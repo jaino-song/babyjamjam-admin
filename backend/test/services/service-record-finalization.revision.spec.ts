@@ -1,6 +1,8 @@
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { setup as initialRecoverySetup, input as initialRecoveryInput } from "../utils/service-record-initial-recovery.fixture";
 import { ConflictException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
+import { isInitialFinalizationRequestKeyFor } from "application/policies/service-record-initial-finalization.policy";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import {
@@ -10,7 +12,9 @@ import {
     type KrBusinessDayCalendar,
 } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
+import { findManyFrom, matchesWhere } from "../utils/prisma-where-evaluator";
 
 const branchId = "00000000-0000-4000-8000-000000000010";
 const caseId = "00000000-0000-4000-8000-000000000020";
@@ -692,6 +696,118 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
     });
 });
 
+
+it("releases a pre-deploy INITIAL after rejection and freezes one INITIAL for the confirmed revision", async () => {
+    const rejectionCode = "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";
+    const oldRequestKey = `service-record-initial-finalization:${revisionId}`;
+    const activeKey = `service-record-initial-finalization:${caseId}`;
+    const record = { ...source(), status: "FINALIZATION_FAILED", finalizationDueAt: null, lastError: rejectionCode };
+    const oldState = {
+        id: stateId, branchId, clientId, revisionId, operation: "record_snapshot",
+        generation: "old-generation", status: "failed", step: "failed", documentVersion: 3, lastErrorCode: rejectionCode,
+        workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey: oldRequestKey },
+    };
+    const oldJob = {
+        branchId, clientId, jobType: "create_document", source: "auto_finalize", requestKey: oldRequestKey,
+        status: "requires_attention", activeKey, leaseToken: null, documentId: null,
+        payload: { revisionId, generationKind: "INITIAL_FINALIZATION", generation: oldState.generation, context: { serviceRecordCaseId: caseId } },
+    };
+    const jobs: Array<Record<string, unknown>> = [oldJob];
+    const newRevisionId = "00000000-0000-4000-8000-000000000031";
+    const draftId = "00000000-0000-4000-8000-000000000080";
+    const day = "2026-09-07";
+    let revision: (Prisma.service_record_revisionUncheckedCreateInput & { id: string }) | null = null;
+    const tx = {
+        $queryRaw: jest.fn(async ({ text }: Prisma.Sql) => {
+            if (text.includes('FROM "service_record_revision_document_state"')) return [oldState];
+            if (text.includes('FROM "service_record_snapshot_chunk"')) return [
+                { documentId: "doc-1", chunkIndex: 1, chunkCount: 2 },
+                { documentId: "doc-2", chunkIndex: 2, chunkCount: 2 },
+            ];
+            if (text.includes('FROM "eformsign_doc" AS doc')) return ["doc-1", "doc-2"].map(documentId => ({
+                documentId, statusType: "011", voidedAt: null, permanentPurgeRequestedAt: null,
+            }));
+            if (text.includes('SELECT status, lease_token')) return [oldJob];
+            if (text.includes('FROM "client"')) return [{ id: clientId }];
+            if (text.includes('FROM "service_record_case"') || text.includes("FROM service_record_case")) return [record];
+            return [];
+        }),
+        $executeRaw: jest.fn(async ({ text, values }: Prisma.Sql) => {
+            expect(text).toContain("SET active_key = NULL, status = 'failed'");
+            expect(values).toEqual([branchId, clientId, caseId, revisionId, oldState.generation]);
+            Object.assign(oldJob, { status: "failed", activeKey: null });
+            return 1;
+        }),
+        service_record_case: {
+            findUnique: jest.fn(async () => ({ ...record, branch: { name: record.branchName } })),
+            findMany: jest.fn(async ({ where }: { where: Prisma.service_record_caseWhereInput }) =>
+                where.snapshotChunks && matchesWhere(record, { OR: where.OR }) ? [record] : []),
+            update: jest.fn(async ({ data }: { data: Prisma.service_record_caseUpdateInput }) => {
+                Object.assign(record, data);
+                return { version: 2 };
+            }),
+            updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        service_record_revision: {
+            findFirst: jest.fn().mockResolvedValue({ revisionNumber: 1 }),
+            create: jest.fn(async ({ data }: { data: Prisma.service_record_revisionUncheckedCreateInput }) => {
+                revision = { ...data, id: newRevisionId };
+                return revision;
+            }),
+            findUnique: jest.fn(async () => revision),
+        },
+        service_record_edit_draft: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        service_record_token: { updateMany: jest.fn() },
+        client: { updateMany: jest.fn() },
+        eformsign_document_job: { findMany: findManyFrom(jobs) },
+    };
+    const prisma = { ...tx, $transaction: async (run: (db: typeof tx) => Promise<unknown>) => run(tx) };
+    const repository = new ServiceRecordEditRepository(prisma as never);
+    const editorReads = repository as unknown as { findDraftByIdWithClient: jest.Mock; loadSourceWithClient: jest.Mock };
+    jest.spyOn(editorReads, "findDraftByIdWithClient").mockResolvedValue({ status: "ACTIVE", draftVersion: 1, serviceRecordCaseId: caseId });
+    const editorSource = {
+        caseId, caseVersion: 1, client: { id: clientId, startDate: day, endDate: day },
+        caseLifecycle: { status: record.status }, assignments: record.assignments,
+    };
+    jest.spyOn(editorReads, "loadSourceWithClient").mockResolvedValue(editorSource);
+    jest.spyOn(repository, "createRevisionDocumentStateInTransaction").mockResolvedValue({ id: "new-state" } as never);
+    jest.spyOn(repository, "allocateServiceRecordRevisionDocumentVersionInTransaction").mockResolvedValue(1);
+    const enqueueInTransaction = jest.fn(async (_tx, input: Record<string, unknown>) => {
+        expect(jobs.some(job => job["activeKey"] === input["activeKey"])).toBe(false);
+        const job = { ...input, id: "new-job", status: "queued" };
+        jobs.push(job);
+        return { existing: false, job };
+    });
+    const queue = { enqueueInTransaction, findByRequestKeyInTransaction: jest.fn().mockResolvedValue(null) };
+    const snapshot = { executeCase: jest.fn() };
+    const finalizer = new ServiceRecordFinalizationService(prisma as never, {} as never, snapshot as never,
+        createHolidayCalendarStub(), queue as never, repository);
+
+    const confirmed = await repository.confirmDraft({
+        branchId, draftId, expectedDraftVersion: 1, previewId: `srp_${"a".repeat(64)}`,
+        idempotencyKey: "00000000-0000-4000-8000-000000000081", requestFingerprint: "b".repeat(64), actorUserId: "admin",
+        prepare: () => ({
+            status: "confirmed", sourceFingerprint: "a".repeat(64), caseId, clientId, formVersion: record.formVersion,
+            requiredSessionCount: record.requiredSessionCount, startDate: day, endDate: day, header: record,
+            plannedSessions: record.plannedSessions, sessions: [], newSessions: [], assignments: [],
+            revision: { branchId, serviceRecordCaseId: caseId, actorUserId: "admin", formVersionAtConfirm: record.formVersion,
+                payload: { plannedSessions: record.plannedSessions }, plannedSessions: record.plannedSessions, provenance: {} },
+            documentStatus: "waiting_for_completion", dispatchContext: null, documentJob: null,
+        }),
+    });
+    expect(confirmed).toMatchObject({ revisionId: newRevisionId, revisionNumber: 2 });
+    expect(oldJob).toMatchObject({ status: "failed", activeKey: null, requestKey: oldRequestKey });
+    expect(record).toMatchObject({ currentRevisionId: newRevisionId, nextAttemptAt: expect.any(Date) });
+
+    const referenceDate = new Date();
+    await expect(finalizer.processDueCases(referenceDate)).resolves.toBe(0);
+    await expect(finalizer.processDueCases(referenceDate)).resolves.toBe(0);
+    expect(snapshot.executeCase).not.toHaveBeenCalled();
+    expect(enqueueInTransaction).toHaveBeenCalledTimes(1);
+    expect(jobs).toHaveLength(2);
+    expect(jobs[1]).toMatchObject({ activeKey, status: "queued", payload: { revisionId: newRevisionId, generationKind: "INITIAL_FINALIZATION" } });
+    expect(isInitialFinalizationRequestKeyFor(newRevisionId, jobs[1]?.["requestKey"])).toBe(true);
+});
 
 describe("cancelled INITIAL generation scheduler replay", () => {
     it.each(["preparing", "sent"])("retains %s generation through repeated processDueCases runs without claiming or enqueueing", async progressStep => {

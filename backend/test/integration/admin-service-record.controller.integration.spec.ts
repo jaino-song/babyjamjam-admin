@@ -1,15 +1,18 @@
-import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
-import { NotFoundException, RequestMethod } from "@nestjs/common";
+import { RequestMethod } from "@nestjs/common";
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { Test, TestingModule } from "@nestjs/testing";
+
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
 import { TenantGuard } from "infrastructure/tenant";
 import { AdminServiceRecordController, AdminServiceRecordNoQueryPipe } from "interface/controllers/admin-service-record.controller";
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
+
+import { attestationReplayInBranch } from "../utils/service-record-attestation-branch.fixture";
 
 describe("AdminServiceRecordController (Integration)", () => {
     const tenant = {
@@ -176,15 +179,17 @@ describe("AdminServiceRecordController (Integration)", () => {
         );
     });
 
-    it("protects the attestation POST with BranchManagerGuard and forwards the verified tenant scope", async () => {
+    it("protects the attestation POST and scopes the state read to the verified tenant branch", async () => {
         const handler = AdminServiceRecordController.prototype.confirmInitialNoProviderDocument;
         expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toContain(BranchManagerGuard);
         expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.POST);
         expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe("revisions/:revisionId/documents/:documentStateId/confirm-no-provider-document");
         const revisionId = "revision-1", documentStateId = "state-1", expectedGeneration = "generation-1";
-        const applied = { id: documentStateId, status: "failed" };
-        confirmNoProviderDocument.mockResolvedValueOnce(applied).mockRejectedValueOnce(new NotFoundException());
-        await expect(controller.confirmInitialNoProviderDocument(tenant, revisionId, documentStateId, { expectedGeneration })).resolves.toBe(applied);
+        confirmNoProviderDocument.mockImplementation(attestationReplayInBranch(tenant.branchId, {
+            revisionId, documentStateId, expectedGeneration,
+        }));
+        await expect(controller.confirmInitialNoProviderDocument(tenant, revisionId, documentStateId, { expectedGeneration }))
+            .resolves.toMatchObject({ id: documentStateId, status: "failed" });
         expect(confirmNoProviderDocument).toHaveBeenCalledWith({
             branchId: tenant.branchId, actorUserId: tenant.userId, revisionId, documentStateId, expectedGeneration,
         });

@@ -1,28 +1,32 @@
-import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
-import { SERVICE_RECORD_INITIAL_NO_DOC_REASONS as NO_DOC_REASON } from "domain/constants/service-record-initial-no-provider-document";
-import { ConflictException, NotFoundException } from "@nestjs/common";
-import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
-import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
-import { Test, TestingModule } from "@nestjs/testing";
-import request from "supertest";
+import { ConflictException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Test, TestingModule } from "@nestjs/testing";
+import type { Prisma } from "@prisma/client";
+import request from "supertest";
+
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
 import { EformsignHeadlessProgressService } from "application/services/eformsign-headless-progress.service";
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
+import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import { ListReviewStageContractsUsecase } from "application/usecases/eformsign-doc/list-review-stage-contracts.usecase";
 import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
+import { SERVICE_RECORD_INITIAL_NO_DOC_REASONS as NO_DOC_REASON } from "domain/constants/service-record-initial-no-provider-document";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
 import type { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
 import { ContractSupersedeService } from "application/services/contract-supersede.service";
+
 import { setup as initialRecoveryFixture, input as initialRecoveryInput } from "../utils/service-record-initial-recovery.fixture";
+import { attestationReplayInBranch } from "../utils/service-record-attestation-branch.fixture";
 
 const validContractData = {
     customerName: "산모",
@@ -222,13 +226,18 @@ describe("EformsignDocumentJobController (Integration)", () => {
         expect(conflict.body.reason).toBe(NO_DOC_REASON.VENDOR_CHECK_INCOMPLETE);
     });
 
-    it("does not accept a caller-supplied branch or actor and returns 404 for another branch", async () => {
+    it("rejects a caller-supplied branch or actor", async () => {
         await request(app.getHttpServer()).post(confirmPath).send({ ...regenerateBody, branchId: "branch-z", actorUserId: "other-user" }).expect(400);
         expect(confirmNoProviderDocument).not.toHaveBeenCalled();
+    });
+
+    it("scopes the staff attestation state read to the verified tenant branch", async () => {
+        confirmNoProviderDocument.mockImplementation(attestationReplayInBranch("branch-a", regenerateBody));
+        await request(app.getHttpServer()).post(confirmPath).send(regenerateBody).expect(200);
+
         authBranchId = "branch-z";
-        confirmNoProviderDocument.mockRejectedValueOnce(new NotFoundException({ code: "RESOURCE_NOT_FOUND" }));
         await request(app.getHttpServer()).post(confirmPath).send(regenerateBody).expect(404);
-        expect(confirmNoProviderDocument).toHaveBeenCalledWith({ ...regenerateBody, branchId: "branch-z", actorUserId: "user-a" });
+        expect(confirmNoProviderDocument).toHaveBeenLastCalledWith({ ...regenerateBody, branchId: "branch-z", actorUserId: "user-a" });
     });
 
     it("requires staff dispatch capability and actor identity before starting an attestation", async () => {
@@ -263,18 +272,22 @@ describe("EformsignDocumentJobController (Integration)", () => {
             const response = await request(app.getHttpServer()).post("/eformsign-docs/jobs/regenerate-initial").send(regenerateBody).expect(409);
             expect(response.body).toEqual({ code });
         });
-    it("wrong branch returns the same not-found status as retry and cancel", async () => {
-        authBranchId = "branch-b";
-        finalization.regenerateInitialFinalization.mockImplementation(async branch => {
-            if (branch !== "branch-a") throw new NotFoundException({ code: "RESOURCE_NOT_FOUND" });
-        });
-        documentJobService.retry.mockResolvedValue({ kind: "not_found" });
-        documentJobService.cancel.mockResolvedValue({ kind: "not_found" });
-        for (const route of [`jobs/${JOB_ID}/retry`, `jobs/${JOB_ID}/cancel`]) {
-            await request(app.getHttpServer()).post(`/eformsign-docs/${route}`).expect(404);
-        }
+    it("scopes the staff regeneration repository lookup to the verified tenant branch", async () => {
+        authBranchId = "33333333-3333-4333-8333-333333333333";
+        const $queryRaw = jest.fn<Promise<never[]>, [Prisma.Sql]>().mockResolvedValue([]);
+        const prisma = { $queryRaw };
+        const editRepository = new ServiceRecordEditRepository(prisma as never);
+        const service = new ServiceRecordFinalizationService(
+            prisma as never, {} as never, {} as never, {} as never, {} as never, editRepository,
+        );
+        finalization.regenerateInitialFinalization.mockImplementation(service.regenerateInitialFinalization.bind(service));
+
         await request(app.getHttpServer()).post("/eformsign-docs/jobs/regenerate-initial").send(regenerateBody).expect(404);
-        expect(finalization.regenerateInitialFinalization).toHaveBeenCalledWith("branch-b", regenerateBody);
+        expect(finalization.regenerateInitialFinalization).toHaveBeenCalledWith(authBranchId, regenerateBody);
+        expect($queryRaw).toHaveBeenCalledTimes(1);
+        const [lookup] = $queryRaw.mock.calls[0]!;
+        expect(lookup.text).toMatch(/WHERE state\.branch_id = \$1::uuid/);
+        expect(lookup.values).toEqual([authBranchId, regenerateBody.revisionId, regenerateBody.documentStateId]);
     });
     it("applies dispatch capability and accepting gates to regeneration", async () => {
         authRole = "staff";

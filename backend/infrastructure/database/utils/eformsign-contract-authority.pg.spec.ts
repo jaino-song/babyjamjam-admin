@@ -9,12 +9,16 @@ import { createEformsignWorkerPrincipal } from "application/services/eformsign-c
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import type { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
-import { initialRegenerationReadiness, releaseTerminalInitialFinalizationKey } from "application/policies/service-record-initial-finalization.policy";
+import {
+    initialRegenerationReadiness,
+    isInitialFinalizationJobIdentity,
+    isInitialFinalizationRequestKeyFor,
+    releaseTerminalInitialFinalizationKey,
+} from "application/policies/service-record-initial-finalization.policy";
 import { ServiceRecordEditRepository, assertNoBlockingRevisionDocumentStates } from "infrastructure/database/repositories/service-record-edit.repository";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import type { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { SbEformsignDocumentMirrorRepository } from "../repositories/sb.eformsign-document-mirror.repository";
-import { isInitialFinalizationJobIdentity } from "application/policies/service-record-initial-finalization.policy";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { initialFinalizationJobSql, initialFinalizationRetryCandidateSql } from "./service-record-initial-recovery-sql";
 import { createHash, randomUUID } from "node:crypto";
@@ -214,6 +218,12 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             await db.employee_schedule.deleteMany({ where: { branchId: { in: branches } } });
             await db.service_record_revision_document_state.deleteMany({ where: { branchId: { in: branches } } });
             await db.service_record_case.deleteMany({ where: { branchId: { in: branches }, id: { notIn: [...retained.cases] } } });
+            // Append-only revisions keep these parents alive after their mutable data is
+            // removed. Make them idle so they cannot fill a later test's scheduler batch.
+            await db.service_record_case.updateMany({
+                where: { branchId: { in: branches }, id: { in: [...retained.cases] } },
+                data: { status: "WAITING_FOR_DETAILS", nextAttemptAt: null },
+            });
             await db.client.deleteMany({ where: { branchId: { in: branches } } });
             await db.employee.deleteMany({ where: { id: { in: employees } } });
             await db.user.deleteMany({ where: { id: { in: users } } });
@@ -2122,20 +2132,22 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     }
     async function freezeAfterConfirm(f: Awaited<ReturnType<typeof initialChunks>>, revisionId: string) {
         const finalizer = initialFinalizer(f);
-        const requestKey = `service-record-initial-finalization:${revisionId}`;
         const referenceDate = new Date();
+        const readJobs = () => db.eformsign_document_job.findMany({
+            where: { branchId: f.branchId, source: "auto_finalize", jobType: "create_document" },
+        });
         await expect(finalizer.processDueCases(referenceDate)).resolves.toBe(0);
-        const queued = await db.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
-        expect(queued).toMatchObject({
+        const jobsForRevision = (await readJobs()).filter(job => isInitialFinalizationRequestKeyFor(revisionId, job.requestKey));
+        expect(jobsForRevision).toMatchObject([{
             branchId: f.branchId,
             status: "queued",
             activeKey: `service-record-initial-finalization:${f.record.id}`,
             payload: { generationKind: "INITIAL_FINALIZATION", revisionId },
-        });
+        }]);
         await expect(finalizer.processDueCases(referenceDate)).resolves.toBe(0);
-        const all = await db.eformsign_document_job.findMany({ where: { branchId: f.branchId, source: "auto_finalize", jobType: "create_document" } });
+        const all = await readJobs();
         expect(all).toHaveLength(2);
-        expect(all.filter(job => job.status === "queued").map(job => job.id)).toEqual([queued.id]);
+        expect(all.filter(job => job.status === "queued").map(job => job.id)).toEqual([jobsForRevision[0]!.id]);
     }
     async function regenerationReady() {
         const f = await terminalInitial(true);
