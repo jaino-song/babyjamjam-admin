@@ -19,7 +19,7 @@ function rasterTest(name, fn) {
     return test(name, { skip }, fn);
 }
 
-function serializePdf(objects, info) {
+function serializePdf(objects, info, trailerEntries = '') {
     const parts = [Buffer.from('%PDF-1.7\n')];
     const offsets = ['0000000000 65535 f \n'];
     let offset = parts[0].length;
@@ -29,9 +29,8 @@ function serializePdf(objects, info) {
         offset += entry.reduce((length, part) => length + part.length, 0);
         parts.push(...entry);
     }
-    parts.push(Buffer.from(
-        `xref\n0 ${offsets.length}\n${offsets.join('')}trailer\n<< /Size ${offsets.length} /Root 1 0 R${info ? ` /Info ${info}` : ''} >>\nstartxref\n${offset}\n%%EOF\n`,
-    ));
+    const trailer = `<< /Size ${offsets.length} /Root 1 0 R${info ? ` /Info ${info}` : ''} ${trailerEntries} >>`;
+    parts.push(Buffer.from(`xref\n0 ${offsets.length}\n${offsets.join('')}trailer\n${trailer}\nstartxref\n${offset}\n%%EOF\n`));
     return Buffer.concat(parts);
 }
 
@@ -45,8 +44,8 @@ function pdfObjects() {
         set(ref, object) {
             objects[Number.parseInt(ref, 10) - 1] = object;
         },
-        output(info) {
-            return serializePdf(objects, info);
+        output(info, trailerEntries) {
+            return serializePdf(objects, info, trailerEntries);
         },
     };
 }
@@ -432,35 +431,40 @@ rasterTest('malformed, truncated and password-required input stays unpublished',
     await assert.rejects(lstat(outputPath), { code: 'ENOENT' });
 });
 
-function flatPdf(specifications, { openAction = false, unusedObject = false } = {}) {
+function flatPdf(specifications, {
+    openAction = false, unusedObject = false, trailerEntries = '', infoEntries = '', treeEntries = '',
+} = {}) {
     const pdf = pdfObjects();
     const catalog = pdf.add();
     const tree = pdf.add();
     const kids = specifications.map(({
         width = 100, height = 100, media = [24, 24], draw = true, bytes,
         colorSpace = '/DeviceRGB', bitsPerComponent = 8, asciiHexImage = false, linkAnnotation = false,
+        imageEntries = '', contentLengthHint = false, resourceEntries = '',
     }) => {
         const pixels = Buffer.alloc(bytes ?? width * height * 3, 255);
         const filter = asciiHexImage ? '/ASCIIHexDecode' : '/FlateDecode';
         const encodedPixels = asciiHexImage ? `${pixels.toString('hex')}>` : deflateSync(pixels);
         const image = pdf.add(pdfStream(`/Subtype /Image /ColorSpace ${colorSpace} /BitsPerComponent ${bitsPerComponent}
-            /Width ${width} /Height ${height} /Filter ${filter}`, encodedPixels));
+            /Width ${width} /Height ${height} /Filter ${filter} ${imageEntries}`, encodedPixels));
         const [pageWidth, pageHeight] = media;
         const painting = draw ? `${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im1 Do` : '0 0 m 24 24 l S';
-        const contents = pdf.add(pdfStream('/Filter /FlateDecode', deflateSync(painting)));
+        const contentEntries = contentLengthHint ? ` /DL ${Buffer.byteLength(painting)}` : '';
+        const contents = pdf.add(pdfStream(`/Filter /FlateDecode${contentEntries}`, deflateSync(painting)));
         const page = pdf.add();
         // A local destination needs no separate annotation object or executable action.
         const annots = linkAnnotation
             ? ` /Annots [<< /Type /Annot /Subtype /Link /Rect [0 0 12 12] /Dest [${page} /Fit] >>]` : '';
         pdf.set(page, `<< /Type /Page /Parent ${tree} /MediaBox [0 0 ${pageWidth} ${pageHeight}]
-            /Resources << /XObject << /Im1 ${image} >> >> /Contents ${contents}${annots} >>`);
+            /Resources << /XObject << /Im1 ${image} >> ${resourceEntries} >> /Contents ${contents}${annots} >>`);
         return page;
     });
     const action = openAction ? ` /OpenAction [${kids[0]} /Fit]` : '';
     pdf.set(catalog, `<< /Type /Catalog /Pages ${tree}${action} >>`);
-    pdf.set(tree, `<< /Type /Pages /Count ${kids.length} /Kids [${kids.join(' ')}] >>`);
+    pdf.set(tree, `<< /Type /Pages /Count ${kids.length} /Kids [${kids.join(' ')}] ${treeEntries} >>`);
     if (unusedObject) pdf.add('<< /Fixture (Unreferenced object) >>');
-    return pdf.output();
+    const info = pdf.add(`<< /Producer (GPL Ghostscript 10.06.0) /CreationDate (D:20261124000000Z) ${infoEntries} >>`);
+    return pdf.output(info, trailerEntries);
 }
 
 rasterTest('validates image-only output before publication and cleans up rejected fixtures', async (t) => {
@@ -489,6 +493,12 @@ rasterTest('validates image-only output before publication and cleans up rejecte
         ['catalog has an OpenAction', [{}, {}], { openAction: true }],
         ['page has a Link annotation', [{ linkAnnotation: true }, {}]],
         ['unreferenced object', [{}, {}], { unusedObject: true }],
+        ['image stream has a Decode array that inverts RGB', [{ imageEntries: '/Decode [1 0 1 0 1 0]' }, {}]],
+        ['content stream has a decoded length hint', [{ contentLengthHint: true }, {}]],
+        ['trailer has a custom entry', [{}, {}], { trailerEntries: '/Fixture (Synthetic trailer data)' }],
+        ['Info has a Title entry', [{}, {}], { infoEntries: '/Title (Synthetic title)' }],
+        ['page tree has an inherited Rotate entry', [{}, {}], { treeEntries: '/Rotate 0' }],
+        ['Resources has a ProcSet entry', [{ resourceEntries: '/ProcSet [/PDF /ImageC]' }, {}]],
         ['image uses CalRGB', [{ colorSpace: '[/CalRGB << /WhitePoint [0.9505 1 1.089] >>]' }, {}]],
         // Keep the decoded byte count fixed so the bit-depth check has to reject it.
         ['image declares 4 bits per component', [{ bitsPerComponent: 4 }, {}]],
