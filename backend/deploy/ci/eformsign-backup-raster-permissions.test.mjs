@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import * as fs from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -260,21 +260,12 @@ const cases = {
     'invalid state shape': (f) => write(f.state, '{"version":2,"units":{"doc:fake":{"files":{}}}}', 0o664),
     'settings with insecure permissions': (f) => fs.chmod(f.settings, 0o664),
     'filesystem root': (f) => f.configure({ stateDir: '/' }),
-    'home directory despite backup state shape': async (f) => {
-        await write(join(f.home, 'state.json'), stateBytes, 0o664);
-        await f.configure({ stateDir: f.home });
-    },
     'project directory': (f) => f.configure({ stateDir: fileURLToPath(new URL('../../../', import.meta.url)).slice(0, -1) }),
     'application directory': async (f) => {
         const app = join(f.home, 'eformsign-backup');
         await fs.mkdir(app, { mode: 0o755 });
         await write(join(app, 'state.json'), stateBytes, 0o664);
         await f.configure({ stateDir: app });
-    },
-    'user-wide directory despite backup state shape': async (f) => {
-        const wide = dirname(f.lockDir);
-        await write(join(wide, 'state.json'), stateBytes, 0o664);
-        await f.configure({ stateDir: wide });
     },
     'ambiguous state path': (f) => f.configure({ stateDir: f.stateDir + '/.' }),
     'state equal to public root': (f) => f.configure({ stateDir: f.archive }),
@@ -298,6 +289,33 @@ for (const [name, setup] of Object.entries(cases)) {
             assert.equal(result.status, 'refused');
             assert.equal(result.changed, 0);
             assert.deepEqual(await snapshot(f.home), before);
+        }
+    });
+}
+
+for (const [directory, reason] of [
+    ['.', 'overlapping_roots'],
+    ['.local/state', 'overlapping_roots'],
+    // Documents is disjoint from the timer lock and all protected paths in the fixture.
+    ['Documents', 'out_of_scope_path'],
+]) {
+    test('refuses attributable backup state under ~/' + directory, async (t) => {
+        const f = await fixture(t);
+        const stateDir = join(f.home, directory);
+        await fs.mkdir(stateDir, { recursive: true });
+        await fs.chmod(stateDir, 0o755);
+        await write(join(stateDir, 'state.json'), stateBytes, 0o664);
+        await f.configure({ stateDir });
+
+        const before = await snapshot(f.home);
+        for (const apply of [false, true]) {
+            await t.test(apply ? 'apply' : 'dry run', async () => {
+                const result = await f.run({ apply, code: 1 });
+                assert.equal(result.status, 'refused');
+                assert.equal(result.reason, reason);
+                assert.equal(result.changed, 0);
+                assert.deepEqual(await snapshot(f.home), before);
+            });
         }
     });
 }
