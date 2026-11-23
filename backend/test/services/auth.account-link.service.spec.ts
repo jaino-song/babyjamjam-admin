@@ -9,6 +9,13 @@ import { IAuthTokenRepository } from "domain/repositories/auth-token.repository.
 import { AuthSessionService } from "application/services/auth-session.service";
 
 const phone = "01012345678";
+const lookupForms = [phone, "010-1234-5678", "010-12345678", "0101234-5678"];
+const partialPhoneForms = [
+    ["010-12345678", phone],
+    ["0101234-5678", phone],
+    ["011-1234567", "0111234567"],
+    ["011123-4567", "0111234567"],
+];
 const birthDate = "1990-01-01";
 const token = "a".repeat(64);
 const refusal = { status: 400, response: { code: "VALIDATION_FAILED", errors: [{ pointer: "/code", code: "INVALID_VALUE", detail: "계정을 연결할 수 없어요. 처음부터 다시 시도해 주세요." }] } };
@@ -124,10 +131,72 @@ describe("SMS account linking", () => {
         await expect(startKakao(service)).resolves.toEqual({ success: true, linkVerificationRequired: true, linkChallengeToken: token,
             message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요." });
         expect(challenge.issue).toHaveBeenCalledWith({ purpose: "kakao_link", phone, kakaoId: "new-kakao", targetUserId: reason === "match" ? "user" : null });
-        expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: { in: [phone, user.phone] } } }));
+        expect(tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: { in: lookupForms } } }));
         expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
         expect(tx.user.create).not.toHaveBeenCalled();
     });
+    describe.each(partialPhoneForms)("partially hyphenated holder %s", (storedPhone, canonicalPhone) => {
+        it.each(["kakao", "email"])("links an eligible %s holder without creating a duplicate", async method => {
+            user.phone = storedPhone;
+            if (method === "email") {
+                user.kakaoId = "kakao";
+                user.passwordHash = null;
+            }
+            const lookup = method === "kakao" ? tx.user.findMany : prisma.user.findMany;
+            lookup.mockImplementation(async ({ where }) => where.phone.in.includes(user.phone) ? [user] : []);
+
+            const result = method === "kakao"
+                ? await service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user")
+                : await service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate);
+
+            expect(result).toMatchObject({ linkVerificationRequired: true });
+            expect(challenge.issue).toHaveBeenCalledWith(expect.objectContaining({
+                phone: canonicalPhone, targetUserId: user.id,
+            }));
+            expect(tx.user.create).not.toHaveBeenCalled();
+        });
+
+        it.each(["kakao", "email"])("rejects %s registration when the phone holder already has that provider", async method => {
+            user.phone = storedPhone;
+            user.kakaoId = "existing-kakao";
+            const lookup = method === "kakao" ? tx.user.findMany : prisma.user.findMany;
+            lookup.mockImplementation(async ({ where }) => where.phone.in.includes(user.phone) ? [user] : []);
+
+            const result = method === "kakao"
+                ? service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user")
+                : service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate);
+
+            await expect(result).rejects.toMatchObject({
+                status: 400, response: { errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] },
+            });
+            expect(challenge.issue).not.toHaveBeenCalled();
+            expect(tx.user.create).not.toHaveBeenCalled();
+        });
+    });
+
+    describe.each(["kakao", "email"])("%s registration with ambiguous holders", method => {
+        it.each(partialPhoneForms)("rejects a second holder stored as %s", async (storedPhone, canonicalPhone) => {
+            user.phone = canonicalPhone;
+            if (method === "email") {
+                user.kakaoId = "kakao";
+                user.passwordHash = null;
+            }
+            const holders = [user, { ...user, id: "second", phone: storedPhone }];
+            const lookup = method === "kakao" ? tx.user.findMany : prisma.user.findMany;
+            lookup.mockImplementation(async ({ where }) => holders.filter(holder => where.phone.in.includes(holder.phone)));
+
+            const result = method === "kakao"
+                ? service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user")
+                : service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate);
+
+            await expect(result).rejects.toMatchObject({
+                status: 400, response: { errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] },
+            });
+            expect(challenge.issue).not.toHaveBeenCalled();
+            expect(tx.user.create).not.toHaveBeenCalled();
+        });
+    });
+
     it.each(["kakao", "email", "ownEmail"])("counts a pending %s match before returning only PENDING_APPROVAL", async method => {
         user.approvalStatus = "pending";
         if (method !== "kakao") { user.kakaoId = "kakao"; user.passwordHash = null; }
@@ -282,7 +351,7 @@ describe("SMS account linking", () => {
         expect(challenge.verify).toHaveBeenCalledWith({ purpose: "kakao_link", challengeToken: token, code: "123456" });
         expect(challenge.consume).toHaveBeenCalledWith(tx, "challenge");
         expect(tx.auth_flow_state.updateMany).toHaveBeenCalledTimes(1);
-        expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: "user", kakaoId: null, phone: { in: [phone, user.phone] },
+        expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: "user", kakaoId: null, phone: { in: lookupForms },
             approvalStatus: "approved", OR: [{ role: null }, { role: { not: "owner" } }] },
         data: { kakaoId: "new-kakao", authProvider: "both", profileImage: "image" } });
         expect(prisma.user.updateMany).not.toHaveBeenCalled();
@@ -400,7 +469,7 @@ describe("SMS account linking", () => {
             : await service.registerWithEmail("New@example.invalid", "Password1!", "New", "010-1234-5678", birthDate);
         expect(result).toEqual({ success: true, linkVerificationRequired: true, linkChallengeToken: token,
             message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요." });
-        expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: { in: [phone, "010-1234-5678"] } } }));
+        expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: { in: lookupForms } } }));
         expect(challenge.issue).toHaveBeenCalledTimes(1);
         expect(challenge.issue).toHaveBeenCalledWith({
             purpose: method === "kakao" ? "kakao_link" : "email_link", phone, targetUserId: decoy ? null : user.id,
@@ -411,6 +480,28 @@ describe("SMS account linking", () => {
         expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
         expect(tx.user.create).not.toHaveBeenCalled();
         expect(tx.user.updateMany).not.toHaveBeenCalled();
+    });
+    describe.each(["kakao", "email"])("%s link verification", method => {
+        it.each(partialPhoneForms)("accepts stored phone %s", async (storedPhone, canonicalPhone) => {
+            user.phone = storedPhone;
+            row.phone = canonicalPhone;
+            if (method === "email") {
+                user.kakaoId = "kakao";
+                user.passwordHash = null;
+            }
+            tx.user.updateMany.mockImplementation(async ({ where, data }) => {
+                if (!where.phone.in.includes(user.phone)) return { count: 0 };
+                Object.assign(user, data);
+                return { count: 1 };
+            });
+
+            const result = method === "kakao"
+                ? service.verifyKakaoLink("pending-token", token, "123456")
+                : service.verifyEmailLink(token, "123456");
+
+            await expect(result).resolves.toMatchObject({ linked: true });
+            expect(challengeConsumed).toBe(true);
+        });
     });
     it.each([false, true])("links email (already verified=%s)", async verified => {
         user.kakaoId = "kakao"; user.passwordHash = null; user.emailVerified = verified;
@@ -425,7 +516,7 @@ describe("SMS account linking", () => {
             email: row.email, passwordHash: row.passwordHash, authProvider: "both", name: "Stored",
             ...(!verified ? { emailVerified: false, emailVerifiedAt: null } : {}) } }));
         expect(tx.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
-            id: user.id, passwordHash: null, kakaoId: { not: null }, phone: { in: [phone, user.phone] },
+            id: user.id, passwordHash: null, kakaoId: { not: null }, phone: { in: lookupForms },
             approvalStatus: "approved", OR: [{ role: null }, { role: { not: "owner" } }],
         } }));
         expect(tx.auth_token.deleteMany).toHaveBeenCalledTimes(verified ? 0 : 1);

@@ -3,6 +3,12 @@
 import { cookies } from "next/headers";
 import { AxiosError } from "axios";
 import { normalizeApiError } from "@babyjamjam/shared";
+import {
+  clearPendingAccountOnboarding,
+  clearPendingOnboarding,
+  PENDING_ACCOUNT_ONBOARDING_COOKIE,
+  readPendingAccountAutoLogin,
+} from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
 import { getFieldMessageText } from "@/lib/forms/field-message-text";
@@ -18,21 +24,27 @@ const EXPIRED = "로그인 세션이 만료됐어요. 다시 로그인해 주세
 
 export async function completeAccountOnboarding(input: { phone?: string; birthDate?: string }): Promise<CompletionResult> {
   const store = await cookies();
-  const token = store.get("pending_account_onboarding")?.value;
-  if (!token) return { success: false, error: EXPIRED };
+  const token = store.get(PENDING_ACCOUNT_ONBOARDING_COOKIE)?.value;
+  if (!token) {
+    clearPendingAccountOnboarding(store);
+    return { success: false, error: EXPIRED };
+  }
   try {
     const { data } = await serverAPIClient.post<{ accessToken: string; refreshToken: string; requiresBranchSelection?: boolean }>("/auth/onboarding/complete", input, {
       headers: { "x-pending-onboarding-token": token },
     });
-    setAuthSessionCookies(store, { accessToken: data.accessToken, refreshToken: data.refreshToken });
-    store.delete("pending_account_onboarding");
-    store.delete("pending_kakao_signup");
+    setAuthSessionCookies(store, {
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      autoLogin: readPendingAccountAutoLogin(store, token),
+    });
+    clearPendingOnboarding(store);
     return { success: true, requiresBranchSelection: Boolean(data.requiresBranchSelection) };
   } catch (error) {
     const status = error instanceof AxiosError ? error.response?.status : undefined;
     const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
     if (status === 401) {
-      store.delete("pending_account_onboarding");
+      clearPendingAccountOnboarding(store);
       return { success: false, error: EXPIRED };
     }
     const problem = normalized.problem;
