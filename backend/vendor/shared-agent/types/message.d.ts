@@ -857,3 +857,20 @@ export interface MessageAutomationPolicyPreviewResponse {
     canEnableQuietHours: boolean;
     warnings: MessagePolicyWarning[];
 }
+export type CanceledAutomationRetryReason = "target_client_status_not_met" | "live_unsigned_contract" | "missing_birthday" | "missing_current_contract" | "current_contract_pdf_pending" | "pre_booking";
+export interface CanceledAutomationRetryRoutine {
+    id: string;
+    label: string;
+    eligible: boolean;
+    unavailableReason: "dispatch_disabled" | "routine_disabled" | "unsupported" | null;
+    recoverableReasons: readonly CanceledAutomationRetryReason[];
+    enabled: boolean;
+    enabledAt: string | null;
+}
+export interface CanceledAutomationRetrySettings {
+    routines: CanceledAutomationRetryRoutine[];
+    canManageActivation: boolean;
+}
+export interface UpdateCanceledAutomationRetryRequest {
+    enabled: boolean;
+}

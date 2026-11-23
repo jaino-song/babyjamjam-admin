@@ -1203,6 +1203,8 @@ model message_trigger_rule {
   targetClientStatus String           @default("all") @map("target_client_status") @db.VarChar(20)
   /// 실패 시 재전송 (규칙 메시지-04): false면 일시 실패를 자동으로 다시 보내지 않는다.
   retryOnFailure Boolean              @default(true) @map("retry_on_failure")
+  canceledRetryEnabledAt DateTime?    @map("canceled_retry_enabled_at") @db.Timestamptz(3)
+  canceledRetryLastEnabledAt DateTime? @map("canceled_retry_last_enabled_at") @db.Timestamptz(3)
   createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch        branch?               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1222,6 +1224,8 @@ model message_trigger_rule_branch_override {
   branchId  String   @map("branch_id") @db.Uuid
   ruleId    String   @map("rule_id")
   isActive  Boolean  @map("is_active")
+  canceledRetryEnabledAt DateTime? @map("canceled_retry_enabled_at") @db.Timestamptz(3)
+  canceledRetryLastEnabledAt DateTime? @map("canceled_retry_last_enabled_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch    branch               @relation(fields: [branchId], references: [id], onDelete: Cascade)
