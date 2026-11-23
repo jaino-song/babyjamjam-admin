@@ -99,7 +99,7 @@ function runTool(bin, args, {
     });
 }
 
-async function copyPdf(sourcePath, targetPath, invalid) {
+async function copyPdf(sourcePath, targetPath, invalid, { durable = false } = {}) {
     const source = await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
         .catch(() => { throw new RasterError(invalid); });
     try {
@@ -122,6 +122,7 @@ async function copyPdf(sourcePath, targetPath, invalid) {
             const copied = await target.stat();
             requireRaster(copied.size === before.size && after.size === before.size &&
                 before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs, invalid);
+            if (durable) await target.sync();
         } finally {
             await target.close();
         }
@@ -394,14 +395,20 @@ export async function renderRasterPdf(options) {
         await checkPdfEnvelope(rendered, 'RASTER_INVALID_OUTPUT');
         await verifyOutput(qpdfBin, rendered, scratch, sizes);
 
-        // Build the final inode on the destination's filesystem. Only the parent
-        // links it into the requested name, after validation and private copying.
+        // Sync the final inode on the destination filesystem before linking it
+        // into the requested name. Sync the directory before reporting success.
         destinationScratch = await mkdtemp(join(outputDirectory, '.bjj-raster-'));
         const staging = join(destinationScratch, 'rendered.pdf');
-        await copyPdf(rendered, staging, 'RASTER_INVALID_OUTPUT');
+        await copyPdf(rendered, staging, 'RASTER_INVALID_OUTPUT', { durable: true });
         await rm(scratch, { recursive: true, force: true });
         scratch = undefined;
-        await publishExclusive(staging, outputPath);
+        const directory = await open(outputDirectory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+        try {
+            await publishExclusive(staging, outputPath);
+            await directory.sync();
+        } finally {
+            await directory.close();
+        }
     } catch (error) {
         throw error instanceof RasterError ? error : new RasterError('RASTER_IO_ERROR');
     } finally {
