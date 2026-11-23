@@ -1302,6 +1302,10 @@ model message_trigger_job {
   recoveryState      String?              @map("recovery_state")
   recoveryTransitionStatus String?       @map("recovery_transition_status")
   nextCheckAt        DateTime?            @map("next_check_at") @db.Timestamptz(6)
+  /// Branch-scoped replay key. Its partial unique index is defined in SQL.
+  standaloneRequestId String?             @map("standalone_request_id") @db.Uuid
+  /// Durable proof that a token was issued. Intentionally survives token cleanup.
+  standaloneIssuedTokenId String?         @map("standalone_issued_token_id") @db.Uuid
   originalJobId      String?              @unique(map: "uq_message_trigger_job_original_job_id") @map("original_job_id")
   clientId           Int?                 @map("client_id")
   employeeScheduleId Int?                 @map("employee_schedule_id")

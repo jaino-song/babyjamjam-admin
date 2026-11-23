@@ -115,8 +115,18 @@ export class ReceiptLinkTokenService {
         return this.salt;
     }
 
-    private hashBirthday(birthday: string): string {
+    hashBirthday(birthday: string): string {
         return sha256(`${this.requireSalt()}:${birthday}`);
+    }
+
+    deriveStandaloneLink(identity: { nonce: string; jobId: string; branchId: string; clientId: number }): {
+        linkToken: string; linkTokenHash: string;
+    } {
+        const { nonce, jobId, branchId, clientId } = identity;
+        const linkToken = `efr_${createHmac("sha256", this.requireSalt())
+            .update(JSON.stringify(["receipt-standalone-link:v1", nonce, jobId, branchId, clientId]))
+            .digest("base64url")}`;
+        return { linkToken, linkTokenHash: sha256(linkToken) };
     }
 
     async issue(

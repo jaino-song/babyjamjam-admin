@@ -1,4 +1,5 @@
 export const FILE_STORAGE_PORT = Symbol('FileStoragePort');
+export const STANDALONE_RECEIPT_STORAGE = Symbol('StandaloneReceiptStorage');
 
 export class FileStorageObjectNotFoundError extends Error {
   constructor(
@@ -45,4 +46,9 @@ export interface FileStoragePort {
    * @returns file buffer
    */
   download(path: string): Promise<Buffer>;
+}
+
+/** Private, create-only receipt writes without making an access URL. */
+export interface StandaloneReceiptStorage extends Pick<FileStoragePort, 'download'> {
+  createPrivateObject(file: Buffer, path: string, mimetype: string): Promise<void>;
 }

@@ -1,3 +1,5 @@
+import { StandaloneReceiptIssueService } from "application/services/standalone-receipt-issue.service";
+import { StandaloneReceiptPreparationService } from "application/services/standalone-receipt-preparation.service";
 // F5: ReceiptLinkModule transitively imports MessageModule, EformsignDocModule,
 // SystemSettingModule and SchedulerLeaseModule, so compiling it in isolation with
 // Test.createTestingModule needs heavy overrides this unit test has no reason to stand up
@@ -39,6 +41,8 @@ describe("ReceiptLinkModule wiring", () => {
         expect(providers).toContain(ReceiptLinkTokenService);
         expect(providers).toContain(ReceiptLinkIssueService);
         expect(providers).toContain(ReceiptLinkManualSendService);
+        expect(providers).toContain(StandaloneReceiptIssueService);
+        expect(providers).toContain(StandaloneReceiptPreparationService);
     });
 
     it("declares ReceiptLinkController and ReceiptLinkAdminController as controllers", () => {

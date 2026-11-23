@@ -83,6 +83,7 @@ type MessageTriggerJobPrismaRow = {
     updatedAt: Date;
     claimToken: string | null;
     processingDeadlineAt: Date | null;
+    standaloneRequestId?: string | null;
 };
 
 type MessageTriggerJobRawRow = {
@@ -107,6 +108,7 @@ type MessageTriggerJobRawRow = {
     updated_at: Date | string;
     claim_token: string | null;
     processing_deadline_at: Date | string | null;
+    standalone_request_id?: string | null;
 };
 
 type ClientUpcomingMessageTriggerJobRawRow = {
@@ -839,6 +841,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 job.next_attempt_at, job.sent_at, job.canceled_at, job.cancel_reason, job.client_id,
                 job.employee_schedule_id, job.recipient_type, job.recipient_phone, job.template_key,
                 job.dedupe_key, job.payload, job.created_at, job.updated_at, job.claim_token, job.processing_deadline_at,
+                job.standalone_request_id,
                 job.updated_at::text AS exact_updated_at, job.processing_deadline_at::text AS exact_deadline
             FROM "message_trigger_job" AS job
             WHERE job.status IN ('processing', 'dispatching')
@@ -2499,6 +2502,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             row.nextAttemptAt,
             row.claimToken,
             row.processingDeadlineAt ?? null,
+            row.standaloneRequestId ?? null,
         );
     }
 
@@ -2526,6 +2530,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             this.toNullableDate(row.next_attempt_at),
             row.claim_token,
             this.toNullableDate(row.processing_deadline_at),
+            row.standalone_request_id ?? null,
         );
     }
 

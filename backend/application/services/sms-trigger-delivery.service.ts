@@ -1,3 +1,10 @@
+import {
+    hasStandaloneReceipt, standaloneReceiptReference, STANDALONE_RECEIPT_HISTORY_PLACEHOLDER, STANDALONE_RECEIPT_LOG_REFERENCE,
+} from "domain/entities/standalone-receipt-request";
+import {
+    SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE, SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY,
+} from "domain/constants/service-end-notice-message";
+import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { SMS_TEMPLATE_DELIVERY, type SmsTemplateDeliveryConfig } from "domain/constants/sms-template-delivery";
 import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
@@ -85,6 +92,7 @@ export interface SmsTriggerDeliverySnapshot {
     readonly configHash: string;
     readonly snapshotHash: string;
     readonly systemTemplateKey?: SystemTemplateKey;
+    readonly standaloneLink?: { reference: string; url: string };
 }
 
 /**
@@ -203,6 +211,25 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS trigger template ${job.templateKey} is not supported`);
         }
 
+        if (hasStandaloneReceipt(job)) {
+            const link = await this.resolveStandaloneLink(job);
+            const staged = this.readStagedSnapshot(job, {
+                receiver: job.payload.recipientPhone,
+                maskedReceiver: this.maskedReceiver(job.payload.recipientPhone),
+                requestedDeliveryType: "AUTO",
+            }, link);
+            if (staged) return Object.freeze(staged);
+
+            const smsJob = job.withPayloadOverride({
+                buttonUrl: link.url,
+                templateVariables: { ...job.payload.templateVariables, [SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE]: link.url },
+            });
+            const resolved = await this.resolveCanonicalSnapshot(smsJob, config);
+            if (!resolved.message.includes(link.url) || resolved.message.includes(link.reference)) {
+                throw new SmsTriggerDeliverySkipError("standalone_receipt_template_invalid");
+            }
+            return Object.freeze({ ...resolved, standaloneLink: link });
+        }
         const canonical = await this.resolveCanonicalSnapshot(job, config);
         const staged = this.readStagedSnapshot(job, canonical);
         if (staged) {
@@ -213,6 +240,48 @@ export class SmsTriggerDeliveryService {
         }
 
         return canonical;
+    }
+
+    private async resolveStandaloneLink(job: MessageTriggerJobEntity): Promise<NonNullable<SmsTriggerDeliverySnapshot["standaloneLink"]>> {
+        const enricher = this.enricherRegistry?.get(MessageTriggerTemplateKey.SERVICE_END_NOTICE);
+        if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE || !enricher?.resolveStandaloneReceiptUrl) {
+            throw new SmsTriggerDeliverySkipError("standalone_receipt_unusable");
+        }
+        return Object.freeze({ reference: standaloneReceiptReference(job.id), url: await enricher.resolveStandaloneReceiptUrl(job) });
+    }
+
+    async validateStandaloneHandoff(
+        job: MessageTriggerJobEntity,
+        snapshot: Readonly<SmsTriggerDeliverySnapshot>,
+        tx: Prisma.TransactionClient,
+    ): Promise<void> {
+        const enricher = this.enricherRegistry?.get(MessageTriggerTemplateKey.SERVICE_END_NOTICE);
+        if (!snapshot.standaloneLink || !enricher?.validateStandaloneHandoff) {
+            throw new SmsTriggerDeliverySkipError("standalone_receipt_unusable");
+        }
+        await enricher.validateStandaloneHandoff(job, snapshot.standaloneLink.url, tx);
+    }
+
+    /** Reconstruct an exact provider-bound snapshot for a persisted transport retry. */
+    async resolveStandaloneLogRetry(
+        job: MessageTriggerJobEntity,
+        log: MessageLogEntity,
+        verified?: Readonly<SmsTriggerDeliverySnapshot>,
+    ): Promise<Readonly<SmsTriggerDeliverySnapshot>> {
+        if (!this.hasStagedDeliverySnapshot(job)) throw new SmsTriggerDeliverySkipError("standalone_receipt_retry_unusable");
+        const snapshot = verified ?? await this.resolveDeliverySnapshot(job);
+        if (!snapshot.standaloneLink
+            || (verified && this.serializeSnapshot(verified) !== job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]) || log.branchId !== job.branchId
+            || log.triggerJobId !== job.id || log.clientId !== job.clientId || log.provider !== "aligo_sms"
+            || log.templateKey !== SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY
+            || log.variables[STANDALONE_RECEIPT_LOG_REFERENCE] !== snapshot.standaloneLink.reference
+            || log.receiver !== snapshot.receiver || log.messageBody !== this.historyMessage(snapshot)
+            || log.variables["standaloneReceiptSnapshotHash"] !== snapshot.snapshotHash
+            || log.variables["title"] !== snapshot.title || log.variables["msgType"] !== snapshot.requestedDeliveryType
+            || log.providerAcceptanceFingerprint !== this.providerFingerprint(job, log.templateKey, snapshot)) {
+            throw new SmsTriggerDeliverySkipError("standalone_receipt_retry_unusable");
+        }
+        return snapshot;
     }
 
     /** Only the locked date reconciler may rebind a never-started, exact-job DEFER draft. */
@@ -347,7 +416,7 @@ export class SmsTriggerDeliveryService {
         return {
             templateKey: snapshot.templateKey,
             receiver: snapshot.maskedReceiver,
-            messageBody: snapshot.message,
+            messageBody: this.historyMessage(snapshot),
             title: snapshot.title,
             requestedDeliveryType: snapshot.requestedDeliveryType,
             deliveryType: snapshot.deliveryType,
@@ -371,7 +440,10 @@ export class SmsTriggerDeliveryService {
             templateKey: snapshot.templateKey,
             maskedReceiver: snapshot.maskedReceiver,
             recipientName: snapshot.recipientName,
-            message: snapshot.message,
+            message: snapshot.standaloneLink
+                ? snapshot.message.replaceAll(snapshot.standaloneLink.url, snapshot.standaloneLink.reference)
+                : snapshot.message,
+            ...(snapshot.standaloneLink ? { standaloneReceiptLinkReference: snapshot.standaloneLink.reference } : {}),
             title: snapshot.title,
             requestedDeliveryType: snapshot.requestedDeliveryType,
             deliveryType: snapshot.deliveryType,
@@ -413,7 +485,7 @@ export class SmsTriggerDeliveryService {
             // to validate that an approved external capability is still usable.
             const hasStagedSnapshot = this.hasStagedDeliverySnapshot(job);
             const enricher = job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? null : this.enricherRegistry?.get(job.templateKey) ?? null;
-            if (hasStagedSnapshot && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+            if (hasStagedSnapshot && (hasStandaloneReceipt(job) || job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)) {
                 if (!enricher?.validateStagedSnapshot) {
                     throw new SmsTriggerDeliverySkipError(
                         "receipt_link_validation_unavailable",
@@ -424,10 +496,15 @@ export class SmsTriggerDeliveryService {
             } else if (!hasStagedSnapshot && enricher) {
                 await enricher.enrich(job);
             }
+            if (hasStandaloneReceipt(job)) {
+                const snapshot = await this.resolveDeliverySnapshot(job);
+                if (!hasStagedSnapshot) job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = this.serializeSnapshot(snapshot);
+                return await this.sendSmsJob(job, config, snapshot);
+            }
             return await this.sendSmsJob(job, config);
         } catch (error) {
             if (error instanceof SmsTriggerDeliverySkipError) {
-                job.cancel(`메시지 발송 건너뜀: ${error.message}`);
+                job.cancel(hasStandaloneReceipt(job) ? error.reason : `메시지 발송 건너뜀: ${error.message}`);
                 this.logger.warn(`[SMS Automation] ${job.templateKey} skipped for job ${job.id}: ${error.reason}`);
                 return false;
             }
@@ -487,7 +564,7 @@ export class SmsTriggerDeliveryService {
             // values against the current recipient/template contract.
             const hasStagedSnapshot = this.hasStagedDeliverySnapshot(job);
             const enricher = job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? null : this.enricherRegistry?.get(job.templateKey) ?? null;
-            if (hasStagedSnapshot && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+            if (hasStagedSnapshot && (hasStandaloneReceipt(job) || job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)) {
                 if (!enricher?.validateStagedSnapshot) {
                     throw new SmsTriggerDeliverySkipError(
                         "receipt_link_validation_unavailable",
@@ -521,7 +598,7 @@ export class SmsTriggerDeliveryService {
             job.payload.buttonUrl = previousButtonUrl;
 
             if (error instanceof SmsTriggerDeliverySkipError) {
-                job.cancel(`메시지 발송 건너뜀: ${error.message}`);
+                job.cancel(hasStandaloneReceipt(job) ? error.reason : `메시지 발송 건너뜀: ${error.message}`);
                 this.logger.warn(`[SMS Automation] ${job.templateKey} skipped for job ${job.id}: ${error.reason}`);
                 return null;
             }
@@ -566,10 +643,24 @@ export class SmsTriggerDeliveryService {
         if (job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] !== preparation.serializedSnapshot) {
             throw new AgentAutomationDispatchUncertainError();
         }
+        if (hasStandaloneReceipt(job)) {
+            try {
+                const snapshot = await this.resolveDeliverySnapshot(job);
+                if (snapshot.snapshotHash !== preparation.snapshot.snapshotHash) throw new AgentAutomationDispatchUncertainError();
+                return await this.sendSmsJob(job, config, snapshot);
+            } catch (error) {
+                if (!(error instanceof SmsTriggerDeliverySkipError)) throw error;
+                job.cancel(error.reason);
+                return false;
+            }
+        }
         return this.sendSmsJob(job, config, preparation.snapshot);
     }
 
     private assertDeliveryJob(job: MessageTriggerJobEntity): void {
+        if (hasStandaloneReceipt(job) && job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+            throw new SmsTriggerDeliverySkipError("standalone_receipt_unusable");
+        }
         if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY || job.ruleId.startsWith(MANUAL_SMS_RULE_PREFIX)) {
             if (!job.branchId || job.ruleId !== MANUAL_SMS_RULE_PREFIX + job.branchId || job.templateKey !== MANUAL_SMS_TEMPLATE_KEY
                 || job.payload.origin !== "ADMIN_DIRECT" || !Number.isSafeInteger(job.payload.existingMessageLogId)
@@ -661,12 +752,14 @@ export class SmsTriggerDeliveryService {
             async (decision, transaction): Promise<
                 | { kind: "ready"; attempt: MessageLogEntity }
                 | { kind: "held"; hold: MessageQuietHold }
+                | { kind: "standalone-denied"; reason: string }
                 | { kind: "duplicate" }
                 | { kind: "occurrence"; disposition: "accepted" | "held"; at: Date }
                 | { kind: "source-canceled"; cancellation: ManualSourceCancellation }
                 | { kind: "refused"; decision: { action: "CANCEL"; reevaluateAt: null }; canceledAt: Date | null; durableCancellation?: true }
             > => {
                 if (!transaction) {
+                    if (snapshot.standaloneLink) throw new AgentAutomationDispatchUncertainError();
                     // Only the explicit schema-valid OFF direct-builder compatibility path.
                     if (isQuietHoursCanceled(persistedAttempt)) return { kind: "refused", decision: { action: "CANCEL", reevaluateAt: null }, canceledAt: null };
                     return { kind: "ready", attempt: (this.acceptanceService
@@ -729,6 +822,35 @@ export class SmsTriggerDeliveryService {
                         });
                         if (refused.count !== 1) throw new AgentAutomationDispatchUncertainError();
                         return { kind: "refused" as const, decision: finalDecision, canceledAt, durableCancellation: true as const };
+                    }
+                    if (snapshot.standaloneLink) {
+                        const branch = await transaction.$queryRaw<Array<{ id: string }>>`
+                            SELECT id FROM "branch" WHERE id = ${job.branchId}::uuid AND is_active
+                                AND sms_sender_approval_status = 'approved' FOR SHARE
+                        `;
+                        let refusal = branch.length ? null : MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON;
+                        if (!refusal) {
+                            try {
+                                await this.validateStandaloneHandoff(job, snapshot, transaction);
+                            } catch (error) {
+                                if (!(error instanceof SmsTriggerDeliverySkipError)) throw error;
+                                refusal = error.reason;
+                            }
+                        }
+                        if (refusal) {
+                            const canceled = await transaction.message_trigger_job.updateMany({
+                                where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken,
+                                    processingDeadlineAt: job.processingDeadlineAt, updatedAt: currentJob.updatedAt },
+                                data: { status: "canceled", cancelReason: refusal,
+                                    canceledAt: new Date(), nextAttemptAt: null, claimToken: null, processingDeadlineAt: null },
+                            });
+                            if (canceled.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                            await transaction.message_log.update({
+                                where: { id: current.id, branchId: job.branchId, providerAcceptanceState: "prepared" },
+                                data: { status: "failed", nextRetryAt: null, errorMessage: refusal },
+                            });
+                            return { kind: "standalone-denied" as const, reason: refusal };
+                        }
                     }
                     if (finalDecision.action === "DEFER") {
                         if (!this.jobRepository || !revision) throw new AgentAutomationDispatchUncertainError();
@@ -814,6 +936,13 @@ export class SmsTriggerDeliveryService {
             this.applyManualSourceCancellation(job, admission.cancellation);
             return false;
         }
+        if (admission.kind === "standalone-denied") {
+            job.cancel(admission.reason);
+            job.nextAttemptAt = null;
+            job.claimToken = null;
+            job.processingDeadlineAt = null;
+            return false;
+        }
         if (admission.kind === "duplicate") {
             job.cancel("duplicate_at_release"); job.nextAttemptAt = null; job.claimToken = null; job.processingDeadlineAt = null;
             persistedAttempt.markRetrySuperseded("duplicate_at_release");
@@ -853,6 +982,7 @@ export class SmsTriggerDeliveryService {
                 recipientName: snapshot.recipientName,
                 title: snapshot.title,
                 msgType: snapshot.requestedDeliveryType,
+                ...(snapshot.standaloneLink ? { confidential: true } : {}),
                 ...(job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? { testMode: job.payload.templateVariables["testMode"] === "true" } : {}),
             });
             const outcome = classifySmsProviderOutcome(result, countSmsRecipients(snapshot.receiver));
@@ -870,7 +1000,7 @@ export class SmsTriggerDeliveryService {
             attempt.providerAcceptedAt = isAccepted ? new Date(Date.now()) : null;
             attempt.errorMessage = isAccepted ? null : isPermanent
                 ? `발송 실패: ${rejection.reason}`
-                : result.response.message;
+                : snapshot.standaloneLink ? "Standalone receipt delivery rejected" : result.response.message;
             attempt.status = isAccepted ? "sent" : "failed";
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
@@ -890,7 +1020,7 @@ export class SmsTriggerDeliveryService {
             return isAccepted;
         } catch (error) {
             job.payload.templateVariables["retrySafety"] = "uncertain";
-            const errorMessage = this.formatErrorMessage(error);
+            const errorMessage = snapshot.standaloneLink ? "Standalone receipt delivery outcome unavailable" : this.formatErrorMessage(error);
             try {
                 if (attempt.providerAcceptanceState === "started") {
                     attempt.markProviderOutcomeUncertain(errorMessage);
@@ -898,9 +1028,10 @@ export class SmsTriggerDeliveryService {
                 await this.persistAttempt(attempt);
             } catch (logError) {
                 this.logger.warn(
-                    `Failed to record SMS log: ${this.formatErrorMessage(logError)}`,
+                    snapshot.standaloneLink ? "Failed to record standalone receipt delivery" : `Failed to record SMS log: ${this.formatErrorMessage(logError)}`,
                 );
             }
+            if (snapshot.standaloneLink) throw new Error(errorMessage);
             throw error;
         }
     }
@@ -1183,6 +1314,10 @@ export class SmsTriggerDeliveryService {
         const now = new Date();
         const variables: Record<string, string> = {
             ...this.sanitizeLogVariables(params.templateVariables),
+            ...(params.snapshot.standaloneLink ? {
+                [STANDALONE_RECEIPT_LOG_REFERENCE]: params.snapshot.standaloneLink.reference,
+                standaloneReceiptSnapshotHash: params.snapshot.snapshotHash,
+            } : {}),
             ...(params.job.quietHold ? messageQuietHoldVariables(params.job.quietHold) : {}),
             automationKey: params.config.automationKey,
             recipientName: params.job.payload.recipientName,
@@ -1206,16 +1341,7 @@ export class SmsTriggerDeliveryService {
             "automation",
             `${params.job.branchId}:${params.job.id}`,
         );
-        const providerAcceptanceFingerprint = buildSmsProviderAcceptanceFingerprint({
-            branchId: params.job.branchId,
-            triggerJobId: params.job.id,
-            templateKey: params.config.smsLogTemplateKey,
-            receiver: params.snapshot.receiver,
-            message: params.snapshot.message,
-            title: params.snapshot.title,
-            msgType: params.msgType,
-            snapshotHash: params.snapshot.snapshotHash,
-        });
+        const providerAcceptanceFingerprint = this.providerFingerprint(params.job, params.config.smsLogTemplateKey, params.snapshot);
         return MessageLogEntity.reconstitute(
             0,
             params.job.branchId,
@@ -1224,7 +1350,7 @@ export class SmsTriggerDeliveryService {
             params.job.id,
             params.receiver,
             params.job.clientId,
-            params.snapshot.message,
+            this.historyMessage(params.snapshot),
             variables,
             params.status,
             params.aligoMid,
@@ -1246,9 +1372,29 @@ export class SmsTriggerDeliveryService {
         );
     }
 
+    private historyMessage(snapshot: SmsTriggerDeliverySnapshot): string {
+        return snapshot.standaloneLink
+            ? snapshot.message.replaceAll(snapshot.standaloneLink.url, STANDALONE_RECEIPT_HISTORY_PLACEHOLDER)
+            : snapshot.message;
+    }
+
+    private providerFingerprint(job: MessageTriggerJobEntity, templateKey: string, snapshot: SmsTriggerDeliverySnapshot): string {
+        return buildSmsProviderAcceptanceFingerprint({
+            branchId: job.branchId,
+            triggerJobId: job.id,
+            templateKey,
+            receiver: snapshot.receiver,
+            message: snapshot.message,
+            title: snapshot.title,
+            msgType: snapshot.requestedDeliveryType,
+            snapshotHash: snapshot.snapshotHash,
+        });
+    }
+
     private readStagedSnapshot(
         job: MessageTriggerJobEntity,
-        canonical: SmsTriggerDeliverySnapshot,
+        canonical: Pick<SmsTriggerDeliverySnapshot, "receiver" | "maskedReceiver" | "requestedDeliveryType">,
+        standaloneLink?: SmsTriggerDeliverySnapshot["standaloneLink"],
     ): SmsTriggerDeliverySnapshot | null {
         const serialized = job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE];
         if (!serialized) {
@@ -1256,10 +1402,12 @@ export class SmsTriggerDeliveryService {
         }
 
         try {
-            const parsed = JSON.parse(serialized) as Partial<SmsTriggerDeliverySnapshot>;
+            const parsed = JSON.parse(serialized) as Partial<SmsTriggerDeliverySnapshot> & { standaloneReceiptLinkReference?: string };
             if (
                 parsed.templateKey !== job.templateKey
                 || typeof parsed.message !== "string"
+                || parsed.standaloneReceiptLinkReference !== standaloneLink?.reference
+                || (standaloneLink && (!parsed.message.includes(standaloneLink.reference) || parsed.message.includes(standaloneLink.url)))
                 || typeof parsed.title !== "string"
                 || parsed.requestedDeliveryType !== (job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? canonical.requestedDeliveryType : "AUTO")
                 || (parsed.deliveryType !== "SMS" && parsed.deliveryType !== "LMS")
@@ -1281,7 +1429,7 @@ export class SmsTriggerDeliveryService {
                 receiver: canonical.receiver,
                 maskedReceiver: canonical.maskedReceiver,
                 recipientName: parsed.recipientName,
-                message: parsed.message,
+                message: standaloneLink ? parsed.message.replaceAll(standaloneLink.reference, standaloneLink.url) : parsed.message,
                 title: parsed.title,
                 requestedDeliveryType: canonical.requestedDeliveryType,
                 deliveryType: parsed.deliveryType as AligoSmsMessageType,
@@ -1295,11 +1443,10 @@ export class SmsTriggerDeliveryService {
             if (this.hashSnapshot(snapshotWithoutHash) !== parsed.snapshotHash) {
                 throw new Error("staged SMS delivery snapshot hash mismatch");
             }
-            return { ...snapshotWithoutHash, snapshotHash: parsed.snapshotHash };
+            return { ...snapshotWithoutHash, snapshotHash: parsed.snapshotHash, ...(standaloneLink ? { standaloneLink } : {}) };
         } catch (error) {
-            throw new Error(
-                `SMS delivery snapshot is invalid: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            if (standaloneLink) throw new SmsTriggerDeliverySkipError("standalone_receipt_snapshot_invalid");
+            throw new Error(`SMS delivery snapshot is invalid: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

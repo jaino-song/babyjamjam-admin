@@ -1,3 +1,4 @@
+import { hasStandaloneReceipt } from "domain/entities/standalone-receipt-request";
 import { publicMessageVariables } from "domain/message-policy-evaluator";
 import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX } from "domain/constants/message-trigger-catalog";
 import { agentAutomationCoverageScope } from "application/agent/agent-automation-coverage";
@@ -4509,9 +4510,10 @@ export class MessageTriggerService {
             if (error instanceof TriggerJobDeferredError) {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
-                job.markFailed(error instanceof Error ? error.message : String(error));
+                const failure = hasStandaloneReceipt(job) ? new Error("Standalone receipt preparation failed") : error;
+                job.markFailed(failure instanceof Error ? failure.message : String(failure));
                 try {
-                    captureBackendError(error instanceof Error ? error : new Error("Message delivery prepare failed"), {
+                    captureBackendError(failure instanceof Error ? failure : new Error("Message delivery prepare failed"), {
                         handled: true,
                         operation: "message-delivery:prepare",
                     });
@@ -4534,9 +4536,10 @@ export class MessageTriggerService {
             await this.jobRepository.update(job);
             return true;
         } catch (error) {
-            job.markFailed(error instanceof Error ? error.message : String(error));
+            const failure = hasStandaloneReceipt(job) ? new Error("Standalone receipt preparation could not be persisted") : error;
+            job.markFailed(failure instanceof Error ? failure.message : String(failure));
             try {
-                captureBackendError(error instanceof Error ? error : new Error("Message delivery persist prepared failed"), {
+                captureBackendError(failure instanceof Error ? failure : new Error("Message delivery persist prepared failed"), {
                     handled: true,
                     operation: "message-delivery:persist-prepared",
                 });
@@ -5145,9 +5148,10 @@ export class MessageTriggerService {
             if (error instanceof TriggerJobDeferredError) {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
-                job.markFailed(error instanceof Error ? error.message : String(error));
+                const failure = hasStandaloneReceipt(job) ? new Error("Standalone receipt delivery failed") : error;
+                job.markFailed(failure instanceof Error ? failure.message : String(failure));
                 try {
-                    captureBackendError(error instanceof Error ? error : new Error("Message delivery send failed"), {
+                    captureBackendError(failure instanceof Error ? failure : new Error("Message delivery send failed"), {
                         handled: true,
                         operation: "message-delivery:send",
                     });

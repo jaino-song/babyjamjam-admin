@@ -278,7 +278,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         });
     }
 
-    async insertStandaloneLink(data: InsertStandaloneReceiptLinkTokenData): Promise<{ id: string; expiresAt: Date }> {
+    async insertStandaloneLink(data: InsertStandaloneReceiptLinkTokenData, tx?: Prisma.TransactionClient): Promise<{ id: string; expiresAt: Date }> {
         if (!validUuid(data.branchId) || !validUuid(data.jobId)
             || !Number.isSafeInteger(data.clientId) || data.clientId <= 0
             || !validSha(data.linkTokenHash) || !validSha(data.expectedBirthdayHash)
@@ -288,7 +288,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             || data.expiresAt <= data.createdAt || !isStandaloneStoragePath(data.storagePath, data.branchId)) {
             throw new Error("Invalid standalone receipt token data");
         }
-        return this.prisma.receipt_link_token.create({
+        return (tx ?? this.prisma).receipt_link_token.create({
             data: {
                 kind: RECEIPT_LINK_KIND.STANDALONE,
                 branch: { connect: { id: data.branchId } },

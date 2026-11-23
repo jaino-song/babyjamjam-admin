@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -12,6 +13,8 @@ import {
     ReceiptLinkSkipError,
     receiptLinkUnusableError,
 } from "./receipt-link-issue.service";
+import { hasStandaloneReceipt, standaloneReceiptReference } from "domain/entities/standalone-receipt-request";
+import { StandaloneReceiptPreparationService } from "./standalone-receipt-preparation.service";
 import { ReceiptLinkTokenService } from "./receipt-link-token.service";
 import {
     SmsTriggerPayloadEnricher,
@@ -36,6 +39,8 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         @Optional()
         @Inject(FILE_STORAGE_PORT)
         private readonly storage?: FileStoragePort,
+        @Optional()
+        private readonly standalone?: StandaloneReceiptPreparationService,
     ) {}
 
     onModuleInit(): void {
@@ -43,6 +48,14 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
     }
 
     async enrich(job: MessageTriggerJobEntity): Promise<void> {
+        if (hasStandaloneReceipt(job)) {
+            if (!this.standalone) throw receiptLinkUnusableError();
+            await this.standalone.resolve(job, true);
+            const reference = standaloneReceiptReference(job.id);
+            job.payload.templateVariables[SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE] = reference;
+            job.payload[SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY] = reference;
+            return;
+        }
         if (!job.branchId || !job.clientId) {
             throw new ReceiptLinkSkipError("no_contract_document");
         }
@@ -61,7 +74,27 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         job.payload[SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY] = issued.url;
     }
 
+    async resolveStandaloneReceiptUrl(job: MessageTriggerJobEntity): Promise<string> {
+        const reference = standaloneReceiptReference(job.id);
+        if (!this.standalone || !hasStandaloneReceipt(job)
+            || job.payload.templateVariables[SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE] !== reference
+            || job.payload[SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY] !== reference) {
+            throw receiptLinkUnusableError();
+        }
+        return this.issueService.buildReceiptUrl(await this.standalone.resolve(job, false));
+    }
+
+    async validateStandaloneHandoff(job: MessageTriggerJobEntity, url: string, tx: Prisma.TransactionClient): Promise<void> {
+        if (!this.standalone || this.issueService.buildReceiptUrl(await this.standalone.assertHandoff(job, tx)) !== url) {
+            throw receiptLinkUnusableError();
+        }
+    }
+
     async validateStagedSnapshot(job: MessageTriggerJobEntity): Promise<void> {
+        if (hasStandaloneReceipt(job)) {
+            await this.resolveStandaloneReceiptUrl(job);
+            return;
+        }
         const receiptUrl = job.payload.templateVariables[SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE];
         let linkToken: string | undefined;
         try {

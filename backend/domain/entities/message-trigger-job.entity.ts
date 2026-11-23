@@ -1,3 +1,4 @@
+import type { StandaloneReceiptRequest } from "./standalone-receipt-request";
 import {
     MessageTriggerRecipientType,
     type MessageTriggerJobTemplateKey,
@@ -78,6 +79,7 @@ export interface MessageTriggerJobPayload {
      * jobs, which keep deriving the document from the client at delivery time.
      */
     receiptEformsignDocId?: number | null;
+    standaloneReceipt?: StandaloneReceiptRequest;
     /**
      * Immutable service-record revision context captured when this message was
      * scheduled. The dispatcher revalidates it under the service-record write
@@ -114,6 +116,7 @@ export class MessageTriggerJobEntity {
         public claimToken: string | null = null,
         /** Policy snapshot stored with a processing claim; legacy rows may be null. */
         public processingDeadlineAt: Date | null = null,
+        public readonly standaloneRequestId: string | null = null,
     ) {}
 
     static create(params: {
@@ -175,6 +178,7 @@ export class MessageTriggerJobEntity {
         nextAttemptAt: Date | null = null,
         claimToken: string | null = null,
         processingDeadlineAt: Date | null = null,
+        standaloneRequestId: string | null = null,
     ): MessageTriggerJobEntity {
         return new MessageTriggerJobEntity(
             id,
@@ -198,6 +202,7 @@ export class MessageTriggerJobEntity {
             updatedAt,
             claimToken,
             processingDeadlineAt,
+            standaloneRequestId,
         );
     }
 
@@ -288,7 +293,7 @@ export class MessageTriggerJobEntity {
             this.id, this.branchId, this.ruleId, this.status, this.scheduledFor, this.sentAt, this.canceledAt,
             this.cancelReason, this.clientId, this.employeeScheduleId, this.recipientType, this.recipientPhone,
             this.templateKey, this.dedupeKey, { ...this.payload, ...overrides }, this.createdAt, this.updatedAt,
-            this.attempts, this.nextAttemptAt, this.claimToken, this.processingDeadlineAt,
+            this.attempts, this.nextAttemptAt, this.claimToken, this.processingDeadlineAt, this.standaloneRequestId,
         );
     }
 }
