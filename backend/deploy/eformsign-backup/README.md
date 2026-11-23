@@ -6,19 +6,32 @@ Node.js 20 이상에서 매일 한국 시간 03시에 검토 단계(제공인력
 
 `archiveDir`과 Google Drive에는 이미지 전용 PDF를 게시합니다. 전자서명이 포함된 문서와 감사추적은 받은 바이트 그대로 비공개 원본 보관소에 남습니다. 서명 검증과 증빙에는 이 원본을 사용합니다. 공개 PDF는 열람용이며, 병합 PDF는 비공개 청크로 만든 별도 출력입니다.
 
-1. 실행 계정의 `~/eformsign-backup/`에 `backup.mjs`, `provider-contract-paths.mjs`, `provider-contract-migration.mjs`, `provider-contract-publication.mjs`, `raster-mirror.mjs`, `raster-render.mjs`를 함께 설치합니다. `eformsign-backup.service`와 `eformsign-backup.timer`는 `~/.config/systemd/user/`에 둡니다. 업그레이드 전에는 타이머를 정지하고 실행 중인 서비스가 끝날 때까지 기다립니다. 되돌릴 수 있도록 이전 모듈과 service 파일을 보관합니다.
-2. 실행 계정으로 접근 제한된 설정·상태 디렉터리와 공용 잠금 파일을 준비합니다. 실행 중인 서비스·운영자 명령이 모두 끝난 상태에서 준비하고, 이후 잠금 파일을 삭제하거나 교체하지 않습니다.
+1. 업그레이드할 때는 `systemctl --user stop eformsign-backup.timer`로 타이머를 멈춥니다. 실행 중인 백업이 끝나면 `systemctl --user stop eformsign-backup.service`를 실행하고 수동 작업도 모두 끝났는지 확인합니다. 이전 모듈과 service 파일을 보관합니다. 새 설치와 업그레이드 모두 같은 릴리스의 저장소 루트에서 모든 모듈을 실행 계정의 비공개 설치 경로에 복사합니다. 새 설치에서만 `install -d -m 700 ~/eformsign-backup`으로 경로를 만듭니다. 업그레이드 전에는 기존 설치 경로가 본인 소유 `0700` 일반 디렉터리인지 확인합니다. `eformsign-backup.service`와 `eformsign-backup.timer`는 `~/.config/systemd/user/`에 둡니다.
+
+   ```sh
+   install -m 600 backend/deploy/eformsign-backup/*.mjs ~/eformsign-backup/
+   ```
+
+2. **새 설치 전용.** 아직 설정·상태·잠금 경로가 없는 경우에만 아래 명령으로 생성합니다. 이후 잠금 파일을 삭제하거나 교체하지 않습니다. 기존 설치에는 6단계의 권한 점검 명령을 사용합니다.
 
    ```sh
    install -d -m 700 ~/.config/eformsign-backup ~/.local/state/eformsign-backup
-   (umask 077 && touch ~/.local/state/eformsign-backup/run.lock)
-   chmod 600 ~/.local/state/eformsign-backup/run.lock
+   (umask 077; set -C; : > ~/.local/state/eformsign-backup/run.lock)
    ```
 
 3. 새 설치에서는 `settings.example.json`을 `~/.config/eformsign-backup/settings.json`으로 복사하고 실제 URL·절대 경로·원격 저장소를 설정합니다. 기존 설정은 service의 `--raster`로 전환됩니다. `originalArchiveDir`을 명시하면 스위치 없이도 라스터 모드입니다. 생략 시 절대 경로로 해석한 `archiveDir` 바로 뒤에 `.originals`를 붙입니다. 예를 들어 공개 경로가 `/home/USER/eformsign-archive`이면 기본 비공개 원본 경로는 `/home/USER/eformsign-archive.originals`입니다. 공개·원본·상태 경로는 서로 포함할 수 없으며 심볼릭 링크를 사용할 수 없습니다. 별도 `stateDir`도 실행 계정 소유, 모드 `0700`으로 준비합니다. 비공개 원본과 상태를 Drive 동기화, 웹 서버, 공유 폴더에서 제외합니다. 원본과 저널을 함께 비공개 백업합니다.
 4. `sudo apt install ghostscript qpdf rclone util-linux`로 `gs`, `qpdf`, `rclone`, `flock`을 준비합니다. 필요하면 설정의 `gsBin`, `qpdfBin`, `rcloneBin`으로 실행 파일을 지정합니다. Drive를 사용하면 `rclone config`로 실행 계정의 Google Drive 원격 저장소를 설정합니다. `rcloneRemote`를 생략하면 공개 로컬 게시만 수행합니다.
 5. 전환 전 기존 제공인력 계약서 이동 저널이 `applying` 또는 `rollingBack`이면, 이전 모듈과 설정으로 해당 방향을 끝냅니다. 기존 `provider-contract-publication.json` 또는 `provider-contract-prepared-stages.json`이 있으면 이전 정기 백업을 같은 잠금으로 실행해 복구합니다. 공개 트리의 `*.tmp`, `.provider-publication-*`, `.provider-contract-*`가 남아 있으면 실행을 멈춥니다. 출처와 복구 필요성을 오프라인에서 확인한 뒤 운영자가 승인한 파일만 비공개 격리 경로로 옮깁니다. 자동으로 삭제되는 파일은 없습니다.
-6. 타이머가 정지된 상태에서 dry-run과 전체 과거 자료 전환을 실행합니다. 세 독립 전환 명령은 API와 토큰을 사용하지 않습니다. Dry-run에는 파일 생성이나 수정이 없습니다. 적용은 전체 자료를 처리하므로 service의 3시간 제한과 별도로 아래 명령을 실행해 완료를 기다립니다.
+6. **기존 설치 전용 권한 점검.** 타이머와 서비스가 정지된 상태에서 실행 계정으로 신뢰하는 본인 소유 설정 파일의 절대 경로를 넘깁니다. 결과에는 점검·변경 개수와 일반 사유만 표시됩니다. Dry-run이 종료 코드 `0`이면 잠금을 잡는 적용 명령을 실행합니다.
+
+   ```sh
+   node ~/eformsign-backup/prepare-raster-permissions.mjs --settings ~/.config/eformsign-backup/settings.json
+   node ~/eformsign-backup/prepare-raster-permissions.mjs --settings ~/.config/eformsign-backup/settings.json --apply
+   ```
+
+   권한 도구는 검증한 본인 소유 상태·잠금 디렉터리와 기존 `run.lock`, `state.json`만 각각 `0700`, `0600`으로 제한합니다. 재귀 변경 없이 파일 이름·내용·inode와 공개 아카이브의 `0755`를 유지합니다. 재실행 시 이미 적용된 항목의 변경 건수는 0입니다. 종료 코드 `1`이면 전환을 멈추고 경로·소유자·잠금을 확인합니다. 그룹이나 다른 계정이 쓸 수 있는 디렉터리, 다른 계정이 쓸 수 있는 메타데이터, 쓰기 권한이 과도한 잠금 파일은 오프라인에서 원인과 출처를 먼저 확인합니다. 점검 후 경로가 교체되면 중단합니다. 교체가 늦게 일어났다면 일부 검증된 파일의 권한이 이미 제한됐을 수 있으므로 이전 권한으로 풀지 않습니다.
+
+   새 설치는 권한 점검을 건너뛰고 여기서 시작합니다. 기존 설치는 권한 적용이 성공한 뒤 진행합니다. 타이머를 계속 정지한 상태에서 독립 라스터 dry-run과 전체 과거 자료 전환을 순서대로 실행합니다. 독립 전환 명령은 API와 토큰을 사용하지 않습니다. Dry-run은 파일을 생성하거나 수정하지 않습니다. 적용은 service의 3시간 제한과 별도로 실행해 완료를 기다립니다.
 
    ```sh
    node ~/eformsign-backup/backup.mjs --settings ~/.config/eformsign-backup/settings.json --raster-archive
@@ -67,7 +80,7 @@ eformsign 템플릿 이름이 정확히 `제공인력 계약서`이고 `제공�
 
 검토 중인 제공인력 계약서의 이름이 처음 확정되거나 바뀌면 새 경로의 파일을 검증한 뒤 현재 상태를 갱신합니다. 이전 경로와 파일은 로컬과 Drive에 남습니다. 기존 이름이 계속 유효한 검토 문서는 내용이 달라지면 같은 경로를 갱신하고, 감사추적은 처음부터 예약한 경로에 추가합니다. 완료 상태로 저장한 파일의 내용이 이후 바뀌면 새 경로를 배정하고 이전 기록을 `state.json`의 `<키>@<지문>`에 남깁니다. 목록에서 사라진 문서의 파일도 보존합니다. 분할 제공기록지는 모든 청크가 모이면 날짜 순서로 병합하고, 병합 감사추적은 모든 청크에 감사추적이 생기면 생성합니다.
 
-`stateDir/state.json`(version 2)의 배정 경로·크기·지문은 비공개 원본 기준입니다. version 1은 첫 정상 실행에서 version 2로 변환하며 기존 항목을 완료 상태로 간주합니다. 다운로드와 병합, 제공인력 계약서의 이름 배정과 임시 저장은 모두 비공개 보관소에서 이루어집니다. 공개 로컬과 Drive는 게시 모듈이 갱신합니다. 게시만 실패하면 같은 명령을 재시도해 로컬 원본을 다시 사용합니다.
+`stateDir/state.json`(version 2)의 배정 경로·크기·지문은 비공개 원본 기준입니다. version 1은 첫 정상 실행에서 version 2로 변환하며 기존 항목을 완료 상태로 간주합니다. 다운로드와 이름 배정은 비공개 보관소에서 이루어집니다. qpdf는 `/tmp/eformsign-backup-qpdf-*`의 실행 계정 소유 `0700` 임시 디렉터리에서 병합하고, 작업자는 결과를 비공개 보관소에 확정합니다. 강제 종료로 임시 디렉터리나 비공개 보관소의 병합 `*.pdf.<UUID>.tmp`가 남으면 실행이 모두 끝난 뒤 소유자·권한·출처를 확인한 해당 항목만 정리합니다. 공개 로컬과 Drive는 게시 모듈이 갱신합니다. 게시만 실패하면 같은 명령을 재시도해 로컬 원본을 다시 사용합니다.
 
 제공인력 계약서의 새 경로 확정이 중단되면 다음 정기 실행이 `stateDir/provider-contract-publication.json`을 사용해 이어서 처리합니다. 복구가 경로 충돌이나 파일 검증 실패로 중단되면 저널과 비공개 원본 보관소의 `.provider-publication-*` 임시 데이터를 보존합니다.
 
@@ -84,7 +97,7 @@ node ~/eformsign-backup/backup.mjs --settings ~/.config/eformsign-backup/setting
 node ~/eformsign-backup/backup.mjs --settings ~/.config/eformsign-backup/settings.json --raster --migrate-provider-contracts --rollback
 ```
 
-이동 전에 게시 기준을 검증하고 문서·감사추적 각각의 이동 경로와 방향을 저널에 기록합니다. 검증된 원본 쌍에 맞춰 상태와 이름을 갱신한 뒤 게시 모듈이 새 공개 PDF를 검증하고 이전 파생본을 제거합니다. 중단되면 같은 방향의 명령을 재실행합니다. 이전 방향의 원본 이동이 끝나면 정기 실행도 미완료 게시를 재개할 수 있습니다. 이동 중인 원본이 있으면 완료될 때까지 정기 실행과 전체 아카이브 롤백이 대기합니다. 이름 롤백은 마지막 적용 배치를 대상으로 하며, 원본 이동과 게시를 재개할 때는 API 토큰이 필요 없습니다. 복원 경로가 점유됐거나 원본 또는 할당이 바뀐 경우, 저널과 `pre-state-<id>.json`을 비공개 환경에서 함께 확인합니다.
+이동 전에 게시 기준을 검증하고 문서·감사추적 각각의 이동 경로와 방향을 저널에 기록합니다. 검증된 원본 쌍에 맞춰 상태와 이름을 갱신한 뒤 게시 모듈이 새 공개 PDF를 검증하고 이전 파생본을 제거합니다. 원본 이동이 진행 중이면 정기 실행과 전체 아카이브 롤백은 종료 코드 `1`로 거부됩니다. 이때 같은 설정으로 이동을 시작한 `--raster --migrate-provider-contracts --apply` 또는 `--raster --migrate-provider-contracts --rollback`을 먼저 재실행하고, 성공한 뒤 정기 실행이나 전체 롤백을 다시 시도합니다. 원본 이동이 끝나면 정기 실행도 미완료 게시를 재개할 수 있습니다. 이름 롤백은 마지막 적용 배치를 대상으로 하며, 원본 이동과 게시를 재개할 때는 API 토큰이 필요 없습니다. 복원 경로가 점유됐거나 원본 또는 할당이 바뀐 경우, 저널과 `pre-state-<id>.json`을 비공개 환경에서 함께 확인합니다.
 
 전환 전 완료된 이동 저널은 `stateDir/provider-contract-migration/records/pre-raster-<id>-<phase>.json`에 보존됩니다. 전환 시 그 저널의 ID와 단계도 기록합니다. 과거 레거시 이동을 취소할 계획이면 전환 전에 실행합니다. 이미 전환한 경우 아래 전체 롤백을 먼저 완료하고, 활성 저널 자리가 비어 있는지 확인합니다. 기록된 경로·상태·해시가 실제 복원 자료와 일치할 때만 보존 저널을 `provider-contract-migration/journal.json`으로 복사하고 모드 `0600`을 설정한 뒤 이전 버전에서 레거시 `--migrate-provider-contracts --rollback`을 실행합니다. 보존본과 적용 전 상태 사본은 유지합니다.
 

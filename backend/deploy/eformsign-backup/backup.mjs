@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { resolve, relative, dirname, isAbsolute, sep } from 'node:path';
+import { resolve, relative, basename, dirname, isAbsolute, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
     assertRasterMigration, migrateProviderContracts, migrationInProgress, preserveMigration, readMigration,
@@ -115,8 +115,9 @@ async function rasterSettings(settings) {
 }
 
 async function readCutover(settings) {
-    // Legacy uses the same anchor even if its settings were replaced.
-    await canonicalDirectory(timerLockDirectory(), settings.raster);
+    // Legacy may reach the shared anchor through a symlink. lstat still sees
+    // any marker at that location, including a dangling symlink.
+    if (settings.raster) await canonicalDirectory(timerLockDirectory(), true);
     const path = guardPath();
     const info = await stat(path);
     if (!info) return null;
@@ -138,6 +139,95 @@ async function readCutover(settings) {
     }
     if (!isDeepStrictEqual(guard.binding, cutoverBinding(settings))) throw rasterError('raster_cutover_settings_changed');
     return guard;
+}
+
+const sameInode = (info, expected) => info?.dev === expected.dev && info.ino === expected.ino;
+const privateMergeFile = (info) => info?.isFile() && privateToWorker(info) && info.nlink === 1;
+const mergeGuard = () => rasterError('unsafe_raster_merge_file');
+const directoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+
+async function openMergeFile(path, expected) {
+    const info = await stat(path);
+    if (!privateMergeFile(info) || (expected && !sameInode(info, expected))) throw mergeGuard();
+    const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = await handle.stat().catch(async (error) => { await handle.close(); throw error; });
+    if (privateMergeFile(opened) && sameInode(opened, info)) return { handle, info: opened };
+    await handle.close();
+    throw mergeGuard();
+}
+
+async function createMergeFile(artifact, write) {
+    const handle = await fs.open(artifact.tmp, 'wx', 0o600);
+    try {
+        artifact.info = await handle.stat();
+        if (!privateMergeFile(artifact.info)) throw mergeGuard();
+        await write(handle);
+    } finally { await handle.close(); }
+}
+
+async function removeMergeFile({ tmp, info }) {
+    if (!info) return;
+    const current = await stat(tmp);
+    if (!current) return;
+    if (!privateMergeFile(current) || !sameInode(current, info)) throw mergeGuard();
+    await fs.unlink(tmp);
+}
+
+async function copyMergeBytes(source, destination, hash) {
+    let bytes = 0;
+    for await (const chunk of source.createReadStream({ autoClose: false })) {
+        await destination.writeFile(chunk);
+        hash?.update(chunk);
+        bytes += chunk.length;
+    }
+    return bytes;
+}
+
+async function rasterMerge(bin, stageInputs, target, createdAt) {
+    // The system qpdf profile permits ordinary PDFs under /tmp. mkdtemp makes
+    // the directory private before any input or output is placed in it.
+    const tmpInfo = await fs.lstat('/tmp');
+    if (!tmpInfo.isDirectory() || tmpInfo.uid !== 0 || !(tmpInfo.mode & 0o1000)) throw mergeGuard();
+    const scratch = await fs.mkdtemp('/tmp/eformsign-backup-qpdf-');
+    const created = await fs.lstat(scratch);
+    const directory = await fs.open(scratch, directoryFlags);
+    const artifacts = [];
+    try {
+        const root = await directory.stat();
+        if (!sameInode(root, created) || root.uid !== process.getuid() || (root.mode & 0o7777) !== 0o700) throw mergeGuard();
+        const create = async (name, write) => {
+            const artifact = { tmp: `/proc/self/fd/${directory.fd}/${name}`, path: resolve(scratch, name) };
+            artifacts.push(artifact);
+            await createMergeFile(artifact, write);
+            return artifact;
+        };
+        const inputs = await stageInputs(create);
+        const output = await create('merged.pdf', async () => {});
+        if (!sameInode(await stat(scratch), root)) throw mergeGuard();
+        for (const { path, info } of artifacts) {
+            const current = await stat(path);
+            if (!privateMergeFile(current) || !sameInode(current, info)) throw mergeGuard();
+        }
+        await execute(bin, ['--empty', '--pages', ...inputs, '--', output.path]);
+        const { handle, info } = await openMergeFile(output.tmp, output.info);
+        try {
+            if (!info.size) throw rasterError('empty_raster_merge');
+            await createMergeFile(target, async (destination) => {
+                target.bytes = await copyMergeBytes(handle, destination);
+                if (target.bytes !== info.size) throw mergeGuard();
+                await destination.chmod(0o600);
+                await destination.utimes(new Date(createdAt), new Date(createdAt));
+                await destination.sync();
+            });
+        } finally { await handle.close(); }
+    } finally {
+        try {
+            for (const artifact of artifacts) await removeMergeFile(artifact);
+            if (created.isDirectory() && created.uid === process.getuid() && sameInode(await stat(scratch), created)) {
+                await fs.rmdir(scratch);
+            }
+        } finally { await directory.close(); }
+    }
 }
 
 async function rasterMirror(settings, lockFd) {
@@ -739,22 +829,57 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
                 if (!need[i]) continue;
                 const final = await prepare(paths[i]);
                 const tmp = tempPath(final);
-                temps.push({ tmp, final, path: paths[i] });
-                const inputs = unit.chunks.map((chunk) => finalPath(Object.keys(chunk.files)[i]));
-                await execute(settings.qpdfBin, ['--empty', '--pages', ...inputs, '--', tmp]);
-                temps.at(-1).bytes = (await fs.stat(tmp)).size;
-                await fs.utimes(tmp, new Date(unit.createdAt), new Date(unit.createdAt));
+                const target = { tmp, final, path: paths[i] };
+                temps.push(target);
                 if (mirror) {
-                    const handle = await fs.open(tmp, constants.O_RDONLY | constants.O_NOFOLLOW);
-                    try { await handle.chmod(0o600); await handle.sync(); }
-                    finally { await handle.close(); }
+                    target.parent = await fs.open(dirname(final), directoryFlags);
+                    target.parentInfo = await target.parent.stat();
+                    if (target.parentInfo.uid !== process.getuid()
+                        || !sameInode(await stat(dirname(final)), target.parentInfo) || !await checkParents(final)) {
+                        throw mergeGuard();
+                    }
+                    const parentRef = `/proc/self/fd/${target.parent.fd}`;
+                    target.tmp = resolve(parentRef, basename(tmp));
+                    target.finalRef = resolve(parentRef, basename(final));
+                    await rasterMerge(settings.qpdfBin, async (create) => {
+                        const inputs = [];
+                        for (const [index, chunk] of unit.chunks.entries()) {
+                            const source = finalPath(Object.keys(chunk.files)[i]);
+                            if (!await checkParents(source)) throw mergeGuard();
+                            const { handle, info } = await openMergeFile(source);
+                            try {
+                                if (!await checkParents(source) || !sameInode(await stat(source), info)) throw mergeGuard();
+                                const input = chunk.inputs[i];
+                                const hash = createHash('sha256');
+                                const staged = await create(`input-${index + 1}.pdf`, async (destination) => {
+                                    const bytes = await copyMergeBytes(handle, destination, hash);
+                                    if (bytes !== input.byteSize || hash.digest('hex') !== input.sha256.toLowerCase()) {
+                                        throw rasterError('original_sha256_mismatch');
+                                    }
+                                });
+                                inputs.push(staged.path);
+                            } finally { await handle.close(); }
+                        }
+                        return inputs;
+                    }, target, unit.createdAt);
+                } else {
+                    const inputs = unit.chunks.map((chunk) => finalPath(Object.keys(chunk.files)[i]));
+                    await execute(settings.qpdfBin, ['--empty', '--pages', ...inputs, '--', tmp]);
+                    target.bytes = (await fs.stat(tmp)).size;
+                    await fs.utimes(tmp, new Date(unit.createdAt), new Date(unit.createdAt));
                 }
             }
             try {
-                for (const { tmp, final, path, bytes } of temps) {
-                    await fs.rename(tmp, final);
-                    renamed.push(final);
-                    if (mirror) await syncDirectory(dirname(final));
+                for (const item of temps) {
+                    const { tmp, final, path, bytes, info, finalRef, parentInfo } = item;
+                    if (mirror) {
+                        if (!await checkParents(final) || !sameInode(await stat(dirname(final)), parentInfo)) throw mergeGuard();
+                        const current = await stat(tmp);
+                        if (!privateMergeFile(current) || !sameInode(current, info) || current.size !== bytes) throw mergeGuard();
+                    }
+                    await fs.rename(tmp, finalRef ?? final);
+                    renamed.push(item);
+                    if (mirror) await item.parent.sync();
                     unit.files[path] = bytes;
                     report.savedFiles += 1;
                     // A partial rewrite must not mark the new fingerprint as done; a fork is all or nothing.
@@ -762,7 +887,9 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
                 }
             } catch (error) {
                 if (unit.fork) {
-                    await Promise.all(renamed.map((final) => fs.rm(final, { force: true })));
+                    await Promise.all(renamed.map((item) => mirror
+                        ? removeMergeFile({ ...item, tmp: item.finalRef })
+                        : fs.rm(item.final, { force: true })));
                     report.savedFiles -= renamed.length;
                 }
                 throw error;
@@ -770,8 +897,12 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             changed = true;
         } catch (error) { unitError = error; }
         finally {
-            for (const { tmp } of temps) {
-                try { await fs.rm(tmp, { force: true }); } catch (error) { unitError ??= error; }
+            for (const item of temps) {
+                try {
+                    if (mirror) await removeMergeFile(item);
+                    else await fs.rm(item.tmp, { force: true });
+                } catch (error) { unitError ??= error; }
+                try { await item.parent?.close(); } catch (error) { unitError ??= error; }
             }
             if (changed) {
                 try { await record(unit); } catch (error) { unitError ??= error; }

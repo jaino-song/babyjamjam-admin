@@ -157,11 +157,22 @@ fs.cpSync(args[2], process.env.TEST_DRIVE, { recursive: true });
 
 const qpdf = String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
+const { createHash } = require('node:crypto');
+const { dirname } = require('node:path');
 const args = process.argv.slice(2);
 const inputs = args.slice(2, -2);
-if (!inputs.every((path) => path.startsWith(process.env.TEST_ORIGINALS + '/'))) process.exit(13);
-fs.appendFileSync(process.env.TEST_EVENTS, JSON.stringify({ call: 'merge', inputs }) + '\n');
-fs.writeFileSync(args.at(-1), 'merged:' + inputs.map((path) => fs.readFileSync(path, 'utf8')).join('|'));
+const payloads = inputs.map((path) => fs.readFileSync(path));
+const staged = inputs.map((path, i) => {
+    const root = dirname(path);
+    const info = fs.lstatSync(root);
+    const input = fs.lstatSync(path);
+    return { digest: createHash('sha256').update(payloads[i]).digest('hex'),
+        private: root.startsWith('/tmp/eformsign-backup-qpdf-') && root === dirname(args.at(-1))
+            && info.isDirectory() && info.uid === process.getuid() && (info.mode & 0o7777) === 0o700
+            && path.endsWith('.pdf') && input.isFile() && input.uid === process.getuid() && (input.mode & 0o7777) === 0o600 };
+});
+fs.appendFileSync(process.env.TEST_EVENTS, JSON.stringify({ call: 'merge', staged }) + '\n');
+fs.writeFileSync(args.at(-1), 'merged:' + payloads.join('|'));
 `;
 
 async function fixture(t, { explicit = false, remote = true } = {}) {
@@ -357,7 +368,10 @@ test('historical folders, private chunks and both merged PDFs are published', as
     await expectPublished(f, pair('제공기록지', title), SIGNED.map((value, i) => 'merged:' + value + '|' + second[i]));
     await expectPublished(f, historic, historic.map(() => 'historic-raw'));
     const merges = result.events.filter(({ call }) => call === 'merge');
-    assert.deepEqual(merges.map(({ inputs }) => inputs), [0, 1].map((i) => chunks.map((paths) => join(f.originals, paths[i]))));
+    const expected = await Promise.all([0, 1].map((i) => Promise.all(chunks.map(async (paths) => ({
+        digest: sha(await fs.readFile(join(f.originals, paths[i]))), private: true,
+    })))));
+    assert.deepEqual(merges.map(({ staged }) => staged), expected);
     report(f, { savedFiles: 6, skippedFiles: 0, status: 'success' });
     assert.deepEqual(await f.raw(), []);
 });
@@ -443,6 +457,44 @@ test('standalone lifecycle is offline and immutable in dry-run; rollback gates l
     await f.token();
     await f.run([], 0, { legacyLock: true });
     assert.equal((await f.raw())[0][0], 'copy');
+});
+
+test('legacy follows a lock ancestor link until a cutover entry exists; raster refuses the ancestor', async (t) => {
+    const f = await fixture(t);
+    const ancestor = join(f.home, '.local');
+    const physical = join(f.home, 'old-local');
+    await fs.rename(ancestor, physical);
+    await fs.symlink(physical, ancestor);
+    await f.token();
+    f.listing.docs = [f.doc('legacy-record')];
+    const first = await f.run([], 0, { legacyLock: true });
+    assert.deepEqual(first.requests, ['listing', 'file', 'file', 'report']);
+    assert.equal(names(first)[0], 'token');
+    await expect(f.publicRoot, oldPair, SIGNED);
+    const baseline = await f.raw();
+    assert.equal(baseline.length, 1);
+    assert.equal(baseline[0][0], 'copy');
+
+    const rejectedRaster = await f.run(archive, 1);
+    assert.equal(rejectedRaster.log[0].reason, 'unsafe_raster_directory');
+    assert.deepEqual(rejectedRaster.events, []);
+    assert.deepEqual(rejectedRaster.requests, []);
+    await f.untoken();
+    const marker = join(physical, 'state/eformsign-backup/raster-cutover.json');
+    for (const variant of ['regular', 'unreadable', 'dangling', 'symlink']) {
+        if (variant === 'regular' || variant === 'unreadable') {
+            await put(marker, '{}');
+            if (variant === 'unreadable') await fs.chmod(marker, 0o000);
+        } else {
+            await fs.symlink(variant === 'dangling' ? join(f.home, 'absent-marker') : f.state, marker);
+        }
+        const refused = await f.run([], 1, { legacyLock: true });
+        assert.equal(refused.log[0].reason, 'raster_cutover_blocks_legacy');
+        assert.deepEqual(refused.requests, []);
+        assert.deepEqual(refused.events, []);
+        assert.deepEqual(await f.raw(), baseline);
+        await fs.unlink(marker);
+    }
 });
 
 test('invalid modes, unsafe roots, damaged guards and lock contention leave state and API untouched', async (t) => {
