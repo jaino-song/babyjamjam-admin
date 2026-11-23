@@ -17,9 +17,11 @@ import { AgentAutomationRecordStoreService } from "application/agent/agent-autom
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { AligoDefaultSenderPolicyService } from "application/services/aligo-default-sender-policy.service";
+import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { CanceledAutomationRetrySettingsService } from "application/services/canceled-automation-retry-settings.service";
 import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
 import { ClientService } from "application/services/client.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
@@ -27,6 +29,7 @@ import { MessageQuietHoursService } from "application/services/message-quiet-hou
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
+import { buildMessageRecipeDedupeKey } from "application/services/message-trigger-recipes";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ReceiptLinkDeliveryEnricher } from "application/services/receipt-link-delivery-enricher.service";
 import { ReceiptLinkIssueService } from "application/services/receipt-link-issue.service";
@@ -41,20 +44,26 @@ import { DeleteClientUsecase } from "application/usecases/client/delete-client.u
 import { UpdateClientUsecase } from "application/usecases/client/update-client.usecase";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
 import { SYSTEM_TEMPLATE_REGISTRY, type SystemTemplateKey } from "domain/constants/system-template-registry";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbEformsignDocumentMirrorRepository } from "infrastructure/database/repositories/sb.eformsign-document-mirror.repository";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
+import { SbHolidayCalendarRepository } from "infrastructure/database/repositories/sb.holiday-calendar.repository";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/database/repositories/sb.message-trigger-rule-branch-override.repository";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 import { SbReceiptLinkTokenRepository } from "infrastructure/database/repositories/sb.receipt-link-token.repository";
 import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import { mirrorDetail } from "../contracts/contracts-fixture";
-import { createBranch, createClient, createEformsignDoc, createMessageLog, createMessageTriggerRule } from "../helpers/factories";
+import {
+    createBranch, createClient, createEformsignDoc, createEmployee, createEmployeeSchedule,
+    createMessageLog, createMessageTriggerJob, createMessageTriggerRule, createUser,
+} from "../helpers/factories";
 import { closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
 
@@ -156,7 +165,7 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             new UpdateClientUsecase(clientRepo, calendar), new DeleteClientUsecase(clientRepo), database, clientRepo, settings,
             { invalidate: async () => {} } as never, intents, calendar, trigger,
             undefined, undefined, config, undefined, undefined, undefined, lock);
-        return { retry, trigger, clients, delivery, issue, vendor, mirror, acceptance, lock, docRepo, transport };
+        return { retry, trigger, clients, delivery, issue, vendor, mirror, acceptance, lock, docRepo, transport, settings, intents, jobs };
     }
 
     async function fixture(birthday: string | null = "19940510") {
@@ -190,6 +199,8 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
     }
 
     const advance = (at: Date, minutes: number) => jest.setSystemTime(new Date(at.getTime() + minutes * 60_000));
+    const receiptKey = (ruleId: string, clientId: number, due: Date) =>
+        buildMessageRecipeDedupeKey(ruleId, `client:${clientId}`, due, MessageTriggerRecipientType.CLIENT);
 
     async function getOriginal(ruleId: string): Promise<message_trigger_job> {
         return db.raw.message_trigger_job.findFirstOrThrow({ where: { branchId, ruleId, originalJobId: null } });
@@ -214,6 +225,30 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         jest.setSystemTime(at);
         await f.trigger.dispatchDueJobs();
         return getOriginal(f.rule.id);
+    }
+
+    async function eligibleUnsignedReceipt(f: Awaited<ReturnType<typeof fixture>>) {
+        const document = await makeContract(f.client.id);
+        await syncGeneration(document, "unsigned", false);
+        await f.retry.update(branchId, f.rule.id, true);
+        const original = await firstAttempt(f);
+        expect(original).toMatchObject({ recoveryState: "eligible", recoveryReason: "live_unsigned_contract" });
+        return { document, original };
+    }
+
+    async function expectReceiptRecoveryAt(f: Awaited<ReturnType<typeof fixture>>,
+        document: Awaited<ReturnType<typeof makeContract>>, original: message_trigger_job, due: Date) {
+        await syncGeneration(document, "signed", true);
+        await f.trigger.wakeReceiptRecoveryForDocument(branchId, document.documentId);
+        const child = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
+        expect(child).toMatchObject({ scheduledFor: due, recoveryEpoch: original.recoveryEpoch });
+        if (new Date() < due) {
+            await f.trigger.dispatchDueJobs();
+            await outcomes(original, { children: 1, accepted: 0, calls: 0 });
+        }
+        jest.setSystemTime(due);
+        await f.trigger.dispatchDueJobs();
+        expect((await outcomes(original, { children: 1, accepted: 1, calls: 1 }))?.id).toBe(child.id);
     }
 
     it.each(receiptReasons)("captures %s and recovers once after committed evidence", async reason => {
@@ -313,10 +348,7 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
 
     async function admittedChild() {
         const f = await fixture();
-        const document = await makeContract(f.client.id);
-        await syncGeneration(document, "unsigned", false);
-        await f.retry.update(branchId, f.rule.id, true);
-        const original = await firstAttempt(f);
+        const { document, original } = await eligibleUnsignedReceipt(f);
         advance(originalDue, 300);
         await syncGeneration(document, "signed", true);
         await f.trigger.wakeReceiptRecovery(branchId, f.client.id);
@@ -459,7 +491,10 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         await outcomes(original, { children: 1, accepted: 0, calls: 0 });
     });
 
-    it.each(["missing mirror", "unknown status", "void", "revoke", "replacement", "purge", "wrong tenant"] as const)(
+    it.each([
+        "missing mirror", "unknown status", "void", "revoke", "replacement", "purge",
+        "wrong document tenant", "deleted client", "wrong client tenant",
+    ] as const)(
         "makes %s terminal despite a later signed document", async condition => {
             const f = await fixture();
             const document = await makeContract(f.client.id);
@@ -470,13 +505,21 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
                 await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { detailPayload: mirrorDetail({
                     documentId: document.documentId, statusType: "998", updatedDate: beforeDue,
                 }) as unknown as Prisma.InputJsonObject } });
-            } else if (condition === "wrong tenant") {
+            } else if (condition === "wrong document tenant") {
                 const foreign = await createBranch(db.raw, tracker);
                 await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { branchId: foreign.id } });
             }
             await f.retry.update(branchId, f.rule.id, true);
             const original = await firstAttempt(f);
             advance(originalDue, 65);
+            const clientUnavailable = condition === "deleted client" || condition === "wrong client tenant";
+            if (clientUnavailable) {
+                expect(original).toMatchObject({ recoveryState: "eligible", recoveryReason: "live_unsigned_contract" });
+                const data = condition === "deleted client"
+                    ? { deletedAt: new Date() }
+                    : { branchId: (await createBranch(db.raw, tracker)).id };
+                await independent.raw.client.update({ where: { id: f.client.id }, data });
+            }
             if (condition === "void" || condition === "purge") {
                 await db.raw.eformsign_doc.update({ where: { id: document.id },
                     data: condition === "void" ? { voidedAt: new Date() } : { permanentPurgeRequestedAt: new Date() } });
@@ -487,6 +530,10 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
                     detailPayload: mirrorDetail({ documentId: document.documentId, statusType: "090", updatedDate: new Date() }) as unknown as Prisma.InputJsonObject } });
             }
             await f.trigger.dispatchDueJobs();
+            expect(await getOriginal(f.rule.id)).toMatchObject({ recoveryState: "ineligible_terminal", nextCheckAt: null });
+            if (clientUnavailable) {
+                await independent.raw.client.update({ where: { id: f.client.id }, data: { branchId, deletedAt: null } });
+            }
             await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { voidedAt: null, permanentPurgeRequestedAt: null, branchId } });
             await syncGeneration(document, "signed", true);
             advance(originalDue, 120);
@@ -681,6 +728,192 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         await f.trigger.dispatchDueJobs();
         expect(await getOriginal(f.rule.id)).toMatchObject({ id: job.id, status: "sent", originalJobId: null });
         expect(sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("rematerializes a receipt canceled by the real Client data changed path", async () => {
+        const f = await fixture();
+        await syncGeneration(await makeContract(f.client.id), "signed", true);
+        await f.retry.update(branchId, f.rule.id, true);
+        await f.trigger.syncClientRulesForClient(branchId, f.client.id, false);
+        const original = await getOriginal(f.rule.id);
+
+        advance(originalDue, 300);
+        await f.clients.update(branchId, f.client.id, { endDate: "2026-11-25", allowBusinessDayMismatch: true });
+        expect(await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: original.id } })).toMatchObject({
+            status: "canceled", cancelReason: "Client data changed", firstBlockedAt: null, recoveryEpoch: null,
+        });
+        await f.clients.update(branchId, f.client.id, { endDate: "2026-11-24", allowBusinessDayMismatch: true });
+        expect(await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: original.id } })).toMatchObject({
+            status: "pending", scheduledFor: originalDue, canceledAt: null, recoveryReason: null, recoveryEpoch: null,
+        });
+        await f.trigger.dispatchDueJobs();
+        const rows = await db.raw.message_trigger_job.findMany({ where: { branchId, ruleId: f.rule.id } });
+        expect(rows).toHaveLength(2);
+        expect(rows).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: original.id, status: "sent", originalJobId: null, recoveryEpoch: null }),
+            expect.objectContaining({ status: "canceled", cancelReason: "Client data changed", originalJobId: null }),
+        ]));
+        expect(await db.raw.message_occurrence_claim.count({ where: { branchId, slot: { not: null }, state: "accepted" } })).toBe(1);
+        expect(sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("suppresses a changed-key catch-up with preserveExisting=%s", async preserveExisting => {
+        const f = await fixture();
+        const { original } = await eligibleUnsignedReceipt(f);
+        const unrelated = await createMessageTriggerRule(db.raw, tracker, { branchId, eventType: "SERVICE_END",
+            offsetType: "SAME_DAY", sendTime: "11:00", templateKey: "THANKS", isActive: true });
+        await f.settings.setMessageSettingsPolicyEnabled(branchId, "past-trigger", true);
+        advance(originalDue, 300);
+        const catchUpAt = new Date();
+        const catchUpKey = receiptKey(f.rule.id, f.client.id, catchUpAt);
+        expect(catchUpKey).not.toBe(original.dedupeKey);
+        const persist = jest.spyOn(f.jobs, "upsertPendingForRuleGeneration");
+        await f.trigger.syncClientRulesForClient(branchId, f.client.id, true, false, { stableBatchAt: catchUpAt, preserveExisting });
+        expect(persist).toHaveBeenCalledWith(expect.objectContaining({
+            dedupeKey: catchUpKey, payload: expect.objectContaining({
+                catchUp: expect.objectContaining({ originalScheduledFor: originalDue.toISOString() }),
+            }),
+        }), expect.any(Date), false, preserveExisting, expect.anything());
+        const next = await getOriginal(unrelated.id);
+        expect(next).toMatchObject({ status: "pending", scheduledFor: catchUpAt,
+            payload: { catchUp: { sequence: 1, predecessorDedupeKey: null } } });
+        await outcomes(original, { children: 0, accepted: 0, calls: 0 });
+        await f.trigger.dispatchDueJobs();
+        expect(await getOriginal(unrelated.id)).toMatchObject({ id: next.id, status: "sent" });
+        await outcomes(original, { children: 0, accepted: 1, calls: 1 });
+        expect(await getOriginal(f.rule.id)).toMatchObject({ recoveryState: "eligible", dedupeKey: original.dedupeKey });
+    });
+
+    it.each(["same key", "changed key"] as const)("protects a typed original through a %s rule rebuild", async key => {
+        const f = await fixture();
+        const { document, original } = await eligibleUnsignedReceipt(f);
+        advance(originalDue, 300);
+        const editAt = new Date();
+        const changed = key === "changed key";
+        const currentDue = changed ? new Date("2026-11-24T07:00:00.000Z") : originalDue;
+        const candidateKey = receiptKey(f.rule.id, f.client.id, currentDue);
+        expect(candidateKey === original.dedupeKey).toBe(!changed);
+        const persist = jest.spyOn(f.jobs, "upsertPendingForRuleGeneration");
+        await f.trigger.updateRule(branchId, f.rule.id, changed ? { sendTime: "16:00" } : { name: "QA-영수증 규칙 수정" });
+        expect(persist).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: candidateKey }),
+            expect.any(Date), true, false, expect.anything());
+        expect(await db.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: f.rule.id } }))
+            .toMatchObject({ jobsStale: false, sendTime: changed ? "16:00" : "10:00" });
+        await outcomes(original, { children: 0, accepted: 0, calls: 0 });
+        await expectReceiptRecoveryAt(f, document, original, changed ? currentDue : editAt);
+    });
+
+    it("suppresses an unlinked receipt after a real client contract date edit changes its key", async () => {
+        const f = await fixture();
+        const { document, original } = await eligibleUnsignedReceipt(f);
+        advance(originalDue, 300);
+        const currentDue = new Date("2026-11-25T01:00:00.000Z");
+        const candidateKey = receiptKey(f.rule.id, f.client.id, currentDue);
+        expect(candidateKey).not.toBe(original.dedupeKey);
+        const persist = jest.spyOn(f.jobs, "upsertPendingForRuleGeneration");
+        await f.clients.update(branchId, f.client.id, { endDate: "2026-11-25", allowBusinessDayMismatch: true });
+        expect(persist).toHaveBeenCalledWith(expect.objectContaining({ dedupeKey: candidateKey }),
+            expect.any(Date), false, false, expect.anything());
+        await outcomes(original, { children: 0, accepted: 0, calls: 0 });
+        await expectReceiptRecoveryAt(f, document, original, currentDue);
+    });
+
+    it("moves only the operator reservation and cannot move it onto a protected receipt key", async () => {
+        const f = await fixture();
+        const { original } = await eligibleUnsignedReceipt(f);
+        const reservationDue = new Date("2026-11-25T01:00:00.000Z");
+        const reservation = await createMessageTriggerJob(db.raw, tracker, { ruleId: f.rule.id }, {
+            branchId, clientId: f.client.id, templateKey: "SERVICE_END_NOTICE", recipientPhone: original.recipientPhone,
+            status: "needs_setup", cancelReason: "QA-operator reservation", scheduledFor: reservationDue,
+            dedupeKey: receiptKey(f.rule.id, f.client.id, reservationDue),
+        });
+        const scope = { startDate: false, endDate: true, scheduleIds: [] };
+        const movedDue = new Date("2026-11-26T01:00:00.000Z");
+        advance(originalDue, 300);
+        await independent.raw.client.update({ where: { id: f.client.id }, data: { endDate: new Date("2026-11-26") } });
+        await f.trigger.reconcileServiceRecordDateRules(branchId, f.client.id, scope);
+        const moved = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: reservation.id } });
+        expect(moved).toMatchObject({ status: "needs_setup", scheduledFor: movedDue, cancelReason: reservation.cancelReason,
+            dedupeKey: receiptKey(f.rule.id, f.client.id, movedDue) });
+
+        await independent.raw.client.update({ where: { id: f.client.id }, data: { endDate: new Date("2026-11-24") } });
+        await f.trigger.reconcileServiceRecordDateRules(branchId, f.client.id, scope);
+        await f.trigger.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: reservation.id } })).toEqual(moved);
+        expect(await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: original.id } })).toMatchObject({
+            status: "canceled", canceledAt: original.canceledAt, scheduledFor: originalDue, dedupeKey: original.dedupeKey,
+            recoveryState: "eligible",
+        });
+        expect(await db.raw.message_trigger_job.count({ where: { branchId, ruleId: f.rule.id } })).toBe(2);
+        expect(await db.raw.message_occurrence_claim.count({ where: { branchId, slot: { not: null }, state: "accepted" } })).toBe(0);
+        expect(sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { edit: "same key", dates: ["2026-11-20", "2026-11-23", "2026-11-24"], startDate: true, endDate: false },
+        { edit: "changed key", dates: ["2026-11-19", "2026-11-23", "2026-11-25"], startDate: false, endDate: true },
+    ] as const)("protects a typed original through a confirmed payroll date edit with $edit", async ({ dates, startDate, endDate }) => {
+        const f = await fixture();
+        const client = await db.raw.client.update({ where: { id: f.client.id }, data: {
+            startDate: new Date("2026-11-19"), duration: 3, bookingConfirmedAt: beforeDue,
+            fullPrice: "150000", grant: "90000", actualPrice: "60000",
+        } });
+        const employee = await createEmployee(db.raw, tracker, { branchId });
+        const schedule = await createEmployeeSchedule(db.raw, tracker, { clientId: client.id, primaryEmployeeId: employee.id }, {
+            branchId, startDate: new Date("2026-11-19"), endDate: new Date("2026-11-24"),
+        });
+        const record = await db.raw.service_record_case.create({ data: {
+            branchId, clientId: client.id, startDate: client.startDate, endDate: client.endDate, requiredSessionCount: 3,
+            status: "IN_PROGRESS", momName: client.name,
+        } });
+        await db.raw.service_record_assignment.create({ data: {
+            branchId, serviceRecordCaseId: record.id, scheduleId: schedule.id, employeeId: employee.id,
+            employeeNameSnapshot: employee.name, startDate: schedule.startDate, endDate: schedule.endDate,
+        } });
+        const actor = await createUser(db.raw, tracker, { role: "admin" }, { membership: { branchId, role: "admin" } });
+        const { document, original } = await eligibleUnsignedReceipt(f);
+        advance(originalDue, 300);
+        const admissionAt = new Date();
+
+        const editor = new AdminServiceRecordEditService(new ServiceRecordEditRepository(independent.service),
+            new HolidayCalendarService(new SbHolidayCalendarRepository(independent.service)));
+        const started = await editor.startDraft(branchId, client.id, actor.id);
+        if (!started.draft) throw new Error("Missing payroll date draft");
+        const saved = await editor.updateDraft(branchId, started.draft.id, actor.id, {
+            expectedDraftVersion: started.draft.draftVersion, changes: {},
+            schedule: { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: [...dates] },
+        });
+        if (!saved.draft) throw new Error("Missing saved payroll date draft");
+        const draftVersion = { expectedDraftVersion: saved.draft.draftVersion };
+        const preview = await editor.previewDraft(branchId, saved.draft.id, actor.id, draftVersion);
+        expect(preview.blockingReasons).toEqual([]);
+        await expect(editor.confirmDraft(branchId, saved.draft.id, actor.id, {
+            ...draftVersion, previewId: preview.previewId, idempotencyKey: randomUUID(),
+        })).resolves.toMatchObject({ status: "confirmed" });
+        const [start, , end] = dates;
+        expect(await db.raw.client.findUniqueOrThrow({ where: { id: client.id } }))
+            .toMatchObject({ startDate: new Date(start), endDate: new Date(end) });
+
+        const intent = await db.raw.message_trigger_job.findFirstOrThrow({
+            where: { branchId, clientId: client.id, payload: { path: ["templateVariables", "intentKind"], equals: "client_dates" } },
+        });
+        const dateScope = { startDate, endDate, scheduleIds: [schedule.id] };
+        expect(intent).toMatchObject({
+            nextAttemptAt: intent.scheduledFor, payload: { templateVariables: { dateScope: JSON.stringify(dateScope) } },
+        });
+        // The intent claim uses PostgreSQL's clock, which Jest's fake time does not advance.
+        await db.raw.message_trigger_job.update({ where: { id: intent.id }, data: { nextAttemptAt: new Date(0) } });
+        await expect(f.intents.fulfillClientDateIntent({
+            branchId, clientId: client.id, dedupeKey: intent.dedupeKey, intentAt: intent.scheduledFor,
+            dateScope,
+        })).resolves.toBe(true);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: intent.id } })).toBeNull();
+        const currentDue = new Date(`${end}T01:00:00.000Z`);
+        const candidateKey = receiptKey(f.rule.id, client.id, currentDue);
+        expect(candidateKey === original.dedupeKey).toBe(!endDate);
+        await outcomes(original, { children: 0, accepted: 0, calls: 0 });
+        expect(await getOriginal(f.rule.id)).toMatchObject({ dedupeKey: original.dedupeKey, recoveryState: "eligible" });
+        await expectReceiptRecoveryAt(f, document, original, endDate ? currentDue : admissionAt);
     });
 
     it("recognizes only the exact ordinary scheduling, policy, timing and duplicate dispositions", async () => {
