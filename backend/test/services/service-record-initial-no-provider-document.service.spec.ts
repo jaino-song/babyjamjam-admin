@@ -169,9 +169,11 @@ describe("INITIAL no-provider-document attestation", () => {
         const f = fixture();
         f.chunks.push(f.chunk(1, "linked"), f.chunk(2));
         f.documents.push(f.doc("linked", status));
+        f.list(f.remote(1, "linked"));
         expect(await f.project()).toEqual([{ stateId: scope.stateId, revisionId: scope.revisionId,
             generation: scope.generation, suffix, unlinkedChunkOrdinals: ["(2/2)"] }]);
-        expect(await f.confirm()).toMatchObject({ reasonCode: outcome, outputProof: { unlinkedChunkIndexes: [2] } });
+        expect(await f.confirm()).toMatchObject({ reasonCode: outcome,
+            outputProof: { unlinkedChunkIndexes: [2], vendorCheck: { totals: { "01": 1, "03": 0, "04": 0 } } } });
         expect(await f.readiness()).toMatchObject(readinessReason ? { ready: false, reason: readinessReason } : { ready: true });
         expect(f.job.activeKey === null).toBe(readinessReason === null);
     });
@@ -201,6 +203,7 @@ describe("INITIAL no-provider-document attestation", () => {
         if (scenario === "all linked") {
             f.chunks.push(f.chunk(1, "a"), f.chunk(2, "b"));
             f.documents.push(f.doc("a", "049"), f.doc("b", "070"));
+            f.list(f.remote(1, "a"), f.remote(2, "b"));
             expect(await f.project()).toEqual([]);
         }
         if (scenario === "mirror hit") f.mirror.mockReturnValueOnce([{ id: 1 }] as never);
@@ -208,6 +211,20 @@ describe("INITIAL no-provider-document attestation", () => {
         await expect(f.confirm(override)).rejects.toMatchObject({ status: 409, response: { reason } });
         expect({ state: f.state, record: f.record, job: f.job }).toEqual(before);
         if (scenario === "mirror hit") expect(f.vendor.getInProgressDocumentsPage).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["new document for the unlinked chunk", 2, ["new"], REASON.PROVIDER_DOCUMENT_FOUND],
+        ["ambiguous documents for the unlinked chunk", 2, ["new", "other"], REASON.VENDOR_CHECK_INCOMPLETE],
+        ["linked document with the unlinked ordinal", 1, [], REASON.VENDOR_CHECK_INCOMPLETE],
+    ])("refuses a mixed snapshot with %s", async (_scenario, linkedOrdinal, newIds, reason) => {
+        const f = fixture();
+        f.chunks.push(f.chunk(1), f.chunk(2, "linked"));
+        f.documents.push(f.doc("linked", "070"));
+        f.list(f.remote(linkedOrdinal, "linked"), ...newIds.map(id => f.remote(1, id)));
+
+        await expect(f.confirm()).rejects.toMatchObject({ status: 409, response: { reason } });
+        expect(f.prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it.each(["state", "job", "chunk", "document", "state update", "case update", "output proof"])("detects %s CAS loss", async (changed) => {

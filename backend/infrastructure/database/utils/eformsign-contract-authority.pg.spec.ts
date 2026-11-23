@@ -2175,7 +2175,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
 
     it("U4e attests PARTIAL_DISPATCH but fences the live linked sibling", async () => {
         const f = await cancelledProviderRuntime();
-        f.listed.splice(0);
+        f.listed.splice(1);
         const linkedId = documents[0]!;
         const projection = { stateId: f.state.id, revisionId: f.revisionId, generation: f.state.generation,
             suffix: `[SR-${f.record.id.slice(0, 8)}-r1-v3]`, unlinkedChunkOrdinals: ["(2/2)"] };
@@ -2187,7 +2187,8 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(history?.revisions[0]?.documents[0]?.noProviderDocumentConfirmable).toEqual(projection);
         const service = new ServiceRecordInitialNoProviderDocumentService(db as unknown as PrismaService, f.client as never, f.credentials as never);
         await expect(service.confirmInitialNoProviderDocument(noDocumentRequest(f))).resolves.toMatchObject({
-            reasonCode: "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH", outputProof: { unlinkedChunkIndexes: [2] },
+            reasonCode: "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH",
+            outputProof: { unlinkedChunkIndexes: [2], vendorCheck: { totals: { "01": 1, "03": 0, "04": 0 } } },
         });
         expect(await f.readJob()).toMatchObject({ activeKey: `service-record-initial-finalization:${f.record.id}` });
         expect(await readinessOf(f)).toMatchObject({ ready: false, reason: "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS" });
@@ -2195,7 +2196,6 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
 
     it("U4e refuses after a provider match without changing persisted rows", async () => {
         const f = await cancelledProviderRuntime();
-        f.listed.splice(0, 1);
         const before = await f.read();
         const service = new ServiceRecordInitialNoProviderDocumentService(db as unknown as PrismaService, f.client as never, f.credentials as never);
         await expect(service.confirmInitialNoProviderDocument(noDocumentRequest(f))).rejects.toMatchObject({

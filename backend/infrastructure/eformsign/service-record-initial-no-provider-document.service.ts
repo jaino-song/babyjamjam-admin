@@ -198,8 +198,10 @@ export class ServiceRecordInitialNoProviderDocumentService {
                     chunkIndex: data.chunk_index, chunkCount: data.chunk_count, eformsignDocumentId: data.document_id,
                 })) }, deadline);
                 if (result === "INCOMPLETE") return result;
-                return { found: result.chunks.some(chunk => "matchId" in chunk && chunk.matchId !== undefined),
-                    ambiguous: result.ambiguous, totals: result.totals };
+                // Keep linked rows in the scan so conflicting titles and ordinals still block attestation.
+                const linkedIds = new Set(chunks.map(({ data }) => data.document_id).filter(id => id !== null));
+                const found = result.chunks.some(({ matchId }) => matchId !== undefined && !linkedIds.has(matchId));
+                return { found, ambiguous: result.ambiguous, totals: result.totals };
             });
             const result = await Promise.race([scan, timeout]);
             return Date.now() < deadline.expiresAt ? result : "INCOMPLETE";
