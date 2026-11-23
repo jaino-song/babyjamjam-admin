@@ -237,6 +237,21 @@ test('fresh apply refuses an incomplete listing before planning eligible moves',
     await assert.rejects(fs.stat(f.journalPath), { code: 'ENOENT' });
 });
 
+test('fresh apply with an applied journal still refuses an incomplete listing', async (t) => {
+    const f = await fixture(t);
+    assert.deepEqual(await f.run(apply), { migration: 'apply', pairs: 1, skipped: 0 });
+    assert.equal((await f.journal()).phase, 'applied');
+    const before = await f.snapshot();
+    const commands = await f.commands();
+
+    // The first page contains another eligible legacy pair, but the next page fails.
+    f.listing.items = [f.b];
+    f.listing.incomplete = true;
+    assert.equal((await f.run(apply, 1)).reason, 'incomplete_listing');
+    assert.deepEqual(await f.snapshot(), before);
+    assert.deepEqual(await f.commands(), commands);
+});
+
 const refusalCases = [
     ['changed committed state', 'allocation_changed', async (f) => {
         const state = await f.state();
