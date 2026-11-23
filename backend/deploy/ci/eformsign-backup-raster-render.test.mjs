@@ -182,15 +182,37 @@ async function recordingTool(dir, name, log, body) {
         assert.equal(process.env.GS_OPTIONS, undefined);
         const source = join(scratch, 'source.pdf');
         const rendered = join(scratch, 'rendered.pdf');
+        const normalized = join(scratch, 'normalized.pdf');
+        const patch = join(scratch, 'patch.json');
+        const update = '--update-from-json=' + patch;
         const documentArgs = args.filter((arg) => arg.startsWith('/') || arg.startsWith('-sOutputFile='));
         if (${JSON.stringify(name)} === 'record-qpdf') {
-            assert.deepEqual(documentArgs, [args.at(-1)]);
-            assert.ok([source, rendered].includes(args.at(-1)));
+            assert.equal(args[0], '--suppress-recovery');
+            if (args.includes(update)) {
+                assert.deepEqual(args, ['--suppress-recovery', update, rendered, normalized]);
+                assert.equal(statSync(patch).mode & 0o777, 0o600);
+            } else {
+                const document = args.at(-1);
+                assert.deepEqual(documentArgs, [document]);
+                assert.ok([source, rendered, normalized].includes(document));
+                if (args[1] === '--check') {
+                    assert.deepEqual(args, ['--suppress-recovery', '--check', source]);
+                } else if (args[1] === '--json=2') {
+                    assert.deepEqual(args, ['--suppress-recovery', '--json=2', '--json-key=pages',
+                        '--json-key=qpdf', '--json-stream-data=none', document]);
+                } else {
+                    assert.match(args[1], /^--show-object=\\d+,\\d+$/);
+                    assert.deepEqual(args, ['--suppress-recovery', args[1], '--filtered-stream-data', document]);
+                    assert.notEqual(document, source);
+                }
+            }
         } else {
             assert.deepEqual(documentArgs, ['-sOutputFile=' + rendered, source]);
-            for (const flag of ['-dSAFER', '-dPrinted=false', '-dShowAnnots=true', '-r300']) {
-                assert.ok(args.includes(flag));
-            }
+            assert.deepEqual(args, [
+                '-q', '-dSAFER', '-dBATCH', '-dNOPAUSE', '-dPDFSTOPONERROR', '-dUseCropBox',
+                '-dPrinted=false', '-dShowAnnots=true', '-sDEVICE=pdfimage24', '-sCompression=Flate',
+                '-r300', '-sOutputFile=' + rendered, '-f', source,
+            ]);
         }
         if (args.includes(source)) assert.equal(statSync(source).mode & 0o777, 0o600);
         appendFileSync(${JSON.stringify(log)}, JSON.stringify({ scratch, pid: process.pid, args }) + '\\n');
@@ -835,17 +857,17 @@ function flatPdf(specifications, {
     const catalog = pdf.add();
     const tree = pdf.add();
     const kids = specifications.map(({
-        width = 100, height = 100, media = [24, 24], draw = true, bytes,
+        width = 100, height = 100, media = [24, 24], draw = true, bytes, pixels, paint,
         colorSpace = '/DeviceRGB', bitsPerComponent = 8, asciiHexImage = false, linkAnnotation = false,
         imageEntries = '', contentLengthHint = false, resourceEntries = '',
     }) => {
-        const pixels = Buffer.alloc(bytes ?? width * height * 3, 255);
+        pixels ??= Buffer.alloc(bytes ?? width * height * 3, 255);
         const filter = asciiHexImage ? '/ASCIIHexDecode' : '/FlateDecode';
         const encodedPixels = asciiHexImage ? `${pixels.toString('hex')}>` : deflateSync(pixels);
         const image = pdf.add(pdfStream(`/Subtype /Image /ColorSpace ${colorSpace} /BitsPerComponent ${bitsPerComponent}
             /Width ${width} /Height ${height} /Filter ${filter} ${imageEntries}`, encodedPixels));
         const [pageWidth, pageHeight] = media;
-        const painting = draw ? `${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im1 Do` : '0 0 m 24 24 l S';
+        const painting = paint ?? (draw ? `${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im1 Do` : '0 0 m 24 24 l S');
         const contentEntries = contentLengthHint ? ` /DL ${Buffer.byteLength(painting)}` : '';
         const contents = pdf.add(pdfStream(`/Filter /FlateDecode${contentEntries}`, deflateSync(painting)));
         const page = pdf.add();
@@ -916,6 +938,343 @@ rasterTest('validates image-only output before publication and cleans up rejecte
         assert.deepEqual(await readFile(outputPath), await readFile(mockPath));
         await assertClean(dir, log, [...expectedFiles, 'result.pdf']);
     });
+});
+
+function noblePages() {
+    const width = 833;
+    const height = 417;
+    const pixels = Buffer.alloc(width * height * 3, 255);
+    const markers = [
+        [31, 0, red], [0, 53, green], [width - 1, 101, blue],
+        [277, height - 1, magenta], [width - 1, height - 1, cyan],
+    ];
+    for (const [x, y, color] of markers) {
+        pixels.set(color, (y * width + x) * 3);
+    }
+    return {
+        markers,
+        truncated: { width, height, pixels, media: [199.92, 100.08], paint: '199 0 0 100 0 0 cm\n/Im1 Do' },
+        source: { width, height, pixels, media: [200, 100] },
+        exact: { pixels: Buffer.alloc(30_000, 42) },
+    };
+}
+
+async function readPaint(path, page) {
+    const [number, generation] = page.contents[0].split(' ');
+    const { stdout } = await exec('qpdf', [
+        `--show-object=${number},${generation}`, '--filtered-stream-data', path,
+    ]);
+    return stdout.trim().replace(/\s+/g, ' ');
+}
+
+async function nobleFixture(t) {
+    const dir = await temp(t);
+    const sourcePath = join(dir, 'source.pdf');
+    const outputPath = join(dir, 'result.pdf');
+    const mockPath = join(dir, 'noble.pdf');
+    const gsLog = join(dir, 'gs.log');
+    const qpdfLog = join(dir, 'qpdf.log');
+    const pages = noblePages();
+    const original = flatPdf([pages.source, pages.exact]);
+    await writeFile(sourcePath, original);
+    await writeFile(mockPath, flatPdf([pages.truncated, pages.exact]));
+    const source = await lstat(sourcePath, { bigint: true });
+    const gsBin = await recordingTool(dir, 'mock-gs', gsLog, `
+        import { copyFileSync } from 'node:fs';
+        copyFileSync(${JSON.stringify(mockPath)}, rendered);
+    `);
+    return { dir, sourcePath, outputPath, mockPath, gsLog, qpdfLog, gsBin, pages, source, original };
+}
+
+function rewrites(entries) {
+    return entries.filter(({ args }) => args.some((arg) => arg.startsWith('--update-from-json=')));
+}
+
+rasterTest('normalizes a Noble 200x100-point raster alongside an exact page', async (t) => {
+    const fixture = await nobleFixture(t);
+    const { dir, sourcePath, outputPath, mockPath, gsLog, qpdfLog, gsBin, pages } = fixture;
+    const patchCapture = join(dir, 'observed-patch.json');
+    const qpdfBin = await recordingTool(dir, 'record-qpdf', qpdfLog, `
+        import { copyFileSync } from 'node:fs';
+        if (args.includes(update)) copyFileSync(patch, ${JSON.stringify(patchCapture)});
+        process.exit(spawnSync('qpdf', args, { stdio: 'inherit' }).status ?? 1);
+    `);
+    const raw = await pdfJson(mockPath);
+    assert.equal(await readPaint(mockPath, raw.pages[0]), '199 0 0 100 0 0 cm /Im1 Do');
+    await renderRasterPdf({ sourcePath, outputPath, gsBin, qpdfBin });
+    await exec('qpdf', ['--check', outputPath]);
+    assert.equal(rewrites(await toolLog(qpdfLog)).length, 1);
+    const repair = JSON.parse(await readFile(patchCapture, 'utf8'));
+    assert.equal(repair.qpdf[0].jsonversion, 2);
+    assert.deepEqual(Object.keys(repair.qpdf[1]), [`obj:${raw.pages[0].contents[0]}`]);
+    const { pages: final, qpdf, acroform } = await pdfJson(outputPath);
+    assert.equal(acroform.hasacroform, false);
+    assert.doesNotMatch(JSON.stringify(qpdf[1]), /"\/(?:Font|Annots|AcroForm|Form|OpenAction)"/);
+    assert.equal(final.length, 2);
+    for (const [index, expected] of [[0, pages.truncated], [1, pages.exact]]) {
+        const page = final[index];
+        assert.equal(page.contents.length, 1);
+        assert.equal(page.images.length, 1);
+        const [image] = page.images;
+        const [width, height] = expected.media ?? [24, 24];
+        assert.deepEqual(qpdf[1][`obj:${page.object}`].value['/MediaBox'], [0, 0, width, height]);
+        assert.equal(await readPaint(outputPath, page), `${width} 0 0 ${height} 0 0 cm /Im1 Do`);
+        assert.deepEqual([image.width, image.height, image.colorspace, image.bitspercomponent, image.filter],
+            [expected.width ?? 100, expected.height ?? 100, '/DeviceRGB', 8, ['/FlateDecode']]);
+        const pixels = await readImage(outputPath, image);
+        assert.deepEqual(pixels, await readImage(mockPath, raw.pages[index].images[0]));
+        assert.deepEqual(pixels, expected.pixels);
+        if (index === 0) {
+            for (const [x, y, color] of pages.markers) {
+                checkPixel(pixels, image.width, x, y, color, `edge at ${x},${y}`);
+            }
+        }
+    }
+    await assertOriginal(fixture);
+    await assertClean(dir, gsLog, [
+        'source.pdf', 'result.pdf', 'noble.pdf', 'gs.log', 'qpdf.log', 'mock-gs', 'record-qpdf', 'observed-patch.json',
+    ]);
+});
+
+rasterTest('publishes a real Ghostscript derivative and bypasses rewriting when its matrix is exact', async (t) => {
+    const dir = await temp(t);
+    const sourcePath = join(dir, 'source.pdf');
+    const outputPath = join(dir, 'result.pdf');
+    const rawPath = join(dir, 'raw.pdf');
+    const gsLog = join(dir, 'gs.log');
+    const qpdfLog = join(dir, 'qpdf.log');
+    await writeFile(sourcePath, flatPdf([noblePages().source]));
+    const gsBin = await recordingTool(dir, 'record-gs', gsLog, `
+        import { copyFileSync } from 'node:fs';
+        const result = spawnSync('gs', args, { stdio: 'inherit' });
+        if (result.status !== 0) process.exit(result.status ?? 1);
+        copyFileSync(rendered, ${JSON.stringify(rawPath)});
+    `);
+    const qpdfBin = await recordingTool(dir, 'record-qpdf', qpdfLog,
+        "process.exit(spawnSync('qpdf', args, { stdio: 'inherit' }).status ?? 1)");
+    const outputHandle = await open(outputPath, 'wx+', 0o600);
+    try {
+        await renderRasterPdf({ sourcePath, outputPath, outputHandle, gsBin, qpdfBin });
+    } finally {
+        await outputHandle.close();
+    }
+    const { pages: [raw] } = await pdfJson(rawPath);
+    const { pages: [final] } = await pdfJson(outputPath);
+    const exact = '199.92 0 0 100.08 0 0 cm /Im1 Do';
+    const paint = (await readPaint(rawPath, raw)).replace(/(\.\d*?[1-9])0+\b/g, '$1');
+    assert.equal((await readPaint(outputPath, final)).replace(/(\.\d*?[1-9])0+\b/g, '$1'), exact);
+    const calls = rewrites(await toolLog(qpdfLog));
+    if (paint === exact) {
+        assert.equal(calls.length, 0);
+        assert.deepEqual(await readFile(outputPath), await readFile(rawPath));
+    } else {
+        assert.equal(paint, '199 0 0 100 0 0 cm /Im1 Do');
+        assert.equal(calls.length, 1);
+    }
+    assert.deepEqual(await readImage(outputPath, final.images[0]), await readImage(rawPath, raw.images[0]));
+});
+
+rasterTest('does not rewrite malformed or near-miss raster candidates', async (t) => {
+    const fixture = await nobleFixture(t);
+    const { dir, sourcePath, outputPath, mockPath, gsBin, qpdfLog, pages } = fixture;
+    const qpdfBin = await recordingTool(dir, 'record-qpdf', qpdfLog, `
+        assert.ok(!args.includes(update), 'unexpected rewrite');
+        process.exit(spawnSync('qpdf', args, { stdio: 'inherit' }).status ?? 1);
+    `);
+    const truncated = pages.truncated;
+    for (const [name, changes, options] of [
+        ['oversized', { paint: '200 0 0 100 0 0 cm /Im1 Do' }],
+        ['undersized', { paint: '198 0 0 100 0 0 cm /Im1 Do' }],
+        ['decimal floor token', { paint: '199.0 0 0 100 0 0 cm /Im1 Do' }],
+        ['noncanonical integer', { paint: '0199 0 0 100 0 0 cm /Im1 Do' }],
+        ['only one axis floored', { paint: '199 0 0 100.08 0 0 cm /Im1 Do' }],
+        ['wrong image name', { paint: '199 0 0 100 0 0 cm /Im2 Do' }],
+        ['shifted', { paint: '199 0 0 100 1 0 cm /Im1 Do' }],
+        ['skewed', { paint: '199 1 0 100 0 0 cm /Im1 Do' }],
+        ['duplicate paint', { paint: '199 0 0 100 0 0 cm /Im1 Do /Im1 Do' }],
+        ['injected operator', { paint: 'q 199 0 0 100 0 0 cm /Im1 Do Q' }],
+        ['non-PDF whitespace', { paint: '199\u000b0 0 100 0 0 cm /Im1 Do' }],
+        ['wrong page box', { media: [199.96, 100.08] }],
+        ['wrong raster dimensions', { width: 832 }],
+        ['wrong raster color space', { colorSpace: '/DeviceGray' }],
+        ['extra action', {}, { openAction: true }],
+        ['orphan object', {}, { unusedObject: true }],
+    ]) {
+        await t.test(name, async () => {
+            await writeFile(mockPath, flatPdf([{ ...truncated, ...changes }, pages.exact], options));
+            await assert.rejects(renderRasterPdf({ sourcePath, outputPath, gsBin, qpdfBin }), {
+                code: 'RASTER_INVALID_OUTPUT',
+            });
+            await assert.rejects(lstat(outputPath), { code: 'ENOENT' });
+        });
+    }
+    assert.equal(rewrites(await toolLog(qpdfLog)).length, 0);
+    await assertOriginal(fixture);
+    await assertClean(dir, qpdfLog, ['source.pdf', 'noble.pdf', 'gs.log', 'qpdf.log', 'mock-gs', 'record-qpdf']);
+});
+
+rasterTest('binds the original raster snapshot through the precheck and rejects a stale rewrite path', async (t) => {
+    const fixture = await nobleFixture(t);
+    const { dir, sourcePath, outputPath, mockPath, gsBin, qpdfLog, pages } = fixture;
+    for (const [name, action, exact] of [
+        ['truncated raster changed after RGB read', "appendFileSync(rendered, ' ')"],
+        ['exact raster changed after RGB read', "appendFileSync(rendered, ' ')", true],
+        ['stale rewrite path', 'copyFileSync(rendered, normalized)'],
+    ]) {
+        await t.test(name, async () => {
+            if (exact) await writeFile(mockPath, flatPdf([{ ...pages.truncated, paint: undefined }, pages.exact]));
+            const marker = join(dir, 'precheck-changed');
+            const qpdfBin = await recordingTool(dir, 'record-qpdf', qpdfLog, `
+                import { copyFileSync } from 'node:fs';
+                assert.ok(!args.includes(update), 'unexpected rewrite');
+                const result = spawnSync('qpdf', args, { maxBuffer: 2 * 1024 ** 2 });
+                if (result.status !== 0) process.exit(result.status ?? 1);
+                if (args.at(-1) === rendered && args.includes('--filtered-stream-data') && result.stdout.length === 30_000) {
+                    ${action};
+                    writeFileSync(${JSON.stringify(marker)}, 'changed after RGB read');
+                }
+                process.stdout.write(result.stdout);
+            `);
+            await assert.rejects(renderRasterPdf({ sourcePath, outputPath, gsBin, qpdfBin }), {
+                code: 'RASTER_INVALID_OUTPUT', message: 'RASTER_INVALID_OUTPUT',
+            });
+            assert.equal(await readFile(marker, 'utf8'), 'changed after RGB read');
+            assert.equal(rewrites(await toolLog(qpdfLog)).length, 0);
+            await assert.rejects(lstat(outputPath), { code: 'ENOENT' });
+            await assertOriginal(fixture);
+            await assertClean(dir, qpdfLog, [
+                'source.pdf', 'noble.pdf', 'gs.log', 'qpdf.log', 'mock-gs', 'record-qpdf', 'precheck-changed',
+            ]);
+            await rm(marker);
+            await rm(qpdfLog);
+            await writeFile(mockPath, flatPdf([pages.truncated, pages.exact]));
+        });
+    }
+});
+
+for (const owned of [false, true]) {
+    rasterTest(`rejects unsafe Noble rewrite results before ${owned ? 'descriptor copying' : 'exclusive publication'}`, async (t) => {
+        const fixture = await nobleFixture(t);
+        const { dir, sourcePath, outputPath, gsBin, qpdfLog, pages } = fixture;
+        const alternate = join(dir, 'alternate.pdf');
+        for (const [name, behavior, code] of [
+            ['process failure', "process.stderr.write('PRIVATE SYNTHETIC DETAIL'); process.exit(7)"],
+            ['missing derivative', 'process.exit(0)'],
+            ['empty derivative', "writeFileSync(normalized, '')"],
+            ['still truncated', 'copyFileSync(rendered, normalized)'],
+            ['oversized derivative', "writeFileSync(normalized, ''); truncateSync(normalized, 512 * 1024 ** 2 + 1)", 'RASTER_LIMIT'],
+            ['extra crop box', 'copyFileSync(alternate, normalized)'],
+            ['different RGB', 'copyFileSync(alternate, normalized)'],
+            ['late RGB mutation', ''],
+        ]) {
+            await t.test(name, async (sub) => {
+                const qpdfBin = await recordingTool(dir, 'record-qpdf', qpdfLog, `
+                    import { closeSync, copyFileSync, openSync, writeSync } from 'node:fs';
+                    const alternate = ${JSON.stringify(alternate)};
+                    if (args.includes(update) && ${Boolean(behavior)}) {
+                        ${behavior}
+                        process.exit(0);
+                    }
+                    const result = spawnSync('qpdf', args, { maxBuffer: 2 * 1024 ** 2 });
+                    if (result.status !== 0) process.exit(result.status ?? 1);
+                    if (args.at(-1) === normalized && args.includes('--filtered-stream-data') &&
+                        result.stdout.length === 30_000 && ${name === 'late RGB mutation'}) {
+                        const fd = openSync(normalized, 'r+');
+                        try {
+                            writeSync(fd, Buffer.from(' '), 0, 1, 0);
+                        } finally {
+                            closeSync(fd);
+                        }
+                        writeFileSync(alternate, 'mutated after the final RGB read');
+                    }
+                    process.stdout.write(result.stdout);
+                `);
+                if (name === 'extra crop box' || name === 'different RGB') {
+                    const first = { ...pages.truncated, paint: undefined };
+                    const second = name === 'different RGB' ? {} : pages.exact;
+                    const treeEntries = name === 'extra crop box' ? '/CropBox [0 0 190 100]' : '';
+                    await writeFile(alternate, flatPdf([first, second], { treeEntries }));
+                }
+                const outputHandle = owned ? await open(outputPath, 'wx+', 0o600) : undefined;
+                const write = owned && sub.mock.method(outputHandle, 'write', () => assert.fail('unexpected write'));
+                const expected = code ?? 'RASTER_INVALID_OUTPUT';
+                try {
+                    await assert.rejects(renderRasterPdf({ sourcePath, outputPath, outputHandle, gsBin, qpdfBin }), {
+                        code: expected, message: expected,
+                    });
+                    if (owned) {
+                        assert.equal(write.mock.callCount(), 0);
+                        assert.equal((await outputHandle.stat()).size, 0);
+                        assert.equal((await lstat(outputPath)).size, 0);
+                    } else {
+                        await assert.rejects(lstat(outputPath), { code: 'ENOENT' });
+                    }
+                } finally {
+                    if (owned) {
+                        await outputHandle.close();
+                        await rm(outputPath);
+                    }
+                }
+                if (name === 'late RGB mutation') {
+                    assert.equal(await readFile(alternate, 'utf8'), 'mutated after the final RGB read');
+                }
+                assert.equal(rewrites(await toolLog(qpdfLog)).length, 1);
+                await assertOriginal(fixture);
+                const files = ['source.pdf', 'noble.pdf', 'gs.log', 'qpdf.log', 'mock-gs', 'record-qpdf'];
+                if (['extra crop box', 'different RGB', 'late RGB mutation'].includes(name)) files.push('alternate.pdf');
+                await assertClean(dir, qpdfLog, files);
+                await rm(qpdfLog);
+                await rm(alternate, { force: true });
+            });
+        }
+    });
+}
+
+rasterTest('kills a hung qpdf rewrite at its deadline and removes its partial PDF', async (t) => {
+    const fixture = await nobleFixture(t);
+    const { dir, sourcePath, outputPath, gsBin, qpdfLog } = fixture;
+    const qpdfBin = await recordingTool(dir, 'record-qpdf', qpdfLog, `
+        if (args.includes(update)) {
+            writeFileSync(normalized, '%PDF-incomplete');
+            setInterval(() => {}, 1000);
+        } else {
+            process.exit(spawnSync('qpdf', args, { stdio: 'inherit' }).status ?? 1);
+        }
+    `);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const rejects = assert.rejects(renderRasterPdf({ sourcePath, outputPath, gsBin, qpdfBin }), {
+        code: 'RASTER_TIMEOUT', message: 'RASTER_TIMEOUT',
+    });
+    try {
+        let update;
+        let partial;
+        const until = Date.now() + 5000;
+        while (!partial) {
+            await new Promise((ready) => realSetTimeout(ready, 10));
+            const entries = await toolLog(qpdfLog).catch((error) => {
+                if (error.code !== 'ENOENT') throw error;
+                return [];
+            });
+            update = rewrites(entries)[0];
+            if (update) {
+                partial = await lstat(join(update.scratch, 'normalized.pdf')).catch((error) => {
+                    if (error.code !== 'ENOENT') throw error;
+                });
+            }
+            assert.ok(Date.now() < until, 'qpdf never wrote its partial raster');
+        }
+        t.mock.timers.tick(59_999);
+        process.kill(update.pid, 0);
+        t.mock.timers.tick(1);
+        await rejects;
+        assert.throws(() => process.kill(update.pid, 0), { code: 'ESRCH' });
+        await assert.rejects(lstat(outputPath), { code: 'ENOENT' });
+        await assertOriginal(fixture);
+        await assertClean(dir, qpdfLog, ['source.pdf', 'noble.pdf', 'gs.log', 'qpdf.log', 'mock-gs', 'record-qpdf']);
+    } finally {
+        t.mock.timers.tick(600_000);
+        await rejects;
+    }
 });
 
 // At 300 DPI, these fixtures reach one capacity limit each while staying below the other two.
