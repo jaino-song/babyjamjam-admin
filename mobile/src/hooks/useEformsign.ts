@@ -106,19 +106,16 @@ export function useEformsign(): UseEformsignResult {
       const eformsign: EformSignDocument = new window.EformSignDocument();
 
       const successCallback = (response: EformsignSuccessResponse) => {
-        console.log("Eformsign success:", { code: response.code });
         if (response.code === "-1") {
           callbacks?.onSuccess?.(response);
         }
       };
 
       const errorCallback = (response: EformsignErrorResponse) => {
-        console.error("Eformsign error:", { code: response.code });
         callbacks?.onError?.(response);
       };
 
       const actionCallback = (response: EformsignActionResponse) => {
-        console.log("Eformsign action:", { type: response.type });
         callbacks?.onAction?.(response);
       };
 
