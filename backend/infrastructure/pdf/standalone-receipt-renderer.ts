@@ -10,16 +10,8 @@ import {
     RECEIPT_WIDTH,
 } from "./standalone-receipt-png";
 
-export interface StandaloneReceiptSnapshot {
-    readonly customerName: string;
-    readonly serviceStartDate: string;
-    readonly endDate: string;
-    readonly receivedDate: string;
-    readonly issueDate: string;
-    readonly fullPrice: number;
-    readonly grant: number;
-    readonly actualPrice: number;
-}
+import type { StandaloneReceiptSnapshot } from "../../domain/entities/standalone-receipt-request";
+export type { StandaloneReceiptSnapshot } from "../../domain/entities/standalone-receipt-request";
 
 type Box = readonly [left: number, top: number, right: number, bottom: number];
 
@@ -63,7 +55,7 @@ const MIN_FONT_POINTS = 6;
 const FONT_STEP_POINTS = 0.5;
 const INK_PADDING = 2;
 const MAX_NAME_LENGTH = 999;
-const MAX_KRW = 999_999_999;
+export const STANDALONE_RECEIPT_MAX_KRW = 999_999_999;
 
 function readFormat4Coverage(table: Buffer): ReadonlySet<number> | undefined {
     const segmentBytes = table.readUInt16BE(6); // segCountX2, also the byte length of each segment array.
@@ -141,18 +133,22 @@ function readNanumMyeongjoCoverage(font: Buffer): ReadonlySet<number> | undefine
     }
 }
 
-function validateDate(date: string, field: string): void {
+export function isStandaloneReceiptDate(date: unknown): date is string {
     if (typeof date === "string" && date.length === 10 && /^20\d{2}-\d{2}-\d{2}$/.test(date)) {
         const parsed = new Date(`${date}T00:00:00Z`);
         if (!Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === date) {
-            return;
+            return true;
         }
     }
-    throw new RangeError(`Invalid standalone receipt ${field}`);
+    return false;
+}
+
+function validateDate(date: string, field: string): void {
+    if (!isStandaloneReceiptDate(date)) throw new RangeError(`Invalid standalone receipt ${field}`);
 }
 
 function formatAmount(amount: number, field: string): string {
-    if (!Number.isSafeInteger(amount) || amount < 0 || amount > MAX_KRW) {
+    if (!Number.isSafeInteger(amount) || amount < 0 || amount > STANDALONE_RECEIPT_MAX_KRW) {
         throw new RangeError(`Invalid standalone receipt ${field}`);
     }
     return amount.toLocaleString("en-US");
@@ -192,6 +188,10 @@ interface Overlay {
     readonly box: Box;
     readonly text: string;
     readonly leftAligned?: boolean;
+}
+
+export function validateStandaloneReceiptSnapshot(snapshot: StandaloneReceiptSnapshot): void {
+    prepareFields(snapshot);
 }
 
 function drawOverlays(context: SKRSContext2D, overlays: readonly Overlay[], field: string): void {

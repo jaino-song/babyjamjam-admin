@@ -31,6 +31,18 @@ function makeJob(dedupeKey: string, receiptUrl?: string, branchId: string | null
 }
 
 describe("ReceiptLinkDeliveryEnricher", () => {
+    it("fails closed through both receipt paths when a standalone discriminator has no request column", async () => {
+        const issue = { issue: jest.fn(), assertDocumentSyncReady: jest.fn() };
+        const preparation = { resolve: jest.fn().mockRejectedValue(new ReceiptLinkSkipError("no_contract_document")) };
+        const enricher = new ReceiptLinkDeliveryEnricher(new SmsTriggerPayloadEnricherRegistry(), issue as never,
+            undefined, undefined, preparation as never);
+        const job = makeJob("standalone-marker").withPayloadOverride({ standaloneReceipt: undefined });
+        await expect(enricher.enrich(job)).rejects.toBeInstanceOf(ReceiptLinkSkipError);
+        await expect(enricher.validateStagedSnapshot(job)).rejects.toMatchObject({ reason: "receipt_link_unusable" });
+        expect(issue.issue).not.toHaveBeenCalled();
+        expect(issue.assertDocumentSyncReady).not.toHaveBeenCalled();
+    });
+
     it("skips service-end notice when the contract is voided", async () => {
         const issueService = { issue: jest.fn().mockRejectedValue(new ReceiptLinkSkipError("contract_voided")) };
         const enricher = new ReceiptLinkDeliveryEnricher(new SmsTriggerPayloadEnricherRegistry(), issueService as never);

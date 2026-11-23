@@ -12,6 +12,7 @@ export class AligoService {
         try {
             return await this.sendSmsUsecase.execute(dto);
         } catch (error) {
+            if (dto.confidential) throw new Error("Confidential SMS delivery failed");
             this.logger.error(
                 `[Aligo] Failed to send sms to ${dto.receiver}`,
                 error instanceof Error ? error.stack : String(error),

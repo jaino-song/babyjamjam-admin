@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Injectable } from "@nestjs/common";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -27,6 +28,8 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
  */
 export interface SmsTriggerPayloadEnricher {
     enrich(job: MessageTriggerJobEntity): Promise<void>;
+    resolveStandaloneReceiptUrl?(job: MessageTriggerJobEntity): Promise<string>;
+    validateStandaloneHandoff?(job: MessageTriggerJobEntity, url: string, tx: Prisma.TransactionClient): Promise<void>;
     /** Validate an already-approved staged payload without mutating its contents. */
     validateStagedSnapshot?(job: MessageTriggerJobEntity): Promise<void>;
 }
