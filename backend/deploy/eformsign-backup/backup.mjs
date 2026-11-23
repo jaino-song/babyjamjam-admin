@@ -7,10 +7,10 @@ import { resolve, relative, basename, dirname, isAbsolute, sep } from 'node:path
 import { isDeepStrictEqual } from 'node:util';
 import {
     assertRasterMigration, migrateProviderContracts, migrationInProgress, preserveMigration, readMigration,
-    readPreRasterMigration, replayRasterMigration, timerLockDirectory, withTimerLock,
+    readPreRasterMigration, replayRasterMigration, restorePreRasterMigration, timerLockDirectory, withTimerLock,
 } from './provider-contract-migration.mjs';
 import { providerPublication } from './provider-contract-publication.mjs';
-import { pairPaths, providerBase, providerFolder, matchesProviderPair, sanitize, syncDirectory, writeJson } from './provider-contract-paths.mjs';
+import { pairPaths, providerBase, providerFolder, matchesProviderPair, pairedPaths, sanitize, syncDirectory, writeJson } from './provider-contract-paths.mjs';
 
 let token = '';
 const cleanReason = (error) => error instanceof SyntaxError ? 'JSON 형식 오류'
@@ -22,8 +22,16 @@ const execute = (bin, args) => new Promise((done, reject) => {
 });
 const compare = (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.docId < b.docId ? -1 : a.docId > b.docId ? 1 : 0);
 const types = ['document', 'audit_trail'];
+const failureDetailLimit = 200;
 const tempPath = (path) => `${path}.${randomUUID()}.tmp`;
 const rasterError = (rasterReason) => Object.assign(new Error(rasterReason), { rasterReason });
+const documentsFailed = 'raster_archive_documents_failed';
+const rasterDocumentReasons = new Set(['RASTER_INVALID_SOURCE', 'RASTER_LIMIT', 'RASTER_RENDER_FAILED', 'RASTER_INVALID_OUTPUT']);
+const sha256Pattern = /^[a-f0-9]{64}$/i;
+const normalizePath = (path) => path.normalize('NFC');
+const relativePdf = (path) => typeof path === 'string' && /\.pdf$/i.test(path) && Buffer.byteLength(path) <= 4095
+    && path.split('/').every((part) => part && part !== '.' && part !== '..'
+        && !/[\\:\x00-\x1f\x7f]|\p{Cs}/u.test(part) && Buffer.byteLength(part) <= 255);
 const rasterReason = (error) => error?.rasterReason ?? error?.migrationReason ?? 'raster_backup_failed';
 const within = (parent, path) => {
     const rel = relative(parent, path);
@@ -127,13 +135,21 @@ async function readCutover(settings) {
     let guard;
     try {
         const opened = await handle.stat();
-        if (opened.dev !== info.dev || opened.ino !== info.ino) throw rasterError('unsafe_raster_cutover');
+        if (!opened.isFile() || !privateToWorker(opened) || opened.nlink !== 1
+            || !sameInode(opened, info)) throw rasterError('unsafe_raster_cutover');
         guard = JSON.parse(await handle.readFile('utf8'));
     } catch { throw rasterError('invalid_raster_cutover'); }
     finally { await handle.close(); }
     const predecessor = guard?.predecessor;
-    if (guard?.version !== 1 || Object.keys(guard).length !== 4 || !['preparing', 'active', 'rollingBack'].includes(guard.phase)
-        || !(predecessor === null || (typeof predecessor?.id === 'string' && /^[a-f\d-]{36}$/.test(predecessor.id)
+    const oldGuard = guard?.version === 1 && Object.keys(guard).length === 4
+        && ['preparing', 'active', 'rollingBack'].includes(guard.phase);
+    const newGuard = guard?.version === 2 && Object.keys(guard).length === 6
+        && ['preparing', 'partial', 'active', 'rollingBack'].includes(guard.phase)
+        && ['fresh', 'existing', 'pausedLegacy'].includes(guard.origin)
+        && (guard.origin === 'pausedLegacy'
+            ? typeof guard.proofDigest === 'string' && /^[a-f0-9]{64}$/.test(guard.proofDigest)
+            : guard.proofDigest === null);
+    if ((!oldGuard && !newGuard) || !(predecessor === null || (typeof predecessor?.id === 'string' && /^[a-f\d-]{36}$/.test(predecessor.id)
             && ['applied', 'rolledBack'].includes(predecessor.phase) && Object.keys(predecessor).length === 2))) {
         throw rasterError('invalid_raster_cutover');
     }
@@ -236,15 +252,61 @@ async function rasterMirror(settings, lockFd) {
     catch { throw rasterError('raster_publisher_unavailable'); }
     const { archiveDir, originalArchiveDir, stateDir, rcloneRemote, rcloneBin, gsBin, qpdfBin } = settings;
     const archiveSettings = { archiveDir, originalArchiveDir, stateDir, rcloneRemote, rcloneBin, gsBin, qpdfBin };
-    const call = (operation, reason) => async (options = {}) => {
+    const call = (operation, name) => async (options = {}) => {
         try { return await operation(archiveSettings, { ...options, lockFd }); }
-        catch { throw rasterError(reason); }
+        catch (error) {
+            throw describeMirrorFailure(mirror, error, name, options);
+        }
     };
     return {
-        prepare: call(mirror.prepareRasterArchive, 'raster_prepare_failed'),
-        publish: call(mirror.publishRasterArchive, 'raster_publish_failed'),
-        rollback: call(mirror.rollbackRasterArchive, 'raster_rollback_failed'),
+        prepare: call(mirror.prepareRasterArchive, 'prepare'),
+        publish: call(mirror.publishRasterArchive, 'publish'),
+        rollback: call(mirror.rollbackRasterArchive, 'rollback'),
+        async inspect() {
+            try {
+                const observation = await mirror.inspectRasterArchive(archiveSettings, { lockFd });
+                const { manifestPresent, unpublished, retiredPaths, phase } = observation;
+                if (Object.keys(observation).length !== 4 || typeof manifestPresent !== 'boolean'
+                    || typeof unpublished !== 'boolean' || !Array.isArray(retiredPaths)
+                    || !Array.from(retiredPaths).every(relativePdf)
+                    || new Set(retiredPaths.map(normalizePath)).size !== retiredPaths.length
+                    || (manifestPresent ? unpublished || !['active', 'paused', 'rolling-back'].includes(phase)
+                        : phase !== null || retiredPaths.length !== 0)) throw rasterError('raster_inspect_failed');
+                return { manifestPresent, unpublished, retiredPaths, phase };
+            } catch { throw rasterError('raster_inspect_failed'); }
+        },
     };
+}
+
+function describeMirrorFailure(mirror, error, name, options) {
+    const fallback = rasterError(`raster_${name}_failed`);
+    try {
+        const description = mirror.describeRasterArchiveError(error);
+        if (typeof description?.code !== 'string' || !/^raster_archive_[a-z0-9_]+$/.test(description.code)) return fallback;
+        const { code } = description;
+        if (code !== documentsFailed) return rasterError(code);
+        const { report } = description;
+        if (name !== 'publish' || options.dryRun || !Number.isSafeInteger(report?.failedCount) || report.failedCount <= 0
+            || !Array.isArray(report.failures) || report.failures.length !== Math.min(report.failedCount, 10)) return fallback;
+        const failures = [];
+        for (const item of report.failures) {
+            const { id, reason } = item;
+            if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id) || !rasterDocumentReasons.has(reason)) return fallback;
+            failures.push({ docId: `raster:${id}`, reason });
+        }
+        if (new Set(failures.map(({ docId }) => docId)).size !== failures.length) return fallback;
+        return Object.assign(rasterError(code), { rasterReport: { failedFiles: report.failedCount, failures } });
+    } catch { return fallback; }
+}
+
+function recordRasterFailure(report, error) {
+    const result = error.rasterReport;
+    if (result) {
+        report.failedFiles += result.failedFiles;
+        // Reserve space for the bounded raster details in the existing DTO limit.
+        report.failures = [...report.failures.slice(0, failureDetailLimit - result.failures.length), ...result.failures];
+    }
+    log({ reason: rasterReason(error), ...result });
 }
 
 async function refusePublicationReceipts(stateDir) {
@@ -272,53 +334,112 @@ function validatePredecessor(journal, settings, predecessor = journal) {
     if (migrationInProgress(journal)) throw rasterError('finish_legacy_provider_migration_first');
 }
 
+async function clearCutover(guard) {
+    await fs.unlink(guardPath());
+    try { await syncDirectory(timerLockDirectory()); }
+    catch (error) {
+        await writeJson(guardPath(), guard);
+        throw error;
+    }
+}
+
 async function standaloneRaster(settings, guard, lockFd) {
     const dryRun = settings.action === 'dry-run';
     const rollback = settings.action === 'rollback';
     if (rollback && !guard) throw rasterError('raster_cutover_required');
     if (!rollback && guard?.phase === 'rollingBack') throw rasterError('resume_raster_rollback');
+    await refusePublicationReceipts(settings.stateDir);
     const journal = await readMigration(settings.stateDir);
     let predecessor = guard?.predecessor ?? null;
-    if (!guard && journal) {
-        validatePredecessor(journal, settings);
-        predecessor = { id: journal.id, phase: journal.phase };
-    } else if (journal && journal.raster === undefined) {
-        if (guard.phase !== 'preparing') throw rasterError('foreign_pre_raster_migration');
-        validatePredecessor(journal, settings, predecessor);
+    const legacyJournal = journal && journal.raster === undefined ? journal : null;
+    if (legacyJournal) {
+        if (!guard) {
+            validatePredecessor(legacyJournal, settings);
+            predecessor = { id: journal.id, phase: journal.phase };
+        } else {
+            if (guard.phase !== 'preparing' && !(guard.phase === 'rollingBack' && rollback)) {
+                throw rasterError('foreign_pre_raster_migration');
+            }
+            validatePredecessor(legacyJournal, settings, predecessor);
+        }
     } else if (journal) {
+        if (!guard) throw rasterError('foreign_pre_raster_migration');
         assertRasterMigration(journal, settings);
         if (journal.raster.pending) throw rasterError('finish_raster_provider_migration_first');
     }
-    if (guard?.predecessor && (!journal || journal.raster !== undefined)) {
-        validatePredecessor(await readPreRasterMigration(settings.stateDir, predecessor), settings, predecessor);
+    const preserved = guard?.predecessor && await readPreRasterMigration(settings.stateDir, predecessor);
+    if (guard?.predecessor) {
+        validatePredecessor(preserved, settings, predecessor);
+        if (legacyJournal) await restorePreRasterMigration(settings.stateDir, preserved, { checkOnly: true });
     }
-    await refusePublicationReceipts(settings.stateDir);
     if (!guard) await checkPublicScratch(settings.archiveDir);
     const mirror = await rasterMirror(settings, lockFd);
-    if (dryRun) {
-        await mirror.prepare({ dryRun });
-        await mirror.publish({ dryRun });
-    } else if (rollback) {
-        const rollbackGuard = { ...guard, phase: 'rollingBack' };
-        await writeJson(guardPath(), rollbackGuard);
-        await mirror.rollback();
-        if (journal?.raster) await preserveMigration(settings.stateDir, journal, 'post-raster');
-        await fs.unlink(guardPath());
-        try { await syncDirectory(timerLockDirectory()); }
-        catch (error) {
+    const inspection = await mirror.inspect();
+    if (rollback) {
+        if (!inspection.manifestPresent) {
+            if (!inspection.unpublished || guard.version !== 2 || guard.origin !== 'fresh' || guard.phase !== 'preparing' || journal?.raster) {
+                throw rasterError('raster_cutover_manifest_required');
+            }
+            if (preserved) await restorePreRasterMigration(settings.stateDir, preserved);
+            await clearCutover(guard);
+        } else {
+            const rollbackGuard = { ...guard, phase: 'rollingBack' };
             await writeJson(guardPath(), rollbackGuard);
-            throw error;
+            await mirror.rollback();
+            if (journal?.raster) await preserveMigration(settings.stateDir, journal, 'post-raster');
+            await clearCutover(rollbackGuard);
         }
-    } else {
-        guard = { version: 1, phase: 'preparing', binding: cutoverBinding(settings), predecessor };
-        await writeJson(guardPath(), guard);
-        await fs.mkdir(settings.stateDir, { recursive: true, mode: 0o700 });
-        if (journal && journal.raster === undefined) await preserveMigration(settings.stateDir, journal, 'pre-raster');
-        await mirror.prepare({ explicitRepublish: true });
-        await canonicalDirectory(settings.originalArchiveDir, true);
-        await mirror.publish({ explicitRepublish: true });
-        await writeJson(guardPath(), { ...guard, phase: 'active' });
+        log({ rasterArchive: settings.action, exitCode: 0 });
+        return;
     }
+
+    const retry = guard?.phase === 'preparing' || guard?.phase === 'partial';
+    let origin;
+    if (!guard) {
+        if (inspection.manifestPresent && inspection.phase === 'paused') origin = 'pausedLegacy';
+        else if (inspection.unpublished) origin = 'fresh';
+        else throw rasterError('raster_cutover_manifest_conflict');
+    } else {
+        origin = retry && guard.version === 2 ? guard.origin : 'existing';
+        const freshRetry = guard.phase === 'preparing' && origin === 'fresh';
+        const pausedRetry = retry && (guard.phase === 'partial' || origin === 'pausedLegacy');
+        if (inspection.phase !== 'active' && !(pausedRetry && inspection.phase === 'paused')
+            && !(freshRetry && !inspection.manifestPresent)) throw rasterError('raster_cutover_manifest_required');
+    }
+    const options = { explicitRepublish: true };
+    let proofDigest = retry && guard.version === 2 ? guard.proofDigest : null;
+    if (origin === 'pausedLegacy' && guard?.phase !== 'partial') {
+        const legacyProofs = await readLegacyProofs(settings.stateDir);
+        proofDigest = createHash('sha256').update(JSON.stringify(legacyProofs)).digest('hex');
+        if (retry && guard.proofDigest !== proofDigest) throw rasterError('raster_cutover_legacy_proofs_changed');
+        options.legacyProofs = legacyProofs;
+    }
+    const dryOptions = { ...options, dryRun: true };
+    await mirror.prepare(dryOptions);
+    await mirror.publish(dryOptions);
+    if (dryRun) {
+        log({ rasterArchive: settings.action, exitCode: 0 });
+        return;
+    }
+
+    if (guard?.phase !== 'partial') {
+        if (legacyJournal) await preserveMigration(settings.stateDir, legacyJournal, 'pre-raster', false);
+        guard = { version: 2, phase: 'preparing', binding: cutoverBinding(settings), predecessor, origin, proofDigest };
+        await writeJson(guardPath(), guard);
+    }
+    await fs.mkdir(settings.stateDir, { recursive: true, mode: 0o700 });
+    if (legacyJournal) await preserveMigration(settings.stateDir, legacyJournal, 'pre-raster');
+    await mirror.prepare(options);
+    await canonicalDirectory(settings.originalArchiveDir, true);
+    try { await mirror.publish(options); }
+    catch (error) {
+        if (!error.rasterReport) throw error;
+        if (guard.phase !== 'partial') await writeJson(guardPath(), { ...guard, phase: 'partial' });
+        log({ rasterArchive: settings.action, status: 'partial', reason: rasterReason(error), ...error.rasterReport, exitCode: 2 });
+        process.exitCode = 2;
+        return;
+    }
+    await writeJson(guardPath(), { ...guard, phase: 'active' });
     log({ rasterArchive: settings.action, exitCode: 0 });
 }
 
@@ -328,6 +449,7 @@ async function main() {
         if (settings.raster) settings = await rasterSettings(settings);
         const guard = await readCutover(settings);
         if (settings.rasterArchive) return standaloneRaster(settings, guard, lockFd);
+        if (settings.migration) await refusePublicationReceipts(settings.stateDir);
         if (settings.raster && settings.migration && guard?.phase !== 'active') throw rasterError('raster_cutover_required');
         return run(settings, lockFd, guard);
     };
@@ -338,7 +460,8 @@ async function main() {
     } catch (error) {
         log({ ...(settings.migration ? { migration: settings.action } : settings.rasterArchive
             ? { rasterArchive: settings.action } : { status: 'failed' }),
-        reason: settings.raster ? rasterReason(error) : error.rasterReason ?? error.migrationReason ?? 'migration_failed', exitCode: 1 });
+        reason: settings.raster ? rasterReason(error) : error.rasterReason ?? error.migrationReason ?? 'migration_failed',
+        ...(settings.raster && error.rasterReport), exitCode: 1 });
         process.exitCode = 1;
     }
 }
@@ -377,11 +500,10 @@ async function run(settings, lockFd, guard) {
         let mirror;
         let migration;
         if (raster) {
-            if (guard?.phase !== 'active') throw rasterError('raster_cutover_required');
+            if (!['active', 'partial'].includes(guard?.phase)) throw rasterError('raster_cutover_required');
             migration = await readMigration(settings.stateDir);
             assertRasterMigration(migration, settings);
             if (settings.migration) {
-                await refusePublicationReceipts(settings.stateDir);
                 if (migration?.raster.pending && settings.action !== (migration.raster.direction === 'forward' ? 'apply' : 'rollback')) {
                     throw rasterError('resume_previous_action');
                 }
@@ -389,19 +511,95 @@ async function run(settings, lockFd, guard) {
             } else if (migrationInProgress(migration)) throw rasterError('resume_previous_action');
             if (!settings.migration || settings.action !== 'dry-run') await syncDirectory(timerLockDirectory());
             mirror = await rasterMirror(settings, lockFd);
-            if (!settings.migration && !migration?.raster.pending) await mirror.prepare();
         }
-        await backup({ settings, lockFd, report, request, reason, failure, timeout, mirror, migration, predecessor: guard?.predecessor });
+        await backup({ settings, lockFd, report, request, reason, failure, timeout, mirror, migration, guard });
     } catch (error) {
         if (!raster || settings.migration) throw error;
         report.status = 'failed';
         report.driveStatus = 'failed';
-        log({ reason: reason(error) });
+        recordRasterFailure(report, error);
     }
     if (!settings.migration) await postResult(report, request, reason);
 }
 
-async function backup({ settings, lockFd, report, request, reason, failure, timeout, mirror, migration, predecessor }) {
+function validateStateFiles(files, nullable, validPath) {
+    if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('state.json 파일 정보 오류');
+    const entries = Object.entries(files);
+    if (entries.length !== 2 || entries.some(([path, bytes]) => !validPath(path)
+        || !(Number.isSafeInteger(bytes) && bytes >= 0 || nullable && bytes === null))) throw new Error('state.json 파일 정보 오류');
+    return files;
+}
+
+async function readState(statePath, privateState, validateFiles) {
+    let loaded = { version: 2, units: {} };
+    if (privateState) {
+        const info = await stat(statePath);
+        if (info) {
+            if (!info.isFile() || !privateToWorker(info) || info.nlink !== 1) throw rasterError('unsafe_original_state');
+            const handle = await fs.open(statePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+            try {
+                const opened = await handle.stat();
+                if (!opened.isFile() || !privateToWorker(opened) || opened.nlink !== 1
+                    || !sameInode(opened, info)) throw rasterError('unsafe_original_state');
+                loaded = JSON.parse(await handle.readFile('utf8'));
+            } finally { await handle.close(); }
+        }
+    } else {
+        try { loaded = JSON.parse(await fs.readFile(statePath, 'utf8')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    if (!loaded || ![1, 2].includes(loaded.version) || !loaded.units || typeof loaded.units !== 'object' || Array.isArray(loaded.units)) throw new Error('state.json 형식 오류');
+    // Version 1 keyed a unit by its content hashes; version 2 keys it by the document.
+    const migrate = (units) => {
+        const migrated = {};
+        for (const [oldKey, unit] of Object.entries(units)) {
+            if (!unit) throw new Error('state.json 파일 정보 오류');
+            const files = validateFiles(unit.files, false);
+            const doc = /^doc:(.+):([0-9a-fA-F]+):([0-9a-fA-F]+)$/.exec(oldKey);
+            const merged = /^merged:(.+:\d+):([0-9a-fA-F,]+)$/.exec(oldKey);
+            const [newKey, fingerprint] = doc ? [`doc:${doc[1]}`, `${doc[2]}:${doc[3]}`]
+                : merged ? [`merged:${merged[1]}`, `v1:${merged[2]}`] : [null, null];
+            if (newKey === null || Object.hasOwn(migrated, newKey)) throw new Error('state.json 형식 오류');
+            migrated[newKey] = { files, fingerprint, completed: true }; // version 1 only ever saved completed documents
+        }
+        return migrated;
+    };
+    return { version: 2, units: loaded.version === 1 ? migrate(loaded.units) : loaded.units };
+}
+
+async function readLegacyProofs(stateDir) {
+    const { units } = await readState(resolve(stateDir, 'state.json'), true,
+        (files, nullable) => validateStateFiles(files, nullable, relativePdf));
+    const claims = new Map();
+    for (const entry of Object.values(units)) {
+        if (!entry || typeof entry.completed !== 'boolean' || typeof entry.fingerprint !== 'string') {
+            throw rasterError('invalid_original_state');
+        }
+        validateStateFiles(entry.files, true, relativePdf);
+        const reservations = entry.reservedPaths === undefined ? [] : entry.reservedPaths;
+        if (!Array.isArray(reservations) || !reservations.every(relativePdf)) throw rasterError('invalid_original_state');
+        const paths = new Set([...Object.keys(entry.files), ...reservations].map(normalizePath));
+        for (const path of paths) claims.set(path, (claims.get(path) ?? 0) + 1);
+    }
+    const proofs = [];
+    const folders = [providerFolder, '기타', '서비스계약서', '제공기록지', '제공기록지/원본'];
+    for (const [key, entry] of Object.entries(units)) {
+        if (!/^doc:[^@]+$/.test(key)) continue;
+        const paths = folders.map((folder) => pairedPaths(entry.files, folder)).find(Boolean);
+        const hashes = entry.fingerprint.split(':');
+        if (!paths || hashes.length !== 2 || !sha256Pattern.test(hashes[0])
+            || (entry.completed || hashes[1] !== '' ? !sha256Pattern.test(hashes[1]) : entry.files[paths[1]] !== null)
+            || paths.some((path) => claims.get(normalizePath(path)) !== 1)) continue;
+        for (const [i, path] of paths.entries()) {
+            if (hashes[i] && Number.isSafeInteger(entry.files[path])) {
+                proofs.push({ path, sha256: hashes[i].toLowerCase(), size: entry.files[path] });
+            }
+        }
+    }
+    return proofs.sort((a, b) => a.path < b.path ? -1 : Number(a.path > b.path));
+}
+
+async function backup({ settings, lockFd, report, request, reason, failure, timeout, mirror, migration, guard }) {
     const rawRoot = mirror ? settings.originalArchiveDir : settings.archiveDir;
     if (!settings.migration && !mirror) {
         await fs.mkdir(settings.archiveDir, { recursive: true });
@@ -445,71 +643,50 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             if (mirror && !await checkParents(final)) return null;
             const info = await fs.lstat(final);
             inside(await fs.realpath(final));
-            if (!info.isFile() || (mirror && info.uid !== process.getuid())) throw new Error('일반 파일이 아닌 보관 경로');
+            if (!info.isFile() || (mirror && (info.uid !== process.getuid() || info.nlink !== 1))) throw new Error('일반 파일이 아닌 보관 경로');
             return info.size;
         } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
     };
-    const prepare = async (path, durable = false) => {
+    const prepare = async (path, durable = false, create = true) => {
         const final = finalPath(path);
         // Check each parent before creating the next one: a preexisting symlink
         // must not cause mkdir or a temporary write outside the archive.
-        await checkParents(final, true, durable);
+        await checkParents(final, create, durable);
         return final;
     };
     const statePath = resolve(settings.stateDir, 'state.json');
-    let loaded = { version: 2, units: {} };
-    try {
-        if (mirror) {
-            const info = await fs.lstat(statePath);
-            if (!info.isFile() || !privateToWorker(info) || info.nlink !== 1) throw rasterError('unsafe_original_state');
-            const handle = await fs.open(statePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-            try {
-                const opened = await handle.stat();
-                if (opened.dev !== info.dev || opened.ino !== info.ino) throw rasterError('unsafe_original_state');
-                loaded = JSON.parse(await handle.readFile('utf8'));
-            } finally { await handle.close(); }
-        } else loaded = JSON.parse(await fs.readFile(statePath, 'utf8'));
-    }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (!loaded || ![1, 2].includes(loaded.version) || !loaded.units || typeof loaded.units !== 'object' || Array.isArray(loaded.units)) throw new Error('state.json 형식 오류');
-    const validFiles = (files, nullable) => {
-        if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('state.json 파일 정보 오류');
-        const entries = Object.entries(files);
-        if (entries.length !== 2 || entries.some(([path, bytes]) => !validStatePath(path) ||
-            !(Number.isSafeInteger(bytes) && bytes >= 0 || nullable && bytes === null))) throw new Error('state.json 파일 정보 오류');
-        return files;
-    };
-    // Version 1 keyed a unit by its content hashes; version 2 keys it by the document.
-    const migrate = (units) => {
-        const migrated = {};
-        for (const [oldKey, unit] of Object.entries(units)) {
-            if (!unit) throw new Error('state.json 파일 정보 오류');
-            const files = validFiles(unit.files, false);
-            const doc = /^doc:(.+):([0-9a-fA-F]+):([0-9a-fA-F]+)$/.exec(oldKey);
-            const merged = /^merged:(.+:\d+):([0-9a-fA-F,]+)$/.exec(oldKey);
-            const [newKey, fingerprint] = doc ? [`doc:${doc[1]}`, `${doc[2]}:${doc[3]}`]
-                : merged ? [`merged:${merged[1]}`, `v1:${merged[2]}`] : [null, null];
-            if (newKey === null || Object.hasOwn(migrated, newKey)) throw new Error('state.json 형식 오류');
-            migrated[newKey] = { files, fingerprint, completed: true }; // version 1 only ever saved completed documents
-        }
-        return migrated;
-    };
-    const state = { version: 2, units: loaded.version === 1 ? migrate(loaded.units) : loaded.units };
+    const validFiles = (files, nullable) => validateStateFiles(files, nullable, validStatePath);
+    const state = await readState(statePath, Boolean(mirror), validFiles);
     const saveState = () => writeJson(statePath, state);
     const reserved = new Set();
+    const reserve = mirror ? normalizePath : (path) => path;
     for (const unit of Object.values(state.units)) {
         if (!unit || typeof unit.fingerprint !== 'string' || typeof unit.completed !== 'boolean') throw new Error('state.json 파일 정보 오류');
-        for (const path of Object.keys(validFiles(unit.files, true))) reserved.add(path);
+        for (const path of Object.keys(validFiles(unit.files, true))) reserved.add(reserve(path));
         if (unit.reservedPaths !== undefined) {
             if (!Array.isArray(unit.reservedPaths) || unit.reservedPaths.some((path) => !validStatePath(path))) {
                 throw new Error('state.json 예약 경로 오류');
             }
-            for (const path of unit.reservedPaths) reserved.add(path);
+            for (const path of unit.reservedPaths) reserved.add(reserve(path));
         }
     }
     if (!mirror) migration = await readMigration(settings.stateDir);
-    const migrationContext = { settings, archive, statePath, state, reserved, saveState, migration, finalPath, timeout, lockFd,
-        log, mirror, predecessor };
+    const publication = providerPublication({ archive, statePath, state, saveState, prepare, fetchInto, raster: Boolean(mirror) });
+    if (!settings.migration) {
+        if (migrationInProgress(migration)) throw new Error('제공인력 계약서 이동 재시도 필요');
+        // Finish owned final links before the mirror can inspect private originals.
+        report.savedFiles += await publication.resume();
+    }
+    const partial = guard?.phase === 'partial';
+    const ordinaryOptions = partial ? { explicitRepublish: true } : undefined;
+    const inspection = mirror && await mirror.inspect();
+    if (inspection && (!inspection.manifestPresent
+        || (inspection.phase !== 'active' && !(partial && inspection.phase === 'paused')))) {
+        throw rasterError('raster_cutover_manifest_required');
+    }
+    const retired = new Set(inspection ? inspection.retiredPaths.map(normalizePath) : []);
+    const migrationContext = { settings, archive, statePath, state, reserved, retired, saveState, migration, finalPath,
+        timeout, lockFd, log, mirror, predecessor: guard?.predecessor };
     const resumingRasterMigration = mirror && migration?.raster.pending;
     if (resumingRasterMigration && !migrationInProgress(migration)) {
         await replayRasterMigration(migrationContext);
@@ -517,14 +694,9 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             log({ migration: settings.action, pairs: migration.moves.length, skipped: 0 });
             return;
         }
-        await mirror.prepare();
     }
-    const publication = providerPublication({ archive, statePath, state, saveState, prepare, fetchInto });
     if (!settings.migration) {
-        if (migrationInProgress(migration)) throw new Error('제공인력 계약서 이동 재시도 필요');
-        // Scheduled and manual backup runs already hold the timer's flock. Recover
-        // before allocating from a new listing or copying any files to Drive.
-        report.savedFiles += await publication.resume();
+        if (mirror) await mirror.prepare(ordinaryOptions);
         await saveState();
     }
 
@@ -541,7 +713,9 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             const response = await request(`/internal/eformsign-backup/documents?${query}`);
             if (response.status !== 200) throw new Error(`목록 HTTP ${response.status}`);
             const page = await response.json();
-            docs.push(...page.items.slice(0, settings.limit - docs.length));
+            const remaining = settings.limit - docs.length;
+            docs.push(...page.items.slice(0, remaining));
+            if (mirror && page.items.length > remaining) return;
             cursor = page.nextCursor;
             if (cursor !== null && seen.has(cursor)) throw new Error('목록 커서 반복');
             seen.add(cursor);
@@ -631,11 +805,12 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         if (entry !== null && !unit.fork) { unit.files = { ...entry.files }; return; }
         for (let n = 1; ; n += 1) {
             const paths = pairPaths(unit.folder, unit.base, n);
-            if (reserved.has(paths[0]) || reserved.has(paths[1]) || await size(paths[0]) !== null || await size(paths[1]) !== null) continue;
+            if (paths.some((path) => reserved.has(reserve(path)) || retired.has(normalizePath(path)))
+                || await size(paths[0]) !== null || await size(paths[1]) !== null) continue;
             // Expected sizes for a new document unit; null = nothing to write there yet (the audit trail of a
             // document still in review, a merged output not built yet). The audit path stays reserved either way.
             unit.files = Object.fromEntries(paths.map((path, i) => [path, unit.inputs?.[i]?.byteSize ?? null]));
-            paths.forEach((path) => reserved.add(path));
+            paths.forEach((path) => reserved.add(reserve(path)));
             return;
         }
     };
@@ -755,11 +930,11 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
                 await tighten(unit);
                 continue;
             }
-            if (unit.fork && unit.providerBase) {
+            if (unit.fork && (unit.providerBase || mirror)) {
                 const before = state.units[unit.key];
                 report.savedFiles += await publication.publish({
                     key: unit.key, before, history: historicalKey(unit, before), next: recordedUnit(unit, before),
-                    inputs: unit.inputs, createdAt: unit.createdAt,
+                    inputs: unit.inputs, createdAt: unit.createdAt, generic: !unit.providerBase,
                 });
                 unit.fork = false;
             } else if (replace || unit.fork) {
@@ -913,19 +1088,24 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             if (unitError.rasterReason === 'original_state_size_mismatch') throw unitError;
         }
     }
+    let published = false;
     if (mirror) {
         try {
-            await mirror.publish();
+            await mirror.publish(ordinaryOptions);
+            published = true;
             if (settings.rcloneRemote) report.driveStatus = 'ok';
         } catch (error) {
-            report.driveStatus = 'failed';
-            log({ reason: reason(error) });
+            if (settings.rcloneRemote) report.driveStatus = 'failed';
+            recordRasterFailure(report, error);
+        }
+        if (partial && !resumingRasterMigration && listingComplete && report.failedFiles === 0 && published) {
+            await writeJson(guardPath(), { ...guard, phase: 'active' });
         }
     } else if (settings.rcloneRemote) {
         try { await execute(settings.rcloneBin, ['copy', '--checksum', settings.archiveDir, settings.rcloneRemote, '--include', '*.pdf']); report.driveStatus = 'ok'; }
         catch (error) { report.driveStatus = 'failed'; log({ reason: `Drive: ${cleanReason(error)}` }); }
     }
-    report.status = listingFailed ? 'failed' : !listingComplete || report.failures.length || report.driveStatus !== 'ok' ? 'partial' : 'success';
+    report.status = listingFailed ? 'failed' : !listingComplete || report.failedFiles || report.driveStatus !== 'ok' ? 'partial' : 'success';
 }
 
 async function postResult(report, request, reason) {
@@ -936,7 +1116,7 @@ async function postResult(report, request, reason) {
     for (let attempt = 0; attempt < 2 && !posted; attempt += 1) {
         try {
             const response = await request('/internal/eformsign-backup/runs', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...report, failures: report.failures.slice(0, 200) }),
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...report, failures: report.failures.slice(0, failureDetailLimit) }),
             });
             await response.body?.cancel();
             if (response.status !== 201) throw new Error(`결과 POST HTTP ${response.status}`);

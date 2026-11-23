@@ -13,6 +13,10 @@ const validIdentity = (id) => typeof id?.dev === 'string' && /^\d+$/.test(id.dev
     && typeof id.birthtimeNs === 'string' && /^\d+$/.test(id.birthtimeNs);
 const validPreparedIdentity = (id) => validIdentity(id) && /[1-9]/.test(id.birthtimeNs);
 const sameInode = (stat, id) => isDeepStrictEqual(identity(stat), id);
+const genericFolders = ['기타', '서비스계약서', '제공기록지', '제공기록지/원본'];
+const genericPair = (files) => genericFolders.map((folder) => pairedPaths(files, folder)).find(Boolean);
+const digestPattern = /^[a-f0-9]{64}$/i;
+const validCount = (bytes) => Number.isSafeInteger(bytes) && bytes >= 0;
 const refuse = (reason) => { throw new Error(`provider_publication_${reason}`); };
 const stat = (path) => fs.lstat(path, { bigint: true }).catch((error) => {
     if (error.code === 'ENOENT') return null;
@@ -27,11 +31,11 @@ const stagePath = (directory) => join(directory, 'payload.stage');
 async function readPrivateJson(path, reason) {
     const info = await stat(path);
     if (!info) return null;
-    if (!info.isFile() || !privateToWorker(info)) refuse(reason);
+    if (!info.isFile() || !privateToWorker(info) || info.nlink !== 1n) refuse(reason);
     const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
         const opened = await handle.stat({ bigint: true });
-        if (!opened.isFile() || !privateToWorker(opened) || !sameInode(opened, identity(info))) refuse(reason);
+        if (!opened.isFile() || !privateToWorker(opened) || opened.nlink !== 1n || !sameInode(opened, identity(info))) refuse(reason);
         return { value: JSON.parse(await handle.readFile('utf8')), inode: identity(opened) };
     } finally { await handle.close(); }
 }
@@ -47,42 +51,47 @@ function validatePrepared(receipt, archive, archiveInfo) {
     }
 }
 
-async function verify(path, file, createdAt) {
+async function verify(path, file, createdAt, privateOriginal = false) {
     const info = await stat(path);
     if (!info) return false;
-    if (!file || !info.isFile() || !sameInode(info, file.inode)) refuse('path_collision');
+    if (!file || !info.isFile() || !sameInode(info, file.inode)
+        || (privateOriginal && !privateToWorker(info))) refuse('path_collision');
     const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
         | (constants.O_NOATIME ?? 0));
     try {
         const opened = await handle.stat({ bigint: true });
-        if (!opened.isFile() || !sameInode(opened, file.inode)) refuse('path_collision');
+        if (!opened.isFile() || !sameInode(opened, file.inode)
+            || (privateOriginal && !privateToWorker(opened))) refuse('path_collision');
         if (opened.size !== BigInt(file.byteSize)
             || Math.round(Number(opened.mtimeNs) / 1e6) !== Date.parse(createdAt)) refuse('content_mismatch');
         const digest = createHash('sha256');
         for await (const chunk of handle.createReadStream({ autoClose: false })) digest.update(chunk);
         if (digest.digest('hex') !== file.sha256.toLowerCase()) refuse('content_mismatch');
     } finally { await handle.close(); }
-    return true;
+    return info;
 }
 
-function validate(intent, archive) {
-    if (intent?.version !== 1 || intent.archive !== archive || typeof intent.key !== 'string'
+function validate(intent, archive, raster, archiveInfo) {
+    const generic = intent?.version === 2;
+    if ((generic ? !raster || !validPreparedIdentity(intent.archiveInode) || !sameInode(archiveInfo, intent.archiveInode)
+        : intent?.version !== 1) || intent.archive !== archive || typeof intent.key !== 'string'
         || !intent.key.startsWith('doc:') || !intent.before || typeof intent.before.fingerprint !== 'string'
         || typeof intent.history !== 'string' || typeof intent.createdAt !== 'string'
         || !Number.isFinite(Date.parse(intent.createdAt))
         || !Array.isArray(intent.files) || intent.files.length !== 2
-        || !intent.next?.files || typeof intent.next.providerBase !== 'string' || typeof intent.next.completed !== 'boolean') {
+        || !intent.next?.files || typeof intent.next.completed !== 'boolean') {
         refuse('invalid_intent');
     }
     const historyBase = `${intent.key}@${intent.before.fingerprint}`;
     if (intent.history !== historyBase && !(intent.history.startsWith(`${historyBase}@`)
         && /^(?:[2-9]|[1-9]\d+)$/.test(intent.history.slice(historyBase.length + 1)))) refuse('invalid_intent');
-    const paths = pairedPaths(intent.next.files, providerFolder);
-    if (!paths || !matchesProviderPair(intent.next.files, intent.next.providerBase)
+    const paths = generic ? genericPair(intent.next.files) : pairedPaths(intent.next.files, providerFolder);
+    if (!paths || (generic ? !validGenericIntent(intent, paths)
+        : typeof intent.next.providerBase !== 'string' || !matchesProviderPair(intent.next.files, intent.next.providerBase))
         || intent.files.some((file, index) => file === null
             ? index !== 1 || intent.next.completed || intent.next.files[paths[index]] !== null
             : typeof file?.fileId !== 'string' || !file.fileId || typeof file.sha256 !== 'string'
-                || !/^[a-f\d]{64}$/i.test(file.sha256) || !Number.isSafeInteger(file.byteSize) || file.byteSize < 0
+                || !digestPattern.test(file.sha256) || !validCount(file.byteSize)
                 || intent.next.files[paths[index]] !== file.byteSize || !validIdentity(file.inode)
                 || !validStageName(file.stage?.name)
                 || !validIdentity(file.stage.inode))
@@ -91,7 +100,22 @@ function validate(intent, archive) {
     return paths;
 }
 
-export function providerPublication({ archive, statePath, state, saveState, prepare, fetchInto }) {
+function validGenericIntent(intent, paths) {
+    const { before, next, files } = intent;
+    if (Object.keys(intent).length !== 9 || !/^doc:[^@]+$/.test(intent.key)
+        || !before.files || before.completed !== true || !files[0] || files[0].fileId === files[1]?.fileId
+        || before.fingerprint === next.fingerprint) return false;
+    const previous = genericPair(before.files)
+        || (typeof before.providerBase === 'string' && matchesProviderPair(before.files, before.providerBase)
+            && pairedPaths(before.files, providerFolder));
+    return Boolean(previous && before.fingerprint.split(':').length === 2
+        && before.fingerprint.split(':').every((hash) => digestPattern.test(hash))
+        && previous.every((path) => validCount(before.files[path]))
+        && new Set([...previous, ...paths].map((path) => path.normalize('NFC'))).size === 4
+        && isDeepStrictEqual(next, { ...before, files: next.files, fingerprint: next.fingerprint, completed: next.completed }));
+}
+
+export function providerPublication({ archive, statePath, state, saveState, prepare, fetchInto, raster = false }) {
     const stateDir = dirname(statePath);
     const journalPath = join(stateDir, 'provider-contract-publication.json');
     const preparedPath = join(stateDir, 'provider-contract-prepared-stages.json');
@@ -163,7 +187,7 @@ export function providerPublication({ archive, statePath, state, saveState, prep
 
     async function removeStage(directory, file, createdAt) {
         const path = stagePath(directory);
-        if (await verify(path, file, createdAt)) await fs.unlink(path);
+        if (await verify(path, file, createdAt, raster)) await fs.unlink(path);
         await syncDirectory(directory);
         await fs.rmdir(directory);
         await syncDirectory(archive);
@@ -218,30 +242,38 @@ export function providerPublication({ archive, statePath, state, saveState, prep
     }
 
     async function finish(intent) {
-        const paths = validate(intent, archive);
-        await reconcilePrepared(intent);
+        const archiveInfo = await stat(archive);
+        if (raster && (!archiveInfo?.isDirectory() || !privateToWorker(archiveInfo))) refuse('unsafe_archive');
+        const paths = validate(intent, archive, raster, archiveInfo);
         const active = state.units[intent.key];
         const historical = state.units[intent.history];
         const committed = isDeepStrictEqual(active, intent.next) && isDeepStrictEqual(historical, intent.before);
         if (!committed && (!isDeepStrictEqual(active, intent.before) || historical !== undefined)) refuse('state_changed');
-        const destinations = new Set(paths.map((path) => resolve(archive, path)));
+        const allocation = (path) => raster ? resolve(archive, path).normalize('NFC') : resolve(archive, path);
+        const destinations = new Set(paths.map(allocation));
         for (const [key, entry] of Object.entries(state.units)) {
             if (committed && key === intent.key) continue;
             if ([...Object.keys(entry.files), ...(entry.reservedPaths ?? [])]
-                .some((path) => destinations.has(resolve(archive, path)))) refuse('shared_archive_path');
+                .some((path) => destinations.has(allocation(path)))) refuse('shared_archive_path');
         }
 
         const artifacts = [];
         // Inspect both destinations before creating either link. A matching digest alone proves no ownership.
         for (const [index, path] of paths.entries()) {
             const file = intent.files[index];
-            const final = await prepare(path, true);
-            const published = await verify(final, file, intent.createdAt);
+            const final = await prepare(path, false, false);
+            const published = await verify(final, file, intent.createdAt, raster);
             const directory = file ? await checkStage(file.stage) : null;
             const temp = directory ? stagePath(directory) : null;
-            const staged = temp ? await verify(temp, file, intent.createdAt) : false;
-            if (file) artifacts.push({ index, file, final, published, staged, temp, directory });
+            const staged = temp ? await verify(temp, file, intent.createdAt, raster) : false;
+            const expectedLinks = published && staged ? 2n : 1n;
+            if (raster && ((published && published.nlink !== expectedLinks) || (staged && staged.nlink !== expectedLinks))) {
+                refuse('unowned_hardlink');
+            }
+            if (file) artifacts.push({ index, file, path, final, published, staged, temp, directory });
         }
+        await reconcilePrepared(intent);
+        for (const artifact of artifacts) await prepare(artifact.path, true);
 
         for (const artifact of artifacts) {
             if (artifact.published || artifact.staged) continue;
@@ -255,7 +287,7 @@ export function providerPublication({ archive, statePath, state, saveState, prep
                 refuse('staged_file_unavailable');
             }
             const temp = stagePath(await checkStage(file.stage));
-            if (!await verify(temp, file, intent.createdAt)) refuse('staged_file_unavailable');
+            if (!await verify(temp, file, intent.createdAt, raster)) refuse('staged_file_unavailable');
             intent.files[artifact.index] = file;
             await writeJson(journalPath, intent);
             await reconcilePrepared(intent);
@@ -271,7 +303,7 @@ export function providerPublication({ archive, statePath, state, saveState, prep
                 await fs.link(artifact.temp, artifact.final);
                 saved += 1;
             }
-            if (!await verify(artifact.final, artifact.file, intent.createdAt)) refuse('missing_destination');
+            if (!await verify(artifact.final, artifact.file, intent.createdAt, raster)) refuse('missing_destination');
         }
         for (const parent of new Set(artifacts.map(({ final }) => dirname(final)))) await syncDirectory(parent);
         if (!committed) {
@@ -298,8 +330,11 @@ export function providerPublication({ archive, statePath, state, saveState, prep
             await reconcilePrepared(null);
             return 0;
         },
-        async publish({ key, before, history, next, inputs, createdAt }) {
-            const intent = { version: 1, archive, key, before, history, next, createdAt, files: [] };
+        async publish({ key, before, history, next, inputs, createdAt, generic }) {
+            const archiveInfo = generic ? await stat(archive) : null;
+            if (generic && (!raster || !archiveInfo?.isDirectory() || !privateToWorker(archiveInfo))) refuse('unsafe_archive');
+            const intent = { version: generic ? 2 : 1, archive, key, before, history, next, createdAt, files: [] };
+            if (generic) intent.archiveInode = identity(archiveInfo);
             try {
                 for (const file of inputs) {
                     intent.files.push(file ? await stageFile(file, createdAt) : null);
@@ -313,7 +348,7 @@ export function providerPublication({ archive, statePath, state, saveState, prep
                 throw error;
             }
             pending = true;
-            validate(intent, archive);
+            validate(intent, archive, raster, archiveInfo);
             await writeJson(journalPath, intent);
             return finish(intent);
         },
