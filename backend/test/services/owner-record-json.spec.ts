@@ -103,6 +103,7 @@ function harness() {
         expireDuringWrite: false,
         whileWaitingForCaseLock: undefined as ((state: State) => void) | undefined,
         afterDayInsert: undefined as ((state: State, row: Row) => void) | undefined,
+        afterHolidayOverridesRead: undefined as ((state: State) => void) | undefined,
         beforeCalendarValidation: undefined as (() => void) | undefined,
     };
     const trace: string[] = [];
@@ -185,7 +186,11 @@ function harness() {
                     holiday_year_snapshot: { findMany: jest.fn(async () => []) },
                     public_holiday: { findMany: jest.fn(async () => []) },
                     branch_holiday_override: {
-                        findMany: jest.fn(async ({ where }) => db.holidayOverrides.filter((row) => matches(row, where))),
+                        findMany: jest.fn(async ({ where }) => {
+                            const rows = db.holidayOverrides.filter((row) => matches(row, where));
+                            controls.afterHolidayOverridesRead?.(db);
+                            return rows;
+                        }),
                     },
                     employee: {
                         findMany: jest.fn(async ({ where }) => (where.branchId === BRANCH
@@ -607,6 +612,19 @@ describe("owner record JSON confirmation", () => {
         await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
         expect(h.trace.indexOf("calendar-read")).toBeGreaterThan(h.trace.indexOf("lock:service_record_case"));
         expect(h.dayInsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects a mixed write with stored sessions when the calendar revision changes during the read", async () => {
+        const h = harness();
+        const req = await h.request([edit(), fill()]);
+        const before = structuredClone(h.db);
+        h.controls.afterHolidayOverridesRead = (state) => { state.calendarRevision = 2n; };
+
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.db).toEqual({ ...before, calendarRevision: 2n });
+        expect(h.dayWrite).not.toHaveBeenCalled();
+        expect(h.dayInsert).not.toHaveBeenCalled();
+        expect(h.emit).not.toHaveBeenCalled();
     });
 
     it.each([2n, null])("rolls back a mixed projected write when the commit-time calendar revision is %s", async (revision) => {
