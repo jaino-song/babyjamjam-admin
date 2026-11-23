@@ -6,6 +6,7 @@ import { ClientService } from "application/services/client.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
+import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
@@ -24,11 +25,14 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
     getServiceRecordLinkScheduledFor,
+    serviceRecordAutomaticJobKey,
 } from "domain/constants/service-record-link-message";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
+import { occurrenceVariables, storedOccurrence } from "infrastructure/database/repositories/message-occurrence-ledger";
+import { RECORD_LINK_RECOVERY_REFUSED } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/database/repositories/sb.message-trigger-rule-branch-override.repository";
@@ -121,7 +125,7 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         const lock = new MessageAutomationBranchLockService(db.service);
         const activation = new MessageAutomationActivationService(db.service, lock, new AdminAuditEventWriter(db.service));
         const retry = new CanceledAutomationRetrySettingsService(new CanceledAutomationRetryRepository(db.service), lock, activation);
-        const trigger = wireMessageTriggerService(db, branchId, RecordingRecordLinkDelivery);
+        const trigger = wireMessageTriggerService(db, branchId, RecordingRecordLinkDelivery, new MessageSenderApprovalService(db.service));
         const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as ConstructorParameters<typeof ClientService>[11];
         const lifecycle = withRecordLifecycle ? new ServiceRecordLifecycleService(db.service, calendar) : undefined;
         const newLinkWorker = () => new ServiceRecordLinkService(db.service, new ServiceRecordTokenService(db.service), new ConfigService(),
@@ -267,6 +271,20 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(await acceptedFor(branchId)).toHaveLength(1);
     });
 
+    it("reschedules the same recipient on the original ordinary job", async () => {
+        const { branchId, create, link, lock } = await fixture();
+        const { schedule } = await create("waiting");
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        const startDate = new Date("2026-12-01");
+        await lock.runExclusive(branchId, tx => tx.employee_schedule.update({ where: { id: schedule.id, branchId }, data: { startDate } }));
+        const read = jest.spyOn(db.service.message_trigger_job, "findUnique");
+        expect(await link.scheduleForServiceStart(schedule.id, { rescheduleAutomatic: true, branchId })).toBe(true);
+        expect(read.mock.calls.filter(([options]) => options.where.dedupeKey === original.dedupeKey)).toHaveLength(1);
+        expect(await db.raw.message_trigger_job.findMany({ where: { employeeScheduleId: schedule.id } })).toEqual([
+            expect.objectContaining({ id: original.id, status: "pending", scheduledFor: getServiceRecordLinkScheduledFor(startDate) }),
+        ]);
+    });
+
     it("keeps the first due time and honors a delayed schedule, even when a date refresh rechecks it", async () => {
         const { branchId, lock, create, toggle, clients, link, trigger } = await fixture();
         await toggle(true);
@@ -290,6 +308,58 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(await acceptedFor(branchId)).toHaveLength(1);
     });
 
+    it.each(["before claim", "after preparation", "earlier"])("retimes an admitted successor when the schedule changes %s", async change => {
+        const { branchId, lock, create, toggle, clients, link, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(1);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({
+            where: { employeeScheduleId: schedule.id, originalJobId: null },
+        });
+        const successor = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
+        const changedStart = new Date(change === "earlier" ? "2026-11-26" : "2026-12-01");
+        const changedDue = getServiceRecordLinkScheduledFor(changedStart);
+        const editSchedule = () => lock.runExclusive(branchId, tx => tx.employee_schedule.update({
+            where: { id: schedule.id, branchId }, data: { startDate: changedStart },
+        }));
+        let prepare: jest.SpyInstance | undefined;
+        if (change === "after preparation") {
+            const realPrepare = trigger.delivery.prepareJob.bind(trigger.delivery);
+            prepare = jest.spyOn(trigger.delivery, "prepareJob").mockImplementationOnce(async job => {
+                const prepared = await realPrepare(job);
+                await editSchedule();
+                return prepared;
+            });
+        } else {
+            await editSchedule();
+        }
+        if (change === "earlier") {
+            jest.setSystemTime(changedDue);
+            await deliver(trigger, successor.id, branchId);
+            expect(trigger.delivery.providerCalls).toHaveLength(0);
+            jest.setSystemTime(due);
+        } else {
+            await deliver(trigger, successor.id, branchId);
+            if (prepare) expect(prepare).toHaveBeenCalledTimes(1);
+            expect(trigger.delivery.providerCalls).toHaveLength(0);
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } })).toMatchObject({
+                id: successor.id, status: "pending", scheduledFor: changedDue, claimToken: null, processingDeadlineAt: null,
+            });
+            jest.setSystemTime(changedDue);
+        }
+        await trigger.service.dispatchDueJobs();
+        await trigger.service.dispatchDueJobs();
+        expect(trigger.delivery.providerCalls).toHaveLength(1);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } })).toMatchObject({
+            status: "canceled", cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON, scheduledFor: due,
+        });
+        expect(await db.raw.message_trigger_job.findMany({ where: { originalJobId: original.id } })).toEqual([
+            expect.objectContaining({ id: successor.id, status: "sent" }),
+        ]);
+    });
+
     it.each(["direct dispatch", "dispatch tick"])("makes denied sender terminal at a real due attempt via %s, even after approval", async entry => {
         const { branchId, create, clients, toggle, link, trigger } = await fixture();
         await toggle(true);
@@ -297,8 +367,9 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
         await clients.update(branchId, client.id, { startDate: null });
         await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+        const discover = jest.spyOn(trigger.jobRepository, "findDueRecordLinkJobsForSenderCheck");
+        const fence = jest.spyOn(trigger.jobRepository, "fenceServiceRecordLinkAttempt");
         if (entry === "dispatch tick") {
-            jest.spyOn(trigger.service["messageSenderApprovalService"], "getApprovedBranchIds").mockResolvedValue(new Set());
             jest.setSystemTime(new Date(due.getTime() - 1));
             await trigger.service.dispatchDueJobs();
             expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } }))
@@ -307,15 +378,51 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         jest.setSystemTime(due);
         if (entry === "dispatch tick") await trigger.service.dispatchDueJobs();
         else await deliver(trigger, job.id, branchId);
+        if (entry === "dispatch tick") {
+            expect(discover).toHaveBeenCalledWith([branchId], due);
+            expect(fence).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: job.id }), due, "pending", true);
+        }
         expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({
             status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, recoveryReason: null, recoveryEpoch: null,
         });
         await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
+        await trigger.service.dispatchDueJobs();
         await clients.update(branchId, client.id, { startDate: dates.startDate });
         expect(await link.sweepRecovery()).toBe(0);
         expect(await link.scheduleForServiceStart(schedule.id)).toBe(false);
+        await trigger.service.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findMany({ where: { branchId, employeeScheduleId: schedule.id } })).toEqual([
+            expect.objectContaining({ id: job.id, status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, originalJobId: null }),
+        ]);
         expect(trigger.delivery.providerCalls).toHaveLength(0);
         expect(await db.raw.message_log.count({ where: { branchId } })).toBe(0);
+    });
+
+    it.each([false, true])("dispatches an approved eligible job once (approval changes after discovery: %s)", async changes => {
+        const { branchId, create, trigger } = await fixture();
+        const { schedule } = await create("waiting");
+        const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        if (changes) {
+            await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+            const discover = trigger.jobRepository.findDueRecordLinkJobsForSenderCheck.bind(trigger.jobRepository);
+            const fence = jest.spyOn(trigger.jobRepository, "fenceServiceRecordLinkAttempt");
+            jest.spyOn(trigger.jobRepository, "findDueRecordLinkJobsForSenderCheck").mockImplementationOnce(async (branches, now) => {
+                const rows = await discover(branches, now);
+                expect(rows.map(row => row.id)).toContain(job.id);
+                await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
+                return rows;
+            });
+            jest.setSystemTime(due);
+            await trigger.service.dispatchDueJobs();
+            expect(fence).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: job.id }), due, "pending", true);
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({ status: "pending" });
+            expect(trigger.delivery.providerCalls).toHaveLength(0);
+        }
+        jest.setSystemTime(new Date(due.getTime() + 60_000));
+        await trigger.service.dispatchDueJobs();
+        await trigger.service.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({ status: "sent" });
+        expect(trigger.delivery.providerCalls).toHaveLength(1);
     });
 
     it.each([false, true])("captures the %s epoch at a pending original's first actual cancellation", async enabled => {
@@ -360,27 +467,115 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(await acceptedFor(branchId)).toHaveLength(1);
     });
 
-    it("rechecks the exact epoch at the provider fence after a successor is admitted", async () => {
+    it.each(["same", "off", "new-epoch"])("rechecks the %s setting at the provider fence after preparation", async mode => {
         const { branchId, create, clients, link, toggle, trigger } = await fixture();
-        await toggle(true);
+        const { enabledAt: epoch } = await toggle(true);
         const { client, schedule } = await create();
         await clients.confirmBooking(branchId, client.id);
         jest.setSystemTime(due);
         expect(await link.sweepRecovery()).toBe(1);
         const successor = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, originalJobId: { not: null } } });
         const realPrepare = trigger.delivery.prepareJob.bind(trigger.delivery);
-        jest.spyOn(trigger.delivery, "prepareJob").mockImplementationOnce(async job => {
+        const prepare = jest.spyOn(trigger.delivery, "prepareJob").mockImplementationOnce(async job => {
             const prepared = await realPrepare(job);
-            await toggle(false);
-            await toggle(true);
+            expect(prepared).not.toBeNull();
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } }))
+                .toMatchObject({ status: "processing", claimToken: job.claimToken });
+            if (mode !== "same") await toggle(false);
+            if (mode === "new-epoch") expect((await toggle(true)).enabledAt).not.toBe(epoch);
             return prepared;
         });
         await deliver(trigger, successor.id, branchId);
-        expect(trigger.delivery.providerCalls).toHaveLength(0);
-        expect(await acceptedFor(branchId)).toHaveLength(0);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(trigger.delivery.providerCalls).toHaveLength(mode === "same" ? 1 : 0);
+        expect(await acceptedFor(branchId)).toHaveLength(mode === "same" ? 1 : 0);
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: successor.originalJobId } })).toBe(1);
         expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } }))
-            .toMatchObject({ status: "canceled" });
+            .toMatchObject(mode === "same" ? { status: "sent" } : { status: "canceled", cancelReason: RECORD_LINK_RECOVERY_REFUSED });
     });
+
+    it.each(["same", "off", "new-epoch"])("rechecks the %s setting after the preliminary read and before insert", async mode => {
+        const { branchId, create, clients, link, toggle, trigger } = await fixture();
+        const { enabledAt: epoch } = await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        const issue = link["issueServiceRecordLinkJob"].bind(link);
+        const prepare = jest.spyOn(link as unknown as { issueServiceRecordLinkJob: typeof issue }, "issueServiceRecordLinkJob")
+            .mockImplementationOnce(async (id, options) => {
+                expect(options.recovery).toEqual(expect.any(Function));
+                if (mode !== "same") await toggle(false);
+                if (mode === "new-epoch") expect((await toggle(true)).enabledAt).not.toBe(epoch);
+                return issue(id, options);
+            });
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(mode === "same" ? 1 : 0);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        const rows = await db.raw.message_trigger_job.findMany({ where: { originalJobId: original.id } });
+        expect(rows).toHaveLength(mode === "same" ? 1 : 0);
+        await trigger.service.dispatchDueJobs();
+        expect(trigger.delivery.providerCalls).toHaveLength(mode === "same" ? 1 : 0);
+    });
+
+    it.each(["branch disabled", "rule disabled", "sender denied", "assignment replaced", "link revoked"])(
+        "refuses provider entry when %s after recovery preparation",
+        async mode => {
+            const { branchId, create, clients, link, lock, toggle, trigger } = await fixture();
+            await toggle(true);
+            const { client, schedule } = await create();
+            await clients.confirmBooking(branchId, client.id);
+            jest.setSystemTime(due);
+            expect(await link.sweepRecovery()).toBe(1);
+            const successor = await db.raw.message_trigger_job.findFirstOrThrow({
+                where: { branchId, employeeScheduleId: schedule.id, originalJobId: { not: null } },
+            });
+            const realPrepare = trigger.delivery.prepareJob.bind(trigger.delivery);
+            const prepare = jest.spyOn(trigger.delivery, "prepareJob").mockImplementationOnce(async job => {
+                const prepared = await realPrepare(job);
+                await lock.runExclusive(branchId, async tx => {
+                    switch (mode) {
+                        case "branch disabled":
+                            await tx.system_setting.create({ data: {
+                                key: `branch:${branchId}:message_policy:trigger-dispatch:enabled`, value: "false",
+                            } });
+                            break;
+                        case "rule disabled":
+                            await tx.message_trigger_rule.update({ where: { id: SERVICE_RECORD_LINK_RULE_ID }, data: { isActive: false } });
+                            break;
+                        case "sender denied":
+                            await tx.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+                            break;
+                        case "assignment replaced":
+                            await tx.employee_schedule.update({ where: { id: schedule.id, branchId }, data: { replaced: true } });
+                            break;
+                        case "link revoked":
+                            await tx.service_record_token.updateMany({ where: { branchId, scheduleId: schedule.id, active: true },
+                                data: { active: false, revokedAt: due } });
+                            break;
+                    }
+                });
+                return prepared;
+            });
+            try {
+                if (mode === "branch disabled") {
+                    await expect(deliver(trigger, successor.id, branchId)).rejects.toMatchObject({ status: 409 });
+                } else {
+                    await deliver(trigger, successor.id, branchId);
+                    expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } })).toMatchObject({
+                        status: "canceled", claimToken: null,
+                        ...(mode === "sender denied" ? { cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } : {}),
+                    });
+                }
+                expect(prepare).toHaveBeenCalledTimes(1);
+                expect(trigger.delivery.providerCalls).toHaveLength(0);
+                expect(await db.raw.message_log.count({ where: { branchId, triggerJobId: successor.id } })).toBe(0);
+            } finally {
+                if (mode === "rule disabled") {
+                    await db.raw.message_trigger_rule.update({ where: { id: SERVICE_RECORD_LINK_RULE_ID }, data: { isActive: true } });
+                }
+            }
+        },
+    );
 
     it("keeps a provider-rejected attempt terminal after pre-booking supersedes transport retry", async () => {
         const { branchId, create, clients, link, toggle, trigger } = await fixture();
@@ -423,6 +618,29 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
             .toMatchObject({ recoveryState: "ineligible_terminal", recoveryTransitionStatus: "terminated",
                 payload: expect.objectContaining({ employeeId: employee.id }) });
         expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it.each(["employee", "replaced assignment"])("never admits a pre-booking observation for a changed %s", async field => {
+        const { branchId, create, clients, link, toggle, trigger, lock } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        const replacement = await createEmployee(db.raw, tracker, { branchId, smsAutomationEnabled: true });
+        await lock.runExclusive(branchId, tx => tx.employee_schedule.update({
+            where: { id: schedule.id, branchId },
+            data: field === "employee" ? { primaryEmployeeId: replacement.id } : { replaced: true },
+        }));
+        jest.setSystemTime(new Date("2026-11-28T04:00:00Z"));
+        await clients.confirmBooking(branchId, client.id);
+        expect(await link.sweepRecovery()).toBe(0);
+        await trigger.service.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findMany({ where: {
+            OR: [{ originalJobId: original.id }, { dedupeKey: serviceRecordAutomaticJobKey(schedule.id, replacement.id) }],
+        } })).toHaveLength(0);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } })).toMatchObject({
+            status: "canceled", cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON, recoveryState: "ineligible_terminal",
+        });
+        expect(trigger.delivery.providerCalls).toHaveLength(0);
     });
 
     it("blocks a legacy canceled occurrence under an alternate ordinary key", async () => {
@@ -506,15 +724,29 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(await acceptedFor(branchId)).toHaveLength(0);
     });
 
-    it("counts accepted manual sends and still permits an explicit resend", async () => {
+    it.each(["linked history", "ledger only"])("counts accepted manual sends from %s and still permits an explicit resend", async proof => {
         const { branchId, create, clients, toggle, link, trigger } = await fixture();
         await toggle(true);
         const { client, schedule } = await create();
         await clients.confirmBooking(branchId, client.id);
         const manual = await link.sendNow(schedule.id);
         await deliver(trigger, manual.jobId, branchId);
+        if (proof === "ledger only") {
+            const [accepted] = await acceptedFor(branchId);
+            if (!accepted) throw new Error("Expected the manual provider acceptance");
+            const occurrence = storedOccurrence(accepted);
+            if (!occurrence) throw new Error("Expected a committed occurrence for the manual send");
+            await db.raw.message_log.update({ where: { id: accepted.id }, data: {
+                triggerJobId: null, variables: occurrenceVariables(occurrence),
+            } });
+            await db.raw.message_trigger_job.delete({ where: { id: manual.jobId } });
+        }
         jest.setSystemTime(due);
         expect(await link.sweepRecovery()).toBe(0);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, status: "canceled" } });
+        expect(original).toMatchObject({ recoveryState: "ineligible_terminal", scheduledFor: due });
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
+        expect(trigger.delivery.providerCalls).toHaveLength(1);
         expect(await acceptedFor(branchId)).toHaveLength(1);
         const resend = await link.sendNow(schedule.id);
         await deliver(trigger, resend.jobId, branchId);

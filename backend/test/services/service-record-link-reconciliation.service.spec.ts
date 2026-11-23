@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { ServiceRecordLinkReconciliationService } from "application/services/service-record-link-reconciliation.service";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
@@ -9,6 +10,7 @@ import {
 } from "domain/constants/service-record-link-message";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import * as sentry from "infrastructure/observability/service-record-sentry";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
 describe("ServiceRecordLinkReconciliationService", () => {
@@ -31,6 +33,53 @@ describe("ServiceRecordLinkReconciliationService", () => {
 
     const createLinkService = () => ({
         scheduleForServiceStart: jest.fn().mockResolvedValue(true),
+        sweepRecovery: jest.fn().mockResolvedValue(0),
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    it.each([
+        { sweepFails: true, reconcileFails: false, count: 2 },
+        { sweepFails: false, reconcileFails: true, count: 3 },
+        { sweepFails: true, reconcileFails: true, count: 0 },
+    ])("isolates sweep=$sweepFails and reconciliation=$reconcileFails failures", async ({ sweepFails, reconcileFails, count }) => {
+        jest.useFakeTimers();
+        const link = createLinkService();
+        const service = new ServiceRecordLinkReconciliationService(createPrisma() as never, link as never, createSchedulerLeaseMock());
+        const capture = jest.spyOn(sentry, "captureServiceRecordError").mockImplementation(() => undefined);
+        const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const sweepError = Object.assign(new Error("connection lost"), { code: "P1001" });
+        const reconcileError = new Error("reconciliation failed");
+        link.sweepRecovery.mockResolvedValue(3);
+        if (sweepFails) link.sweepRecovery.mockRejectedValueOnce(sweepError);
+        const reconcile = jest.spyOn(service, "reconcileMissingJobs").mockResolvedValue(2);
+        if (reconcileFails) reconcile.mockRejectedValueOnce(reconcileError);
+
+        await expect(service.repairMissingJobs()).resolves.toBeUndefined();
+        expect(link.sweepRecovery).toHaveBeenCalledTimes(1);
+        expect(reconcile).toHaveBeenCalledTimes(1);
+        expect(link.sweepRecovery.mock.invocationCallOrder[0]).toBeLessThan(reconcile.mock.invocationCallOrder[0]!);
+        expect(capture.mock.calls.map(([error]) => error)).toEqual([
+            ...(sweepFails ? [sweepError] : []),
+            ...(reconcileFails ? [reconcileError] : []),
+        ]);
+        if (reconcileFails) expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("reconcileMissingJobs"), expect.any(String));
+        if (count) expect(log).toHaveBeenCalledWith(`[Service Record Link Repair] Recreated ${count} missing message jobs`);
+        else expect(log).not.toHaveBeenCalled();
+
+        await expect(service.repairMissingJobs()).resolves.toBeUndefined();
+        expect(link.sweepRecovery).toHaveBeenCalledTimes(sweepFails ? 1 : 2);
+        expect(reconcile).toHaveBeenCalledTimes(sweepFails ? 1 : 2);
+        if (sweepFails) {
+            jest.advanceTimersByTime(5 * 60 * 1000);
+            await expect(service.repairMissingJobs()).resolves.toBeUndefined();
+            expect(link.sweepRecovery).toHaveBeenCalledTimes(2);
+            expect(reconcile).toHaveBeenCalledTimes(2);
+        }
     });
 
     it("repairs only durable retry markers and safe internal cancellations", async () => {
@@ -338,6 +387,7 @@ describe("ServiceRecordLinkReconciliationService", () => {
 
         await service.repairMissingJobs();
 
+        expect(linkService.sweepRecovery).not.toHaveBeenCalled();
         expect(prisma.branch.findMany).not.toHaveBeenCalled();
     });
 });

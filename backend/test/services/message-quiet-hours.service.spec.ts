@@ -805,19 +805,29 @@ describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
         let releaseSecond!: () => void; const secondMayEnter = new Promise<void>(resolve => { releaseSecond = resolve; });
         const admission = f.quiet.runAdmission.bind(f.quiet);
         jest.spyOn(f.quiet, "runAdmission").mockImplementation((async (...args: any[]) => {
+            if (args[3]) return (admission as any)(...args);
             const ordinal = ++arrivals; if (ordinal === 2) releasePrepared(); await bothPrepared;
             if (ordinal === 2) await secondMayEnter; return (admission as any)(...args);
         }) as never);
         const current = await f.settings.getMessageAutomationPolicyConfig(f.job.branchId!);
-        const first = f.service.sendJob(f.job); const second = f.service.sendJob(duplicate);
-        expect(await first).toBe(false);
-        const stored = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: "87000000-0000-4000-8000-000000008201" } });
-        expect(stored).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", claimToken: null, nextAttemptAt: null });
-        expect(await handle.raw.message_log.count({ where: { triggerJobId: stored.id, status: "failed", providerAcceptanceState: "prepared", nextRetryAt: null,
-            variables: { path: ["quietHoursDisposition"], equals: "CANCEL" } } })).toBe(1);
-        const off = structuredClone(current.configuration); off.quietHours.enabled = false;
-        await f.settings.setMessageAutomationPolicyConfig(f.job.branchId!, current.version, off); releaseSecond();
-        expect(await second).toBe(false); expect(f.aligo.sendSms).toHaveBeenCalledTimes(0);
+        const sends = [f.service.sendJob(f.job), f.service.sendJob(duplicate)];
+        // Either PostgreSQL preparation can reach the admission gate first.
+        let stored;
+        try {
+            expect(await Promise.race(sends)).toBe(false);
+            expect(arrivals).toBe(2);
+            stored = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.job.id } });
+            expect(stored).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", claimToken: null, nextAttemptAt: null });
+            expect(await handle.raw.message_log.count({ where: { triggerJobId: stored.id, status: "failed", providerAcceptanceState: "prepared", nextRetryAt: null,
+                variables: { path: ["quietHoursDisposition"], equals: "CANCEL" } } })).toBe(1);
+            const off = structuredClone(current.configuration); off.quietHours.enabled = false;
+            await f.settings.setMessageAutomationPolicyConfig(f.job.branchId!, current.version, off);
+        } finally {
+            releasePrepared();
+            releaseSecond();
+        }
+        expect(await Promise.all(sends)).toEqual([false, false]);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(0);
         jest.mocked(Date.now).mockReturnValue(stored.updatedAt.getTime() + 2 * 60 * 60_000);
         const jobs = new SbMessageTriggerJobRepository(handle.service);
         const core = Object.assign(Object.create(MessageTriggerService.prototype), { jobRepository: jobs, messageLogRepository: f.repository });

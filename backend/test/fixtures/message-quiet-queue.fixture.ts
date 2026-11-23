@@ -62,6 +62,11 @@ export function memoryQueue(templateBody?: string) {
         findMany: jest.fn(async ({ where = {}, include }: { where?: Row; include?: Row } = {}) => tables[name]!.filter(row => matches(row, where)).map(row => {
             const result = structuredClone(row);
             if (include?.["logs"]) result["logs"] = tables["message_log"]!.filter(log => log["triggerJobId"] === row["id"] && matches(log, ((include["logs"] as Row)["where"] ?? {}) as Row));
+            if (include?.["triggerJob"]) {
+                const job = tables["message_trigger_job"]!.find(job => job["id"] === row["triggerJobId"]);
+                const rule = job && tables["message_trigger_rule"]!.find(rule => rule["id"] === job["ruleId"]);
+                result["triggerJob"] = job ? structuredClone({ ...job, rule }) : null;
+            }
             return result;
         })),
         create: jest.fn(async ({ data }: { data: Row }) => {
@@ -78,7 +83,13 @@ export function memoryQueue(templateBody?: string) {
         updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
             if (name === "message_log" && logCasFailure) return { count: 0 };
             const found = tables[name]!.filter(row => matches(row, where));
-            for (const row of found) Object.assign(row, structuredClone(data), { updatedAt: new Date(Date.now()) });
+            for (const row of found) {
+                const update = structuredClone(data);
+                if (name === "message_occurrence_claim" && update["epoch"]) {
+                    update["epoch"] = Number(row["epoch"]) + Number((update["epoch"] as Row)["increment"]);
+                }
+                Object.assign(row, update, { updatedAt: new Date(Date.now()) });
+            }
             return { count: found.length };
         }),
         update: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
@@ -103,7 +114,8 @@ export function memoryQueue(templateBody?: string) {
                 const [branchId, occurrenceKey, templateKey, eventType, lifecycleId, recipientKind, recipientId, slot] = sql.values;
                 const claims = tables["message_occurrence_claim"]!;
                 if (!claims.some(row => row["branchId"] === branchId && row["occurrenceKey"] === occurrenceKey)) {
-                    claims.push({ branchId, occurrenceKey, templateKey, eventType, lifecycleId, recipientKind, recipientId, slot, state: "released", holderLogId: null });
+                    claims.push({ branchId, occurrenceKey, templateKey, eventType, lifecycleId, recipientKind, recipientId, slot,
+                        state: "released", holderLogId: null, epoch: 0 });
                 }
             }
             return 1;

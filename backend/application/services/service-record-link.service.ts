@@ -286,6 +286,13 @@ export class ServiceRecordLinkService {
                 });
                 if (!token) return false;
                 const { original, schedule } = current;
+                if (await this.jobRepository.hasAcceptedOccurrence?.(pendingJob, tx)) {
+                    await tx.message_trigger_job.update({
+                        where: { id: original.id, branchId: candidate.branch_id },
+                        data: { recoveryState: "ineligible_terminal", nextCheckAt: null },
+                    });
+                    return false;
+                }
                 await tx.message_trigger_job.create({ data: {
                     branchId: candidate.branch_id,
                     ruleId: SERVICE_RECORD_LINK_RULE_ID,
@@ -635,7 +642,10 @@ export class ServiceRecordLinkService {
         const automaticDedupeKey = replacedRecipient ? serviceRecordAutomaticJobKey(scheduleId, employee.id) : originalKey;
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
         const automaticReplacement = !options.recovery && options.rescheduleAutomatic
-            ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: automaticDedupeKey, branchId: schedule.branchId } }) : null;
+            ? replacedRecipient
+                ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: automaticDedupeKey, branchId: schedule.branchId } })
+                : original
+            : null;
         if (automaticReplacement && (automaticReplacement.branchId !== schedule.branchId
             || automaticReplacement.employeeScheduleId !== scheduleId || automaticReplacement.clientId !== schedule.clientId)) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));

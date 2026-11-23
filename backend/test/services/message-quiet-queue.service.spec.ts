@@ -1027,7 +1027,7 @@ describe("quiet retry scheduler release", () => {
         expect((await f.logs.findByIdInBranch(f.branchId, held.id))!.attempts).toBe(1);
     });
 
-    async function holdAutomaticRetry(global = false, throughScheduler = false) {
+    async function holdAutomaticRetry(global = false, throughScheduler = false, bodyOnly = false) {
         const f = memoryQueue();
         const ruleId = randomUUID();
         const rule: Row = { id: ruleId, branchId: global ? null : f.branchId, isActive: true, deletedAt: null,
@@ -1036,11 +1036,11 @@ describe("quiet retry scheduler release", () => {
         const linked = await f.jobs.create(MessageTriggerJobEntity.create({ branchId: f.branchId, ruleId, clientId: 7,
             templateKey: MessageTriggerTemplateKey.INFO, dedupeKey: "automatic:quiet-retry", scheduledFor: original,
             recipientType: MessageTriggerRecipientType.CLIENT,
-            // The seeded legacy retry has a stored body and only a per-log fence.
-            // The scheduler-created retry below exercises canonical occurrences.
+            recipientPhone: "01000000011",
             payload: { memberId: "", recipientName: "synthetic", recipientPhone: "01000000011", messageBody: "automatic held body",
-                templateVariables: throughScheduler ? {} : { triggerType: "agent_scheduled" } } }));
-        const draft = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "INFO",
+                templateVariables: bodyOnly ? { triggerType: "agent_scheduled" } : {} } }));
+        const templateKey = bodyOnly ? "agent_scheduled_sms" : "info_sms";
+        const draft = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey,
             triggerJobId: linked.id, receiver: "01000000011", clientId: 7, messageBody: "automatic held body",
             variables: {}, providerAcceptanceKey: "auto-source", providerAcceptanceFingerprint: "auto-source-fingerprint", providerAcceptanceState: "rejected" });
         draft.status = "failed"; draft.attempts = 1;
@@ -1055,7 +1055,7 @@ describe("quiet retry scheduler release", () => {
             const held = (await f.logs.findByIdInBranch(f.branchId, 2))!;
             return { f, rule, held, scheduler };
         }
-        const pending = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "INFO",
+        const pending = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey,
             triggerJobId: linked.id, receiver: source.receiver, clientId: 7, messageBody: source.messageBody,
             variables: { retryOfLogId: String(source.id), retryInvocation: "automatic", retrySafety: "uncertain" },
             providerAcceptanceKey: "auto-held", providerAcceptanceFingerprint: "auto-held-fingerprint", providerAcceptanceState: "prepared" });
@@ -1194,23 +1194,53 @@ describe("quiet retry scheduler release", () => {
         // Ordinary SMS retry does not depend on the Core trigger-job-retry switch.
         f.tables["system_setting"]!.push({ key: `branch:${f.branchId}:message_policy:trigger-job-retry:enabled`, value: "false" });
         const sourceBefore = structuredClone(f.tables["message_log"]![0]);
-        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
-        f.approval.ensureApproved.mockClear(); f.db.$transaction.mockClear();
+        const send = f.aligo.sendSms.getMockImplementation()!;
+        const admission = jest.fn();
+        f.aligo.sendSms.mockImplementation(async request => {
+            const row = f.tables["message_log"]![1]!;
+            const claim = f.tables["message_occurrence_claim"]!.find(row => row["holderLogId"] === held.id);
+            admission(row["providerAcceptanceState"], row["providerCallStartedAt"], claim?.["state"], claim?.["templateKey"]);
+            return send(request);
+        });
+        f.approval.ensureApproved.mockClear();
         jest.setSystemTime(release);
         await scheduler.retryFailedMessages();
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(allowed ? 1 : 0);
-        expect(begin).toHaveBeenCalledTimes(allowed ? 1 : 0);
+        expect(admission).toHaveBeenCalledTimes(allowed ? 1 : 0);
+        if (allowed) expect(admission).toHaveBeenCalledWith("started", release, "in_flight", "system:INFO");
         expect(f.approval.ensureApproved).toHaveBeenCalledTimes(mode === "sms retry off" ? 0 : 1);
-        // The fixture rejects nested root transactions and provider calls in a transaction.
-        expect(f.db.$transaction).toHaveBeenCalledTimes(["sms retry off", "activation missing"].includes(mode) ? 0 : 1);
         expect(f.tables["message_log"]).toHaveLength(2);
         expect(f.tables["message_log"]![0]).toEqual(sourceBefore);
         const current = (await f.logs.findByIdInBranch(f.branchId, held.id))!;
         expect(current.attempts).toBe(allowed ? 2 : 1);
+        expect(current.providerCallStartedAt).toEqual(allowed ? release : null);
+        const claims = f.tables["message_occurrence_claim"]!.filter(row => row["holderLogId"] !== null);
+        expect(claims).toEqual(allowed ? [expect.objectContaining({ state: "accepted", acceptedLogId: held.id })] : []);
         if (mode === "retry off" || mode === "target mismatch") {
             expect(current).toMatchObject({ status: "failed", nextRetryAt: null });
             expect(current.errorMessage).toContain(mode === "retry off" ? "rule_retry_disabled" : "target_client_status_mismatch");
         } else if (!allowed) expect(current).toMatchObject({ status: "pending", nextRetryAt: release });
+    });
+
+    it("releases a body-only automatic retry through its per-log fence", async () => {
+        const { f, held, scheduler } = await holdAutomaticRetry(false, false, true);
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.tables["message_occurrence_claim"]).toEqual([]);
+        expect(await f.logs.findByIdInBranch(f.branchId, held.id)).toMatchObject({
+            status: "sent", attempts: 2, providerCallStartedAt: release,
+        });
+    });
+
+    it("rolls back a canonical held retry's provider start and occurrence claim on commit failure", async () => {
+        const { f, scheduler } = await holdAutomaticRetry();
+        const before = structuredClone(f.tables);
+        f.commitFailure();
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.tables).toEqual(before);
     });
 
     it.each(["invocation", "job FK"])("rejects a changed current %s before using the captured eligibility", async kind => {
@@ -1225,7 +1255,8 @@ describe("quiet retry scheduler release", () => {
         jest.setSystemTime(release);
         await scheduler.retryFailedMessages();
         expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
-        expect(f.tables["message_log"]![1]).toMatchObject({ status: "pending", attempts: 1, nextRetryAt: release });
+        expect(f.tables["message_log"]![1]).toMatchObject({ status: "pending", attempts: 1, nextRetryAt: release, providerCallStartedAt: null });
+        expect(f.tables["message_occurrence_claim"]).toEqual([]);
     });
 });
 
