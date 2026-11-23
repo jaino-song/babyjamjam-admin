@@ -65,6 +65,7 @@ import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.erro
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
+    SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
@@ -1045,6 +1046,50 @@ describe("MessageTriggerService", () => {
                 { branchId, automaticEnabled: true, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
             ], at21, 100, []);
             expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it.each([false, true])("rechecks a due record link under the denied branch lock (live approved=%s)", async approved => {
+            const fx = createDispatchService(settings());
+            const approvedBranch = "approved-branch";
+            const job = createJob({ ruleId: SERVICE_RECORD_LINK_RULE_ID, templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, employeeScheduleId: 10, scheduledFor: at21 });
+            fx.jobRepository.findDueDispatchBranchIds.mockResolvedValue([branchId, approvedBranch]);
+            fx.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([approvedBranch]));
+            const persistedJobs = {
+                findFirst: jest.fn().mockResolvedValue({ id: job.id, canceledByUser: false, employeeScheduleId: 10, clientId: job.clientId }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            };
+            const transaction = Object.assign(fx.transaction, { message_trigger_job: { ...fx.transaction.message_trigger_job, ...persistedJobs } });
+            transaction.$queryRaw.mockResolvedValue([{ approved }]);
+            const repository = new SbMessageTriggerJobRepository(fx.prisma as never);
+            const findDue = jest.fn().mockResolvedValue([job]);
+            const fence = jest.fn(repository.fenceServiceRecordLinkAttempt.bind(repository));
+            Object.assign(fx.jobRepository, { findDueRecordLinkJobsForSenderCheck: findDue, fenceServiceRecordLinkAttempt: fence });
+
+            await fx.service.dispatchDueJobs();
+
+            expect(findDue).toHaveBeenCalledWith([branchId], at21);
+            expect(fx.messageAutomationBranchLockService.runExclusive).toHaveBeenCalledWith(branchId, expect.any(Function));
+            expect(fence).toHaveBeenCalledTimes(1);
+            expect(fence).toHaveBeenCalledWith(transaction, job, at21, "pending", true);
+            expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(transaction.employee_schedule.findFirst).not.toHaveBeenCalled();
+            if (approved) {
+                expect(persistedJobs.updateMany).not.toHaveBeenCalled();
+            } else {
+                expect(persistedJobs.updateMany).toHaveBeenCalledTimes(1);
+                expect(persistedJobs.updateMany).toHaveBeenCalledWith({
+                    where: expect.objectContaining({ id: job.id, branchId, status: "pending", scheduledFor: { lte: at21 } }),
+                    data: { status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, canceledAt: at21,
+                        claimToken: null, processingDeadlineAt: null, nextAttemptAt: null },
+                });
+            }
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
+                expect.objectContaining({ branchId: approvedBranch }),
+            ], at21, 100, []);
+            expect(fx.jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.prepareJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
         });
 
         it("fails closed on corrupt policy reads before cadence consumption or provider calls", async () => {
