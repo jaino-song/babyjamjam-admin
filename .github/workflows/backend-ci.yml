@@ -148,6 +148,16 @@ jobs:
       - name: Lint
         run: pnpm --filter ./backend run lint
 
+      - name: Install PDF and archive tools for deployment contracts
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ghostscript qpdf rclone
+          /usr/bin/qpdf --version
+          /usr/bin/rclone version
+          gs --version
+          gs -h | grep -w pdfimage24
+
       - name: Verify backend deployment automation contracts
         run: |
           backend/deploy/lightsail/ci-automation-contract.test.sh
