@@ -3,8 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import {
   RECEIPT_BRANCH_HEADER,
-  RECEIPT_SEND_SUCCESS,
-  RECEIPT_SEND_UNCONFIRMED,
   type StandaloneReceiptRequest,
 } from "@babyjamjam/shared";
 
@@ -144,7 +142,7 @@ it("keeps the edited B date through an asynchronous detail refresh and queues it
 
   await act(async () => { resolve(accepted()); await pending; });
   expect(result.current.dialog).toBeNull();
-  expect(mockToast).toHaveBeenCalledWith({ variant: "success", title: RECEIPT_SEND_SUCCESS });
+  expect(mockToast).toHaveBeenCalledWith({ variant: "success", title: "영수증 발송을 요청했습니다." });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: messageTriggerKeys.upcoming() });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["messages", "logs", "client", CLIENT_ID] });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: receiptDetailKey, exact: true, refetchType: "active" });
@@ -176,7 +174,7 @@ it.each(["network", "5xx", "malformed acceptance", "unknown response"])(
     const { result } = setup(A);
     await act(async () => result.current.dialog?.submit());
     const firstRequest = request(0);
-    expect(result.current.dialog?.error).toBe(RECEIPT_SEND_UNCONFIRMED);
+    expect(result.current.dialog?.error).toBe("발송 접수 여부를 확인하지 못했어요. 다시 시도해 주세요.");
     expect(result.current.dialog?.isPending).toBe(false);
     expect(mockToast).not.toHaveBeenCalled();
     expect(invalidate).not.toHaveBeenCalled();
@@ -214,7 +212,7 @@ it("keeps the UUID after a timeout and waits for an explicit retry", async () =>
       await pending;
     });
 
-    expect(result.current.dialog?.error).toBe(RECEIPT_SEND_UNCONFIRMED);
+    expect(result.current.dialog?.error).toBe("발송 접수 여부를 확인하지 못했어요. 다시 시도해 주세요.");
     expect(mockFetch).toHaveBeenCalledTimes(1);
     await act(async () => result.current.dialog?.submit());
     expect(request(1)).toEqual(request(0));
