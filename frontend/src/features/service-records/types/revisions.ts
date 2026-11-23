@@ -1,3 +1,5 @@
+import { initialNoProviderDocumentProjectionSchema } from "@/lib/eformsign/initial-document-recovery-contract";
+
 import {
     SERVICE_RECORD_REVISION_DOCUMENT_OPERATIONS,
     SERVICE_RECORD_REVISION_DOCUMENT_STATUSES,
@@ -112,14 +114,19 @@ export function normalizeServiceRecordRevisionDocumentSummary(
     if (!isRecord(value)) {
         throw new Error("Invalid service-record revision document response");
     }
+    const id = requiredString(value.id, "document.id");
+    const generation = requiredString(value.generation, "document.generation");
+    const projection = initialNoProviderDocumentProjectionSchema.safeParse(value.noProviderDocumentConfirmable);
     return {
-        id: requiredString(value.id, "document.id"),
+        id,
         operation: normalizeOperation(value.operation),
-        generation: requiredString(value.generation, "document.generation"),
+        generation,
         status: normalizeStatus(value.status),
         documentVersion: positiveIntegerOrNull(value.documentVersion, "document.documentVersion"),
         canRetry: value.canRetry === true,
         reasonCode: normalizeReasonCode(value.reasonCode),
+        ...(projection.success && projection.data.stateId === id && projection.data.generation === generation
+            ? { noProviderDocumentConfirmable: projection.data } : {}),
     };
 }
 
