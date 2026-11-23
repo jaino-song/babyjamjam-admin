@@ -159,9 +159,10 @@ test('mirror proves the named Drive root from its parent and uses one no-follow 
     const beforeInventory = calls.slice(0, calls.indexOf(recursive[0]));
     assert.ok(beforeInventory.some(({ follow, operands }) => follow && operands[0] === 'fixture:'));
     assert.ok(beforeInventory.some(({ flags, operands }) => !flags.includes('--stat') && operands[0] === 'fixture:'));
-    assert.ok(calls.some(({ follow, parentId }) => follow && parentId === 'records_id'));
-
     assert.equal((await f.remote.read(filePath, f.remote.fromInventory(names, filePath))).sha256, digest(bytes));
+    const readCalls = (await f.calls()).slice(calls.length);
+    assert.ok(readCalls.slice(0, readCalls.findIndex(({ command }) => command === 'cat'))
+        .some(({ follow, parentId }) => follow && parentId === 'records_id'));
     const local = join(f.root, 'private.pdf');
     await fs.writeFile(local, bytes);
     const next = 'missing/deeper/new.pdf';
@@ -174,6 +175,33 @@ test('mirror proves the named Drive root from its parent and uses one no-follow 
     assertDataFlags(await f.calls());
 });
 
+test('idle Drive inventory uses only root checks and one no-follow recursive listing', async (t) => {
+    const f = await fixture(t, validRows());
+    const { root } = await f.remote.inventory();
+    const offset = (await f.calls()).length;
+    for (let i = 0; i < 19; i++) {
+        const parent = `${archive}/batch-${i}`;
+        f.state.rows[parent] = folder(`batch_${i}`);
+        f.state.rows[`${parent}/sample.pdf`] = pdf(`sample_${i}`);
+    }
+    await f.write();
+
+    const { names } = await f.remote.inventory(root);
+
+    assert.equal(names.size, 40);
+    const calls = (await f.calls()).slice(offset);
+    assert.ok(calls.every(({ command }) => command === 'lsjson'));
+    assert.equal(calls.length, 7);
+    const recursive = calls.filter((call) => call.recursive);
+    assert.equal(recursive.length, 1);
+    assert.ok(recursive[0].flags.includes('--drive-skip-shortcuts=true'));
+    assert.equal(calls.filter(({ follow }) => follow).length, 2);
+    assert.ok(calls.filter(({ follow }) => follow).every(({ operands, parentId }) =>
+        operands[0] === 'fixture:' && parentId === undefined));
+});
+
+const nativeLink = () => ({ ...pdf('native_link_id'), MimeType: 'application/x-link-url' });
+
 for (const [name, change, action, reason] of [
     ['an archive root only visible inclusively', (s) => {
         delete s.rows[archive];
@@ -185,9 +213,16 @@ for (const [name, change, action, reason] of [
     ['a conflicting native-link metadata row at the archive root', (s) => {
         s.inclusive[''] = [
             listed(archive, folder('archive_id')),
-            listed(archive + '.url', { ...pdf('native_link_id'), MimeType: 'application/x-link-url' }),
+            listed(archive + '.url', nativeLink()),
         ];
     }, 'inventory', /remote_shortcut_ambiguity/],
+    ['a native .url alias at the archive root in both views', (s) => {
+        s.rows[archive + '.url'] = nativeLink();
+    }, 'inventory', /unsafe_remote_listing/],
+    ['a native .url alias at the upload endpoint in both views', (s) => {
+        delete s.rows[archive + '/' + filePath];
+        s.rows[archive + '/' + filePath + '.url'] = nativeLink();
+    }, 'upload', /unsafe_remote_listing/],
     ['an apparent absent ancestor', (s) => {
         delete s.rows[archive + '/records'];
         s.inclusive[archive] = [listed('records', folder('records_id'))];
@@ -199,7 +234,7 @@ for (const [name, change, action, reason] of [
     ['an inclusive duplicate with identical visible metadata', (s) => {
         const row = listed('sample.pdf', pdf('sample_id'));
         s.inclusive[archive + '/records'] = [row, row];
-    }, 'inventory', /ambiguous_path/],
+    }, 'upload', /ambiguous_path/],
     ['an inclusive ID change with the same name, MIME and hash', (s) => {
         s.inclusive[archive + '/records'] = [listed('sample.pdf', pdf('different_id'))];
     }, 'delete', /remote_shortcut_ambiguity/],

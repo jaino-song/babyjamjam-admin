@@ -217,28 +217,6 @@ export function remoteTransport(settings, lockFd, legacyTimeout) {
         return chain;
     }
 
-    async function validateInventory(names, root) {
-        if (backend !== 'drive') return;
-        const children = new Map();
-        for (const entry of names.values()) {
-            if (root.includes(entry.id)) refuse('ambiguous_remote_identity');
-            const slash = entry.path.lastIndexOf('/');
-            const parent = entry.path.slice(0, Math.max(0, slash));
-            const name = entry.path.slice(slash + 1);
-            if (!children.has(parent)) children.set(parent, new Map());
-            putName(children.get(parent), name, { ...entry, path: name });
-        }
-        const dirs = [['', base ? root.at(-1) : null]];
-        for (const [path, parentId] of dirs) {
-            const expected = children.get(path) ?? new Map();
-            const inclusive = await list(underBase(path), { hashes: true, inclusive: true, parentId });
-            if (!same(expected, inclusive)) refuse('remote_shortcut_ambiguity');
-            for (const entry of expected.values()) {
-                if (entry.isDir) dirs.push([path ? path + '/' + entry.path : entry.path, entry.id]);
-            }
-        }
-    }
-
     function fromInventory(names, path) {
         const parts = segments(path);
         const leaf = parts.pop();
@@ -327,9 +305,16 @@ export function remoteTransport(settings, lockFd, legacyTimeout) {
         async inventory(expected) {
             boundRoot = expected ?? await rootChain();
             if (expected) await rootChain();
+            // The recursive inventory supplies positive no-follow evidence.
+            // Exact-path lookup pairs shallow views before any content access
+            // or creation so a skipped entry cannot be treated as absent.
             const names = await list(base, { recursive: true, hashes: true });
             await rootChain();
-            await validateInventory(names, boundRoot);
+            if (backend === 'drive') {
+                for (const { id } of names.values()) {
+                    if (boundRoot.includes(id)) refuse('ambiguous_remote_identity');
+                }
+            }
             return { names, root: boundRoot };
         },
         fromInventory,
