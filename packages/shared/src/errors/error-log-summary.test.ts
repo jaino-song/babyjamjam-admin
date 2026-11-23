@@ -105,11 +105,15 @@ describe("summarizeErrorForLog", () => {
 
   it("never reads a message or stack accessor", () => {
     const getter = jest.fn(() => { throw new Error("getter-sentinel"); });
-    const error = Object.defineProperties(new Error(), {
+    // A native Error can format its lazy stack while redefining the stack property.
+    const error = Object.defineProperties(Object.create(Error.prototype), {
       message: { get: getter },
       stack: { get: getter },
     });
-    expect(summarizeErrorForLog(error)).toEqual({ name: "Error" });
+    expect(error).toBeInstanceOf(Error);
+    expect(getter).not.toHaveBeenCalled();
+
+    expect(summarizeErrorForLog(error)).toStrictEqual({ name: "Error" });
     expect(getter).not.toHaveBeenCalled();
   });
 
