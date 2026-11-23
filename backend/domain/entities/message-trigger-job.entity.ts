@@ -52,6 +52,8 @@ export interface MessageTriggerJobPayload {
     clientId?: number | null;
     clientName?: string | null;
     employeeId?: number | null;
+    scheduleId?: number;
+    scheduleIncarnationId?: string;
     employeeName?: string | null;
     /**
      * Hash of the schedule and assignment source used to build an employee

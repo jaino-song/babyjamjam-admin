@@ -11,6 +11,7 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
     SERVICE_RECORD_LINK_SMS_TITLE,
+    getServiceRecordLinkScheduledFor,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerEventType,
@@ -166,6 +167,101 @@ describe("ServiceRecordLinkService", () => {
             endDate: new Date("2026-07-12T00:00:00.000Z"),
         },
         ...overrides,
+    });
+
+    describe("pre-booking recovery", () => {
+        const originalEpoch = new Date("2026-06-28T03:00:00.000Z");
+        const newEpoch = new Date("2026-06-29T03:00:00.000Z");
+        const assignment = () => {
+            const schedule = createSchedule();
+            return { ...schedule, primaryEmployeeId: schedule.primaryEmployee.id, incarnationId: "assignment-1",
+                client: { ...schedule.client, branchId: schedule.branchId },
+                primaryEmployee: { ...schedule.primaryEmployee, branchId: schedule.branchId } };
+        };
+        const createRecoveryFixture = () => {
+            const tokens = createTokenService();
+            const prisma = {
+                ...createPrisma(),
+                client: { findFirst: jest.fn() },
+                message_log: { findFirst: jest.fn().mockResolvedValue(null) },
+                message_trigger_job: {
+                    findFirst: jest.fn().mockResolvedValue(null),
+                    update: jest.fn().mockResolvedValue(undefined),
+                    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+                    create: jest.fn(),
+                },
+            };
+            const service = new ServiceRecordLinkService(prisma as never, tokens as never, createConfigService() as never,
+                createJobRepository() as never, createLogRepository() as never, createOverrideRepository() as never,
+                undefined, undefined, createBranchLock(prisma) as never, createAutomationActivationService() as never);
+            return { service, prisma, tokens };
+        };
+
+        it.each([
+            ["the same enabled epoch", new Date(originalEpoch), true],
+            ["OFF", null, false],
+            ["a new epoch after OFF → ON", newEpoch, false],
+        ])("rechecks %s at admission and preserves the original due time", async (_label, currentEpoch, eligible) => {
+            const { service, prisma, tokens } = createRecoveryFixture();
+            const schedule = assignment();
+            const scheduledFor = getServiceRecordLinkScheduledFor(schedule.startDate);
+            schedule.startDate = new Date("2026-07-02T00:00:00.000Z");
+            prisma.$queryRaw.mockResolvedValueOnce([{ id: "original", branch_id: schedule.branchId }])
+                .mockResolvedValueOnce([{ approved: true }]);
+            prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
+            prisma.message_trigger_job.findFirst.mockResolvedValueOnce({ id: "original", recoveryEpoch: originalEpoch,
+                employeeScheduleId: schedule.id, clientId: schedule.clientId, scheduledFor,
+                payload: { scheduleId: schedule.id, employeeId: schedule.primaryEmployeeId, scheduleIncarnationId: schedule.incarnationId } });
+            prisma.message_trigger_rule_branch_override.findUnique.mockResolvedValue({ canceledRetryEnabledAt: currentEpoch, isActive: true });
+
+            expect(await service.sweepRecovery()).toBe(0);
+
+            expect(prisma.message_trigger_job.update).toHaveBeenCalledTimes(1);
+            expect(prisma.message_trigger_job.update).toHaveBeenCalledWith({
+                where: { id: "original", branchId: schedule.branchId },
+                data: eligible ? { nextCheckAt: scheduledFor } : { recoveryState: "ineligible_terminal", nextCheckAt: null },
+            });
+            expect(prisma.message_trigger_job.create).not.toHaveBeenCalled();
+            expect(tokens.issueLink).not.toHaveBeenCalled();
+            expect(tokens.prepareLink).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["waiting", "2026-07-01T00:00:00Z", "waiting", true],
+            ["active", "2026-07-04T00:00:00Z", "waiting", true],
+            ["completed", "2026-07-13T00:00:00Z", "waiting", false],
+            ["terminated", "2026-07-01T00:00:00Z", "terminated", false],
+            ["replacement_requested", "2026-07-01T00:00:00Z", "replacement_requested", false],
+        ])("persists an observed exit to %s in the customer write transaction", async (status, time, storedStatus, eligible) => {
+            const now = new Date(time);
+            jest.setSystemTime(now);
+            const { service, prisma } = createRecoveryFixture();
+            const schedule = assignment();
+            prisma.client.findFirst.mockResolvedValue({ ...schedule.client, serviceStatus: storedStatus });
+            prisma.employee_schedule.findMany.mockResolvedValue([schedule] as never);
+            prisma.message_trigger_job.findFirst.mockResolvedValueOnce({ id: "original" });
+
+            await service.recordClientTransitionInTransaction(prisma as never, schedule.branchId, schedule.clientId,
+                { ...schedule.client, bookingConfirmedAt: null });
+
+            const enrollment = { recoveryEpoch: { not: null }, employeeSchedule: { is: {
+                branchId: schedule.branchId, clientId: schedule.clientId, replaced: false, terminatedAt: null,
+            } } };
+            const where = { branchId: schedule.branchId, clientId: schedule.clientId, status: "canceled",
+                cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON, canceledByUser: false,
+                recoveryReason: "record_link_pre_booking", recoveryState: "awaiting_transition" };
+            expect(prisma.message_trigger_job.updateMany).toHaveBeenNthCalledWith(1, {
+                where: expect.objectContaining({ ...where, ...(eligible ? { NOT: enrollment } : {}) }),
+                data: { recoveryState: "ineligible_terminal", recoveryTransitionStatus: status },
+            });
+            expect(prisma.message_trigger_job.updateMany).toHaveBeenCalledTimes(eligible ? 2 : 1);
+            if (eligible) {
+                expect(prisma.message_trigger_job.updateMany).toHaveBeenNthCalledWith(2, {
+                    where: expect.objectContaining({ ...where, ...enrollment }),
+                    data: { recoveryState: "eligible", recoveryTransitionStatus: status, nextCheckAt: now },
+                });
+            }
+        });
     });
 
     it("routes a date change through automatic-only replacement under current source locks", async () => {
@@ -1997,9 +2093,8 @@ describe("ServiceRecordLinkService", () => {
             );
             expect(occurrences).toHaveLength(2);
             expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(2);
-            // A job cancelled at dispatch because the client was 예약 전 must be re-claimable once
-            // the client leaves 예약 전 (the schedule is not re-created by anything else).
-            expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_PRE_BOOKING_REASON)).toHaveLength(2);
+            // A pre-booking cancellation stays terminal at both ordinary scheduling fences.
+            expect(sql.values).not.toContain(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
             for (const reason of [
                 "Service record access revoked",
                 "Service record link reset without resend",

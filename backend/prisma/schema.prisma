@@ -1249,6 +1249,13 @@ model message_trigger_job {
   canceledAt         DateTime?            @map("canceled_at") @db.Timestamptz(6)
   cancelReason       String?              @map("cancel_reason")
   canceledByUser     Boolean              @default(false) @map("canceled_by_user") // Distinguishes a user-pressed cancel from an internal re-sync cancel; the re-sync upsert must not resurrect the former.
+  recoveryReason     String?              @map("recovery_reason")
+  recoveryEpoch      DateTime?            @map("recovery_epoch") @db.Timestamptz(3)
+  firstBlockedAt     DateTime?            @map("first_blocked_at") @db.Timestamptz(3)
+  recoveryState      String?              @map("recovery_state")
+  recoveryTransitionStatus String?       @map("recovery_transition_status")
+  nextCheckAt        DateTime?            @map("next_check_at") @db.Timestamptz(6)
+  originalJobId      String?              @unique(map: "uq_message_trigger_job_original_job_id") @map("original_job_id")
   clientId           Int?                 @map("client_id")
   employeeScheduleId Int?                 @map("employee_schedule_id")
   recipientType      String               @map("recipient_type")
@@ -1262,6 +1269,8 @@ model message_trigger_job {
   rule               message_trigger_rule @relation(fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   client             client?              @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   employeeSchedule   employee_schedule?   @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  originalJob        message_trigger_job? @relation("CanceledJobRecovery", fields: [originalJobId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recoveryJob        message_trigger_job? @relation("CanceledJobRecovery")
   logs               message_log[]
 
   @@index([branchId], map: "idx_message_trigger_job_branch")

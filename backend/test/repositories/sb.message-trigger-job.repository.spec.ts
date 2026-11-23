@@ -30,6 +30,7 @@ import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { describeReal, assertThrowawayTarget, createIntegrityPrisma, closeIntegrityPrisma, IntegrityPrisma } from "../integrity/helpers/real-db";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { RECORD_LINK_RECOVERY_REFUSED } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { SbMessageTriggerJobRepository, serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
@@ -44,7 +45,7 @@ describe("serviceRecordScheduleBlockerSql", () => {
             canceledByUser: Prisma.sql`blocker.canceled_by_user`,
         });
         expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(1);
-        expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_PRE_BOOKING_REASON)).toHaveLength(1);
+        expect(sql.values).not.toContain(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
         for (const reason of [
             MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
             "Service record access revoked",
@@ -229,6 +230,83 @@ describe("SbMessageTriggerJobRepository", () => {
     const createRow = (overrides: Partial<MockMessageTriggerJobRow> = {}): MockMessageTriggerJobRow => ({
         ...baseRow(),
         ...overrides,
+    });
+
+    describe("service-record link dispatch fence", () => {
+        const due = new Date("2026-07-09T03:00:00.000Z");
+        const epoch = new Date("2026-07-01T00:00:00.000Z");
+        const serviceStart = new Date("2026-07-10T00:00:00.000Z");
+        const serviceEnd = new Date("2026-07-19T00:00:00.000Z");
+        const createFenceFixture = (successor: boolean) => {
+            const payload = { ...baseRow().payload, scheduleId: 10, employeeId: 30, scheduleIncarnationId: "assignment-1" };
+            const row = createRow({ ruleId: SERVICE_RECORD_LINK_RULE_ID, templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, employeeScheduleId: payload.scheduleId,
+                dedupeKey: successor ? "record-retry:original" : `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`,
+                payload, scheduledFor: due, status: successor ? "processing" : "pending", claimToken: successor ? "claim-1" : null });
+            const job = MessageTriggerJobEntity.reconstitute(row.id, row.branchId, row.ruleId, successor ? "processing" : "pending",
+                row.scheduledFor, null, null, null, row.clientId, row.employeeScheduleId, MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                row.recipientPhone, MessageTriggerTemplateKey.SERVICE_RECORD_LINK, row.dedupeKey, payload,
+                row.createdAt, row.updatedAt, row.attempts, row.nextAttemptAt, row.claimToken);
+            const schedule = { id: payload.scheduleId, incarnationId: payload.scheduleIncarnationId, branchId: row.branchId,
+                clientId: row.clientId, primaryEmployeeId: payload.employeeId, replaced: false, terminatedAt: null,
+                startDate: serviceStart, endDate: serviceEnd,
+                client: { branchId: row.branchId, deletedAt: null, serviceStatus: successor ? "waiting" : "pre_booking",
+                    startDate: serviceStart, endDate: serviceEnd, bookingConfirmedAt: successor ? epoch : null },
+                primaryEmployee: { branchId: row.branchId, deletedAt: null, phone: row.recipientPhone } };
+            const tx = {
+                $queryRaw: jest.fn().mockResolvedValue([{ approved: true }]),
+                employee_schedule: { findFirst: jest.fn().mockResolvedValue(schedule) },
+                message_log: { findFirst: jest.fn().mockResolvedValue(null) },
+                message_trigger_rule_branch_override: { findUnique: jest.fn() },
+                message_trigger_job: {
+                    findFirst: jest.fn().mockResolvedValue(null).mockResolvedValueOnce({ ...row,
+                        originalJobId: successor ? "original" : null, recoveryEpoch: successor ? epoch : null }),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+            };
+            if (successor) tx.message_trigger_job.findFirst.mockResolvedValueOnce({ scheduledFor: due, payload });
+            const repo = new SbMessageTriggerJobRepository({} as PrismaService);
+            return { repo, tx, job, row, schedule };
+        };
+
+        it.each([
+            ["the same enabled epoch", new Date(epoch), "waiting", true],
+            ["OFF", null, "waiting", false],
+            ["a new epoch after OFF → ON", new Date(epoch.getTime() + 1), "waiting", false],
+            ["a terminated customer", epoch, "terminated", false],
+        ])("fences a claimed successor immediately before provider dispatch with %s", async (_label, currentEpoch, status, allow) => {
+            const { repo, tx, job, row, schedule } = createFenceFixture(true);
+            schedule.client.serviceStatus = status;
+            tx.message_trigger_rule_branch_override.findUnique.mockResolvedValue({ canceledRetryEnabledAt: currentEpoch, isActive: true });
+
+            expect(await repo.fenceServiceRecordLinkAttempt(tx as never, job, due, "processing")).toEqual(allow
+                ? { kind: "allow" } : { kind: "stale", reason: RECORD_LINK_RECOVERY_REFUSED });
+
+            if (allow) {
+                expect(tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            } else {
+                expect(tx.message_trigger_job.updateMany).toHaveBeenCalledWith({
+                    where: expect.objectContaining({ id: job.id, branchId: row.branchId, status: "processing", claimToken: row.claimToken }),
+                    data: expect.objectContaining({ status: "canceled", canceledAt: due, cancelReason: RECORD_LINK_RECOVERY_REFUSED, claimToken: null }),
+                });
+            }
+        });
+
+        it.each([epoch, null])("snapshots recovery epoch %s at the original due attempt", async currentEpoch => {
+            const { repo, tx, job, row } = createFenceFixture(false);
+            tx.message_trigger_rule_branch_override.findUnique.mockResolvedValue({ canceledRetryEnabledAt: currentEpoch, isActive: true });
+
+            expect(await repo.fenceServiceRecordLinkAttempt(tx as never, job, due, "pending"))
+                .toEqual({ kind: "stale", reason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON });
+
+            expect(tx.message_trigger_job.updateMany).toHaveBeenCalledWith({
+                where: expect.objectContaining({ id: job.id, branchId: row.branchId, status: "pending", scheduledFor: { lte: due } }),
+                data: expect.objectContaining({ status: "canceled", canceledAt: due, cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                    recoveryReason: "record_link_pre_booking", recoveryEpoch: currentEpoch, firstBlockedAt: due, recoveryState: "awaiting_transition" }),
+            });
+            const [{ data }] = tx.message_trigger_job.updateMany.mock.calls[0]!;
+            expect(data).not.toHaveProperty("scheduledFor");
+        });
     });
 
     it("reads outstanding immutable date intents in the caller transaction without filtering leased retry times", async () => {
@@ -3793,7 +3871,6 @@ describe("automatic service-record date replacement", () => {
         SERVICE_RECORD_LINK_RESCHEDULED_REASON,
         SERVICE_RECORD_LINK_ENDED_REASON,
         SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
-        SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     ])("reactivates a system cancellation (%s) even when its time and source are unchanged", async (cancelReason) => {
         const f = fixture(); const row = f.rows()[0]!;
         Object.assign(row, { status: "canceled", cancel_reason: cancelReason,
@@ -3811,9 +3888,10 @@ describe("automatic service-record date replacement", () => {
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(current);
     });
 
-    it("does not reclaim a permission-canceled automatic record link even on a second reschedule", async () => {
+    it.each([MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON])(
+        "keeps an automatic link canceled for %s through repeated date reschedules", async cancelReason => {
         const f = fixture();
-        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON });
+        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
         const before = structuredClone({ rows: f.rows(), logs: f.logs() });
         for (let attempt = 0; attempt < 2; attempt++) {
             expect((await f.run()).kind).toBe("protected");
