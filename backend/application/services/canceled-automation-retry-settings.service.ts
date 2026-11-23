@@ -19,6 +19,7 @@ import {
     type ICanceledAutomationRetryRepository,
 } from "domain/repositories/canceled-automation-retry.repository.interface";
 
+const groupRoutineIdPrefix = "group:";
 const targetStatus = ["target_client_status_not_met"] as const;
 const clientTemplateReasons = new Map<string, readonly CanceledAutomationRetryReason[]>([
     // MessageTriggerService.cancelJobOutsideRuleTargetClientStatus emits
@@ -55,20 +56,25 @@ function isRealRoutine(rule: CanceledRetryRule): boolean {
 
 function projectRoutine(rule: CanceledRetryRule, dispatchEnabled: boolean): CanceledAutomationRetryRoutine {
     // MessageTriggerService uses SERVICE_RECORD_LINK_PRE_BOOKING_REASON on the scheduled attempt.
+    const isClientRoutine = rule.recipientType === MessageTriggerRecipientType.CLIENT
+        && (!rule.group || rule.group.recipientMode === MessageTriggerRecipientType.CLIENT);
     const recoverableReasons: readonly CanceledAutomationRetryReason[] = rule.id === SERVICE_RECORD_LINK_RULE_ID
         ? ["pre_booking"]
-        : rule.recipientType === MessageTriggerRecipientType.CLIENT
+        : isClientRoutine
             ? clientTemplateReasons.get(rule.templateKey) ?? []
             : [];
     const override = rule.branchId === null ? rule.branchOverrides[0] : undefined;
-    const epoch = rule.branchId === null ? override?.canceledRetryEnabledAt : rule.canceledRetryEnabledAt;
+    // A two-recipient group has no retry setting in this release.
+    const epoch = rule.group?.recipientMode === "BOTH_EMPLOYEES"
+        ? null
+        : rule.branchId === null ? override?.canceledRetryEnabledAt : rule.canceledRetryEnabledAt;
     let unavailableReason: CanceledAutomationRetryRoutine["unavailableReason"] = null;
     if (!recoverableReasons.length) unavailableReason = "unsupported";
     else if (!dispatchEnabled) unavailableReason = "dispatch_disabled";
     else if (!isRuleActiveForBranch(rule.isActive, override?.isActive)) unavailableReason = "routine_disabled";
     return {
-        id: rule.id,
-        label: rule.name,
+        id: rule.group ? `${groupRoutineIdPrefix}${rule.group.id}` : rule.id,
+        label: rule.group?.name ?? rule.name,
         recoverableReasons,
         eligible: unavailableReason === null,
         unavailableReason,
@@ -91,13 +97,21 @@ export class CanceledAutomationRetrySettingsService {
             this.repository.list(branchId),
             this.activation.getTriggerDispatchEnabled(branchId),
         ]);
-        return rules.filter(isRealRoutine).map((rule) => projectRoutine(rule, dispatchEnabled));
+        const routines = new Map<string, CanceledAutomationRetryRoutine>();
+        for (const rule of rules.filter(isRealRoutine)) {
+            const routine = projectRoutine(rule, dispatchEnabled);
+            if (!routines.has(routine.id)) routines.set(routine.id, routine);
+        }
+        return [...routines.values()];
     }
 
     async update(branchId: string, id: string, enabled: boolean): Promise<CanceledAutomationRetryRoutine> {
         return this.branchLock.runExclusive(branchId, async (transaction) => {
-            const rule = await this.repository.lockRule(branchId, id, transaction);
-            if (!rule || !isRealRoutine(rule)) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            const rules = id.startsWith(groupRoutineIdPrefix)
+                ? await this.repository.lockGroupRules(branchId, id.slice(groupRoutineIdPrefix.length), transaction)
+                : [await this.repository.lockRule(branchId, id, transaction)];
+            const rule = rules.find((row): row is CanceledRetryRule => row !== null && isRealRoutine(row));
+            if (!rule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
             const dispatchEnabled = await this.activation.getTriggerDispatchEnabled(branchId, transaction);
             const routine = projectRoutine(rule, dispatchEnabled);

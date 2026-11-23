@@ -10,13 +10,13 @@ const fixedEpoch = new Date("2026-11-23T01:02:03.123Z");
 function rule(id: string, fields: Partial<CanceledRetryRule> = {}): CanceledRetryRule {
     return {
         id, name: id, branchId: branch, templateKey: "INFO", recipientType: "CLIENT",
-        isActive: true, canceledRetryEnabledAt: null, branchOverrides: [], ...fields,
+        group: null, isActive: true, canceledRetryEnabledAt: null, branchOverrides: [], ...fields,
     };
 }
 
 describe("canceled automation retry catalog and settings", () => {
     const repository: jest.Mocked<ICanceledAutomationRetryRepository> = {
-        list: jest.fn(), lockRule: jest.fn(), updateEpoch: jest.fn(),
+        list: jest.fn(), lockRule: jest.fn(), lockGroupRules: jest.fn(), updateEpoch: jest.fn(),
     };
     const runExclusive = jest.fn((_branch, work) => work(transaction));
     const getTriggerDispatchEnabled = jest.fn();
@@ -37,6 +37,15 @@ describe("canceled automation retry catalog and settings", () => {
     const disabled = rule("disabled-local", { isActive: false });
     const manual = rule("system:service_end_notice", { branchId: null, templateKey: "SERVICE_END_NOTICE" });
     const retired = rule("retired-local", { templateKey: "CLIENT_WELCOME" });
+    const employeeGroup = { id: "employee-notice", name: "제공인력 안내", recipientMode: "BOTH_EMPLOYEES" };
+    const employeeRules = [
+        rule("employee-secondary", {
+            group: employeeGroup, name: employeeGroup.name, recipientType: "SECONDARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_END_NOTICE",
+        }),
+        rule("employee-primary", {
+            group: employeeGroup, name: employeeGroup.name, recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+        }),
+    ];
 
     it("lists only persisted automation routines and projects branch overrides", async () => {
         const normal = [
@@ -71,6 +80,60 @@ describe("canceled automation retry catalog and settings", () => {
             "local-info", "shared-info", "configured-custom", "disabled-local", "disabled-shared", "custom-unknown",
         ]);
         expect(repository.list).toHaveBeenCalledWith(branch);
+    });
+
+    it("lists both employee projections as one unsupported routine with a stable group ID", async () => {
+        const other = rule("other-employee", {
+            name: employeeGroup.name,
+            group: { id: "other-employee-notice", name: "다른 제공인력 안내", recipientMode: "PRIMARY_EMPLOYEE" },
+            recipientType: "PRIMARY_EMPLOYEE",
+        });
+        repository.list.mockResolvedValueOnce([...employeeRules, other]).mockResolvedValueOnce([...employeeRules].reverse());
+        const employeeRoutine = {
+            id: "group:employee-notice",
+            label: "제공인력 안내",
+            recoverableReasons: [],
+            eligible: false,
+            unavailableReason: "unsupported",
+            enabled: false,
+            enabledAt: null,
+        };
+        expect(await service.list(branch)).toEqual([
+            employeeRoutine,
+            expect.objectContaining({ id: "group:other-employee-notice", label: "다른 제공인력 안내" }),
+        ]);
+        expect(await service.list(branch)).toEqual([employeeRoutine]);
+    });
+
+    it("rejects writes to the employee group at the routine ID returned by the catalog", async () => {
+        repository.lockGroupRules.mockResolvedValueOnce(employeeRules);
+        await expect(service.update(branch, "group:employee-notice", true)).rejects.toMatchObject({ status: 409 });
+        expect(repository.lockGroupRules).toHaveBeenCalledWith(branch, "employee-notice", transaction);
+        expect(repository.lockRule).not.toHaveBeenCalled();
+        expect(repository.updateEpoch).not.toHaveBeenCalled();
+    });
+
+    it("resolves an eligible client routine ID to its existing rule for storage", async () => {
+        const client = rule("client-child", {
+            group: { id: "client-notice", name: "고객 안내", recipientMode: "CLIENT" },
+        });
+        repository.list.mockResolvedValueOnce([client]);
+        repository.lockGroupRules.mockResolvedValueOnce([client]);
+        repository.updateEpoch.mockResolvedValueOnce(fixedEpoch);
+
+        const [routine] = await service.list(branch);
+        expect(routine).toMatchObject({ id: "group:client-notice", label: "고객 안내", eligible: true, enabled: false });
+        expect(await service.update(branch, "group:client-notice", true)).toEqual({
+            ...routine, enabled: true, enabledAt: fixedEpoch.toISOString(),
+        });
+        expect(repository.lockGroupRules).toHaveBeenCalledWith(branch, "client-notice", transaction);
+        expect(repository.updateEpoch).toHaveBeenCalledWith(transaction, branch, client, true);
+    });
+
+    it("rejects a group with no visible rules in the current branch", async () => {
+        repository.lockGroupRules.mockResolvedValueOnce([]);
+        await expect(service.update(branch, "group:foreign-or-deleted", true)).rejects.toMatchObject({ status: 404 });
+        expect(repository.updateEpoch).not.toHaveBeenCalled();
     });
 
     it.each([
