@@ -51,6 +51,8 @@ import {
 import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { observePreBookingRecordLinkAssignment } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
@@ -182,6 +184,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
         @Optional()
         private readonly notificationService?: NotificationService,
+        @Optional() private readonly messageAutomationBranchLock?: MessageAutomationBranchLockService,
     ) {}
 
     async execute(
@@ -891,6 +894,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 document.templateName,
                             )
                             : null;
+                        await this.messageAutomationBranchLock?.runExclusive(creationBranchId, async () => undefined, transaction);
                         const authorityOwners = await discoverAuthorityClientIds(transaction, creationBranchId, [document.documentId]);
                         if (authorityOwners.length) await assertAuthorityPointerWrite(transaction, { branchId: creationBranchId, clientIds: authorityOwners, documentIds: [document.documentId] });
                         if (!completeLockSurface && !await this.lockExpectedMirrorGeneration(transaction, params.documentId, params.expectedMirrorGeneration, creationBranchId, document.branchId)) throw new MirrorGenerationConflict();
@@ -935,6 +939,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 candidate,
                             },
                         );
+                        if (scheduleId !== null && this.messageAutomationBranchLock) {
+                            await observePreBookingRecordLinkAssignment(transaction, creationBranchId, scheduleId);
+                        }
                         if (params.initializeLifecycle) {
                             await this.ensureServiceRecordLifecycle(client.id, transaction, true, calendar);
                         }

@@ -1,3 +1,4 @@
+import { fenceRecordLinkAttempt } from "./record-link-recovery.repository";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { agentAutomationSourcePayload } from "application/services/agent-automation-job-binding";
@@ -189,8 +190,7 @@ export function serviceRecordScheduleBlockerSql(columns: {
                 OR ${columns.cancelReason} NOT IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
                     ${SERVICE_RECORD_LINK_ENDED_REASON},
-                    ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
-                    ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON}
+                    ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON}
                 )
             )
         )
@@ -602,6 +602,28 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             select: { branchId: true }, distinct: ["branchId"],
         });
         return rows.flatMap((row) => row.branchId ? [row.branchId] : []);
+    }
+
+    fenceServiceRecordLinkAttempt(
+        transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity, now: Date,
+        stage: "pending" | "processing", senderOnly?: boolean,
+    ) {
+        return fenceRecordLinkAttempt(transaction, job, now, stage, senderOnly);
+    }
+
+    async findDueRecordLinkJobsForSenderCheck(branchIds: string[], now: Date): Promise<MessageTriggerJobEntity[]> {
+        if (branchIds.length === 0) return [];
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: { ...ordinaryAutomationJobWhere(), branchId: { in: branchIds },
+                ruleId: SERVICE_RECORD_LINK_RULE_ID, status: "pending", scheduledFor: { lte: now },
+                AND: [
+                    { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
+                    { NOT: [{ dedupeKey: { contains: ":manual:" } }, { dedupeKey: { startsWith: "agent-sms-retry:" } }] },
+                ] },
+            orderBy: [{ scheduledFor: "asc" }, { id: "asc" }],
+            take: 100,
+        });
+        return rows.map(row => this.toDomain(row));
     }
 
     private quietReleaseSql(): Prisma.Sql {
@@ -1558,6 +1580,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             data: {
                 status: "canceled",
                 cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                // Provider-attempt rows have no originating recovery observation.
                 canceledByUser: false,
                 canceledAt: new Date(),
                 nextAttemptAt: null,
@@ -1727,7 +1750,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     // Operator revocations and historical revision cancellations stay protected.
                     const reclaimableCancellation = existing.status === "canceled" && existing.cancel_reason !== null
                         && [SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
-                            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON].includes(existing.cancel_reason);
+                            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON].includes(existing.cancel_reason);
                     if (!["pending", "needs_setup"].includes(existing.status) && !reclaimableCancellation) return { kind: "protected" };
                     if (reclaimableCancellation) {
                         // Reclaiming must honor the base scheduler's schedule-wide blockers:
@@ -1868,7 +1891,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     return { kind: "in_flight", inFlightJobIds };
                 }
                 if (live.some((row) => row.status === "canceled")
-                    || await this.findPermissionDeniedPredecessor(transaction, replacement)) return { kind: "protected" };
+                    || await this.findPermissionDeniedPredecessor(transaction, replacement, false)) return { kind: "protected" };
 
                 // A revoke that committed while the link was being prepared has
                 // already cancelled every job; enqueueing now would queue a send
@@ -2134,7 +2157,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE ${ordinaryConflict} AND "message_trigger_job"."status" IN ('pending', 'canceled')
               AND NOT ("message_trigger_job"."status" = 'canceled' AND "message_trigger_job"."canceled_by_user" = true)
-              AND NOT ${terminalCancellation}`;
+              AND NOT ${terminalCancellation}
+              AND NOT ("message_trigger_job"."rule_id" = ${SERVICE_RECORD_LINK_RULE_ID}
+                AND "message_trigger_job"."status" = 'canceled'
+                AND "message_trigger_job"."cancel_reason" IS NOT DISTINCT FROM ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON})`;
         const rows = await client.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
             INSERT INTO "message_trigger_job" (
                 branch_id,
@@ -2195,7 +2221,18 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return this.toDomain(existing);
     }
 
-    private async findPermissionDeniedPredecessor(client: PrismaService | Prisma.TransactionClient, job: MessageTriggerJobEntity) {
+    private async findPermissionDeniedPredecessor(
+        client: PrismaService | Prisma.TransactionClient, job: MessageTriggerJobEntity, checkRecordLinkOccurrence = true,
+    ) {
+        if (checkRecordLinkOccurrence && job.ruleId === SERVICE_RECORD_LINK_RULE_ID && job.employeeScheduleId !== null && !isManualMessageTriggerJob(job)) {
+            return client.message_trigger_job.findFirst({
+                where: { ...ordinaryAutomationJobWhere(), branchId: job.branchId, ruleId: job.ruleId, clientId: job.clientId,
+                    employeeScheduleId: job.employeeScheduleId, recipientType: job.recipientType,
+                    status: "canceled", cancelReason: { in: [MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON] },
+                    NOT: { dedupeKey: { contains: ":manual:" } } },
+                orderBy: [{ canceledAt: "asc" }, { id: "asc" }],
+            });
+        }
         const original = clientMessageOriginalSlot(job);
         const employeeId = job.payload.employeeId;
         let alternateKeys: Prisma.message_trigger_jobWhereInput[];

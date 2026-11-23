@@ -51,7 +51,8 @@ export class ServiceRecordLinkReconciliationService {
         if (!runToken) return;
 
         try {
-            const repairedCount = await this.reconcileMissingJobs();
+            const recovered = await this.linkService.sweepRecovery?.() ?? 0;
+            const repairedCount = recovered + await this.reconcileMissingJobs();
             if (repairedCount > 0) {
                 this.logger.log(
                     `[Service Record Link Repair] Recreated ${repairedCount} missing message jobs`,

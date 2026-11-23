@@ -80,6 +80,7 @@ export class EmployeeScheduleService {
                 branchId: branchid,
                 clientId: created.clientId,
                 scheduleId: created.id,
+                freshAssignment: true,
                 includePast: true,
                 intentAt,
             });

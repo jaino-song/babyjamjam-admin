@@ -211,8 +211,8 @@ export class SmsRetryService {
             const client = await this.logRepository.findServiceRecordLinkClientState(sourceLog);
             if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
                 if (invocation === "automatic") {
-                    // The failed job would otherwise block re-issuing the link once the
-                    // client leaves 예약 전; a system-cancelled row is revivable by the claim.
+                    // A transport attempt remains terminal on a later 예약 전 block.
+                    // Ending its transport retry does not enroll canceled-link recovery.
                     if (this.jobRepository && sourceLog.branchId && sourceLog.triggerJobId) {
                         await this.jobRepository.cancelFailedServiceRecordLinkJobForPreBooking(
                             sourceLog.triggerJobId,

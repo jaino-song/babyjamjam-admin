@@ -1997,9 +1997,8 @@ describe("ServiceRecordLinkService", () => {
             );
             expect(occurrences).toHaveLength(2);
             expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(2);
-            // A job cancelled at dispatch because the client was 예약 전 must be re-claimable once
-            // the client leaves 예약 전 (the schedule is not re-created by anything else).
-            expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_PRE_BOOKING_REASON)).toHaveLength(2);
+            // A pre-booking cancellation stays terminal at both ordinary scheduling fences.
+            expect(sql.values).not.toContain(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
             for (const reason of [
                 "Service record access revoked",
                 "Service record link reset without resend",

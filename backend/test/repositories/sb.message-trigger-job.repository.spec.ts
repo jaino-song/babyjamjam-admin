@@ -44,7 +44,7 @@ describe("serviceRecordScheduleBlockerSql", () => {
             canceledByUser: Prisma.sql`blocker.canceled_by_user`,
         });
         expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(1);
-        expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_PRE_BOOKING_REASON)).toHaveLength(1);
+        expect(sql.values).not.toContain(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
         for (const reason of [
             MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
             "Service record access revoked",
@@ -3793,7 +3793,6 @@ describe("automatic service-record date replacement", () => {
         SERVICE_RECORD_LINK_RESCHEDULED_REASON,
         SERVICE_RECORD_LINK_ENDED_REASON,
         SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
-        SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     ])("reactivates a system cancellation (%s) even when its time and source are unchanged", async (cancelReason) => {
         const f = fixture(); const row = f.rows()[0]!;
         Object.assign(row, { status: "canceled", cancel_reason: cancelReason,
@@ -3811,9 +3810,10 @@ describe("automatic service-record date replacement", () => {
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(current);
     });
 
-    it("does not reclaim a permission-canceled automatic record link even on a second reschedule", async () => {
+    it.each([MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON])(
+        "keeps an automatic link canceled for %s through repeated date reschedules", async cancelReason => {
         const f = fixture();
-        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON });
+        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
         const before = structuredClone({ rows: f.rows(), logs: f.logs() });
         for (let attempt = 0; attempt < 2; attempt++) {
             expect((await f.run()).kind).toBe("protected");

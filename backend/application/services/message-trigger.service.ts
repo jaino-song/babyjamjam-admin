@@ -2230,6 +2230,13 @@ export class MessageTriggerService {
         const now = new Date();
         const branchIds = await this.jobRepository.findDueDispatchBranchIds(now);
         const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(branchIds);
+        const denied = await this.jobRepository.findDueRecordLinkJobsForSenderCheck?.(
+            branchIds.filter(branchId => !approvedBranchIds.has(branchId)), now,
+        ) ?? [];
+        for (const job of denied) {
+            await this.messageAutomationBranchLockService?.runExclusive(job.branchId!, tx =>
+                this.jobRepository.fenceServiceRecordLinkAttempt!(tx, job, now, "pending", true));
+        }
         const eligibility = [];
         for (const branchId of branchIds) {
             if (!approvedBranchIds.has(branchId)) continue;
@@ -4013,6 +4020,9 @@ export class MessageTriggerService {
     ): Promise<boolean> {
         const resend = options.resendFromNeedsSetup === true;
         const automaticJob = this.isAutomaticMessageJob(job);
+        const automaticRecordLink = automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID;
+        const usesRecordLinkFence = automaticRecordLink && !!this.jobRepository.fenceServiceRecordLinkAttempt;
+        let recordLinkCanceled: string | null = null;
         if (
             automaticJob
             && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !job.branchId)
@@ -4038,6 +4048,11 @@ export class MessageTriggerService {
                     if (!current || Math.max(current.scheduledFor.getTime(), current.nextAttemptAt?.getTime() ?? 0) > Date.now()) return null;
                     job.quietHold = hold ?? undefined;
                 }
+            }
+            if (usesRecordLinkFence && transaction && !resend && !sentIds.has(job.id)) {
+                const fence = await this.jobRepository.fenceServiceRecordLinkAttempt!(transaction, job, new Date(), "pending");
+                if (fence.kind === "stale") recordLinkCanceled = fence.reason;
+                if (fence.kind !== "allow") return null;
             }
             if (!skipSafeguard) {
                 const decision = await this.smsAutomationSafeguard!.check(job, transaction);
@@ -4086,6 +4101,10 @@ export class MessageTriggerService {
             ? await this.messageAutomationBranchLockService.runExclusive(job.branchId, (transaction) => claim(transaction))
             : await claim();
         if (!claimed) {
+            if (recordLinkCanceled) {
+                job.cancel(recordLinkCanceled);
+                return true;
+            }
             if (safeguardBlock) {
                 const block: Extract<SmsAutomationSafeguardDecision, { allowed: false }> = safeguardBlock;
                 job.cancel(smsAutomationSafeguardReason(block.level));
@@ -4118,7 +4137,7 @@ export class MessageTriggerService {
         }
 
         let linkClient: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null; bookingConfirmedAt: Date | null } | null = null;
-        if (automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) {
+        if (automaticRecordLink && !usesRecordLinkFence) {
             // 늦게 등록한 링크 문자는 명목 예약 시각을 유지하고 종료일까지 발송한다.
             const schedule = job.employeeScheduleId && job.branchId
                 ? await this.prisma.employee_schedule.findFirst({
@@ -4140,7 +4159,7 @@ export class MessageTriggerService {
                 return true;
             }
             linkClient = schedule.client;
-        } else if (!resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date(Date.now()), job.quietHold?.releaseAt)) {
+        } else if (!automaticRecordLink && !resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date(Date.now()), job.quietHold?.releaseAt)) {
             const reason = job.quietHold ? "expired_after_quiet" : pastExpiryHours === 24
                 ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`;
             if (!job.quietHold && job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
@@ -4167,8 +4186,8 @@ export class MessageTriggerService {
             return true;
         }
 
-        if (job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
-            if (!(automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) && job.employeeScheduleId) {
+        if (!usesRecordLinkFence && job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
+            if (!automaticRecordLink && job.employeeScheduleId) {
                 const schedule = await this.prisma.employee_schedule.findFirst({
                     where: { id: job.employeeScheduleId, branchId: job.branchId },
                     select: { client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
@@ -4185,7 +4204,7 @@ export class MessageTriggerService {
             }
         }
 
-        if (!job.branchId || !approvedBranchIds.has(job.branchId)) {
+        if (!usesRecordLinkFence && (!job.branchId || !approvedBranchIds.has(job.branchId))) {
             job.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
             await this.persistTriggerJobStatus(job, "persist sender approval canceled trigger job");
             return true;
@@ -4441,6 +4460,10 @@ export class MessageTriggerService {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
         const authorize = async (transaction: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> => {
+            if (automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID && this.jobRepository.fenceServiceRecordLinkAttempt) {
+                const attempt = await this.jobRepository.fenceServiceRecordLinkAttempt(transaction, job, new Date(), "processing");
+                if (attempt.kind !== "allow") return attempt;
+            }
             const parentFence = await this.fenceMessageAutomationParent(job, transaction);
             if (parentFence.kind !== "allow") return parentFence;
             const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
@@ -4560,6 +4583,10 @@ export class MessageTriggerService {
                 && job.branchId
             ) {
                 await this.messageAutomationActivationService.assertTriggerDispatchEnabled(job.branchId, transaction);
+            }
+            if (this.isAutomaticMessageJob(job) && job.ruleId === SERVICE_RECORD_LINK_RULE_ID && this.jobRepository.fenceServiceRecordLinkAttempt) {
+                const attempt = await this.jobRepository.fenceServiceRecordLinkAttempt(transaction, job, new Date(), "processing");
+                if (attempt.kind !== "allow") return attempt;
             }
             const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
                 job,
