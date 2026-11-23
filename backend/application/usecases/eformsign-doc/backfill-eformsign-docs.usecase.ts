@@ -769,11 +769,16 @@ export class BackfillEformsignDocsUsecase {
         await mirror.purgeDocuments([documentId]);
         // Never acquire lifecycle case locks while holding the purge transaction's client/doc locks.
         if (lifecycle && branchId) {
-            await lifecycle.evaluateInitialSnapshotTerminalOutcome({
-                branchId,
-                documentId,
-                deletedDocuments: vendorStatusType === undefined ? undefined : [{ documentId, statusType: vendorStatusType }],
-            });
+            try {
+                await lifecycle.evaluateInitialSnapshotTerminalOutcome({
+                    branchId,
+                    documentId,
+                    deletedDocuments: vendorStatusType === undefined ? undefined : [{ documentId, statusType: vendorStatusType }],
+                });
+            } catch {
+                // The heal sweep re-evaluates INITIAL states from their retained tombstones.
+                this.logger.error({ message: "INITIAL snapshot post-purge evaluation failed", documentId });
+            }
         }
     }
 

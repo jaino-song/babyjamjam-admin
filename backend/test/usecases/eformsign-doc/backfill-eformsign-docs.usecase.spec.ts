@@ -226,6 +226,47 @@ describe("BackfillEformsignDocsUsecase", () => {
         });
     });
 
+    it("continues deferred purges after an INITIAL evaluation fails and logs only the document ID", async () => {
+        const documentIds = ["first-chunk", "second-chunk"];
+        const emptyPage = jest.fn().mockResolvedValue({ documents: [], total_rows: 0 });
+        const client = {
+            getInProgressDocumentsPage: emptyPage,
+            getCompletedDocumentsPage: emptyPage,
+            getRejectedDocumentsPage: emptyPage,
+            getDocument: jest.fn().mockRejectedValue(new EformsignApiError("missing", 404)),
+        };
+        const events: string[] = [];
+        const mirror = {
+            findActiveDocumentIds: jest.fn().mockResolvedValue([]),
+            findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(documentIds),
+            purgeDocuments: jest.fn(async ([documentId]: string[]) => {
+                await Promise.resolve();
+                events.push(`purged:${documentId}`);
+            }),
+        };
+        const lifecycle = {
+            findSnapshotChunkBranchForDocument: jest.fn().mockResolvedValue("chunk-branch"),
+            evaluateInitialSnapshotTerminalOutcome: jest.fn(async ({ documentId }: { documentId: string }) => {
+                events.push(`evaluated:${documentId}`);
+                if (documentId === "first-chunk") throw new Error("sensitive evaluator failure");
+            }),
+            healInitialSnapshotTerminalOutcomes: jest.fn(),
+        };
+        const log = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, mirror as never, undefined, lifecycle as never);
+
+        await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toMatchObject({ failed: 0 });
+        expect(events).toEqual([
+            "purged:first-chunk", "evaluated:first-chunk", "purged:second-chunk", "evaluated:second-chunk",
+        ]);
+        expect(log.mock.calls).toEqual([[{
+            message: "INITIAL snapshot post-purge evaluation failed",
+            documentId: "first-chunk",
+        }]]);
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps an ordinary vendor-absent document as a recoverable tombstone", async () => {
         const client = {
             getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),
