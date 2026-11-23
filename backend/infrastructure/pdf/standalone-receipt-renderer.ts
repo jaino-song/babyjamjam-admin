@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createCanvas, GlobalFonts, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
 
@@ -64,6 +64,82 @@ const FONT_STEP_POINTS = 0.5;
 const INK_PADDING = 2;
 const MAX_NAME_LENGTH = 999;
 const MAX_KRW = 999_999_999;
+
+function readFormat4Coverage(table: Buffer): ReadonlySet<number> | undefined {
+    const segmentBytes = table.readUInt16BE(6); // segCountX2, also the byte length of each segment array.
+    const endCodes = 14;
+    const startCodes = endCodes + segmentBytes + 2; // Skip reservedPad.
+    const deltas = startCodes + segmentBytes;
+    const rangeOffsets = deltas + segmentBytes;
+    const glyphIds = rangeOffsets + segmentBytes;
+    if (segmentBytes === 0 || segmentBytes % 2 !== 0 || glyphIds > table.length) {
+        return;
+    }
+
+    const coverage = new Set<number>();
+    let previousEnd = -1;
+    for (let segment = 0; segment < segmentBytes; segment += 2) {
+        const start = table.readUInt16BE(startCodes + segment);
+        const end = table.readUInt16BE(endCodes + segment);
+        if (start <= previousEnd || end < start) {
+            return;
+        }
+        previousEnd = end;
+
+        const delta = table.readInt16BE(deltas + segment);
+        const rangeOffsetEntry = rangeOffsets + segment;
+        const rangeOffset = table.readUInt16BE(rangeOffsetEntry);
+        // A nonzero idRangeOffset is measured from its own entry, in bytes.
+        const firstGlyph = rangeOffsetEntry + rangeOffset;
+        if (rangeOffset !== 0 && (
+            rangeOffset % 2 !== 0 || firstGlyph < glyphIds || firstGlyph + 2 * (end - start + 1) > table.length
+        )) {
+            return;
+        }
+        for (let codePoint = start; codePoint <= end; codePoint++) {
+            const glyphId = rangeOffset === 0
+                ? codePoint
+                : table.readUInt16BE(firstGlyph + 2 * (codePoint - start));
+            if (rangeOffset !== 0 && glyphId === 0) {
+                continue;
+            }
+            if (((glyphId + delta) & 0xffff) !== 0) {
+                coverage.add(codePoint);
+            }
+        }
+    }
+    return coverage.size > 0 ? coverage : undefined;
+}
+
+function readNanumMyeongjoCoverage(font: Buffer): ReadonlySet<number> | undefined {
+    const tableCount = font.readUInt16BE(4);
+    for (let index = 0; index < tableCount; index++) {
+        const record = 12 + index * 16;
+        if (font.toString("ascii", record, record + 4) !== "cmap") {
+            continue;
+        }
+        const offset = font.readUInt32BE(record + 8);
+        const length = font.readUInt32BE(record + 12);
+        const cmap = font.subarray(offset, offset + length);
+        if (cmap.length !== length || cmap.readUInt16BE(0) !== 0) {
+            return;
+        }
+
+        const encodingCount = cmap.readUInt16BE(2);
+        for (let encoding = 0; encoding < encodingCount; encoding++) {
+            const entry = 4 + encoding * 8;
+            // The bundled font exposes a Windows Unicode BMP cmap in format 4.
+            if (cmap.readUInt16BE(entry) === 3 && cmap.readUInt16BE(entry + 2) === 1) {
+                const start = cmap.readUInt32BE(entry + 4);
+                const size = cmap.readUInt16BE(start + 2);
+                if (cmap.readUInt16BE(start) === 4 && start >= 4 + encodingCount * 8 && start + size <= cmap.length) {
+                    return readFormat4Coverage(cmap.subarray(start, start + size));
+                }
+            }
+        }
+        return;
+    }
+}
 
 function validateDate(date: string, field: string): void {
     if (typeof date === "string" && date.length === 10 && /^20\d{2}-\d{2}-\d{2}$/.test(date)) {
@@ -158,21 +234,26 @@ function drawDate(
 }
 
 export class StandaloneReceiptRenderer {
-    private fontRegistered = false;
+    private fontCoverage?: ReadonlySet<number>;
 
     constructor(private readonly fontPath = FONT_PATH) {}
 
-    private ensureFont(): void {
+    private ensureFont(): ReadonlySet<number> {
         try {
             accessSync(this.fontPath, constants.R_OK);
-            if (!this.fontRegistered) {
-                this.fontRegistered = Boolean(GlobalFonts.registerFromPath(this.fontPath, FONT_FAMILY));
+            if (!this.fontCoverage) {
+                const font = readFileSync(this.fontPath);
+                const coverage = readNanumMyeongjoCoverage(font);
+                // Check the same bytes that canvas will use for this family.
+                if (coverage && GlobalFonts.register(font, FONT_FAMILY)) {
+                    this.fontCoverage = coverage;
+                }
             }
-            if (this.fontRegistered && GlobalFonts.has(FONT_FAMILY)) {
-                return;
+            if (this.fontCoverage && GlobalFonts.has(FONT_FAMILY)) {
+                return this.fontCoverage;
             }
         } catch {
-            // An unavailable font file and absent registration both prevent rendering.
+            // An unreadable font, invalid cmap or absent registration prevents rendering.
         }
         throw new Error("Standalone receipt NanumMyeongjo font is unavailable");
     }
@@ -187,7 +268,13 @@ export class StandaloneReceiptRenderer {
         if (template.width !== RECEIPT_WIDTH || template.height !== RECEIPT_HEIGHT) {
             throw new Error("Invalid standalone receipt template PNG dimensions");
         }
-        this.ensureFont();
+        const coverage = this.ensureFont();
+        for (const character of fields.customerName) {
+            const codePoint = character.codePointAt(0);
+            if (codePoint === undefined || !coverage.has(codePoint)) {
+                throw new RangeError("Standalone receipt customerName contains unsupported characters");
+            }
+        }
         const canvas = createCanvas(RECEIPT_WIDTH, RECEIPT_HEIGHT);
         const context = canvas.getContext("2d", { alpha: false });
         context.fillStyle = "#ffffff";
