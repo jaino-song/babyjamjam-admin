@@ -13,20 +13,23 @@ const digestPattern = /^[a-f\d]{64}$/i;
 const journalDir = (stateDir) => resolve(stateDir, 'provider-contract-migration');
 const journalPath = (stateDir) => resolve(journalDir(stateDir), 'journal.json');
 const stages = ['applying', 'applied', 'rollingBack', 'rolledBack'];
+export const timerLockDirectory = () => resolve(homedir(), '.local/state/eformsign-backup');
+export const migrationInProgress = (journal) => ['applying', 'rollingBack'].includes(journal?.phase);
 
 function refuse(migrationReason) {
     throw Object.assign(new Error(migrationReason), { migrationReason });
 }
 
-export async function withTimerLock(run) {
+export async function withTimerLock(run, { privateLock = false } = {}) {
     // The child locks our open file description. The lock survives the child's exit
     // and remains held by this process until the migration completes.
-    const path = resolve(homedir(), '.local/state/eformsign-backup/run.lock');
-    const lock = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch((error) => {
+    const path = resolve(timerLockDirectory(), 'run.lock');
+    const lock = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((error) => {
         refuse(error.code === 'ENOENT' ? 'timer_lock_missing' : 'timer_lock_unavailable');
     });
     try {
-        if (!(await lock.stat()).isFile()) refuse('timer_lock_unavailable');
+        const info = await lock.stat();
+        if (!info.isFile() || (privateLock && (!ownedPrivate(info) || info.nlink !== 1))) refuse('timer_lock_unavailable');
         const child = spawn('/usr/bin/flock', ['-n', '-E', '75', '3'], { stdio: ['ignore', 'ignore', 'ignore', lock.fd] });
         const code = await exitCode(child);
         if (code !== 0) refuse(code === 75 ? 'timer_lock_held' : 'timer_lock_unavailable');
@@ -46,17 +49,62 @@ async function probe(path) {
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
+const ownedPrivate = (info) => info.uid === process.getuid() && (info.mode & 0o077) === 0;
+const validId = (id) => typeof id === 'string' && /^[a-f\d-]{36}$/.test(id);
+
+async function readJournal(path) {
+    const info = await probe(path);
+    if (!info) return null;
+    if (!info.isFile() || !ownedPrivate(info)) refuse('unsafe_journal_file');
+    const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    let journal;
+    try {
+        const opened = await handle.stat();
+        if (opened.dev !== info.dev || opened.ino !== info.ino) refuse('unsafe_journal_file');
+        journal = JSON.parse(await handle.readFile('utf8'));
+    } finally { await handle.close(); }
+    if (journal?.version !== 1 || !stages.includes(journal.phase)
+        || !validId(journal.id) || !Array.isArray(journal.moves)) refuse('invalid_journal');
+    return journal;
+}
+
 export async function readMigration(stateDir) {
     const dir = await probe(journalDir(stateDir));
     if (!dir) return null;
-    if (!dir.isDirectory() || (dir.mode & 0o077) !== 0) refuse('unsafe_journal_directory');
-    const info = await probe(journalPath(stateDir));
+    if (!dir.isDirectory() || !ownedPrivate(dir)) refuse('unsafe_journal_directory');
+    return readJournal(journalPath(stateDir));
+}
+
+// Preserve the original journal inode before detaching it from the active slot.
+// The records directory and the active slot are on the same filesystem.
+async function recordsPath(stateDir, kind, { id, phase }, create = false) {
+    if (!validId(id) || !['applied', 'rolledBack'].includes(phase)) refuse('invalid_journal_record');
+    const dir = resolve(journalDir(stateDir), 'records');
+    if (create) await fs.mkdir(dir, { mode: 0o700 }).catch((error) => { if (error.code !== 'EEXIST') throw error; });
+    const info = await probe(dir);
     if (!info) return null;
-    if (!info.isFile() || (info.mode & 0o077) !== 0) refuse('unsafe_journal_file');
-    const journal = JSON.parse(await fs.readFile(journalPath(stateDir), 'utf8'));
-    if (journal?.version !== 1 || !stages.includes(journal.phase)
-        || !/^[a-f\d-]{36}$/.test(journal.id) || !Array.isArray(journal.moves)) refuse('invalid_journal');
-    return journal;
+    if (!info.isDirectory() || !ownedPrivate(info)) refuse('unsafe_journal_records');
+    if (create) await syncDirectory(journalDir(stateDir));
+    return resolve(dir, `${kind}-${id}-${phase}.json`);
+}
+
+export async function readPreRasterMigration(stateDir, predecessor) {
+    const path = await recordsPath(stateDir, 'pre-raster', predecessor);
+    return path ? readJournal(path) : null;
+}
+
+export async function preserveMigration(stateDir, journal, kind, detach = true) {
+    const source = journalPath(stateDir);
+    if (!isDeepStrictEqual(await readMigration(stateDir), journal)) refuse('migration_journal_changed');
+    const target = await recordsPath(stateDir, kind, journal, true);
+    await fs.link(source, target).catch((error) => { if (error.code !== 'EEXIST') throw error; });
+    const [from, to] = await Promise.all([fs.lstat(source), fs.lstat(target)]);
+    if (from.dev !== to.dev || from.ino !== to.ino) refuse('migration_record_collision');
+    await syncDirectory(dirname(target));
+    if (detach) {
+        await fs.unlink(source);
+        await syncDirectory(dirname(source));
+    }
 }
 
 function localFiles(archive, finalPath) {
@@ -194,12 +242,53 @@ function validateMove(move) {
     }
 }
 
+const rasterDirection = (phase) => ['rollingBack', 'rolledBack'].includes(phase) ? 'reverse' : 'forward';
+const rasterMoves = (moves, direction) => moves.flatMap((move) => move.files.map((file) => direction === 'reverse'
+    ? { from: file.new, to: file.old } : { from: file.old, to: file.new }));
+
+export function assertRasterMigration(journal, settings) {
+    if (!journal) return;
+    if (journal.archive !== settings.originalArchiveDir || journal.remote !== (settings.rcloneRemote ?? null)
+        || journal.raster?.publicRoot !== settings.archiveDir || journal.raster?.stateRoot !== settings.stateDir) {
+        refuse('migration_settings_changed');
+    }
+    for (const move of journal.moves) validateMove(move);
+    const { direction, pending, moves } = journal.raster;
+    if (!journal.moves.length || direction !== rasterDirection(journal.phase) || typeof pending !== 'boolean'
+        || (migrationInProgress(journal) && !pending) || !isDeepStrictEqual(moves, rasterMoves(journal.moves, direction))) {
+        refuse('invalid_raster_migration');
+    }
+}
+
+export async function replayRasterMigration({ settings, archive, state, finalPath, migration: journal, mirror }) {
+    assertRasterMigration(journal, settings);
+    if (!journal?.raster.pending) return;
+    if (migrationInProgress(journal)) refuse('resume_previous_action');
+    const { direction, moves } = journal.raster;
+    const reverse = direction === 'reverse';
+    const local = localFiles(archive, finalPath);
+    for (const move of journal.moves) {
+        if (!isDeepStrictEqual(state.units[move.key], reverse ? move.before : move.after)) refuse('allocation_changed');
+        for (const file of move.files) {
+            const [source, target] = reverse ? [file.new, file.old] : [file.old, file.new];
+            const progress = file[direction];
+            verifyUnshared(state, move.key, [source, target]);
+            if (!progress?.removeLocal || !progress.localReady || await local.inspect(source)) refuse('unverified_raw_removal');
+            await verifyOwnedTarget(archive, local, journal, file, target, progress, reverse);
+        }
+    }
+    await mirror.prepare({ moves });
+    await mirror.publish({ moves });
+    journal.raster.pending = false;
+    await writeJson(journalPath(settings.stateDir), journal);
+}
+
 export async function migrateProviderContracts(context) {
-    const { settings, archive, statePath, state, reserved, saveState, docs, listingComplete, finalPath, timeout, lockFd, log } = context;
+    const { settings, archive, statePath, state, reserved, saveState, docs, listingComplete, finalPath, timeout, lockFd, log, mirror } = context;
     const dryRun = settings.action === 'dry-run';
     const reverse = settings.action === 'rollback';
     let journal = context.migration;
-    const pending = ['applying', 'rollingBack'].includes(journal?.phase);
+    const pending = migrationInProgress(journal);
     // An interrupted apply already has a plan. Its recorded moves govern the retry.
     const resumeApply = settings.action === 'apply' && journal?.phase === 'applying';
     const local = localFiles(archive, finalPath);
@@ -212,6 +301,7 @@ export async function migrateProviderContracts(context) {
     if (!reverse && !resumeApply && !listingComplete) refuse('incomplete_listing');
     if (journal && (journal.archive !== archive || journal.remote !== (settings.rcloneRemote ?? null))) refuse('migration_settings_changed');
     if ((reverse && journal?.phase === 'applying') || (!reverse && journal?.phase === 'rollingBack')) refuse('resume_previous_action');
+    if (mirror && reverse && !journal && context.predecessor) refuse('pre_raster_rollback_requires_archive_rollback');
     const saveJournal = () => writeJson(journalPath(stateDir), journal);
     const listed = new Map();
     if (!resumeApply) {
@@ -252,7 +342,7 @@ export async function migrateProviderContracts(context) {
     }
     if (moves.length === 0) { log({ migration: settings.action, pairs: 0, skipped }); return; }
 
-    const drive = driveFiles(settings, timeout, lockFd);
+    const drive = mirror ? null : driveFiles(settings, timeout, lockFd);
     const sides = (file) => reverse ? [file.new, file.old, file.reverse] : [file.old, file.new, file.forward];
     for (const move of moves) {
         validateMove(move);
@@ -270,7 +360,13 @@ export async function migrateProviderContracts(context) {
 
         for (const file of move.files) {
             const [source, target, progress] = sides(file);
-            if (!await local.verify(source, file) && !(published && progress.removeLocal)) refuse('missing_local_source');
+            const localSource = await local.verify(source, file);
+            if (!localSource && !(published && progress.removeLocal)) refuse('missing_local_source');
+            if (mirror && localSource) {
+                const identity = { dev: localSource.dev, ino: localSource.ino };
+                if (pending && !isDeepStrictEqual(progress.localSource, identity)) refuse('local_source_identity_changed');
+                progress.localSource = identity;
+            }
             if (await local.inspect(target)) {
                 if (!pending) {
                     // Rollback of an applied batch expects its legacy paths to be absent.
@@ -279,6 +375,7 @@ export async function migrateProviderContracts(context) {
                 await verifyOwnedTarget(archive, local, journal, file, target, progress, reverse);
             } else if (published || progress.localReady) refuse('missing_local_target');
 
+            if (!drive) continue;
             const sourceIdentity = await drive.verify(source, file, progress.source);
             if (!sourceIdentity && !(published && progress.removeDrive)) refuse('missing_drive_source');
             if (sourceIdentity) progress.source = sourceIdentity;
@@ -288,18 +385,39 @@ export async function migrateProviderContracts(context) {
             } else if (published || progress.destination) refuse('missing_drive_target');
         }
     }
-    if (dryRun) { log({ migration: settings.action, pairs: moves.length, skipped }); return; }
+    if (dryRun) {
+        if (mirror) {
+            await mirror.prepare({ dryRun: true });
+            await mirror.publish({ dryRun: true, moves: rasterMoves(moves, 'forward') });
+        }
+        log({ migration: settings.action, pairs: moves.length, skipped });
+        return;
+    }
     if (!pending) {
+        if (mirror) {
+            // Verify a baseline derivative before changing any private name.
+            await mirror.prepare();
+            await mirror.publish();
+            await mirror.publish({ dryRun: true, moves: rasterMoves(moves, reverse ? 'reverse' : 'forward') });
+        }
         if (reverse) {
             journal.phase = 'rollingBack';
         } else {
             const dir = journalDir(stateDir);
             await fs.mkdir(dir, { recursive: true, mode: 0o700 });
             await syncDirectory(stateDir);
-            if (journal) await writeJson(resolve(dir, `journal-${journal.id}-${journal.phase}.json`), journal);
-            journal = { version: 1, id: randomUUID(), archive, remote: settings.rcloneRemote, phase: 'applying', moves };
+            if (journal) {
+                if (mirror) await preserveMigration(stateDir, journal, 'raster-batch', false);
+                else await writeJson(resolve(dir, `journal-${journal.id}-${journal.phase}.json`), journal);
+            }
+            journal = { version: 1, id: randomUUID(), archive, remote: settings.rcloneRemote ?? null, phase: 'applying', moves };
             const backupPath = resolve(dir, `pre-state-${journal.id}.json`);
             await writeAtomic(backupPath, await fs.readFile(statePath));
+        }
+        if (mirror) {
+            const direction = rasterDirection(journal.phase);
+            journal.raster = { publicRoot: settings.archiveDir, stateRoot: settings.stateDir,
+                direction, pending: true, moves: rasterMoves(moves, direction) };
         }
         await saveJournal();
     }
@@ -308,6 +426,7 @@ export async function migrateProviderContracts(context) {
         for (const file of move.files) {
             const [source, target, progress] = sides(file);
             await stageLocal({ archive, file, target, source, progress, local, finalPath, journal, reverse, saveJournal });
+            if (!drive) continue;
             let destination = await drive.verify(target, file, progress.destination);
             if (destination && !progress.upload) refuse('drive_target_exists');
             if (!destination) {
@@ -324,7 +443,7 @@ export async function migrateProviderContracts(context) {
             await saveJournal();
         }
 
-        // State points to the new pair only after both local and Drive copies verify.
+        // Both raw targets must verify before state changes. Legacy also verifies Drive here.
         const next = reverse ? move.before : move.after;
         if (!isDeepStrictEqual(state.units[move.key], next)) {
             state.units[move.key] = next;
@@ -335,24 +454,34 @@ export async function migrateProviderContracts(context) {
             const [source, target, progress] = sides(file);
             verifyUnshared(state, move.key, [source]);
             if (Object.hasOwn(state.units[move.key].files, source)) refuse('active_archive_path');
-            if (!await local.verify(target, file) || !await drive.verify(target, file, progress.destination)) refuse('missing_verified_target');
-            const remoteSource = await drive.verify(source, file, progress.source);
-            if (remoteSource) {
-                if (!progress.removeDrive) {
-                    progress.source = remoteSource;
-                    progress.removeDrive = true;
-                    await saveJournal();
+            await verifyOwnedTarget(archive, local, journal, file, target, progress, reverse);
+            if (drive) {
+                if (!await drive.verify(target, file, progress.destination)) refuse('missing_verified_target');
+                const remoteSource = await drive.verify(source, file, progress.source);
+                if (remoteSource) {
+                    if (!progress.removeDrive) {
+                        progress.source = remoteSource;
+                        progress.removeDrive = true;
+                        await saveJournal();
+                    }
+                    // Recheck the exact source after recording intent and before deleting it.
+                    if (await drive.verify(source, file, progress.source)) await drive.remove(source);
+                    if (await drive.lookup(source)) refuse('drive_delete_incomplete');
+                } else if (!progress.removeDrive) refuse('missing_drive_source');
+            }
+            const ownedSource = async () => {
+                const info = await local.verify(source, file);
+                if (mirror && info && !isDeepStrictEqual(progress.localSource, { dev: info.dev, ino: info.ino })) {
+                    refuse('local_source_identity_changed');
                 }
-                // Recheck the exact source after recording intent and before deleting it.
-                if (await drive.verify(source, file, progress.source)) await drive.remove(source);
-                if (await drive.lookup(source)) refuse('drive_delete_incomplete');
-            } else if (!progress.removeDrive) refuse('missing_drive_source');
-            if (await local.verify(source, file)) {
+                return info;
+            };
+            if (await ownedSource()) {
                 if (!progress.removeLocal) {
                     progress.removeLocal = true;
                     await saveJournal();
                 }
-                if (await local.verify(source, file)) await fs.unlink(finalPath(source));
+                if (await ownedSource()) await fs.unlink(finalPath(source));
                 await syncDirectory(dirname(finalPath(source)));
             } else if (!progress.removeLocal) refuse('missing_local_source');
         }
@@ -370,6 +499,7 @@ export async function migrateProviderContracts(context) {
     }
     journal.phase = reverse ? 'rolledBack' : 'applied';
     await saveJournal();
+    if (mirror) await replayRasterMigration({ ...context, migration: journal });
     log({ migration: settings.action, pairs: moves.length, skipped });
 }
 
@@ -384,7 +514,7 @@ function stagePath(archive, journal, reverse, file) {
 
 async function stageDirectoryExists(path) {
     const info = await probe(path);
-    if (info && (!info.isDirectory() || (info.mode & 0o077) !== 0)) refuse('unsafe_staging_directory');
+    if (info && (!info.isDirectory() || !ownedPrivate(info))) refuse('unsafe_staging_directory');
     return Boolean(info);
 }
 
