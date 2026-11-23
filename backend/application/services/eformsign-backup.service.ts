@@ -14,11 +14,18 @@ type BackupDocumentKind = "contract" | "service_record" | "other";
 
 const CONTRACT_NAME_PREFIX = "산모신생아건강관리서비스";
 const SERVICE_RECORD_NAME_PREFIX = "서비스 제공기록지";
+const PROVIDER_CONTRACT_TEMPLATE = "제공인력 계약서";
+
+function providerContractDetail(payload: unknown): Partial<EformsignApiDocumentResponse> | null {
+    const detail = payload as Partial<EformsignApiDocumentResponse> | null;
+    return detail?.template?.name === PROVIDER_CONTRACT_TEMPLATE ? detail : null;
+}
 
 function backupDocumentKind(row: BackupDocumentRow): BackupDocumentKind {
     if (row.documentKind === "service_record_snapshot") return "service_record";
     if (row.documentKind === "contract") return "contract";
     if (row.documentKind !== null) return "other";
+    if (providerContractDetail(row.detailPayload)) return "other";
     if (row.documentName?.startsWith(CONTRACT_NAME_PREFIX)) return "contract";
     if (row.documentName?.startsWith(SERVICE_RECORD_NAME_PREFIX)) return "service_record";
     return "other";
@@ -36,6 +43,31 @@ function payloadStartDate(detailPayload: unknown): Date | null {
     return extractEformsignContractStartDate(detailPayload as EformsignApiDocumentResponse);
 }
 
+function providerContractMetadata(detailPayload: unknown) {
+    const detail = providerContractDetail(detailPayload);
+    if (!Array.isArray(detail?.fields)) return undefined;
+    const fields = detail.fields;
+
+    const readField = (id: string) => {
+        const values = new Set(fields.filter((field) => field?.id === id)
+            .map(({ value }) => typeof value === "string" ? value.trim() : ""));
+        return values.size === 1 ? values.values().next().value : undefined;
+    };
+    const signerName = readField("제공인력 성명");
+    const year = readField("계약년");
+    const month = readField("계약월");
+    const day = readField("계약일");
+    if (!signerName || !signerName.replace(/[/\\:*?"<>|\u0000-\u001f\u007f .]/g, "").trim()
+        || !year || !/^(?:20)?\d{2}$/.test(year)
+        || !month || !/^\d{1,2}$/.test(month)
+        || !day || !/^\d{1,2}$/.test(day)) return undefined;
+
+    const signedDate = `20${year.slice(-2)}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    const date = new Date(signedDate);
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== signedDate) return undefined;
+    return { signerName, signedDate };
+}
+
 @Injectable()
 export class EformsignBackupService {
     constructor(@Inject(EFORMSIGN_BACKUP_REPOSITORY) private readonly repository: IEformsignBackupRepository) {}
@@ -50,6 +82,7 @@ export class EformsignBackupService {
                     : null;
             const chunk = row.serviceRecordSnapshotChunk;
             const completed = isCompletedStatus(row.statusType);
+            const providerContract = kind === "other" ? providerContractMetadata(row.detailPayload) : undefined;
             return {
                 docId: row.documentId, kind, title: row.documentName, customerName: row.customerName,
                 serviceStartDate: start?.toISOString().slice(0, 10) ?? null,
@@ -59,6 +92,7 @@ export class EformsignBackupService {
                     chunkIndex: chunk.chunkIndex, chunkCount: chunk.chunkCount, firstSessionIndex: chunk.firstSessionIndex,
                 } : null,
                 completed,
+                ...(providerContract ? { providerContract } : {}),
                 files: isBackupReadySync(row.statusType, row.syncStatus) ? row.files
                     .filter((file) => file.sourceUpdatedDate.getTime() === row.detailSourceUpdatedDate?.getTime())
                     .map((file) => ({ fileId: file.id, fileType: file.fileType, sha256: file.sha256, byteSize: file.byteSize })) : [],
