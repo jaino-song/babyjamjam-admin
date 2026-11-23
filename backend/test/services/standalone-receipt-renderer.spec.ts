@@ -31,20 +31,20 @@ const SNAPSHOT = Object.freeze({
 
 type Box = readonly [left: number, top: number, right: number, bottom: number];
 
-const TOP_BOXES: readonly Box[] = [
+const TOP_BOXES = [
     [540, 666, 1170, 736], [575, 745, 1188, 816], [540, 824, 995, 894],
     [460, 998, 635, 1060], [711, 998, 886, 1060], [961, 998, 1136, 1060],
     [715, 1274, 982, 1340],
     [401, 1357, 456, 1420], [516, 1357, 584, 1420], [641, 1357, 744, 1420],
     [572, 1435, 619, 1496], [684, 1435, 780, 1496], [844, 1435, 938, 1496],
-];
-const BOTTOM_BOXES: readonly Box[] = [
+] as const satisfies readonly Box[];
+const BOTTOM_BOXES = [
     [540, 2055, 1170, 2125], [575, 2133, 1188, 2204], [540, 2213, 995, 2283],
     [460, 2388, 635, 2448], [711, 2388, 886, 2448], [961, 2388, 1136, 2448],
     [703, 2663, 994, 2729],
     [390, 2743, 467, 2806], [527, 2743, 595, 2806], [652, 2743, 755, 2806],
     [561, 2821, 630, 2886], [695, 2821, 790, 2886], [854, 2821, 949, 2886],
-];
+] as const satisfies readonly Box[];
 
 async function readPixels(png: Buffer): Promise<Buffer> {
     const image = await loadImage(png);
@@ -164,6 +164,22 @@ describe("StandaloneReceiptRenderer", () => {
         { actualPrice: Number.NaN },
     ])("rejects invalid snapshot %#", async (invalid) => {
         await expect(renderer.render(SYNTHETIC, { ...SNAPSHOT, ...invalid })).rejects.toThrow(RangeError);
+    });
+
+    it.each(["Nguyễn", "김😀", "김\u4E00"])("refuses a name with an unmapped code point: %s", async (customerName) => {
+        await expect(async () => {
+            await renderer.render(SYNTHETIC, { ...SNAPSHOT, customerName });
+        }).rejects.toMatchObject({
+            name: "RangeError",
+            message: "Standalone receipt customerName contains unsupported characters",
+        });
+    });
+
+    it("renders a name with mapped Hangul, Latin and space characters in both copies", async () => {
+        const output = await renderer.render(SYNTHETIC, { ...SNAPSHOT, customerName: "김 Hana Ægir" });
+        const after = await readPixels(output);
+        expect(inkBounds(before, after, TOP_BOXES[0])).toBeDefined();
+        expect(inkBounds(before, after, BOTTOM_BOXES[0])).toBeDefined();
     });
 
     it("refuses text that still exceeds the measured box at 6 points", async () => {
