@@ -1,6 +1,7 @@
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { RECEIPT_LINK_KIND } from "domain/repositories/receipt-link-token.repository.interface";
 import {
     FILE_STORAGE_PORT,
     FileStorageObjectNotFoundError,
@@ -80,6 +81,9 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
             throw receiptLinkUnusableError();
         }
         const status = await this.tokenService.getStatus(linkToken, new Date());
+        if (status.ok && status.kind === RECEIPT_LINK_KIND.STANDALONE) {
+            throw receiptLinkUnusableError();
+        }
         const assertDocumentSyncReady = this.issueService.assertDocumentSyncReady;
         if (typeof assertDocumentSyncReady === "function") {
             const explicitDocId = job.payload.receiptEformsignDocId;

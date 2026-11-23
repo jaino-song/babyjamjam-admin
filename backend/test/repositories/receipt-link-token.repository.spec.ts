@@ -143,6 +143,7 @@ describe("SbReceiptLinkTokenRepository.withJobIssuanceLock", () => {
     it("reports contention and waits on the same transaction-scoped advisory lock", async () => {
         const activeRow = {
             id: "token-existing",
+            kind: "contract",
             eformsignDocId: 42,
             accessTokenHash: null,
             expectedBirthdayHash: "birthday-hash",
@@ -205,7 +206,7 @@ describe("SbReceiptLinkTokenRepository.withJobIssuanceLock", () => {
         expect(executeRaw).toHaveBeenCalledTimes(2);
         expect(getSqlText(queryRaw.mock.calls[0]![0])).toContain("pg_try_advisory_xact_lock");
         expect(getSqlText(executeRaw.mock.calls[0]![0])).toContain("pg_advisory_xact_lock");
-        expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { jobId: "job-race", active: true } }));
+        expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { jobId: "job-race", active: true, kind: "contract" } }));
         expect(updateMany).toHaveBeenCalledTimes(1);
         expect(create).toHaveBeenCalledTimes(1);
         expect(rootFindFirst).not.toHaveBeenCalled();

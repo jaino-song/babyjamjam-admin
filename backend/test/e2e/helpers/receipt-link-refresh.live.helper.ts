@@ -11,7 +11,7 @@ import {
 } from "domain/ports/file-storage.port";
 import {
     IReceiptLinkTokenIssuanceRepository,
-    ReceiptLinkTokenRecord,
+    ContractReceiptLinkTokenRecord,
     type CreateReceiptLinkTokenData,
 } from "domain/repositories/receipt-link-token.repository.interface";
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
@@ -472,7 +472,8 @@ export async function compareAndSwapReceiptLinkPointer(
 
 function toReceiptLinkTokenRecord(row: {
     id: string;
-    eformsignDocId: number;
+    kind: string;
+    eformsignDocId: number | null;
     accessTokenHash: string | null;
     expectedBirthdayHash: string;
     verifiedAt: Date | null;
@@ -481,9 +482,11 @@ function toReceiptLinkTokenRecord(row: {
     expiresAt: Date;
     active: boolean;
     storagePath: string;
-}): ReceiptLinkTokenRecord {
+}): ContractReceiptLinkTokenRecord {
+    if (row.kind !== "contract" || row.eformsignDocId === null) throw new Error("Expected a contract token");
     return {
         id: row.id,
+        kind: row.kind,
         eformsignDocId: row.eformsignDocId,
         accessTokenHash: row.accessTokenHash,
         expectedBirthdayHash: row.expectedBirthdayHash,
@@ -510,6 +513,7 @@ export function createTransactionReceiptLinkIssuanceRepository(
         createOrRefreshContractLink: async (data: CreateReceiptLinkTokenData, now: Date) => {
             await client.receipt_link_token.updateMany({
                 where: {
+                    kind: "contract",
                     eformsignDocId: data.eformsignDocId,
                     active: true,
                     branchId: data.branchId,
@@ -521,7 +525,7 @@ export function createTransactionReceiptLinkIssuanceRepository(
         },
         findActiveByJobId: async (jobId) => {
             const row = await client.receipt_link_token.findFirst({
-                where: { jobId, active: true },
+                where: { jobId, active: true, kind: "contract" },
                 orderBy: { createdAt: "desc" },
             });
             return row ? toReceiptLinkTokenRecord(row) : null;

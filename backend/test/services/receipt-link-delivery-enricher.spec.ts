@@ -153,6 +153,23 @@ describe("ReceiptLinkDeliveryEnricher", () => {
         expect(tokenService.getStatus).toHaveBeenCalledWith("efr_live", expect.any(Date));
     });
 
+    it("rejects standalone links in contract staging before checking any document or object", async () => {
+        const issueService = { assertDocumentSyncReady: jest.fn() };
+        const tokenService = {
+            getStatus: jest.fn().mockResolvedValue({ ok: true, kind: "standalone", eformsignDocId: null }),
+        };
+        const storage = { createSignedUrl: jest.fn() };
+        const enricher = new ReceiptLinkDeliveryEnricher(
+            new SmsTriggerPayloadEnricherRegistry(), issueService as never, tokenService as never, storage as never,
+        );
+
+        await expect(enricher.validateStagedSnapshot(makeJob(
+            "agent-sms-retry:action-1", "https://m.admin.example/receipt/efr_live",
+        ))).rejects.toThrow();
+        expect(issueService.assertDocumentSyncReady).not.toHaveBeenCalled();
+        expect(storage.createSignedUrl).not.toHaveBeenCalled();
+    });
+
     it("pins an explicitly selected contract document during staged delivery", async () => {
         const issueService = {
             issue: jest.fn(),

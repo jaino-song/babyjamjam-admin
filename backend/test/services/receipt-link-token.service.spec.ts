@@ -7,6 +7,7 @@ import {
     normalizeBirthdayInput,
 } from "application/services/receipt-link-token.service";
 import {
+    ContractReceiptLinkTokenRecord,
     CreateReceiptLinkTokenData,
     IReceiptLinkTokenRepository,
     IReceiptLinkTokenIssuanceRepository,
@@ -18,7 +19,7 @@ import {
 /** The fake's internal row shape carries a couple of fields the public record never exposes
  * (linkTokenHash is a lookup key, revokedAt is write-only from the service's point of view) so
  * the tests can still assert on them directly, mirroring the previous FakePrisma's `rows`. */
-interface FakeRow extends ReceiptLinkTokenRecord {
+interface FakeRow extends ContractReceiptLinkTokenRecord {
     linkTokenHash: string;
     revokedAt: Date | null;
     jobId: string | null;
@@ -33,7 +34,7 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
         return row ? { ...row } : null;
     }
 
-    async createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date): Promise<ReceiptLinkTokenRecord> {
+    async createOrRefreshContractLink(data: CreateReceiptLinkTokenData): Promise<ContractReceiptLinkTokenRecord> {
         for (const row of this.rows.filter((r) => r.eformsignDocId === data.eformsignDocId && r.active)) {
             row.expiresAt = data.expiresAt;
         }
@@ -47,6 +48,7 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
 
         const row: FakeRow = {
             id: `row-${this.nextId++}`,
+            kind: "contract",
             eformsignDocId: data.eformsignDocId,
             accessTokenHash: null,
             expectedBirthdayHash: data.expectedBirthdayHash,
@@ -64,6 +66,10 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
         };
         this.rows.push(row);
         return { ...row };
+    }
+
+    async insertStandaloneLink(): Promise<never> {
+        throw new Error("Standalone insertion requires the real repository");
     }
 
     async update(id: string, data: UpdateReceiptLinkTokenData): Promise<ReceiptLinkTokenRecord> {
@@ -119,7 +125,7 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
     async findExpired(cutoff: Date) {
         return this.rows
             .filter((r) => r.expiresAt < cutoff)
-            .map((r) => ({ id: r.id, storagePath: r.storagePath, eformsignDocId: r.eformsignDocId }));
+            .map((r) => ({ id: r.id, storagePath: r.storagePath }));
     }
 
     async deleteByIds(ids: string[]): Promise<number> {
@@ -143,7 +149,7 @@ class FakeReceiptLinkTokenRepository implements IReceiptLinkTokenRepository {
         return Array.from(inUse);
     }
 
-    async findActiveByJobId(jobId: string): Promise<ReceiptLinkTokenRecord | null> {
+    async findActiveByJobId(jobId: string): Promise<ContractReceiptLinkTokenRecord | null> {
         const row = this.rows.find((r) => r.jobId === jobId && r.active === true);
         return row ? { ...row } : null;
     }
@@ -344,8 +350,9 @@ describe("ReceiptLinkTokenService", () => {
             findActiveByJobId: repository.findActiveByJobId.bind(repository),
             createOrRefreshContractLink: async (data, now, refresh) => originalCreate({
                 ...data,
+                createdAt: now,
                 ...refresh!({ birthday: "1994-03-07" }),
-            }, now),
+            }),
         };
         await service.issue({
             branchId: "11111111-1111-1111-1111-111111111111", clientId: 7, eformsignDocId: 42,
@@ -374,6 +381,7 @@ describe("ReceiptLinkTokenService", () => {
         const status = await service.getStatus(linkToken, NOW);
         expect(status).toEqual({
             ok: true,
+            kind: "contract",
             state: "pending",
             branchName: "인천 아이미래로",
             storagePath: "receipts/b/42/abc.png",
