@@ -347,7 +347,7 @@
       "status": "migrated",
       "implementation_task_id": "4a-1",
       "path": "backend/application/utils/problem-bodies.ts",
-      "symbol": "problemBody / codeOnlyProblemBody",
+      "symbol": "problemBody / codeOnlyProblemBody / codeOnlyProblemException / isConflictException",
       "spec_ids": [],
       "public_codes": [
         "EMPLOYEE_PHONE_ALREADY_REGISTERED",

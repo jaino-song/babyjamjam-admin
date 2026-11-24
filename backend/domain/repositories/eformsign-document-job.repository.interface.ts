@@ -1,3 +1,4 @@
+import type { InitialNoProviderDocumentProjection } from "domain/constants/service-record-initial-no-provider-document";
 import {
     EformsignDocumentJobEntity,
     EformsignDocumentJobPayload,
@@ -26,7 +27,18 @@ export interface EnqueueEformsignDocumentJobInput {
     copaymentReceivedDate?: Date;
 }
 
+export interface InitialDocumentRegenerationProjection {
+    stateId: string;
+    revisionId: string;
+    generation: string;
+    clientId: number;
+    ready: boolean;
+    reasonCode: string | null;
+}
+
 export interface EformsignDocumentJobSummary {
+    initialRegenerations?: InitialDocumentRegenerationProjection[];
+    noProviderDocumentConfirmable?: InitialNoProviderDocumentProjection[];
     activeCount: number;
     /** 종류와 기간에 관계없이 모든 `requires_attention` 작업 수. */
     requiresAttentionCount: number;
@@ -71,6 +83,8 @@ export type ResolveManuallyResult =
     | { kind: "invalid_state"; status: EformsignDocumentJobStatus };
 
 export interface EformsignDocumentJobList {
+    initialRegenerations?: InitialDocumentRegenerationProjection[];
+    noProviderDocumentConfirmable?: InitialNoProviderDocumentProjection[];
     active: EformsignDocumentJobEntity[];
     requiresAttention: EformsignDocumentJobEntity[];
     recent: EformsignDocumentJobEntity[];

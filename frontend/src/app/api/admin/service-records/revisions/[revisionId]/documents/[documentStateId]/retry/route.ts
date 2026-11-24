@@ -13,6 +13,7 @@ import {
     localValidationProblemResponse,
     readJsonObjectBody,
 } from "@/lib/api/route-utils";
+import { initialRegenerationConflictResponse } from "@/app/api/eformsign-docs/jobs/initial-document-action";
 import { jsonResponse } from "@/app/api/admin/service-records/_lib/proxy";
 
 type RouteParams = { params: Promise<{ revisionId: string; documentStateId: string }> };
@@ -57,6 +58,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     } catch (error) {
         const invalidJson = invalidJsonResponse(error);
         if (invalidJson) return invalidJson;
-        return errorResponse(error, "retry service-record document");
+        return initialRegenerationConflictResponse(error) ?? errorResponse(error, "retry service-record document");
     }
 }

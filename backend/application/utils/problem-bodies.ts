@@ -1,6 +1,18 @@
+import { ConflictException, HttpException } from "@nestjs/common";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 
 import type { ProblemCode, ProblemDetails, ProblemError } from "@babyjamjam/shared/errors/problem-details";
+
+type CodeOnlyProblemFields = Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery">;
+
+function codeOnlyProblemFields(code: ProblemCode): CodeOnlyProblemFields {
+    return {
+        code,
+        params: {},
+        outcome: "NOT_APPLIED",
+        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+    };
+}
 
 /**
  * Shape an employee rejection as a public problem contract body.
@@ -33,14 +45,20 @@ export function problemBody(
  */
 export function codeOnlyProblemBody(
     code: ProblemCode,
-): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery"> & { message: string } {
+): CodeOnlyProblemFields & { message: string } {
     return {
-        code,
-        params: {},
-        outcome: "NOT_APPLIED",
-        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        ...codeOnlyProblemFields(code),
         message: PROBLEM_CATALOG[code].detail["ko-KR"],
     };
+}
+
+/** The HTTP problem boundary localizes the response. Producers supply machine fields. */
+export function codeOnlyProblemException(code: ProblemCode, extension?: { reason: string }): HttpException {
+    return new HttpException({ ...codeOnlyProblemFields(code), ...extension }, PROBLEM_CATALOG[code].status);
+}
+
+export function isConflictException(error: unknown): error is ConflictException {
+    return error instanceof ConflictException;
 }
 
 /**

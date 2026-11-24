@@ -667,7 +667,7 @@ describe("client-owned service record snapshot", () => {
             }
             expect(prisma.service_record_snapshot_chunk.update).toHaveBeenCalledTimes(1);
             expect(prisma.service_record_snapshot_chunk.update).toHaveBeenCalledWith({
-                where: { id: "chunk-1" },
+                where: { id: "chunk-1", AND: { eformsignDocumentId: null } },
                 data: {
                     status: "CREATED",
                     eformsignDocumentId: remoteDocument.id,

@@ -1,9 +1,11 @@
+import { noProviderDocumentConfirmable } from "infrastructure/database/utils/service-record-initial-no-provider-document-projection";
+import { initialRegenerationProjections } from "application/policies/service-record-initial-regeneration-projection.policy";
 import { BadRequestException, ConflictException, Injectable, Logger } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 
-import { isInitialFinalizationJobIdentity, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import { isInitialFinalizationJobIdentity, isInitialFinalizationWorkflowScope, newestInitialFinalizationStateSql } from "application/policies/service-record-initial-finalization.policy";
 import type { ContractDataDto } from "application/dto/contract.dto";
 import { assertContractDataPhones, sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import {
@@ -38,7 +40,7 @@ import {
     RequeueInitialFinalizationJobResult,
     DiagnoseInitialFinalizationJobResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
-import { INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES, cancelledDocumentJobSql, initialFinalizationJobSql, initialFinalizationCancellableSql, initialFinalizationRetryCandidateSql } from "../utils/service-record-initial-recovery-sql";
+import { INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES, historicalInitialFinalizationJobSql, cancelledDocumentJobSql, initialFinalizationJobSql, initialFinalizationCancellableSql, initialFinalizationRetryCandidateSql } from "../utils/service-record-initial-recovery-sql";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
@@ -512,9 +514,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 service_record_case_id AS "serviceRecordCaseId", revision_id AS "revisionId",
                 generation, document_version AS "documentVersion", input_fingerprint AS "inputFingerprint",
                 operation, workflow_scope AS "workflowScope"
-            FROM "service_record_revision_document_state"
+            FROM "service_record_revision_document_state" AS state
             WHERE id = ${stateId}::uuid AND branch_id = ${input.branchId}::uuid
                 AND client_id = ${context.clientId} AND service_record_case_id = ${context.serviceRecordCaseId}::uuid
+                AND ${newestInitialFinalizationStateSql("state")}
             FOR UPDATE
         `);
         if (!state || state.branchId !== input.branchId || state.clientId !== context.clientId
@@ -973,8 +976,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 service_record_case_id AS "serviceRecordCaseId", revision_id AS "revisionId",
                 operation, generation, document_version AS "documentVersion",
                 input_fingerprint AS "inputFingerprint", workflow_scope AS "workflowScope", status, version
-            FROM "service_record_revision_document_state"
-            WHERE id = ${payload["documentStateId"]}::uuid
+            FROM "service_record_revision_document_state" AS state
+            WHERE id = ${payload["documentStateId"]}::uuid AND ${newestInitialFinalizationStateSql("state")}
             ${options.lock ? Prisma.sql`FOR UPDATE` : Prisma.empty}
         `);
         const state = states[0];
@@ -1382,6 +1385,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return rows.map((row) => this.toDomain(row));
     }
 
+    private async regenerationProjections(branchId: string) {
+        return initialRegenerationProjections(this.prisma, branchId);
+    }
+
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {
         const [rows, actionable] = await Promise.all([
             this.prisma.$queryRaw<Array<{
@@ -1390,8 +1397,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 failed_count: number;
                 unresolved_count: number;
             }>>(Prisma.sql`
-                SELECT count(*) FILTER (WHERE status IN ${ACTIVE_STATUSES})::int AS active_count,
-                       count(*) FILTER (WHERE NOT ${cancelledDocumentJobSql()} AND (status = 'requires_attention'
+                SELECT count(*) FILTER (WHERE status IN ${ACTIVE_STATUSES} AND NOT ${historicalInitialFinalizationJobSql()})::int AS active_count,
+                       count(*) FILTER (WHERE NOT ${historicalInitialFinalizationJobSql()} AND NOT ${cancelledDocumentJobSql()} AND (status = 'requires_attention'
                            OR (${initialFinalizationJobSql()} AND status = 'failed')))::int AS attention_count,
                        count(*) FILTER (
                            WHERE ${contractJobSql()} AND status = 'failed'
@@ -1404,6 +1411,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             this.findActionableJobs(branchId),
         ]);
         return {
+            initialRegenerations: await this.regenerationProjections(branchId),
+            noProviderDocumentConfirmable: await noProviderDocumentConfirmable(this.prisma, branchId),
             activeCount: Number(rows[0]?.active_count ?? 0),
             requiresAttentionCount: Number(rows[0]?.attention_count ?? 0),
             failedCount: Number(rows[0]?.failed_count ?? 0),
@@ -1451,7 +1460,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT j.*, false AS cancellable, false AS retryable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
-                WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${ACTIVE_STATUSES}
+                WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${ACTIVE_STATUSES} AND NOT ${historicalInitialFinalizationJobSql("j")}
                 ORDER BY j.created_at ASC
             `),
             // Current unresolved authority holds remain reachable after the failed-history cutoff.
@@ -1461,6 +1470,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid
                   AND NOT ${cancelledDocumentJobSql("j")}
+                  AND NOT ${historicalInitialFinalizationJobSql("j")}
                   AND (
                       j.status = 'requires_attention'
                       OR (j.status = 'failed' AND ${initialFinalizationJobSql("j")})
@@ -1475,10 +1485,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT j.*, false AS cancellable, false AS retryable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
-                WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${TERMINAL_STATUSES}
+                WHERE j.branch_id = ${branchId}::uuid AND (j.status IN ${TERMINAL_STATUSES} OR (j.status = 'requires_attention' AND ${historicalInitialFinalizationJobSql("j")}))
                   AND NOT ${cancelledDocumentJobSql("j")}
                   AND j.completed_at >= ${terminalSince}
-                  AND (NOT (j.status = 'failed' AND (${contract} OR ${initialFinalizationJobSql("j")})) OR j.progress_step = ${SUPERSEDED_PROGRESS_STEP})
+                  AND (NOT (j.status = 'failed' AND (${contract} OR ${initialFinalizationJobSql("j")})) OR j.progress_step = ${SUPERSEDED_PROGRESS_STEP} OR ${historicalInitialFinalizationJobSql("j")})
                 ORDER BY j.completed_at DESC LIMIT ${limit}
             `),
         ]);
@@ -1497,7 +1507,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             const verified = await this.verifyInitialFinalizationDispatch(this.prisma, row, context, { lock: false });
             row.retryable = verified.kind === "allow";
         }
-        return { active: active.map(this.toDomain), requiresAttention: requiresAttention.map(this.toDomain), recent: recent.map(this.toDomain) };
+        return { initialRegenerations: await this.regenerationProjections(branchId),
+            noProviderDocumentConfirmable: await noProviderDocumentConfirmable(this.prisma, branchId),
+            active: active.map(this.toDomain), requiresAttention: requiresAttention.map(this.toDomain), recent: recent.map(this.toDomain) };
     }
 
     async deleteExpiredTerminal(cutoff: Date) {

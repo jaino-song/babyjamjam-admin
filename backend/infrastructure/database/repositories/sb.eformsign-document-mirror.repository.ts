@@ -474,6 +474,8 @@ implements IEformsignDocumentMirrorRepository {
                     where: { id: row.id },
                     data: {
                         statusType: "049",
+                        // Keep deleted snapshots in revision readiness checks so a
+                        // completed sibling cannot hide this terminal chunk.
                         statusDetail: "삭제",
                         updatedDate: deletedAt,
                         expired: false,
@@ -702,6 +704,8 @@ implements IEformsignDocumentMirrorRepository {
                     documentKind: null,
                     employeeScheduleId: null,
                     serviceRecordCaseId: null,
+                    // The revision scope CHECK requires a case for any retained revision.
+                    revisionId: null,
                     snapshotVersion: null,
                     snapshotChunkIndex: null,
                     detailPayload: Prisma.DbNull,

@@ -1,6 +1,9 @@
+import { INITIAL_PROVIDER_RECOVERY, type IInitialProviderRecovery } from "domain/repositories/service-record-initial-provider-recovery.interface";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import { UNASSIGNED_TERMINAL_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EformsignService } from "application/services/eformsign.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
@@ -18,6 +21,7 @@ import {
 import {
     isEformsignDocumentAbsentError,
 } from "infrastructure/api/eformsign-api.error";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 import { MirrorUnassignedEformsignDocUsecase } from "./mirror-unassigned-eformsign-doc.usecase";
 import {
@@ -136,6 +140,10 @@ export class BackfillEformsignDocsUsecase {
         private readonly documentMirrorService?: EformsignDocumentMirrorService,
         @Optional()
         private readonly eformsignService?: EformsignService,
+        @Optional()
+        private readonly serviceRecordLifecycle?: ServiceRecordLifecycleService,
+        @Optional() @Inject(INITIAL_PROVIDER_RECOVERY)
+        private readonly initialProviderRecovery?: IInitialProviderRecovery,
     ) {}
 
     async execute(
@@ -282,26 +290,61 @@ export class BackfillEformsignDocsUsecase {
                 }
             }
 
-            if (scanFailures.length > 0) {
-                const failedTypes = scans
-                    .filter(({ documentType }) =>
-                        summary.byDocumentType[documentType].status === "failed")
-                    .map(({ documentType }) => documentType)
-                    .join(",");
-                throw new BackfillEformsignDocsError(
-                    `Eformsign document backfill failed for types=${failedTypes}`,
-                    summary,
-                    scanFailures,
-                );
-            }
+            let scanFailed = false;
+            try {
+                if (scanFailures.length > 0) {
+                    const failedTypes = scans
+                        .filter(({ documentType }) =>
+                            summary.byDocumentType[documentType].status === "failed")
+                        .map(({ documentType }) => documentType)
+                        .join(",");
+                    throw new BackfillEformsignDocsError(
+                        `Eformsign document backfill failed for types=${failedTypes}`,
+                        summary,
+                        scanFailures,
+                    );
+                }
 
-            await this.verifyLocallyActiveDocumentsMissingFromVendorLists(
-                mirroredUpdatedDates,
-                () => accessToken,
-                refreshAccessToken,
-                options,
-                summary,
-            );
+                await this.verifyLocallyActiveDocumentsMissingFromVendorLists(
+                    mirroredUpdatedDates,
+                    () => accessToken,
+                    refreshAccessToken,
+                    options,
+                    summary,
+                );
+            } catch (error) {
+                scanFailed = true;
+                throw error;
+            } finally {
+                // Preserve a propagating scan/verification error if the lease expires during healing.
+                try {
+                    this.assertCanContinue(options, summary);
+                    const branchId = principal.source === "worker" && principal.branchId?.startsWith("__system__:")
+                        ? undefined : principal.branchId;
+                    try {
+                        await this.serviceRecordLifecycle?.healInitialSnapshotTerminalOutcomes({
+                            branchId,
+                            shouldContinue: options.shouldContinue,
+                        });
+                    } catch (error) {
+                        this.logger.warn({ message: "INITIAL snapshot sweep heal failed", branchId });
+                        try {
+                            captureServiceRecordError(error, { operation: "auto-finalize", handled: true });
+                        } catch {
+                            // Reporting must not change the vendor scan outcome.
+                        }
+                    }
+                    this.assertCanContinue(options, summary);
+                    try {
+                        await this.initialProviderRecovery?.reconcile({ branchId, shouldContinue: options.shouldContinue });
+                    } catch {
+                        this.logger.warn({ message: "INITIAL provider recovery sweep failed", branchId });
+                    }
+                    this.assertCanContinue(options, summary);
+                } catch (error) {
+                    if (!scanFailed) throw error;
+                }
+            }
 
                     options.onProgress?.({
                         phase: "completed",
@@ -710,9 +753,35 @@ export class BackfillEformsignDocsUsecase {
                     );
                 }
                 if (hasPermanentPurgeIntent) {
-                    await this.documentMirrorService.purgeDocuments([documentId]);
+                    await this.finishPermanentPurge(this.documentMirrorService, documentId);
                 } else {
                     await this.documentMirrorService.markDocumentsDeleted([documentId]);
+                }
+            }
+        }
+    }
+
+    private async finishPermanentPurge(
+        mirror: EformsignDocumentMirrorService, documentId: string, vendorStatusType?: string,
+    ): Promise<void> {
+        const lifecycle = this.serviceRecordLifecycle;
+        const branchId = await lifecycle?.findSnapshotChunkBranchForDocument(documentId);
+        await mirror.purgeDocuments([documentId]);
+        // Never acquire lifecycle case locks while holding the purge transaction's client/doc locks.
+        if (lifecycle && branchId) {
+            try {
+                await lifecycle.evaluateInitialSnapshotTerminalOutcome({
+                    branchId,
+                    documentId,
+                    deletedDocuments: vendorStatusType === undefined ? undefined : [{ documentId, statusType: vendorStatusType }],
+                });
+            } catch (error) {
+                // The heal sweep re-evaluates INITIAL states from their retained tombstones.
+                this.logger.error({ message: "INITIAL snapshot post-purge evaluation failed", documentId });
+                try {
+                    captureServiceRecordError(error, { operation: "auto-finalize", handled: true });
+                } catch {
+                    // Reporting must not interrupt the remaining purges.
                 }
             }
         }
@@ -763,7 +832,7 @@ export class BackfillEformsignDocsUsecase {
             }
         } catch (error) {
             if (isEformsignDocumentAbsentError(error)) {
-                await documentMirrorService.purgeDocuments([documentId]);
+                await this.finishPermanentPurge(documentMirrorService, documentId);
                 return;
             }
             if (isDefinitivePermanentDeleteHttpFailure(error)) {
@@ -774,7 +843,7 @@ export class BackfillEformsignDocsUsecase {
 
         const successfulIds = successfulPermanentDeleteDocumentIds(result);
         if (successfulIds.includes(documentId)) {
-            await documentMirrorService.purgeDocuments([documentId]);
+            await this.finishPermanentPurge(documentMirrorService, documentId, vendorStatusType);
             return;
         }
 
@@ -788,9 +857,8 @@ export class BackfillEformsignDocsUsecase {
         // claimCompletionStatus, updateDocument), so the local row stays frozen at its
         // pre-delete status for as long as the intent survives — which is exactly the
         // situation this branch exists to end.
-        if (vendorStatusType !== undefined
-            && UNASSIGNED_TERMINAL_STATUS_CODES.has(vendorStatusType)) {
-            await documentMirrorService.purgeDocuments([documentId]);
+        if (UNASSIGNED_TERMINAL_STATUS_CODES.has(normalizeEformsignStatusCode(vendorStatusType))) {
+            await this.finishPermanentPurge(documentMirrorService, documentId, vendorStatusType);
             return;
         }
 
