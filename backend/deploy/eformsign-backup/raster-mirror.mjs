@@ -1777,7 +1777,8 @@ function checkReadyScope(ctx, options, files) {
     }
     const intent = ctx.state.intent;
     if (intent && (intent.kind !== 'publish' || intent.discarding || !ctx.readyPaths.has(intent.path))) refuse('invalid_ready_scope');
-    if (files && !validReadyPublication(ctx.readyPublication)) refuse('invalid_ready_scope');
+    if (files && (!validReadyPublication(ctx.readyPublication)
+        || (intent?.ready && !same(intent.ready, ctx.readyPublication)))) refuse('invalid_ready_scope');
     const render = ctx.state.renderStage;
     if (render && (!render.path || !ctx.readyPaths.has(render.path))) refuse('invalid_ready_scope');
     for (const sha256 of ctx.stagedRenders.keys()) {
@@ -1979,8 +1980,10 @@ async function settleReadyPublication(settings, options) {
     if (!shaName(owner) || !(authority === null || shaName(authority))) refuse('invalid_ready_scope');
     const bound = await readBinding(settings, options);
     const op = bound.state?.intent;
-    if (bound.state?.phase !== 'active' || !bound.remote || op?.ready?.owner !== owner
-        || (!op.discarding && op.ready.authority === authority)) return;
+    if (bound.state?.phase !== 'active' || !bound.remote || !op?.ready) return;
+    // A different eligible target can release the shared slot even when the
+    // previous owner is backed off or has expired from the queue.
+    if (op.ready.owner === owner ? !op.discarding && op.ready.authority === authority : authority === null) return;
     const ctx = await openArchive(settings, { ...options, readyPaths: new Map([[op.path, null]]) });
     if (!same(ctx.state.intent, op)) refuse('invalid_ready_scope');
     await guardOriginals(ctx, []);

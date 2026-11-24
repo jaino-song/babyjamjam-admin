@@ -1367,6 +1367,12 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             });
         }
         if (!seed?.ready || !files.size) return 'pending';
+        // Reused originals can reach publication without going through record().
+        const unfenced = verifiedUnits.map((unit) => state.units[unit.key]).filter((entry) => !entry.readyPending);
+        if (unfenced.length) {
+            for (const entry of unfenced) entry.readyPending = true;
+            await saveState();
+        }
         await ready.recheck();
         const receipt = await mirror.publish({ readyPaths: files, readyPublication: ready.publicationOwner,
             beforeVisible: ready.recheck, deadline: ready.deadline });
