@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE "client" ADD COLUMN     "copayment_received_date" DATE;
+ALTER TABLE "client" ADD COLUMN IF NOT EXISTS "copayment_received_date" DATE;

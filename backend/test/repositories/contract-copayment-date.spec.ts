@@ -71,7 +71,7 @@ describe("contract copayment date acceptance", () => {
         const migration = readFileSync(resolve(__dirname,
             "../../prisma/migrations/20261123000000_add_client_copayment_received_date/migration.sql"), "utf8");
         expect(migration.replace(/^--.*$/gm, "").trim()).toMatch(
-            /^ALTER TABLE "client" ADD COLUMN\s+"copayment_received_date" DATE;$/,
+            /^ALTER TABLE "client" ADD COLUMN IF NOT EXISTS\s+"copayment_received_date" DATE;$/,
         );
         const parsed = parseContractCopaymentReceivedDate(contractData);
         expect(parsed).toEqual(dbDate(DATE_B));
