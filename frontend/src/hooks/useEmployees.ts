@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import {
     useInfiniteQuery,
     useQuery,
@@ -170,7 +171,7 @@ export function useCreateEmployee() {
             }
         },
         onError: async (error, _dto, context) => {
-            console.error("[useCreateEmployee] onError called:", error);
+            console.error("[useCreateEmployee] onError called:", summarizeErrorForLog(error));
             await refetchOwnedEmployeeListQueries(queryClient, context);
         },
     });

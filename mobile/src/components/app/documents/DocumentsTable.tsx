@@ -1,6 +1,6 @@
 "use client";
 
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { useMemo, useState, useEffect } from "react";
 import { Plus, Upload, FileText, Image, File } from "lucide-react";
@@ -127,7 +127,7 @@ export function DocumentsTable() {
             setIsUploadOpen(false);
             showToast(t(locale, "documents.upload-success"), "default");
         } catch (err) {
-            console.error(err);
+            console.error(summarizeErrorForLog(err));
             showToast(failureMessage(err, "문서 업로드에 실패했어요."), "destructive");
         }
     };
@@ -146,7 +146,7 @@ export function DocumentsTable() {
             setEditDoc(null);
             showToast(t(locale, "documents.update-success"), "default");
         } catch (err) {
-            console.error(err);
+            console.error(summarizeErrorForLog(err));
             showToast(failureMessage(err, "문서 수정에 실패했어요."), "destructive");
         }
     };
@@ -158,7 +158,7 @@ export function DocumentsTable() {
             setDeleteDoc(null);
             showToast(t(locale, "documents.delete-success"), "default");
         } catch (err) {
-            console.error(err);
+            console.error(summarizeErrorForLog(err));
             showToast(failureMessage(err, "문서 삭제에 실패했어요."), "destructive");
         }
     };
@@ -169,7 +169,7 @@ export function DocumentsTable() {
             setIsAddCategoryOpen(false);
             showToast("태그가 추가되었습니다.", "default");
         } catch (err) {
-            console.error(err);
+            console.error(summarizeErrorForLog(err));
             showToast(failureMessage(err, "태그 추가에 실패했어요."), "destructive");
         }
     };

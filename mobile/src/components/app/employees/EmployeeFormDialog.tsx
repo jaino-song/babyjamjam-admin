@@ -1,6 +1,7 @@
 "use client";
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
+    summarizeErrorForLog,
     getUserErrorMessage,
     normalizeApiError,
     resolveProblemPresentation,
@@ -419,7 +420,10 @@ export function EmployeeFormDialog({
 
                 // Check if the response is an error (has statusCode or code property)
                 if (updatedEmployee && ('code' in updatedEmployee || 'statusCode' in updatedEmployee)) {
-                    console.error("[EmployeeFormDialog] Update returned error:", updatedEmployee);
+                    console.error("[EmployeeFormDialog] Update returned error:", {
+                        code: 'code' in updatedEmployee ? updatedEmployee.code : undefined,
+                        statusCode: 'statusCode' in updatedEmployee ? updatedEmployee.statusCode : undefined,
+                    });
                     setMutationError(updatedEmployee);
                     return;
                 }
@@ -444,7 +448,10 @@ export function EmployeeFormDialog({
 
                 // Check if the response is an error (has statusCode or code property)
                 if (newEmployee && ('code' in newEmployee || 'statusCode' in newEmployee)) {
-                    console.error("[EmployeeFormDialog] Create returned error:", newEmployee);
+                    console.error("[EmployeeFormDialog] Create returned error:", {
+                        code: 'code' in newEmployee ? newEmployee.code : undefined,
+                        statusCode: 'statusCode' in newEmployee ? newEmployee.statusCode : undefined,
+                    });
                     setMutationError(newEmployee);
                     return;
                 }
@@ -462,7 +469,7 @@ export function EmployeeFormDialog({
                 return;
             }
             setDeletedPhoneMatch(null);
-            console.error("[EmployeeFormDialog] Failed to save employee:", error);
+            console.error("[EmployeeFormDialog] Failed to save employee:", summarizeErrorForLog(error));
             setMutationError(error);
         } finally {
             setIsSubmitting(false);

@@ -53,7 +53,7 @@ export function QueryErrorState({
         className={cn("flex flex-col gap-1", isPanel ? "items-center" : "min-w-0 flex-1")}
       >
         <p
-          data-component={`${dataComponent}_title`}
+          data-component={`${dataComponent}_text_title`}
           data-slot="title"
           className="flex items-center gap-1.5 text-[0.85rem] font-bold text-v3-dark"
         >
@@ -62,7 +62,7 @@ export function QueryErrorState({
         </p>
         {description ? (
           <p
-            data-component={`${dataComponent}_description`}
+            data-component={`${dataComponent}_text_description`}
             data-slot="description"
             className="text-[0.73rem] text-v3-text-muted"
           >

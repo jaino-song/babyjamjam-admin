@@ -49,7 +49,7 @@ describe("logged-out page presentation", () => {
     jest.clearAllMocks();
     mockQuery = new URLSearchParams();
     localStorage.clear();
-    jest.mocked(authApi.checkEmailExists).mockResolvedValue({ exists: false, linkable: false });
+    jest.mocked(authApi.checkEmailExists).mockResolvedValue({ exists: false });
   });
 
   it("preserves the base onboarding auth-page CSS byte for byte", () => {

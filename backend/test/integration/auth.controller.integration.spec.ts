@@ -6,6 +6,10 @@ import { AuthService } from "application/services/auth.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
+import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pipe";
+import { HttpAdapterHost } from "@nestjs/core";
+import { ServiceRecordSentryExceptionFilter } from "infrastructure/observability/service-record-sentry-exception.filter";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import {
     KakaoAuthGuard,
@@ -95,6 +99,8 @@ describe("AuthController (Integration)", () => {
         process.env = { ...OLD_ENV };
         jwtUser = { userId: mockUser.id, role: mockUser.role };
         const mockAuthService = {
+            verifyKakaoLink: jest.fn().mockResolvedValue({ success: true, linked: true }),
+            verifyEmailLink: jest.fn().mockResolvedValue({ success: true, linked: true }),
             validateKakaoUser: jest.fn(),
             validateEmailPassword: jest.fn(),
             createAuthCode: jest.fn(),
@@ -105,6 +111,7 @@ describe("AuthController (Integration)", () => {
             getPendingKakaoSignup: jest.fn(),
             completeKakaoOnboarding: jest.fn(),
             getPendingAccountOnboarding: jest.fn(),
+            completeAccountOnboarding: jest.fn(),
             linkKakaoToAccount: jest.fn(),
             // Kakao OAuth state binding (login-CSRF protection). The callback
             // rejects with invalid_oauth_state unless verifyKakaoLoginState
@@ -939,6 +946,7 @@ describe("AuthController (Integration)", () => {
                 "010-1234-5678",
                 "1990-01-01",
                 "user",
+                false,
             );
         });
 
@@ -956,33 +964,215 @@ describe("AuthController (Integration)", () => {
     });
 
     describe("POST /auth/onboarding/complete", () => {
-        it("should reject post-approval self-service profile and branch assignment", async () => {
-            const response = await request(app.getHttpServer())
-                .post("/auth/onboarding/complete")
-                .set("x-pending-onboarding-token", "pending-onboarding-token")
-                .send({
-                    phone: "010-1234-5678",
-                    birthDate: "1990-01-01",
-                    branchId: "550e8400-e29b-41d4-a716-446655440000",
-                    role: "manager",
-                });
+        const body = { phone: "010-1234-5678", birthDate: "1990-01-01" };
 
-            expect(response.status).toBe(403);
-            expect(response.body.code).toBe("ACCOUNT_PROFILE_INCOMPLETE");
+        it("signs in after the login handler starts account completion", async () => {
+            authService.validateEmailPassword.mockResolvedValue({
+                onboardingRequired: true, onboardingKind: "account_completion",
+                userId: mockUser.id, prefill: { name: mockUser.name },
+            });
+            authService.startPendingAccountOnboarding.mockResolvedValue("pending-onboarding-token");
+            authService.completeAccountOnboarding.mockResolvedValue({ user: mockUser.id, ...mockTokens });
+            const login = await request(app.getHttpServer()).post("/auth/login")
+                .send({ email: mockUser.email, password: "Password1!" });
+            expect(login.status).toBe(201);
+            expect(login.body).toEqual({
+                success: true, onboardingRequired: true, onboardingRoute: "/onboarding",
+                pendingAccountOnboardingToken: "pending-onboarding-token",
+            });
+            expect(authService.startPendingAccountOnboarding).toHaveBeenCalledWith(mockUser.id);
+            const response = await request(app.getHttpServer()).post("/auth/onboarding/complete")
+                .set("x-pending-onboarding-token", login.body.pendingAccountOnboardingToken).send(body);
+            expect(response.status).toBe(201);
+            expect(response.body).toEqual({ success: true, user: mockUser.id, ...mockTokens });
+            expect(authService.completeAccountOnboarding).toHaveBeenCalledWith(
+                "pending-onboarding-token", body.phone, body.birthDate,
+            );
         });
 
-        it("should reject the endpoint even when the onboarding token is missing", async () => {
-            const response = await request(app.getHttpServer())
-                .post("/auth/onboarding/complete")
-                .send({
-                    phone: "010-1234-5678",
-                    birthDate: "1990-01-01",
-                    branchId: "550e8400-e29b-41d4-a716-446655440000",
-                    role: "manager",
-                });
+        it.each(["/auth/onboarding/complete", "/auth/onboarding/complete?token=url-token"])(
+            "requires the token header at %s", async (url) => {
+                const response = await request(app.getHttpServer()).post(url).send(body);
+                expect(response.status).toBe(400);
+                expect(response.body).toEqual(problemBody("VALIDATION_FAILED", {
+                    pointer: "/token", code: "REQUIRED", detail: "온보딩 진행 토큰을 입력해 주세요.", location: "custom",
+                }));
+                expect(authService.completeAccountOnboarding).not.toHaveBeenCalled();
+            },
+        );
 
-            expect(response.status).toBe(403);
+        it("uses the header when a query token is also supplied", async () => {
+            authService.completeAccountOnboarding.mockResolvedValue({ user: mockUser.id, ...mockTokens });
+            const response = await request(app.getHttpServer()).post("/auth/onboarding/complete?token=url-token")
+                .set("x-pending-onboarding-token", "header-token").send(body);
+            expect(response.status).toBe(201);
+            expect(authService.completeAccountOnboarding).toHaveBeenCalledWith("header-token", body.phone, body.birthDate);
+        });
+
+        it.each([
+            { phone: "invalid", birthDate: body.birthDate },
+            { phone: body.phone, birthDate: "19900101" },
+        ])("rejects malformed profile input %j", async (invalidBody) => {
+            const response = await request(app.getHttpServer()).post("/auth/onboarding/complete")
+                .set("x-pending-onboarding-token", "pending-token").send(invalidBody);
+            expect(response.status).toBe(400);
+            expect(authService.completeAccountOnboarding).not.toHaveBeenCalled();
+        });
+
+        it("allows omission of a stored phone, leaving requiredness to the service", async () => {
+            authService.completeAccountOnboarding.mockResolvedValue({ user: mockUser.id, ...mockTokens });
+            const response = await request(app.getHttpServer()).post("/auth/onboarding/complete")
+                .set("x-pending-onboarding-token", "pending-token").send({ birthDate: body.birthDate });
+            expect(response.status).toBe(201);
+            expect(authService.completeAccountOnboarding).toHaveBeenCalledWith("pending-token", undefined, body.birthDate);
+        });
+
+        describe("production validation pipe", () => {
+            let strictApp: INestApplication;
+            beforeEach(async () => {
+                const moduleFixture = await Test.createTestingModule({
+                    controllers: [AuthController],
+                    providers: [
+                        { provide: AuthService, useValue: authService },
+                        { provide: PrismaService, useValue: prismaService },
+                        { provide: RateLimitGuard, useValue: rateLimitGuard },
+                    ],
+                })
+                    .overrideGuard(JwtGuard).useValue(mockJwtGuard)
+                    .overrideGuard(KakaoAuthGuard).useValue(mockKakaoGuard)
+                    .overrideGuard(RateLimitGuard).useValue(rateLimitGuard)
+                    .compile();
+                strictApp = moduleFixture.createNestApplication();
+                strictApp.useGlobalPipes(new GlobalValidationPipe({
+                    whitelist: true, forbidNonWhitelisted: true, transform: true,
+                }));
+                await strictApp.listen(0, "127.0.0.1");
+            });
+            afterEach(async () => { await strictApp.close(); });
+
+            it.each(["role", "branchId"])("rejects extra %s without calling completion", async (field) => {
+                const response = await request(strictApp.getHttpServer()).post("/auth/onboarding/complete")
+                    .set("x-pending-onboarding-token", "pending-token").send({ ...body, [field]: "untrusted" });
+                expect(response.status).toBe(400);
+                expect(response.body.code).toBe("VALIDATION_FAILED");
+                expect(response.body.errors).toContainEqual(expect.objectContaining({
+                    pointer: `/${field}`, code: "UNEXPECTED_FIELD", location: "body",
+                }));
+                expect(authService.completeAccountOnboarding).not.toHaveBeenCalled();
+            });
+
+            it("accepts a profile-only body and returns login tokens", async () => {
+                authService.completeAccountOnboarding.mockResolvedValue({ user: mockUser.id, ...mockTokens });
+                const response = await request(strictApp.getHttpServer()).post("/auth/onboarding/complete")
+                    .set("x-pending-onboarding-token", "pending-token").send(body);
+                expect(response.status).toBe(201);
+                expect(response.body).toEqual({ success: true, user: mockUser.id, ...mockTokens });
+            });
+
+            it("allows omission of a stored birth date, leaving requiredness to the service", async () => {
+                authService.completeAccountOnboarding.mockResolvedValue({ user: mockUser.id, ...mockTokens });
+                const response = await request(strictApp.getHttpServer()).post("/auth/onboarding/complete")
+                    .set("x-pending-onboarding-token", "pending-token").send({ phone: body.phone });
+                expect(response.status).toBe(201);
+                expect(response.body).toEqual({ success: true, user: mockUser.id, ...mockTokens });
+                expect(authService.completeAccountOnboarding).toHaveBeenCalledWith("pending-token", body.phone, undefined);
+            });
         });
     });
 
+    describe("account link verification with production validation", () => {
+        let strictApp: INestApplication;
+        const body = { challengeToken: "a".repeat(64), code: "123456" };
+        beforeEach(async () => {
+            const moduleFixture = await Test.createTestingModule({
+                controllers: [AuthController], providers: [
+                    { provide: AuthService, useValue: authService },
+                    { provide: PrismaService, useValue: prismaService },
+                    { provide: RateLimitGuard, useValue: rateLimitGuard },
+                ],
+            }).overrideGuard(JwtGuard).useValue(mockJwtGuard)
+                .overrideGuard(KakaoAuthGuard).useValue(mockKakaoGuard)
+                .overrideGuard(RateLimitGuard).useValue(rateLimitGuard).compile();
+            strictApp = moduleFixture.createNestApplication();
+            strictApp.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+            await strictApp.listen(0, "127.0.0.1");
+        });
+        afterEach(async () => { await strictApp.close(); });
+        it.each(["kakao/link/verify", "register/link/verify"])("validates %s and returns default 201", async path => {
+            const response = await request(strictApp.getHttpServer()).post(`/auth/${path}`)
+                .set("x-pending-signup-token", "header-token").send(body);
+            expect(response.status).toBe(201);
+            if (path.startsWith("kakao")) expect(authService.verifyKakaoLink).toHaveBeenCalledWith("header-token", body.challengeToken, body.code);
+            else expect(authService.verifyEmailLink).toHaveBeenCalledWith(body.challengeToken, body.code);
+        });
+        it.each(["kakao/link/verify", "register/link/verify"])("rejects invalid inputs to %s", async path => {
+            for (const invalid of [{ ...body, code: "12345" }, { ...body, code: "1234567" }, { ...body, code: 123456 },
+                { ...body, code: "123456\n" }, { ...body, challengeToken: "a".repeat(64) + "\n" }, { ...body, code: "abcdef" }, { ...body, challengeToken: "A".repeat(64) },
+                { ...body, challengeToken: "a".repeat(63) }, { ...body, extra: "forbidden" }]) {
+                const response = await request(strictApp.getHttpServer()).post(`/auth/${path}`)
+                    .set("x-pending-signup-token", "header-token").send(invalid);
+                expect(response.status).toBe(400);
+            }
+            expect(authService.verifyKakaoLink).not.toHaveBeenCalled();
+            expect(authService.verifyEmailLink).not.toHaveBeenCalled();
+        });
+        it.each(["", "?token=url-token"])("requires Kakao header even with query %s", async query => {
+            const response = await request(strictApp.getHttpServer()).post(`/auth/kakao/link/verify${query}`).send(body);
+            expect(response.status).toBe(400);
+            expect(authService.verifyKakaoLink).not.toHaveBeenCalled();
+        });
+        it.each(["verifyKakaoLink", "verifyEmailLink"] as const)("rate limits %s", method => {
+            expect(Reflect.getMetadata(GUARDS_METADATA, AuthController.prototype[method])).toContain(RateLimitGuard);
+        });
+    });
+
+});
+
+// Separate app: the shared login tests intentionally observe Nest's unfiltered body.
+describe("AuthController pending account linking with production exception filter", () => {
+    let app: INestApplication;
+    const authService = { completeKakaoOnboarding: jest.fn(), registerWithEmail: jest.fn() };
+    const rateLimitGuard = { canActivate: jest.fn(), resetForKey: jest.fn() };
+
+    beforeEach(async () => {
+        jest.resetAllMocks();
+        rateLimitGuard.canActivate.mockResolvedValue(true);
+        const moduleFixture = await Test.createTestingModule({
+            controllers: [AuthController],
+            providers: [
+                { provide: AuthService, useValue: authService },
+                { provide: PrismaService, useValue: {} },
+                { provide: RateLimitGuard, useValue: rateLimitGuard },
+            ],
+        }).overrideGuard(JwtGuard).useValue({ canActivate: () => true })
+            .overrideGuard(KakaoAuthGuard).useValue({ canActivate: () => true })
+            .overrideGuard(RateLimitGuard).useValue(rateLimitGuard).compile();
+        app = moduleFixture.createNestApplication();
+        app.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+        app.useGlobalFilters(new ServiceRecordSentryExceptionFilter(app.get(HttpAdapterHost)));
+        await app.listen(0, "127.0.0.1");
+    });
+    afterEach(async () => { await app.close(); });
+
+    it.each(["kakao", "email"])("returns the public PENDING_APPROVAL problem for %s", async method => {
+        const pending = new ForbiddenException(codeOnlyProblemBody("PENDING_APPROVAL"));
+        const body = { phone: "01012345678", birthDate: "1990-01-01" };
+        if (method === "kakao") authService.completeKakaoOnboarding.mockRejectedValue(pending);
+        else authService.registerWithEmail.mockRejectedValue(pending);
+        const response = await request(app.getHttpServer())
+            .post(method === "kakao" ? "/auth/kakao/complete-signup" : "/auth/register")
+            .set("x-pending-signup-token", "pending-token")
+            .set("x-account-link-version", "1")
+            .send(method === "kakao" ? { ...body, role: "user" }
+                : { ...body, email: "qa@example.invalid", password: "Password1!", name: "QA Link" });
+        expect(response.status).toBe(403);
+        expect(response.headers["content-type"]).toMatch(/^application\/problem\+json(?:;|$)/);
+        expect(response.body.code).toBe("PENDING_APPROVAL");
+        expect(response.body.status).toBe(403);
+        if (method === "kakao") expect(authService.completeKakaoOnboarding)
+            .toHaveBeenCalledWith("pending-token", body.phone, body.birthDate, "user", true);
+        else expect(authService.registerWithEmail)
+            .toHaveBeenCalledWith("qa@example.invalid", "Password1!", "QA Link", body.phone, body.birthDate, true);
+        expect(rateLimitGuard.resetForKey).not.toHaveBeenCalled();
+    });
 });

@@ -7,7 +7,7 @@ import { isAxiosError } from "axios";
 import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
@@ -1359,7 +1359,7 @@ export const ContractCreationForm = ({
             }
           }
         }
-        console.error("Error creating contract:", error);
+        console.error("Error creating contract:", summarizeErrorForLog(error));
         setActiveStep(CONTRACT_INFO_STEP_INDEX);
         markCreationProgressFailed();
         if (!autoRegisteredClientId) {

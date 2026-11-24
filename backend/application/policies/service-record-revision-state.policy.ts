@@ -102,38 +102,51 @@ export function deriveServiceRecordDocumentSyncStatus(
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/i;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function isValidPlannedDates(
-    context: ServiceRecordRevisionDispatchContext,
+    dates: unknown,
+    count: unknown,
 ): boolean {
-    const dates = context.plannedSessionDates;
     if (!Array.isArray(dates)) return false;
-    if (context.plannedSessionCount === null) return dates.length === 0;
-    if (!Number.isInteger(context.plannedSessionCount) || context.plannedSessionCount < 1) return false;
-    if (dates.length !== context.plannedSessionCount) return false;
+    if (count === null) return dates.length === 0;
+    if (typeof count !== "number" || !Number.isInteger(count) || count < 1) return false;
+    if (dates.length !== count) return false;
     const seen = new Set<number>();
-    return dates.every((entry) => {
-        if (!Number.isInteger(entry.sessionIndex) || entry.sessionIndex < 1) return false;
-        if (seen.has(entry.sessionIndex) || !DATE_PATTERN.test(entry.serviceDate)) return false;
-        seen.add(entry.sessionIndex);
+    return dates.every((entry: unknown) => {
+        if (!isRecord(entry)) return false;
+        const { sessionIndex, serviceDate } = entry;
+        if (typeof sessionIndex !== "number" || !Number.isInteger(sessionIndex) || sessionIndex < 1) return false;
+        if (typeof serviceDate !== "string" || !DATE_PATTERN.test(serviceDate)) return false;
+        if (seen.has(sessionIndex)) return false;
+        seen.add(sessionIndex);
         return true;
     }) && [...seen].sort((a, b) => a - b).every((index, position) => index === position + 1);
 }
 
 export function isValidServiceRecordDispatchContext(
-    context: ServiceRecordRevisionDispatchContext | null | undefined,
+    context: unknown,
 ): context is ServiceRecordRevisionDispatchContext {
-    if (!context) return false;
-    if (!context.branchId || !context.serviceRecordCaseId || !Number.isInteger(context.clientId) || context.clientId < 1) {
+    if (!isRecord(context)) return false;
+    const { branchId, serviceRecordCaseId, clientId, revisionId, revisionNumber,
+        businessFingerprint, formVersion, documentSyncStatus, lifecycleStatus, plannedSessionDates, plannedSessionCount } = context;
+    if (typeof branchId !== "string" || !branchId
+        || typeof serviceRecordCaseId !== "string" || !serviceRecordCaseId
+        || typeof clientId !== "number" || !Number.isInteger(clientId) || clientId < 1) {
         return false;
     }
-    if (context.revisionId !== null && !context.revisionId) return false;
-    if (context.revisionNumber !== null && (!Number.isInteger(context.revisionNumber) || context.revisionNumber < 1)) {
+    if (revisionId !== null && (typeof revisionId !== "string" || !revisionId)) return false;
+    if (revisionNumber !== null && (typeof revisionNumber !== "number"
+        || !Number.isInteger(revisionNumber) || revisionNumber < 1)) {
         return false;
     }
-    if (!FINGERPRINT_PATTERN.test(context.businessFingerprint)) return false;
-    if (!Number.isInteger(context.formVersion) || context.formVersion < 1) return false;
-    if (!SERVICE_RECORD_REVISION_DOCUMENT_SYNC_STATUSES.includes(context.documentSyncStatus)) return false;
-    return isValidPlannedDates(context);
+    if (typeof businessFingerprint !== "string" || !FINGERPRINT_PATTERN.test(businessFingerprint)) return false;
+    if (typeof formVersion !== "number" || !Number.isInteger(formVersion) || formVersion < 1) return false;
+    if (typeof lifecycleStatus !== "string" || !lifecycleStatus) return false;
+    if (!SERVICE_RECORD_REVISION_DOCUMENT_SYNC_STATUSES.some(status => status === documentSyncStatus)) return false;
+    return isValidPlannedDates(plannedSessionDates, plannedSessionCount);
 }
 
 /**

@@ -87,7 +87,7 @@
         "287:39-287:74|visualTailwindInPage",
         "291:41-291:90|visualTailwindInPage",
         "295:36-295:82|visualTailwindInPage",
-        "297:122-297:162|visualTailwindInPage",
+        "297:193-297:233|visualTailwindInPage",
         "302:63-302:109|visualTailwindInPage",
         "303:65-303:110|visualTailwindInPage",
         "304:65-304:113|visualTailwindInPage",
@@ -659,19 +659,19 @@
     },
     "mobile/src/app/(shell)/(auth)/register/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "530:11-535:12|rawUiElement",
-        "600:15-615:17|rawUiElement",
-        "626:13-637:15|rawUiElement",
-        "647:13-658:15|rawUiElement",
-        "668:13-679:15|rawUiElement",
-        "683:13-688:14|rawUiElement",
-        "705:13-718:15|rawUiElement",
-        "728:13-741:15|rawUiElement",
-        "745:13-745:116|rawUiElement",
-        "749:13-749:77|rawUiElement",
-        "767:15-774:16|rawUiElement",
-        "787:13-787:116|rawUiElement",
-        "791:13-799:14|rawUiElement"
+        "608:11-613:12|rawUiElement",
+        "678:15-693:17|rawUiElement",
+        "707:13-718:15|rawUiElement",
+        "728:13-739:15|rawUiElement",
+        "749:13-760:15|rawUiElement",
+        "764:13-769:14|rawUiElement",
+        "786:13-799:15|rawUiElement",
+        "809:13-822:15|rawUiElement",
+        "826:13-826:116|rawUiElement",
+        "830:13-830:77|rawUiElement",
+        "848:15-855:16|rawUiElement",
+        "868:13-868:116|rawUiElement",
+        "872:13-880:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/(auth)/reset-password/page.tsx": {

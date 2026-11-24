@@ -2,6 +2,7 @@
 import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
 import {
+    summarizeErrorForLog,
     normalizeApiError,
     resolveProblemPresentation,
     type ProblemError,
@@ -761,7 +762,7 @@ function EmployeeFormContent({
                 return;
             }
             setDeletedPhoneMatch(null);
-            console.error("[EmployeeFormDialog] Failed to save employee:", submitError);
+            console.error("[EmployeeFormDialog] Failed to save employee:", summarizeErrorForLog(submitError));
             setMutationError(submitError);
         } finally {
             setIsSubmitting(false);

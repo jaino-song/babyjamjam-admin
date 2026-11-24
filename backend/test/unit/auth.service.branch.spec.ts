@@ -14,6 +14,7 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
         const prisma = {
         user: {
             findFirst: jest.fn(),
+            findMany: jest.fn().mockResolvedValue([]),
             findUnique: jest.fn(),
             create: jest.fn(),
             update: jest.fn(),
@@ -158,6 +159,9 @@ describe("AuthService - Multi-Tenancy Enhancement", () => {
             emailService,
             authTokenRepository as unknown as ReturnType<typeof createMockAuthTokenRepository>,
             authSessionService as unknown as AuthSessionService,
+            undefined,
+            { issue: jest.fn(), verify: jest.fn(), consume: jest.fn() } as unknown as
+                import("application/services/auth-phone-challenge.service").AuthPhoneChallengeService,
         );
 
         // Setup default mock returns

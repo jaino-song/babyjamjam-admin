@@ -2833,13 +2833,13 @@ describe("AgentRuntimeService", () => {
         expect(sessions.appendMessages).toHaveBeenCalledTimes(1);
         const prompt = JSON.stringify(modelStream.mock.calls);
         expect(prompt).not.toContain("기존 재생 고객");
-        expect(prompt).not.toContain("700");
+        expect(prompt).not.toMatch(/(?:^|[^0-9a-f-])700(?![0-9a-f-])/i);
         expect(prompt).not.toContain("재생 보호 고객");
-        expect(prompt).not.toContain("701");
+        expect(prompt).not.toMatch(/(?:^|[^0-9a-f-])701(?![0-9a-f-])/i);
         expect(prompt).not.toContain("재생 단일 고객");
         expect(prompt).not.toContain("재생 보호 주소");
         expect(JSON.stringify(chunks)).not.toContain("재생 보호 고객");
-        expect(JSON.stringify(chunks)).not.toContain("701");
+        expect(JSON.stringify(chunks)).not.toMatch(/(?:^|[^0-9a-f-])701(?![0-9a-f-])/i);
         expect(JSON.stringify(chunks)).not.toContain("재생 단일 고객");
         expect(JSON.stringify(chunks)).not.toContain("재생 보호 주소");
         expect(JSON.stringify(chunks)).not.toContain("data-entity-choice");

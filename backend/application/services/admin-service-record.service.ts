@@ -10,6 +10,7 @@ import {
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
@@ -375,16 +376,48 @@ export class AdminServiceRecordService {
             // 세대 불일치는 대상 문서 상태가 요청 도중 바뀐 원인이므로 등록된 코드를 재사용해요(EM-CAT-02).
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
+        if (state.operation === "record_snapshot"
+            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(normalizedRevisionId))) {
+            // INITIAL은 관리자 revision 재시도의 staff job scope가 없어 재발급할 수 없어요.
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
 
         void actorUserId;
-        const result = await repository.retryRevisionDocumentState({
-            branchId,
-            clientId: state.clientId,
-            revisionId: normalizedRevisionId,
-            stateId: normalizedDocumentStateId,
-            expectedGeneration: normalizedGeneration,
+        const result = await this.prisma.$transaction(async (tx) => {
+            // Follow the shared retry's case-before-state lock order.
+            const ownerCases = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT id FROM "service_record_case"
+                WHERE id = ${state.serviceRecordCaseId}::uuid
+                  AND branch_id = ${branchId}::uuid
+                  AND client_id = ${state.clientId}
+                FOR UPDATE
+            `);
+            if (!ownerCases[0]) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            const currentStates = await tx.$queryRaw<Array<{ status: string; version: number }>>(Prisma.sql`
+                SELECT status, version FROM "service_record_revision_document_state"
+                WHERE id = ${normalizedDocumentStateId}::uuid
+                  AND branch_id = ${branchId}::uuid
+                  AND client_id = ${state.clientId}
+                  AND service_record_case_id = ${state.serviceRecordCaseId}::uuid
+                  AND revision_id = ${normalizedRevisionId}::uuid
+                  AND generation = ${normalizedGeneration}
+                FOR UPDATE
+            `);
+            const current = currentStates[0];
+            if (!current) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            const retried = await repository.retryRevisionDocumentStateInTransaction({ tx }, {
+                branchId,
+                clientId: state.clientId,
+                revisionId: normalizedRevisionId,
+                stateId: normalizedDocumentStateId,
+                expectedGeneration: normalizedGeneration,
+            });
+            if (retried === null || (retried.status === current.status && retried.version === current.version)) {
+                // 잠근 현재 행과 같으면 이번 재시도가 실행되지 않은 요청 충돌이에요.
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            return retried;
         });
-        if (result === null) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         return normalizeRevisionDocumentSummaryResult(result);
     }
 

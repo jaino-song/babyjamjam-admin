@@ -1,5 +1,5 @@
 "use client";
-import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useState, useCallback } from "react";
@@ -84,7 +84,7 @@ export function VoucherPriceUploadForm({ initialYear }: { initialYear?: number }
         setWarnings(result.warnings ?? []);
         setCurrentStep("preview");
       } catch (error) {
-        console.error("Image parsing failed:", error);
+        console.error("Image parsing failed:", summarizeErrorForLog(error));
       }
     },
     [parseImageMutation],
@@ -117,7 +117,7 @@ export function VoucherPriceUploadForm({ initialYear }: { initialYear?: number }
       setUpdateResult(result);
       setCurrentStep("success");
     } catch (error) {
-      console.error("Bulk update failed:", error);
+      console.error("Bulk update failed:", summarizeErrorForLog(error));
     }
   }, [bulkUpdateMutation, parsedData, selectedYear]);
 

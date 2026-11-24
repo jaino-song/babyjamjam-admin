@@ -5,7 +5,7 @@ import { AxiosError } from "axios";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { prioritizeRecentBranch } from "./branch-order";
 
@@ -93,7 +93,7 @@ export async function getUserBranches(): Promise<{
       ),
     };
   } catch (error) {
-    console.error("[Server Action] Error fetching branches:", error);
+    console.error("[Server Action] Error fetching branches:", summarizeErrorForLog(error));
 
     if (error instanceof AxiosError) {
       const axiosError = error as AxiosError<APIErrorResponse>;
@@ -168,7 +168,7 @@ export async function setCurrentBranch(branchId: string): Promise<{
 
     return { success: true };
   } catch (error) {
-    console.error("[Server Action] Error setting current branch:", error);
+    console.error("[Server Action] Error setting current branch:", summarizeErrorForLog(error));
 
     if (error instanceof AxiosError) {
       const axiosError = error as AxiosError<APIErrorResponse>;

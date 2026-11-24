@@ -11,6 +11,7 @@ describe("AuthService Kakao onboarding", () => {
     const createMockPrismaService = () => ({
         user: {
             findFirst: jest.fn(),
+            findMany: jest.fn().mockResolvedValue([]),
             findUnique: jest.fn(),
             create: jest.fn(),
             update: jest.fn(),
@@ -113,6 +114,11 @@ describe("AuthService Kakao onboarding", () => {
                     refreshToken: "mock-refresh-token",
                 }),
             } as unknown as AuthSessionService,
+            undefined,
+            {
+                issue: jest.fn().mockResolvedValue({ challengeToken: "a".repeat(64) }),
+                verify: jest.fn(), consume: jest.fn(),
+            } as unknown as import("application/services/auth-phone-challenge.service").AuthPhoneChallengeService,
         );
     });
 
@@ -289,7 +295,7 @@ describe("AuthService Kakao onboarding", () => {
         expect(jwt.signAsync).not.toHaveBeenCalled();
     });
 
-    it("rejects onboarding when the phone number already belongs to another user", async () => {
+    it.each([true, false])("handles an existing phone holder (has Kakao=%s)", async (hasKakao) => {
         prisma.auth_flow_state.findUnique.mockResolvedValue({
             id: "pending-1",
             kind: "pending_kakao_signup",
@@ -306,18 +312,19 @@ describe("AuthService Kakao onboarding", () => {
             consumedAt: null,
         });
         prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
-        prisma.user.findFirst
-            .mockResolvedValueOnce(null)
-            .mockResolvedValueOnce({ id: "other-user" } as never);
+        prisma.user.findFirst.mockResolvedValue(null);
+        prisma.user.findMany.mockResolvedValue([{ id: "other-user", kakaoId: hasKakao ? "other-kakao" : null, birthDate: "1990-01-01", role: "user", approvalStatus: "approved" }]);
 
-        await expect(
-            service.completeKakaoOnboarding(
+        const result = service.completeKakaoOnboarding(
                 "pending-token",
                 "010-1234-5678",
                 "1990-01-01",
                 "user",
-            ),
-        ).rejects.toThrow(BadRequestException);
+                true,
+            );
+        if (hasKakao) await expect(result).rejects.toThrow(BadRequestException);
+        else await expect(result).resolves.toMatchObject({ success: true, linkVerificationRequired: true, linkChallengeToken: "a".repeat(64) });
+        expect(prisma.auth_flow_state.updateMany).not.toHaveBeenCalled();
 
         expect(prisma.user.create).not.toHaveBeenCalled();
     });

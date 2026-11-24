@@ -38,6 +38,30 @@ function stateRow() {
 }
 
 describe("ServiceRecordEditRepository revision state branch lookup", () => {
+    it.each(["failed", "manual_review"])("hides retry for an INITIAL %s state without the staff retry scope", async (status) => {
+        const base = { ...stateRow(), status, step: "failed" };
+        const initial = { ...base, workflowScope: {
+            requestKey: `service-record-initial-finalization:${revisionId}`, generationKind: "INITIAL_FINALIZATION",
+        } };
+        const staff = { ...base, id: "staff-state", workflowScope: { requestKey: "staff-request", activeKey: "staff-active" } };
+        const tx = {
+            $queryRaw: jest.fn(async (sql: { text: string }) => {
+                if (sql.text.includes('FROM "service_record_case"')) return [{
+                    caseId: base.serviceRecordCaseId, caseVersion: 1, currentRevisionId: revisionId, currentUsableRevisionId: null,
+                }];
+                if (sql.text.includes('FROM "service_record_revision_document_state"')) return [initial, staff];
+                if (sql.text.includes('FROM "service_record_revision"')) return [{ id: revisionId, revisionNumber: 1, confirmedAt: base.createdAt }];
+                return [];
+            }),
+        };
+        const prisma = { $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)) };
+        const history = await new ServiceRecordEditRepository(prisma as never).listRevisionHistory(branchId, base.clientId);
+        expect(history?.revisions[0]?.documents).toEqual([
+            expect.objectContaining({ id: stateId, canRetry: false }),
+            expect.objectContaining({ id: "staff-state", canRetry: true }),
+        ]);
+    });
+
     it("resolves the owning client from the branch/revision/state join", async () => {
         const prisma = {
             $queryRaw: jest.fn().mockResolvedValue([stateRow()]),

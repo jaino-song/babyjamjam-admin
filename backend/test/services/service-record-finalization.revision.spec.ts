@@ -1,3 +1,4 @@
+import { setup as initialRecoverySetup, input as initialRecoveryInput } from "../utils/service-record-initial-recovery.fixture";
 import { ConflictException } from "@nestjs/common";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
@@ -632,5 +633,39 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
         await expect(freeze(record)).rejects.toMatchObject({
             response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
         });
+    });
+});
+
+
+describe("cancelled INITIAL generation scheduler replay", () => {
+    it.each(["preparing", "sent"])("retains %s generation through repeated processDueCases runs without claiming or enqueueing", async progressStep => {
+        const f = initialRecoverySetup({ progressStep });
+        expect(await f.repo.cancel(initialRecoveryInput)).toEqual({ kind: "cancelled" });
+        const retained = structuredClone(f.job);
+        const record = source();
+        const caseDelegate = {
+            updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            findMany: jest.fn(async (args: { where: { snapshotChunks?: unknown } }) => args.where.snapshotChunks ? [record] : []),
+            findUnique: jest.fn(async (args: { select: Record<string, unknown> }) => "branch" in args.select
+                ? { ...record, branch: { name: record.branchName } } : record),
+        };
+        const tx = { ...f.tx, service_record_case: caseDelegate };
+        const prisma = { service_record_case: caseDelegate,
+            $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)) };
+        const jobs = { findByRequestKeyInTransaction: jest.fn(async () => f.job), enqueueInTransaction: jest.fn() };
+        const edit = { createRevisionDocumentStateInTransaction: jest.fn(async () => ({ ...f.state })),
+            allocateServiceRecordRevisionDocumentVersionInTransaction: jest.fn() };
+        const lifecycle = { recompute: jest.fn() }, snapshot = { executeCase: jest.fn() };
+        const service = new ServiceRecordFinalizationService(prisma as never, lifecycle as never, snapshot as never,
+            createHolidayCalendarStub(), jobs as never, edit as never);
+        await expect(service.processDueCases(new Date("2026-09-30"))).resolves.toBe(0);
+        await expect(service.processDueCases(new Date("2026-09-30"))).resolves.toBe(0);
+        expect(jobs.findByRequestKeyInTransaction).toHaveBeenCalledTimes(2);
+        expect(jobs.enqueueInTransaction).not.toHaveBeenCalled();
+        expect(edit.allocateServiceRecordRevisionDocumentVersionInTransaction).not.toHaveBeenCalled();
+        expect(snapshot.executeCase).not.toHaveBeenCalled();
+        expect(caseDelegate.updateMany.mock.calls).toHaveLength(2); // stale recovery only; no FINALIZING claim
+        expect(f.job).toEqual(retained);
+        expect(f.state.status).toBe(progressStep === "preparing" ? "failed" : "manual_review");
     });
 });

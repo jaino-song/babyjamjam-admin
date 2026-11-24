@@ -456,3 +456,30 @@ describe("middleware API route protection", () => {
     });
   });
 });
+
+
+describe("pending onboarding route gates", () => {
+  it.each([
+    ["/onboarding", "pending_account_onboarding"],
+    ["/kakao/onboarding", "pending_kakao_signup"],
+  ])("allows %s only with its pending cookie", async (path, cookie) => {
+    const allowed = await middleware(createRequest(path, `${cookie}=pending`));
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get("set-cookie")).toBeNull();
+  });
+  it.each(["/onboarding", "/kakao/onboarding"])("rejects %s without pending cookie", async path => {
+    expect((await middleware(createRequest(path))).headers.get("location")).toBe("http://localhost/login");
+  });
+  it.each([
+    ["/onboarding", "pending_kakao_signup"],
+    ["/kakao/onboarding", "pending_account_onboarding"],
+  ])("rejects %s with only the other pending cookie %s", async (path, cookie) => {
+    const response = await middleware(createRequest(path, `${cookie}=pending`));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/login");
+  });
+
+  it("allows registration link verification without a session", async () => {
+    expect((await middleware(createRequest("/api/auth/register/link/verify", undefined, "POST"))).status).toBe(200);
+  });
+});

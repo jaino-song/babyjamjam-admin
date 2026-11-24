@@ -2,22 +2,12 @@
 
 import { cookies } from "next/headers";
 import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
+import { writeLoginSessionCookies } from "@/lib/auth/login-session-cookies";
 
+import { clearPendingOnboarding, replacePendingAccountOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
-import {
-    ACCESS_TOKEN_MAX_AGE_SECONDS,
-    decodeAccessBranchId,
-    getRefreshSessionMaxAgeSeconds,
-} from "@/lib/auth/session-policy";
-import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
+import { summarizeErrorForLog, normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -93,14 +83,6 @@ function readLegacyCode(data: unknown): string | undefined {
     return typeof code === "string" && code.length > 0 ? code : undefined;
 }
 
-function resolveAutoLoginCookieValue(autoLogin: boolean): "1" | "0" {
-    return autoLogin ? "1" : "0";
-}
-
-function isAutoLoginCookieEnabled(value: string | undefined): boolean {
-    return value === "1";
-}
-
 export async function loginWithEmail(email: string, password: string, autoLogin = true): Promise<LoginResult> {
     try {
         console.log("[Server Action] Logging in with email");
@@ -130,14 +112,10 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
 
         if (isLoginOnboardingResponse(data)) {
-            cookieStore.set("pending_account_onboarding", data.pendingAccountOnboardingToken, {
-                httpOnly: true,
+            replacePendingAccountOnboarding(cookieStore, data.pendingAccountOnboardingToken, {
                 secure: isSecureCookie,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 60,
+                autoLogin,
             });
-            cookieStore.delete("pending_kakao_signup");
             cookieStore.delete("auth_token");
             cookieStore.delete("refresh_token");
             cookieStore.delete("auto_login");
@@ -149,81 +127,8 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             };
         }
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(data.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("[Server Action] Failed to decode token");
-        }
-
-        const authCookieBaseOptions = {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-        } as const;
-
-        if (autoLogin) {
-            cookieStore.set("auth_token", data.accessToken, {
-                ...authCookieBaseOptions,
-                maxAge: ACCESS_TOKEN_MAX_AGE_SECONDS,
-            });
-        } else {
-            cookieStore.set("auth_token", data.accessToken, authCookieBaseOptions);
-        }
-
-        const refreshCookieBaseOptions = {
-            httpOnly: true,
-            secure: isSecureCookie,
-            sameSite: "lax",
-            path: "/",
-        } as const;
-
-        if (autoLogin) {
-            cookieStore.set("refresh_token", data.refreshToken, {
-                ...refreshCookieBaseOptions,
-                maxAge: getRefreshSessionMaxAgeSeconds(role),
-            });
-        } else {
-            cookieStore.set("refresh_token", data.refreshToken, refreshCookieBaseOptions);
-        }
-
-        const autoLoginCookieValue = resolveAutoLoginCookieValue(autoLogin);
-        const autoLoginEnabled = isAutoLoginCookieEnabled(autoLoginCookieValue);
-        if (autoLoginEnabled) {
-            cookieStore.set("auto_login", autoLoginCookieValue, {
-                ...authCookieBaseOptions,
-                maxAge: 30 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.set("auto_login", autoLoginCookieValue, authCookieBaseOptions);
-        }
-
-        // middleware.ts gates every non-auth route on the selected_branch_id
-        // cookie. When the backend has already resolved a single accessible
-        // branch into the access token (requiresBranchSelection is false),
-        // reflect that branch here now — otherwise the user is bounced
-        // through /select-branch on the very next navigation.
-        //
-        // Every other case must CLEAR the cookie: this token carries no
-        // authorised branch, and a stale value left by a previous account on
-        // this device would otherwise satisfy the middleware gate and wave
-        // this login through to /dashboard with someone else's branch.
-        const branchId = data.requiresBranchSelection
-            ? null
-            : decodeAccessBranchId(data.accessToken);
-        if (branchId) {
-            cookieStore.set("selected_branch_id", branchId, {
-                httpOnly: false,
-                secure: isSecureCookie,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 24 * 60 * 60,
-            });
-        } else {
-            cookieStore.delete("selected_branch_id");
-        }
+        await writeLoginSessionCookies(data, autoLogin);
+        clearPendingOnboarding(cookieStore);
 
         console.log("[Server Action] Email login successful");
         console.log("[Server Action] requiresBranchSelection:", data.requiresBranchSelection);
@@ -231,16 +136,10 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         // Use requiresBranchSelection from backend response
         return { success: true, requiresBranchSelection: data.requiresBranchSelection || false };
     } catch (error) {
-        console.error("[Server Action] Email Login Error:", error);
+        console.error("[Server Action] Email Login Error:", summarizeErrorForLog(error));
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
-            console.error("[Server Action] Axios Error:", {
-                message: axiosError.message,
-                code: axiosError.code,
-                status: axiosError.response?.status,
-            });
-
             if (isTransportFailure(axiosError)) {
                 return { success: false, error: "서버에 연결할 수 없어요. 다시 시도해 주세요." };
             }

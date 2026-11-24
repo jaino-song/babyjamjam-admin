@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle, AlertTriangle } from "lucide-react";
-import { normalizeApiError, getResetPasswordErrorMessage } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError, getResetPasswordErrorMessage } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
 import { resetPasswordSchema, checkPasswordStrength, type ResetPasswordFormData } from "@/lib/validations/auth";
 import { CardContainer } from "@/components/auth/card-container";
@@ -87,7 +87,7 @@ export default function ResetPasswordPage() {
                 setError("비밀번호 재설정에 실패했어요.");
             }
         } catch (err) {
-            console.error("Reset password error:", err);
+            console.error("Reset password error:", summarizeErrorForLog(err));
             const errorData = err && typeof err === "object" && "response" in err
                 ? (err as { response?: { data?: { code?: unknown } } }).response?.data
                 : undefined;

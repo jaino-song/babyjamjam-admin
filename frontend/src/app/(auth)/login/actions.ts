@@ -1,10 +1,11 @@
 "use server"
 
 import { cookies } from "next/headers";
+import { clearPendingOnboarding, replacePendingAccountOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import axios, { AxiosError } from "axios";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
-import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -44,8 +45,6 @@ type LoginResponsePayload = LoginSuccessResponse | LoginOnboardingResponse | {
     code?: string;
 };
 
-const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
-const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
 const NETWORK_ERROR_CODES = new Set([
     "ECONNABORTED",
     "ECONNREFUSED",
@@ -116,15 +115,10 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 
         if (isLoginOnboardingResponse(data)) {
-            cookieStore.set(PENDING_ACCOUNT_ONBOARDING_COOKIE, data.pendingAccountOnboardingToken, {
-                httpOnly: true,
+            replacePendingAccountOnboarding(cookieStore, data.pendingAccountOnboardingToken, {
                 secure: isSecureCookie,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 60,
+                autoLogin,
             });
-
-            cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
             clearAuthSessionCookies(cookieStore);
 
             return {
@@ -142,8 +136,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             autoLogin,
         });
 
-        cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
-        cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
+        clearPendingOnboarding(cookieStore);
 
         return {
             success: true,
@@ -152,16 +145,10 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             ),
         };
     } catch (error) {
-        console.error("[Server Action] Email Login Error:", error);
+        console.error("[Server Action] Email Login Error:", summarizeErrorForLog(error));
 
         if (axios.isAxiosError<APIErrorResponse>(error)) {
             const axiosError = error;
-            console.error("[Server Action] Axios Error:", {
-                message: axiosError.message,
-                code: axiosError.code,
-                status: axiosError.response?.status,
-            });
-
             if (isBackendConnectionError(axiosError)) {
                 return { success: false, error: "로그인 서버에 연결할 수 없어요. 백엔드 서버를 확인해 주세요." };
             }
