@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { resolve, relative, basename, dirname, isAbsolute, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
-    assertRasterMigration, migrateProviderContracts, migrationInProgress, preserveMigration, readMigration,
+    assertRasterMigration, hasRasterMigrationHistory, migrateProviderContracts, migrationInProgress, preserveMigration, readMigration,
     readPreRasterMigration, replayRasterMigration, restorePreRasterMigration, timerLockDirectory, withTimerLock,
 } from './provider-contract-migration.mjs';
 import { providerPublication } from './provider-contract-publication.mjs';
@@ -143,13 +143,17 @@ async function readCutover(settings) {
     const predecessor = guard?.predecessor;
     const oldGuard = guard?.version === 1 && Object.keys(guard).length === 4
         && ['preparing', 'active', 'rollingBack'].includes(guard.phase);
-    const newGuard = guard?.version === 2 && Object.keys(guard).length === 6
+    const originGuard = ((guard?.version === 2 && Object.keys(guard).length === 6)
+        || (guard?.version === 3 && Object.keys(guard).length === 7
+            && (guard.publication === 'possible'
+                || (guard.origin === 'fresh' && guard.phase === 'preparing'
+                    && ['initial', 'capturing'].includes(guard.publication)))))
         && ['preparing', 'partial', 'active', 'rollingBack'].includes(guard.phase)
         && ['fresh', 'existing', 'pausedLegacy'].includes(guard.origin)
         && (guard.origin === 'pausedLegacy'
             ? typeof guard.proofDigest === 'string' && /^[a-f0-9]{64}$/.test(guard.proofDigest)
             : guard.proofDigest === null);
-    if ((!oldGuard && !newGuard) || !(predecessor === null || (typeof predecessor?.id === 'string' && /^[a-f\d-]{36}$/.test(predecessor.id)
+    if ((!oldGuard && !originGuard) || !(predecessor === null || (typeof predecessor?.id === 'string' && /^[a-f\d-]{36}$/.test(predecessor.id)
             && ['applied', 'rolledBack'].includes(predecessor.phase) && Object.keys(predecessor).length === 2))) {
         throw rasterError('invalid_raster_cutover');
     }
@@ -262,9 +266,9 @@ async function rasterMirror(settings, lockFd) {
         prepare: call(mirror.prepareRasterArchive, 'prepare'),
         publish: call(mirror.publishRasterArchive, 'publish'),
         rollback: call(mirror.rollbackRasterArchive, 'rollback'),
-        async inspect() {
+        async inspect(options) {
             try {
-                const observation = await mirror.inspectRasterArchive(archiveSettings, { lockFd });
+                const observation = await mirror.inspectRasterArchive(archiveSettings, { ...options, lockFd });
                 const { manifestPresent, unpublished, retiredPaths, phase } = observation;
                 if (Object.keys(observation).length !== 4 || typeof manifestPresent !== 'boolean'
                     || typeof unpublished !== 'boolean' || !Array.isArray(retiredPaths)
@@ -318,7 +322,8 @@ async function refusePublicationReceipts(stateDir) {
 async function checkPublicScratch(root) {
     if (!await stat(root)) return;
     for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-        if (entry.isSymbolicLink() || entry.name.endsWith('.tmp') || /^\.provider-(publication|contract)-/.test(entry.name)) {
+        if (entry.isSymbolicLink() || entry.name.endsWith('.tmp')
+            || /^\.(?:provider-(?:publication|contract)|raster-mirror)-/.test(entry.name)) {
             throw rasterError('unsafe_public_archive_scratch');
         }
         if (entry.isDirectory()) await checkPublicScratch(resolve(root, entry.name));
@@ -372,18 +377,23 @@ async function standaloneRaster(settings, guard, lockFd) {
         validatePredecessor(preserved, settings, predecessor);
         if (legacyJournal) await restorePreRasterMigration(settings.stateDir, preserved, { checkOnly: true });
     }
-    if (!guard) await checkPublicScratch(settings.archiveDir);
+    const beforePublication = guard?.publication === 'initial' || guard?.publication === 'capturing';
+    const initial = guard?.publication === 'initial';
+    if (!guard || beforePublication) await checkPublicScratch(settings.archiveDir);
     const mirror = await rasterMirror(settings, lockFd);
-    const inspection = await mirror.inspect();
+    const absence = rollback ? undefined : guard ? 'retry' : 'bootstrap';
+    const inspection = await mirror.inspect({ beforePublication, absence });
+    if (!inspection.manifestPresent && ((guard && (!initial || !inspection.unpublished || journal?.raster))
+        || await hasRasterMigrationHistory(settings))) {
+        throw rasterError('raster_cutover_manifest_required');
+    }
     if (rollback) {
         if (!inspection.manifestPresent) {
-            if (!inspection.unpublished || guard.version !== 2 || guard.origin !== 'fresh' || guard.phase !== 'preparing' || journal?.raster) {
-                throw rasterError('raster_cutover_manifest_required');
-            }
             if (preserved) await restorePreRasterMigration(settings.stateDir, preserved);
             await clearCutover(guard);
         } else {
-            const rollbackGuard = { ...guard, phase: 'rollingBack' };
+            if (beforePublication) await mirror.rollback({ dryRun: true });
+            const rollbackGuard = { ...guard, phase: 'rollingBack', ...(guard.version === 3 && { publication: 'possible' }) };
             await writeJson(guardPath(), rollbackGuard);
             await mirror.rollback();
             if (journal?.raster) await preserveMigration(settings.stateDir, journal, 'post-raster');
@@ -400,14 +410,13 @@ async function standaloneRaster(settings, guard, lockFd) {
         else if (inspection.unpublished) origin = 'fresh';
         else throw rasterError('raster_cutover_manifest_conflict');
     } else {
-        origin = retry && guard.version === 2 ? guard.origin : 'existing';
-        const freshRetry = guard.phase === 'preparing' && origin === 'fresh';
+        origin = retry && guard.version >= 2 ? guard.origin : 'existing';
         const pausedRetry = retry && (guard.phase === 'partial' || origin === 'pausedLegacy');
         if (inspection.phase !== 'active' && !(pausedRetry && inspection.phase === 'paused')
-            && !(freshRetry && !inspection.manifestPresent)) throw rasterError('raster_cutover_manifest_required');
+            && !(initial && !inspection.manifestPresent)) throw rasterError('raster_cutover_manifest_required');
     }
     const options = { explicitRepublish: true };
-    let proofDigest = retry && guard.version === 2 ? guard.proofDigest : null;
+    let proofDigest = retry && guard.version >= 2 ? guard.proofDigest : null;
     if (origin === 'pausedLegacy' && guard?.phase !== 'partial') {
         const legacyProofs = await readLegacyProofs(settings.stateDir);
         proofDigest = createHash('sha256').update(JSON.stringify(legacyProofs)).digest('hex');
@@ -424,13 +433,24 @@ async function standaloneRaster(settings, guard, lockFd) {
 
     if (guard?.phase !== 'partial') {
         if (legacyJournal) await preserveMigration(settings.stateDir, legacyJournal, 'pre-raster', false);
-        guard = { version: 2, phase: 'preparing', binding: cutoverBinding(settings), predecessor, origin, proofDigest };
+        const publication = guard?.publication ?? (!guard && origin === 'fresh' ? 'initial' : 'possible');
+        guard = { version: 3, phase: 'preparing', binding: cutoverBinding(settings), predecessor, origin, proofDigest, publication };
         await writeJson(guardPath(), guard);
     }
+    const markPublication = async (publication) => {
+        const next = { ...guard, publication };
+        await writeJson(guardPath(), next);
+        guard = next;
+    };
     await fs.mkdir(settings.stateDir, { recursive: true, mode: 0o700 });
     if (legacyJournal) await preserveMigration(settings.stateDir, legacyJournal, 'pre-raster');
-    await mirror.prepare(options);
+    await mirror.prepare(guard.publication === 'initial'
+        ? { ...options, beforeCapture: () => markPublication('capturing') }
+        : options);
     await canonicalDirectory(settings.originalArchiveDir, true);
+    // Record the possibility of publication before the mirror can place any
+    // derivative. This authority survives loss of both mirror and raw roots.
+    if (guard.version === 3 && guard.publication !== 'possible') await markPublication('possible');
     try { await mirror.publish(options); }
     catch (error) {
         if (!error.rasterReport) throw error;

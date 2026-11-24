@@ -1488,7 +1488,7 @@ function rejectSource(f, rejected, reason) {
 
 test('a revised document refusal preserves its display while later and future documents publish', async (t) => {
     const f = await fixture(t);
-    const failed = 'QA-private.pdf';
+    const failed = 'QA-private-e\u0301.pdf';
     const first = raw('first');
     const revised = raw('unrenderable revision');
     const sentinel = raw('idle sentinel');
@@ -1504,7 +1504,9 @@ test('a revised document refusal preserves its display while later and future do
         if (repeat === 2) await put(f.original, 'future.pdf', raw('future'));
         const failure = await isolatedReport(publish);
         assert.equal(failure.failedCount, 1);
-        assert.deepEqual(failure.failures, [{ id: sha(revised).slice(0, 16), reason: 'RASTER_INVALID_SOURCE' }]);
+        assert.deepEqual(failure.failures, [{ id: sha(failed.normalize('NFC')).slice(0, 16), reason: 'RASTER_INVALID_SOURCE' }]);
+        assert.ok(!JSON.stringify(failure).includes(failed));
+        assert.ok(!JSON.stringify(failure).includes(sha(revised).slice(0, 16)));
         assert.equal(failure.rendered, repeat === 1 ? 0 : 1);
         await assertEndpoints(f, failed, image(first), image(first), revised);
         await assertEndpoints(f, 'sentinel.pdf', image(sentinel), image(sentinel), sentinel);
@@ -1528,18 +1530,27 @@ test('a revised document refusal preserves its display while later and future do
 test('initial refusals count identical sources individually and cap only diagnostics', async (t) => {
     const f = await fixture(t, { localOnly: true });
     const bad = raw('same original');
-    for (let index = 0; index < 13; index++) {
-        await put(f.settings.archiveDir, `bad-${index}.pdf`, bad);
-    }
+    const paths = Array.from({ length: 13 }, (_, index) => `bad-e\u0301-${String(index).padStart(2, '0')}.pdf`);
+    for (const path of paths) await put(f.settings.archiveDir, path, bad);
     await prepareRasterArchive(f.settings);
     await put(f.original, 'z-last.pdf', raw('last'));
-    const report = await isolatedReport(() => f.publish({ renderRasterPdf: rejectSource(f, bad, 'RASTER_LIMIT') }));
+    const publish = () => f.publish({ renderRasterPdf: rejectSource(f, bad, 'RASTER_LIMIT') });
+    const report = await isolatedReport(publish);
     assert.equal(report.failedCount, 13);
-    assert.deepEqual(report.failures, Array(10).fill({ id: sha(bad).slice(0, 16), reason: 'RASTER_LIMIT' }));
+    const expected = paths.slice(0, 10).map((path) => ({
+        id: sha(path.normalize('NFC')).slice(0, 16), reason: 'RASTER_LIMIT',
+    }));
+    assert.deepEqual(report.failures, expected);
+    assert.equal(new Set(report.failures.map(({ id }) => id)).size, 10);
+    assert.ok(report.failures.every(({ id }) => /^[a-f0-9]{16}$/.test(id)));
+    const retry = await isolatedReport(publish);
+    assert.equal(retry.failedCount, 13);
+    assert.deepEqual(retry.failures, expected);
+    for (const path of paths) assert.ok(!JSON.stringify(report).includes(path));
+    assert.ok(!JSON.stringify(report).includes(sha(bad).slice(0, 16)));
     assert.equal(report.localPublished, 1);
     const records = new Map((await readManifest(f)).records);
-    for (let index = 0; index < 13; index++) {
-        const path = `bad-${index}.pdf`;
+    for (const path of paths) {
         assert.deepEqual(await fs.readFile(join(f.settings.archiveDir, path)), bad);
         assert.deepEqual(await fs.readFile(join(f.original, path)), bad);
         assert.equal(records.get(path).raster, null);

@@ -232,8 +232,10 @@ const instrument = String.raw`
 import { appendFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
-const { readFile, link, open } = fs;
+const { readFile, link, open, rename } = fs;
 const { TEST_TOKEN, TEST_EVENTS, TEST_FAIL_LINK, TEST_KILL_LINK, TEST_KILL_RESTORE } = process.env;
+const crash = process.env.TEST_RASTER_CRASH;
+const kill = () => process.kill(process.pid, 'SIGKILL');
 const observeToken = (path) => {
     if (String(path) === TEST_TOKEN) appendFileSync(TEST_EVENTS, '{"call":"token"}\n');
 };
@@ -243,7 +245,16 @@ fs.readFile = async (path, ...rest) => {
 };
 fs.open = async (path, ...rest) => {
     observeToken(path);
+    if (crash === 'before-bootstrap' && String(path).includes('/.bootstrap-')
+        || crash === 'after-blob' && String(path).includes('/.original-')) kill();
     return open(path, ...rest);
+};
+fs.rename = async (from, to) => {
+    if (String(to).endsWith('/manifest.json') && (crash === 'before-authority' && String(from).includes('/.bootstrap-')
+        || crash === 'after-capture' && String(from).includes('/.journal-'))) kill();
+    if (crash === 'before-active' && String(to).endsWith('/raster-cutover.json')
+        && JSON.parse(await readFile(from, 'utf8')).phase === 'active') kill();
+    return rename(from, to);
 };
 fs.link = async (from, to) => {
     if (TEST_FAIL_LINK && String(to).includes('/제공인력 계약서/')) throw Error('private stage failure ' + to);
@@ -326,6 +337,72 @@ if (command === 'listremotes') {
 }
 `;
 
+const mirrorDrive = String.raw`#!/usr/bin/env node
+const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
+const fs = require('node:fs');
+const { basename, dirname, join, relative } = require('node:path');
+const [command, ...args] = process.argv.slice(2);
+const delimiter = args.indexOf('--');
+assert.ok(delimiter >= 0);
+const flags = args.slice(0, delimiter);
+const operands = args.slice(delimiter + 1);
+const root = process.env.TEST_DRIVE;
+const hidden = process.env.TEST_HIDDEN_REMOTE;
+const inclusive = flags.includes('--drive-skip-shortcuts=false');
+const parent = flags.find((flag) => flag.startsWith('--drive-root-folder-id='));
+const remotePath = (operand) => {
+    assert.ok(operand.startsWith('mock:'));
+    return join(root, operand.slice(5));
+};
+const hash = (bytes, kind = 'sha256') => createHash(kind).update(bytes).digest('hex');
+const info = (path, name) => {
+    const stat = fs.lstatSync(path);
+    return { Name: basename(name), Path: name, ID: String(stat.ino), IsDir: stat.isDirectory(),
+        Size: stat.isDirectory() ? -1 : stat.size, ModTime: stat.mtime.toISOString(),
+        MimeType: stat.isDirectory() ? 'inode/directory' : 'application/pdf',
+        ...(stat.isFile() && flags.includes('--hash-type') && { Hashes: { md5: hash(fs.readFileSync(path), 'md5') } }) };
+};
+function list(dir, prefix = '') {
+    return fs.readdirSync(join(dir, prefix)).flatMap((name) => {
+        const path = join(prefix, name);
+        const full = join(dir, path);
+        if (!inclusive && relative(root, full) === hidden) return [];
+        const row = info(full, path);
+        return row.IsDir && flags.includes('--recursive') ? [row, ...list(dir, path)] : [row];
+    });
+}
+function findDir(id, dir = root) {
+    if (String(fs.statSync(dir).ino) === id) return dir;
+    for (const file of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!file.isDirectory()) continue;
+        const found = findDir(id, join(dir, file.name));
+        if (found) return found;
+    }
+}
+const path = operands.length && (parent ? findDir(parent.split('=')[1]) : remotePath(operands.at(-1)));
+const input = command === 'copyto' && fs.readFileSync(operands[0]);
+fs.appendFileSync(process.env.TEST_RAW_DRIVE, JSON.stringify({
+    command, key: path ? relative(root, path) : null, inclusive, sha: input && hash(input),
+}) + '\n');
+if (command === 'listremotes') {
+    console.log(hidden || process.env.TEST_DRIVE_BACKEND === 'drive' ? 'mock: drive' : 'mock: local');
+} else if (command === 'lsjson') {
+    console.log(JSON.stringify(flags.includes('--stat') ? info(path, '') : list(path)));
+} else if (command === 'cat') {
+    process.stdout.write(fs.readFileSync(path));
+} else if (command === 'copyto') {
+    fs.mkdirSync(dirname(path), { recursive: true });
+    fs.writeFileSync(path, input);
+    const source = fs.statSync(operands[0]);
+    fs.utimesSync(path, source.atime, source.mtime);
+} else if (command === 'deletefile') {
+    fs.unlinkSync(path);
+} else {
+    assert.fail(command);
+}
+`;
+
 const qpdf = String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
 const { createHash } = require('node:crypto');
@@ -346,7 +423,7 @@ fs.appendFileSync(process.env.TEST_EVENTS, JSON.stringify({ call: 'merge', stage
 fs.writeFileSync(args.at(-1), 'merged:' + payloads.join('|'));
 `;
 
-async function fixture(t, { explicit = false, remote = true } = {}) {
+async function fixture(t, { explicit = false, remote = true, real = false, driveBackend = 'local' } = {}) {
     const home = await fs.mkdtemp(join(tmpdir(), 'eformsign-raster-cli-'));
     t.after(() => fs.rm(home, { recursive: true, force: true }));
     const worker = join(home, 'worker');
@@ -374,10 +451,12 @@ async function fixture(t, { explicit = false, remote = true } = {}) {
     const rcloneBin = join(worker, 'rclone');
     await Promise.all([
         put(lock, ''),
-        fs.writeFile(publisher, fixtureMirror),
+        real ? fs.copyFile(new URL('raster-mirror.mjs', unit), publisher) : fs.writeFile(publisher, fixtureMirror),
+        ...(real ? [fs.copyFile(new URL('raster-render.mjs', unit), join(worker, 'raster-render.mjs'))] : []),
         fs.writeFile(join(worker, 'instrument.mjs'), instrument),
         fs.writeFile(qpdfBin, qpdf, { mode: 0o700 }),
-        fs.writeFile(rcloneBin, rawDrive, { mode: 0o700 }),
+        fs.writeFile(rcloneBin, real ? mirrorDrive : rawDrive, { mode: 0o700 }),
+        ...(real && remote ? [fs.mkdir(drive)] : []),
     ]);
 
     const listing = { docs: [], status: 200, nextCursor: null, postStatus: 201 };
@@ -412,8 +491,8 @@ async function fixture(t, { explicit = false, remote = true } = {}) {
         return new Promise((done) => server.close(done));
     });
     const config = { apiBaseUrl: 'http://127.0.0.1:' + server.address().port, tokenFile, archiveDir: publicRoot,
-        stateDir: stateRoot, rcloneBin, qpdfBin, gsBin: 'fixture-gs',
-        ...(explicit ? { originalArchiveDir: originals } : {}), ...(remote ? { rcloneRemote: 'mock:backup' } : {}) };
+        stateDir: stateRoot, rcloneBin, qpdfBin: real ? '/usr/bin/qpdf' : qpdfBin, gsBin: real ? '/usr/bin/gs' : 'fixture-gs',
+        ...(explicit ? { originalArchiveDir: originals } : {}), ...(remote ? { rcloneRemote: real ? 'mock:' : 'mock:backup' } : {}) };
     const settings = (overrides = {}) => fs.writeFile(settingsPath, JSON.stringify({ ...config, ...overrides }));
     await settings();
     const doc = (id, metadata = {}, bytes = SIGNED) => ({
@@ -436,11 +515,13 @@ async function fixture(t, { explicit = false, remote = true } = {}) {
         const command = options.legacyLock ? '/usr/bin/flock' : process.execPath;
         const commandArgs = options.legacyLock ? ['-n', lock, process.execPath, ...nodeArgs] : nodeArgs;
         const result = await exec(command, commandArgs, {
-            timeout: 12000,
+            timeout: real ? 45000 : 12000,
             env: { PATH: process.env.PATH, HOME: home, TEST_TOKEN: tokenFile, TEST_DRIVE: drive, TEST_EVENTS: events,
                 TEST_LOCK: lock, TEST_RAW_DRIVE: rawLog, TEST_ORIGINALS: originals, TEST_FAIL: options.fail ?? '',
                 TEST_FAIL_LINK: options.interruptRaw ? 'yes' : '',
                 TEST_KILL_LINK: options.killLink ? 'yes' : '', TEST_KILL_RESTORE: options.killRestore ? 'yes' : '',
+                TEST_RASTER_CRASH: options.crash ?? '', TEST_HIDDEN_REMOTE: options.hiddenRemote ?? '',
+                TEST_DRIVE_BACKEND: driveBackend,
                 TEST_AGGREGATE: JSON.stringify(options.aggregate ?? {}),
                 TEST_INSPECTION: options.inspection ? JSON.stringify(options.inspection) : '',
                 TEST_EXPLICIT: options.explicitRetry || args.includes('--raster-archive') && !args.includes('--rollback') ? 'yes' : '' },
@@ -905,6 +986,73 @@ const preparedReceipt = (f) => join(f.stateRoot, 'provider-contract-prepared-sta
 const documentsFailed = 'raster_archive_documents_failed';
 const badPath = '기타/00-bad.pdf';
 const badBytes = 'bad-limit: synthetic signed source';
+
+function syntheticPdf(label) {
+    const stream = '0 0 16 16 re f\n';
+    const objects = [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 24 24] /Resources << >> /Contents 4 0 R >>',
+        '<< /Length ' + stream.length + ' >>\nstream\n' + stream + 'endstream',
+        '<< /Title (' + label + ') >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets = ['0000000000 65535 f \n'];
+    for (const [index, object] of objects.entries()) {
+        offsets.push(String(pdf.length).padStart(10, '0') + ' 00000 n \n');
+        pdf += (index + 1) + ' 0 obj\n' + object + '\nendobj\n';
+    }
+    return pdf + 'xref\n0 ' + offsets.length + '\n' + offsets.join('')
+        + 'trailer\n<< /Size ' + offsets.length + ' /Root 1 0 R /Info 5 0 R >>\nstartxref\n' + pdf.length + '\n%%EOF\n';
+}
+
+async function realDerivative(root, path, signed) {
+    const bytes = await fs.readFile(join(root, path));
+    assert.equal(bytes.subarray(0, 5).toString(), '%PDF-');
+    assert.notEqual(sha(bytes), sha(signed));
+    return bytes;
+}
+
+test('real cutover and timer report distinct stable path IDs for equal malformed originals', async (t) => {
+    const f = await fixture(t, { real: true, remote: false, explicit: true });
+    const badPaths = ['기타/00-Synthetic e\u0301.pdf', '기타/01-Synthetic beta.pdf'];
+    const healthy = '기타/02-Healthy.pdf';
+    const signed = syntheticPdf('healthy');
+    await f.seed(f.publicRoot, [...badPaths, healthy], [badBytes, badBytes, signed]);
+    const before = await tree(f);
+    await stand(f, [], 0);
+    assert.deepEqual(await tree(f), before);
+    await absent(f.originals);
+    await absent(f.guard);
+    await absent(join(f.stateRoot, 'raster-mirror'));
+
+    const failures = badPaths.map((path) => opaqueFailure(path, 'RASTER_INVALID_SOURCE'));
+    const first = await stand(f, ['--apply'], 2);
+    assert.deepEqual(first.log, [{ rasterArchive: 'apply', status: 'partial', reason: documentsFailed,
+        failedFiles: 2, failures, exitCode: 2 }]);
+    const guard = await fs.readFile(f.guard);
+    assert.equal(JSON.parse(guard).phase, 'partial');
+    const rendered = await realDerivative(f.publicRoot, healthy, signed);
+    await expect(f.originals, [...badPaths, healthy], [badBytes, badBytes, signed]);
+
+    await f.token();
+    const laterBytes = [syntheticPdf('later document'), syntheticPdf('later audit')];
+    f.listing.docs = [f.doc('later', { title: 'New healthy pair' }, laterBytes)];
+    const next = await f.run(raster, 2);
+    report(f, { status: 'partial', savedFiles: 2, failedFiles: 2, failures });
+    const later = pair('기타', 'New healthy pair');
+    await expect(f.originals, later, laterBytes);
+    for (const [index, path] of later.entries()) await realDerivative(f.publicRoot, path, laterBytes[index]);
+    assert.deepEqual(await fs.readFile(join(f.publicRoot, healthy)), rendered);
+    await expect(f.publicRoot, badPaths, [badBytes, badBytes]);
+    assert.deepEqual(await fs.readFile(f.guard), guard);
+    const output = JSON.stringify([first.log, next.log, f.reports]);
+    for (const path of badPaths) {
+        assert.ok(!output.includes(path) && !output.includes(path.split('/').at(-1)));
+    }
+    assert.ok(!output.includes(sha(badBytes).slice(0, 16)) && !output.includes(badBytes));
+});
+
 async function partialCutover(f) {
     const valid = ['기타/Z1.pdf', '기타/Z2.pdf'];
     for (const root of [f.publicRoot, f.drive]) {
@@ -1105,7 +1253,7 @@ test('immutable first preflight and proven empty cancellation preserve or reatta
     assert.deepEqual(await readJson(record), legacy);
 });
 
-test('proven unpublished rollback refuses preparing guards without a v2 fresh origin', async (t) => {
+test('missing-manifest rollback requires the fresh guard publication checkpoint', async (t) => {
     const guards = [
         ['v1 guard', { version: 1 }],
         ['v2 existing guard', { version: 2, origin: 'existing', proofDigest: null }],
@@ -1156,7 +1304,7 @@ test('rollback rejects inconsistent inspector observations without modifying the
     }
 });
 
-test('pre-manifest capture and older ambiguous guards retain evidence until verified recovery', async (t) => {
+test('unbound interrupted capture preserves private bytes and blocks cutover retry', async (t) => {
     const f = await fixture(t);
     await f.seed(f.publicRoot, oldPair);
     await f.seed(f.drive, oldPair);
@@ -1164,25 +1312,224 @@ test('pre-manifest capture and older ambiguous guards retain evidence until veri
     const guard = await readJson(f.guard);
     assert.equal(guard.phase, 'preparing');
     const stopped = await tree(f);
-    await stand(f, ['--rollback'], 1);
-    assert.deepEqual(await tree(f), stopped);
-    await put(join(f.publicRoot, oldPair[0]), 'different previous copy');
-    const diverged = await tree(f);
-    assert.equal((await stand(f, ['--apply'], 1)).log[0].reason, 'raster_archive_public_version_conflict');
-    assert.deepEqual(await tree(f), diverged);
-    await put(join(f.publicRoot, oldPair[0]), SIGNED[0]);
-    const resumed = await stand(f, ['--apply'], 0);
-    assert.ok(resumed.events.filter(({ call }) => call === 'prepare' || call === 'publish')
-        .every(({ options }) => !Object.hasOwn(options, 'legacyProofs')));
-    await expectPublished(f, oldPair);
-    await fs.unlink(fixtureManifest(f));
-    const removed = await tree(f);
-    await stand(f, ['--rollback'], 1);
-    assert.deepEqual(await tree(f), removed);
+    for (const action of [[], ['--apply'], ['--rollback']]) {
+        assert.equal((await stand(f, action, 1)).log[0].reason, 'raster_cutover_manifest_required');
+        assert.deepEqual(await tree(f), stopped);
+    }
     await put(f.guard, JSON.stringify({ version: 1, phase: 'rollingBack', predecessor: null, binding: guard.binding }));
     const legacy = await tree(f);
     await stand(f, ['--rollback'], 1);
     assert.deepEqual(await tree(f), legacy);
+});
+
+const mirrorHome = (f) => join(f.stateRoot, 'raster-mirror');
+const realManifest = (f) => join(mirrorHome(f), 'manifest.json');
+const remoteWrites = async (f) => (await f.raw()).filter(({ command }) => ['copyto', 'deletefile'].includes(command));
+const predecessorFor = (f) => ({ version: 1, id: '00000000-0000-0000-0000-000000000001',
+    phase: 'applied', moves: [], archive: f.publicRoot, remote: 'mock:' });
+const predecessorRecord = (f, legacy) => join(dirname(f.journal), 'records', 'pre-raster-' + legacy.id + '-applied.json');
+
+test('real cutover cannot cancel or retry after publication and loss of custody metadata', async (t) => {
+    const f = await fixture(t, { real: true, explicit: true });
+    const path = 'fixture/Original contract.pdf';
+    const signed = syntheticPdf('published during cutover');
+    const legacy = predecessorFor(f);
+    const predecessorBytes = JSON.stringify(legacy, null, 4);
+    await put(f.journal, predecessorBytes);
+    await f.seed(f.publicRoot, [path], [signed]);
+    await stand(f, ['--apply'], 'SIGKILL', { crash: 'before-active' });
+    const published = await realDerivative(f.publicRoot, path, signed);
+    assert.deepEqual(await fs.readFile(join(f.drive, path)), published);
+    await expect(f.originals, [path], [signed]);
+    const current = await readJson(f.guard);
+    assert.deepEqual([current.version, current.phase, current.publication], [3, 'preparing', 'possible']);
+    const { phase, binding, predecessor, origin, proofDigest } = current;
+    const oldGuard = { version: 2, phase, binding, predecessor, origin, proofDigest };
+    const preserved = predecessorRecord(f, legacy);
+    assert.equal(await fs.readFile(preserved, 'utf8'), predecessorBytes);
+    const writes = await remoteWrites(f);
+    assert.deepEqual(writes.map(({ command, sha: digest }) => [command, digest]), [['copyto', sha(published)]]);
+    // The interrupted active-guard allocation is independent of the durable
+    // guard being tested. Model loss of that allocation in all variants.
+    for (const name of await fs.readdir(f.stateRoot)) {
+        if (name.startsWith('raster-cutover.json.') && name.endsWith('.tmp')) await fs.unlink(join(f.stateRoot, name));
+    }
+    await fs.rm(mirrorHome(f), { recursive: true });
+    const assertRefused = async () => {
+        const before = await tree(f);
+        const remoteCalls = await f.raw();
+        for (const action of [[], ['--apply'], ['--rollback']]) {
+            assert.equal((await stand(f, action, 1)).log[0].reason, 'raster_cutover_manifest_required');
+            assert.deepEqual(await tree(f), before);
+            assert.deepEqual(await f.raw(), remoteCalls);
+        }
+        assert.equal(await fs.readFile(preserved, 'utf8'), predecessorBytes);
+        await absent(f.journal);
+    };
+    await assertRefused(); // Absent home, private originals and published bytes survive.
+    await put(f.guard, JSON.stringify(oldGuard));
+    await assertRefused(); // Exact version-2 guard has no publication checkpoint.
+    await fs.mkdir(join(mirrorHome(f), 'original-blobs'), { recursive: true, mode: 0o700 });
+    await fs.mkdir(join(mirrorHome(f), 'rendered'), { mode: 0o700 });
+    await assertRefused(); // An empty mirror home provides no affirmative evidence for v2.
+    await fs.rm(f.originals, { recursive: true });
+    await assertRefused(); // Old guard and surviving derivatives, with no private copy.
+    await fs.rm(mirrorHome(f), { recursive: true });
+    await put(f.guard, JSON.stringify(current));
+    await assertRefused(); // Loss of both roots under the durable publication checkpoint.
+    assert.deepEqual(await fs.readFile(join(f.publicRoot, path)), published);
+    assert.deepEqual(await fs.readFile(join(f.drive, path)), published);
+    await f.seed(f.originals, [path], [signed]);
+    await fs.unlink(join(f.publicRoot, path));
+    await fs.unlink(join(f.drive, path));
+    await assertRefused(); // Only the signed private original survives, with the home absent.
+    await fs.mkdir(join(mirrorHome(f), 'original-blobs'), { recursive: true, mode: 0o700 });
+    await assertRefused();
+    await expect(f.originals, [path], [signed]);
+});
+
+test('real never-started cutover cancels cleanly and reattaches an exact predecessor', async (t) => {
+    for (const withPredecessor of [false, true]) {
+        const f = await fixture(t, { real: true, explicit: true });
+        const legacy = predecessorFor(f);
+        const bytes = JSON.stringify(legacy, null, 4);
+        if (withPredecessor) await put(f.journal, bytes);
+        await stand(f, ['--apply'], 'SIGKILL', { crash: 'before-bootstrap' });
+        assert.equal((await readJson(f.guard)).publication, 'initial');
+        await absent(realManifest(f));
+        await absent(f.journal);
+        const before = await f.raw();
+        if (withPredecessor) {
+            const link = join(f.originals, 'unbound.pdf');
+            await fs.symlink(predecessorRecord(f, legacy), link);
+            const footprint = await fs.readlink(link);
+            assert.equal((await stand(f, ['--rollback'], 1)).log[0].reason, 'raster_cutover_manifest_required');
+            assert.equal(await fs.readlink(link), footprint);
+            await fs.unlink(link);
+        }
+        await stand(f, ['--rollback'], 0);
+        await absent(f.guard);
+        assert.deepEqual(await f.raw(), before);
+        if (withPredecessor) {
+            assert.equal(await fs.readFile(f.journal, 'utf8'), bytes);
+            assert.equal((await fs.stat(f.journal)).ino, (await fs.stat(predecessorRecord(f, legacy))).ino);
+        } else await absent(f.journal);
+    }
+});
+
+test('real first capture resumes across the authority rename and private writes', async (t) => {
+    for (const crash of ['before-authority', 'after-blob', 'after-capture']) {
+        await t.test(crash, async (t) => {
+            const f = await fixture(t, { real: true, explicit: true });
+            const paths = ['00-Document.pdf', '01-Remote-only.pdf', '02-Audit.pdf'];
+            const signed = paths.map((_, i) => syntheticPdf('first capture ' + i));
+            await f.seed(f.publicRoot, paths.slice(0, 1), signed.slice(0, 1));
+            await f.seed(f.drive, paths.slice(1, 2), signed.slice(1, 2));
+            await f.seed(f.originals, paths.slice(2), signed.slice(2)); // Explicit operator-owned private seed.
+            const audit = join(f.originals, paths[2]);
+            const auditBefore = await fs.stat(audit);
+            await stand(f, ['--apply'], 'SIGKILL', { crash });
+            const initial = crash === 'before-authority';
+            assert.equal((await readJson(f.guard)).publication, initial ? 'initial' : 'capturing');
+            if (initial) {
+                await absent(realManifest(f));
+                assert.ok((await fs.readdir(mirrorHome(f))).some((name) => name.startsWith('.bootstrap-')));
+            } else {
+                const bound = await readJson(realManifest(f));
+                assert.deepEqual(bound.initialCapture.map(({ path, raw }) => [path, raw.sha256]),
+                    paths.map((path, i) => [path, sha(signed[i])]));
+                assert.deepEqual(await fs.readFile(join(mirrorHome(f), 'original-blobs', sha(signed[0]) + '.pdf'), 'utf8'), signed[0]);
+            }
+            if (crash === 'after-capture') await expect(f.originals, paths, signed);
+            else await absent(join(f.originals, paths[0]));
+            assert.deepEqual(await remoteWrites(f), []);
+            assert.equal(await fs.readFile(audit, 'utf8'), signed[2]);
+            const stopped = await tree(f);
+            await stand(f, [], 0);
+            assert.deepEqual(await tree(f), stopped);
+            if (initial) {
+                const foreign = 'foreign.pdf';
+                await f.seed(f.originals, [foreign], [syntheticPdf('unbound private file')]);
+                const ambiguous = await tree(f);
+                assert.equal((await stand(f, ['--apply'], 1)).log[0].reason, 'raster_archive_original_authority_conflict');
+                assert.deepEqual(await tree(f), ambiguous);
+                assert.deepEqual(await remoteWrites(f), []);
+                await fs.unlink(join(f.originals, foreign));
+            }
+
+            await stand(f, ['--apply'], 0);
+            assert.equal((await readJson(f.guard)).phase, 'active');
+            assert.equal((await readJson(realManifest(f))).initialCapture, undefined);
+            for (const [i, path] of paths.entries()) {
+                const visible = await realDerivative(f.publicRoot, path, signed[i]);
+                assert.deepEqual(await fs.readFile(join(f.drive, path)), visible);
+            }
+            await expect(f.originals, paths, signed);
+            assert.equal((await fs.stat(audit)).ino, auditBefore.ino);
+            assert.equal((await fs.stat(audit)).mtimeMs, auditBefore.mtimeMs);
+            const writes = await remoteWrites(f);
+            assert.equal(writes.length, paths.length);
+            assert.ok(writes.every(({ command, sha: digest }) => command === 'copyto' && !signed.map(sha).includes(digest)));
+        });
+    }
+});
+
+test('real provider preflight sees inclusive-only destinations before forward or reverse raw allocation', async (t) => {
+    const f = await fixture(t, { real: true, driveBackend: 'drive' });
+    const signed = [syntheticPdf('provider document'), syntheticPdf('provider audit')];
+    await stand(f, ['--apply'], 0);
+    await f.token();
+    const doc = f.doc('provider', {}, signed);
+    f.listing.docs = [doc];
+    await f.run(raster, 0);
+    const endpoints = async (paths) => Promise.all(paths.map((path, i) => realDerivative(f.publicRoot, path, signed[i])));
+    const derivativeBefore = await endpoints(oldPair);
+    f.listing.docs = [{ ...doc, providerContract: { signerName: 'Synthetic Private Name', signedDate: '2026-01-02' } }];
+    for (const path of newPair) await fs.mkdir(dirname(join(f.drive, path)), { recursive: true });
+
+    async function refuseHidden(path, actions, source, target) {
+        const hidden = syntheticPdf('other remote object');
+        await f.seed(f.drive, [path], [hidden]);
+        const before = await tree(f);
+        const writes = await remoteWrites(f);
+        for (const action of actions) {
+            const callOffset = (await f.raw()).length;
+            const result = await f.run([...migrate, ...action], 1, { hiddenRemote: path });
+            assert.equal(result.log[0].reason, 'raster_archive_guard_failed');
+            const calls = (await f.raw()).slice(callOffset);
+            assert.ok(calls.some(({ command, inclusive, key }) => command === 'lsjson' && inclusive && key === dirname(path)));
+            assert.deepEqual(await tree(f), before);
+            assert.deepEqual(await remoteWrites(f), writes);
+            await expect(f.originals, source, signed);
+            for (const destination of target) await absent(join(f.originals, destination));
+            await expect(f.drive, [path], [hidden]);
+        }
+        await fs.unlink(join(f.drive, path));
+    }
+    for (const path of newPair) await refuseHidden(path, [[], ['--apply']], oldPair, newPair);
+    await absent(f.journal);
+    await f.run(migrate, 0);
+    await f.run([...migrate, '--apply'], 0);
+    const moved = await readJson(f.journal);
+    assert.equal(moved.raster.pending, false);
+    assert.deepEqual(await endpoints(newPair), derivativeBefore);
+    await refuseHidden(oldPair[1], [['--rollback']], newPair, oldPair);
+    assert.deepEqual(await readJson(f.journal), moved);
+    await f.run([...migrate, '--rollback'], 0);
+    await expect(f.originals, oldPair, signed);
+    assert.deepEqual(await endpoints(oldPair), derivativeBefore);
+    const rolledBack = await readJson(f.journal);
+    assert.equal(rolledBack.phase, 'rolledBack');
+
+    const record = join(dirname(f.journal), 'records', 'post-raster-' + rolledBack.id + '-rolledBack.json');
+    await fs.mkdir(dirname(record), { recursive: true, mode: 0o700 });
+    await fs.link(f.journal, record);
+    await fs.unlink(f.journal);
+    await fs.unlink(f.guard);
+    await fs.rm(mirrorHome(f), { recursive: true });
+    const missing = await tree(f);
+    assert.equal((await stand(f, [], 1)).log[0].reason, 'raster_cutover_manifest_required');
+    assert.deepEqual(await tree(f), missing);
 });
 
 const proofOf = (path, bytes) => ({ path, sha256: sha(bytes), size: Buffer.byteLength(bytes) });

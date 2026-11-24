@@ -300,11 +300,11 @@ export async function exclusiveFile(parent, prefix, write) {
     }
 }
 
-export async function saveJson(path, value, { scratch = dirname(path), parentHandle } = {}) {
+export async function saveJson(path, value, { scratch = dirname(path), parentHandle, prefix = '.journal-' } = {}) {
     const text = JSON.stringify(value) + '\n';
     if (Buffer.byteLength(text) > MAX_JSON) refuse('state_size');
     const parent = dirname(path);
-    const staged = await exclusiveFile(scratch, '.journal-', (handle) => handle.writeFile(text));
+    const staged = await exclusiveFile(scratch, prefix, (handle) => handle.writeFile(text));
     let renamed = false;
     try {
         await fs.rename(staged.path, parentHandle ? join(fdPath(parentHandle), basename(path)) : path);

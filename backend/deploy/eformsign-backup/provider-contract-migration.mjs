@@ -303,6 +303,10 @@ async function readRasterBatches(stateDir, journal, settings) {
     return journals;
 }
 
+export async function hasRasterMigrationHistory(settings) {
+    return (await readRasterBatches(settings.stateDir, null, settings)).length > 0;
+}
+
 // Only a completed inverse batch can authorize reusing its retired forward destinations.
 function retiredReclaims(journals, key, before, base, retired) {
     let authorized = null;
