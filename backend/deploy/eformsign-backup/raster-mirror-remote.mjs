@@ -131,7 +131,7 @@ function parseList(text, { recursive, selected, drive, legacy }) {
     return names;
 }
 
-export function remoteTransport(settings, lockFd, legacyTimeout) {
+export function remoteTransport(settings, lockFd, legacyTimeout, deadline) {
     const { rcloneRemote: target, rcloneBin: bin = 'rclone' } = settings;
     if (target === undefined || target === null) return null;
     const match = typeof target === 'string' && /^([a-zA-Z0-9_][a-zA-Z0-9_. -]*:)(.*)$/u.exec(target);
@@ -144,8 +144,12 @@ export function remoteTransport(settings, lockFd, legacyTimeout) {
     const exact = (path) => remote + path;
     const underBase = (path) => base && path ? base + '/' + path : base || path;
     const legacy = legacyTimeout !== undefined;
-    const invoke = (command, options, operands, consume, inclusive) =>
-        run(bin, lockFd, legacyTimeout ?? timeoutMs, command, options, operands, consume, inclusive);
+    const invoke = (command, options, operands, consume, inclusive) => {
+        const configured = legacyTimeout ?? timeoutMs;
+        const budget = deadline === undefined ? configured : Math.min(configured, deadline - performance.now());
+        if (deadline !== undefined && budget <= 0) refuse('remote_time_budget');
+        return run(bin, lockFd, budget, command, options, operands, consume, inclusive);
+    };
     const metadata = (stream) => collect(stream, legacy ? 16 * 1024 * 1024 : MAX_JSON);
     const empty = (stream) => collect(stream, 1024);
     let boundRoot;
@@ -302,13 +306,16 @@ export function remoteTransport(settings, lockFd, legacyTimeout) {
 
     return {
         target,
-        async inventory(expected) {
+        async inventory(expected, { hashes = true } = {}) {
             boundRoot = expected ?? await rootChain();
             if (expected) await rootChain();
             // The recursive inventory supplies positive no-follow evidence.
             // Exact-path lookup pairs shallow views before any content access
             // or creation so a skipped entry cannot be treated as absent.
-            const names = await list(base, { recursive: true, hashes: true });
+            const names = await list(base, { recursive: true, hashes });
+            if (!hashes) {
+                for (const entry of names.values()) delete entry.md5;
+            }
             await rootChain();
             if (backend === 'drive') {
                 for (const { id } of names.values()) {

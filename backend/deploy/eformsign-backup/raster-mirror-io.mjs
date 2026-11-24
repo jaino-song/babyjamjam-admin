@@ -234,7 +234,7 @@ export async function inspectFile(path, { output, privateFile = false, allowLoos
     }
 }
 
-export async function scanLocal(root, { privateTree = false, skipName = () => false } = {}) {
+export async function scanLocal(root, { privateTree = false, skipName = () => false, hashPdf = () => true } = {}) {
     const names = new Map();
     if (!await checkRoot(root)) return names;
     const rootMeta = await stat(root);
@@ -261,6 +261,10 @@ export async function scanLocal(root, { privateTree = false, skipName = () => fa
             if (isDir) {
                 await walk(path);
             } else if (isPdf(path)) {
+                if (!hashPdf(path)) {
+                    if (privateTree) checkPrivate(info, 0o600, false, covered);
+                    continue;
+                }
                 const file = await inspectFile(full, { privateFile: privateTree, allowLoose: true, covered });
                 if (!file) refuse('file_changed');
                 Object.assign(atName(names, path), file);
@@ -271,13 +275,13 @@ export async function scanLocal(root, { privateTree = false, skipName = () => fa
     return names;
 }
 
-export async function readJson(path, { expectedId, sync = false } = {}) {
+export async function readJson(path, { expectedId, sync = false, maxBytes = MAX_JSON } = {}) {
     const before = await stat(path);
     if (!before) return null;
     checkFile(before);
     checkPrivate(before, 0o600);
     if (expectedId && !same(identity(before), expectedId)) refuse('state_changed');
-    if (before.size > BigInt(MAX_JSON)) refuse('state_size');
+    if (maxBytes !== Infinity && before.size > BigInt(maxBytes)) refuse('state_size');
     const handle = await fs.open(path, readFlags);
     try {
         const opened = await handle.stat({ bigint: true });

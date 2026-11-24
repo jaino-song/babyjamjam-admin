@@ -14,6 +14,7 @@ const row = (patch: Partial<BackupDocumentRow>): BackupDocumentRow => ({
 
 describe("eformsign backup legacy rows (contract)", () => {
     const repository: jest.Mocked<IEformsignBackupRepository> = {
+        listReadyEvents: jest.fn(), findReadyTarget: jest.fn(),
         listDocuments: jest.fn(), findFile: jest.fn(), createRun: jest.fn(), listRuns: jest.fn(),
     };
     const service = new EformsignBackupService(repository);

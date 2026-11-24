@@ -50,7 +50,25 @@ export interface BackupFileRow {
         syncStatus: string; detailSourceUpdatedDate: Date | null;
     };
 }
+export const BACKUP_READY_DOC_ID = /^[^\s\p{Cc}]+$/u;
+export const BACKUP_READY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+export interface BackupReadyEventRow {
+    id: number;
+    documentId: string | null;
+    rawStatus: string | null;
+    statusType: string | null;
+    sourceUpdatedDate: Date | null;
+    createdAt: Date;
+}
+export interface BackupReadyTarget {
+    seed: BackupDocumentRow & { permanentPurgeRequestedAt: Date | null };
+    peers: BackupDocumentRow[];
+}
+
 export interface IEformsignBackupRepository {
+    listReadyEvents(since: Date, until: Date, afterId: number, limit: number): Promise<BackupReadyEventRow[]>;
+    findReadyTarget(docId: string): Promise<BackupReadyTarget | null>;
     listDocuments(cursor: number | undefined, limit: number): Promise<BackupDocumentRow[]>;
     findFile(fileId: string): Promise<BackupFileRow | null>;
     createRun(input: BackupRunInput): Promise<{ id: string }>;

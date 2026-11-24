@@ -37,7 +37,7 @@ const operatorCodes = new Set([
     'retired_original_path', 'unsafe_file', 'unsafe_path', 'unsafe_private_permissions', 'remote_identity_changed',
     'remote_root_changed', 'remote_directory_changed', 'remote_verification_failed',
     'active_original_missing', 'source_mtime_unproven', 'remote_mtime_unavailable', 'unproven_manifest_absence',
-    'legacy_proof_required', 'move_raster_unproven', 'invalid_move_scope',
+    'legacy_proof_required', 'move_raster_unproven', 'invalid_move_scope', 'invalid_ready_scope',
 ].map((reason) => 'raster_archive_' + reason));
 const reportCounts = [
     'localPdfs', 'remotePdfs', 'originalPdfs', 'captured', 'wouldRender', 'wouldMove', 'wouldRestore', 'rendered',
@@ -214,7 +214,7 @@ async function readBinding(settings, options) {
     const manifest = join(home, 'manifest.json');
     const rasterDir = join(home, 'rendered');
     const rawDir = join(home, 'original-blobs');
-    const remote = remoteTransport(settings, lockFd);
+    const remote = remoteTransport(settings, lockFd, undefined, options.deadline);
     const target = remote?.target ?? null;
     const state = await readJson(manifest).catch((error) => {
         if (error instanceof SyntaxError || error instanceof TypeError) refuse('invalid_manifest');
@@ -344,12 +344,14 @@ async function openArchive(settings, options) {
     // Read the pause receipt before launching any child for a scheduled publish.
     if (options.action === 'publish' && state && state.phase !== 'active'
         && (state.phase !== 'paused' || options.explicitRepublish !== true)) refuse('publication_paused');
+    const { readyPaths } = options;
+    const hashPdf = readyPaths && ((path) => readyPaths.has(path));
     const inventories = await Promise.allSettled([
         // Scratch is never part of the PDF corpus. Only journalled allocations
         // may be opened or reclaimed, even when the stage name looks familiar.
-        scanLocal(archiveDir, { skipName: (name) => stageName.test(name) }),
-        scanLocal(originalArchiveDir, { privateTree: true }),
-        remote ? remote.inventory((state ?? candidate?.state ?? stage)?.binding.remoteRoot) : null,
+        scanLocal(archiveDir, { skipName: (name) => stageName.test(name), hashPdf }),
+        scanLocal(originalArchiveDir, { privateTree: true, hashPdf }),
+        remote ? remote.inventory((state ?? candidate?.state ?? stage)?.binding.remoteRoot, { hashes: !readyPaths }) : null,
     ]);
     for (const result of inventories) if (result.status === 'rejected') throw result.reason;
     const [visible, originals, remoteInventory] = inventories.map(({ value }) => value);
@@ -373,7 +375,7 @@ async function openArchive(settings, options) {
             version: 1, binding: { ...binding, remoteRoot: remoteInventory?.root ?? null },
             phase: 'active', records: [], intent: null,
         },
-        existed: Boolean(state),
+        existed: Boolean(state), readyPaths, beforeVisible: options.beforeVisible, deadline: options.deadline,
     };
     await guardBinding(ctx);
     const caches = await readCache(ctx);
@@ -523,6 +525,10 @@ async function readCache(ctx) {
         const receipt = await readJson(join(path, 'receipt.json'));
         if (!shaName(receipt?.raw) || (!pending && receipt.raw !== name)
             || !validBytes(receipt.output) || receipt.raw === receipt.output.sha256) refuse('invalid_cache');
+        if (ctx.readyPaths && !pending) {
+            cache.set(receipt.raw, receipt.output);
+            continue;
+        }
         const rendered = await inspectFile(output, { privateFile: true });
         if (!rendered || !same(rendered.bytes, receipt.output)) refuse('protected_render_changed');
         if (pending) {
@@ -785,7 +791,7 @@ async function ensureRender(ctx, path, raw, override) {
     }
     const { stage, handle: outputHandle } = allocation;
     try {
-        Object.assign(stage, { homeId, raw, phase: 'prepared' });
+        Object.assign(stage, { homeId, raw, phase: 'prepared' }, ctx.readyPaths && { path });
         ctx.state.renderStage = stage;
         // A writer never sees the descriptor until both its inode and the
         // bound stage directory are durably recorded.
@@ -798,7 +804,8 @@ async function ensureRender(ctx, path, raw, override) {
         let rejected = false;
         let reason;
         try {
-            await renderer({ sourcePath, outputPath, outputHandle, lockFd: ctx.lockFd, gsBin: ctx.gsBin, qpdfBin: ctx.qpdfBin });
+            await renderer({ sourcePath, outputPath, outputHandle, lockFd: ctx.lockFd, gsBin: ctx.gsBin, qpdfBin: ctx.qpdfBin,
+                ...(ctx.deadline && { deadline: ctx.deadline }) });
         } catch (error) {
             rejected = true;
             // A renderer's own data property is the only classification input.
@@ -869,7 +876,7 @@ async function observedRemote(ctx, path, observed, candidates = [], strong = fal
     const verified = candidates.find((item) => item && item.id === entry.id && same(item.chain, chain)
         && entry.md5 === item.bytes.md5 && entry.size === item.bytes.size);
     const bytes = !strong && verified ? verified.bytes : await ctx.remote.read(path, observed);
-    return { bytes, id: entry.id, chain, checksum: entry.md5, mtimeMs };
+    return { bytes, id: entry.id, chain, checksum: entry.md5 ?? null, mtimeMs };
 }
 
 function localAllowed(actual, op) {
@@ -907,6 +914,7 @@ async function guardRecords(ctx, options = {}) {
     const op = ctx.state.intent;
     const handoffs = [];
     for (const entry of ctx.records.values()) {
+        if (ctx.readyPaths && !ctx.readyPaths.has(entry.path)) continue;
         try {
             await guardRecord(ctx, entry, options);
         } catch (error) {
@@ -1026,12 +1034,13 @@ async function readRawEndpoint(parent, path, directoryPath, tighten = false, out
     return read;
 }
 
-async function planCapture(ctx, moves, { privateOnly = false } = {}) {
+async function planCapture(ctx, moves, { privateOnly = false, excluded = new Set() } = {}) {
     const plan = [];
     const held = new Set([...moves.flatMap(({ from, to }) => [from, to]), ctx.state.intent?.path, ctx.state.intent?.from].map((path) => path && keyOf(path)));
     const derivatives = derivativeHashes(ctx);
     for (const { path } of ctx.names.values()) {
-        if (!isPdf(path) || atName(ctx.records, path) || held.has(keyOf(path))) continue;
+        if (!isPdf(path) || atName(ctx.records, path) || held.has(keyOf(path)) || excluded.has(keyOf(path))
+            || (ctx.readyPaths && !ctx.readyPaths.has(path))) continue;
         pdfName(path);
         const local = atName(ctx.visible, path);
         const original = atName(ctx.originals, path);
@@ -1214,7 +1223,7 @@ function planMove(ctx, { from, to }) {
     return { from, to, raw, mtimeMs, replay: false };
 }
 
-function planPublish(ctx, moves, captures, { movesOnly = false, handoffs = [] } = {}) {
+function planPublish(ctx, moves, captures, { movesOnly = false, handoffs = [], excluded = new Set() } = {}) {
     const pending = ctx.state.intent;
     const movement = pending?.kind === 'move' ? { from: pending.from, to: pending.path } : null;
     const held = new Set(moves.flatMap(({ from, to }) => [from, to]));
@@ -1235,7 +1244,7 @@ function planPublish(ctx, moves, captures, { movesOnly = false, handoffs = [] } 
     const additions = new Map([...captures, ...handoffs].map((item) => [item.path, item]));
     const work = [];
     for (const path of new Set([...ctx.records.values()].map(({ path }) => path).concat([...additions.keys()]))) {
-        if (held.has(path)) continue;
+        if (held.has(path) || excluded.has(keyOf(path)) || (ctx.readyPaths && !ctx.readyPaths.has(path))) continue;
         const record = atName(ctx.records, path);
         const original = atName(ctx.originals, path);
         const proposed = additions.get(path);
@@ -1375,6 +1384,7 @@ async function replaceLocal(ctx, op, source) {
             if (dateMatches(present, op.mtimeMs)) return present;
             await guardPublicRoot(ctx);
             if (!same(await checkRoot(dirname(path)), identity(await parent.stat({ bigint: true })))) refuse('directory_changed');
+            await ctx.beforeVisible?.();
             const updated = await stampOwnedFile(endpoint, present, op.mtimeMs);
             ctx.report[op.kind === 'rollback' ? 'localRestored' : 'localPublished']++;
             return updated;
@@ -1397,6 +1407,7 @@ async function replaceLocal(ctx, op, source) {
         if (!same(await checkRoot(dirname(path)), op.stage.parentId)) refuse('directory_changed');
         if (!current?.isDirectory() || !same(identity(current), op.stage.directoryId)
             || !await checkStagePayload(dir, 'payload.tmp', op.stage)) refuse('staging_identity_changed');
+        await ctx.beforeVisible?.();
         await fs.rename(payload, endpoint);
         await parent.sync();
         await dir.sync();
@@ -1514,6 +1525,7 @@ async function replaceRemote(ctx, op, source, verified) {
             op.remoteChain = listed.chain;
             await save(ctx);
         }
+        await ctx.beforeVisible?.();
         await ctx.remote.upload(op.path, copy);
         const after = await ctx.remote.lookup(op.path);
         if (!after.entry || (actual && (after.entry.id !== actual.id || !same(after.chain, listed.chain)))
@@ -1659,7 +1671,9 @@ async function protectPlan(ctx, work) {
 async function publishWork(ctx, { path, raw, mtimeMs, from }, renderer) {
     await currentRaw(ctx, path, raw);
     const target = await ensureRender(ctx, path, raw, renderer);
-    if (target) await start(ctx, newIntent(ctx, from ? 'move' : 'publish', path, raw, mtimeMs, target, from));
+    if (!target) return;
+    await ctx.beforeVisible?.();
+    await start(ctx, newIntent(ctx, from ? 'move' : 'publish', path, raw, mtimeMs, target, from));
 }
 
 async function guardOriginals(ctx, moves, { preMove = false } = {}) {
@@ -1673,7 +1687,7 @@ async function guardOriginals(ctx, moves, { preMove = false } = {}) {
         if (retired) {
             if (file && !destinations.has(path)) refuse('retired_original_path');
         } else if (!file && !sources.has(path)) refuse('active_original_missing');
-        if (file && derivatives.has(file.bytes.sha256)) refuse('derivative_as_original');
+        if (file?.bytes && derivatives.has(file.bytes.sha256)) refuse('derivative_as_original');
     }
     if (pending?.kind === 'move') {
         if (atName(ctx.originals, pending.from)) refuse('move_original_conflict');
@@ -1750,12 +1764,67 @@ function verifyMoveSpellings(ctx, moves) {
     }
 }
 
+// Ready delivery may recover only an active publication owned by its exact paths.
+function checkReadyScope(ctx, options, files) {
+    if (!ctx.existed || !ctx.remote || ctx.state.phase !== 'active' || ctx.state.initialCapture
+        || !ctx.readyPaths.size || options.moves?.length || options.explicitRepublish || options.dryRun) {
+        refuse('invalid_ready_scope');
+    }
+    const intent = ctx.state.intent;
+    if (intent && (intent.kind !== 'publish' || !ctx.readyPaths.has(intent.path))) refuse('invalid_ready_scope');
+    const render = ctx.state.renderStage;
+    if (render && (!render.path || !ctx.readyPaths.has(render.path))) refuse('invalid_ready_scope');
+    for (const sha256 of ctx.stagedRenders.keys()) {
+        if (sha256 !== render?.raw.sha256) refuse('invalid_ready_scope');
+    }
+    for (const [path, expected] of ctx.readyPaths) {
+        pdfName(path);
+        const record = atName(ctx.records, path);
+        const raw = atName(ctx.originals, path);
+        if (raw?.isDir || record?.retired || (!record && intent?.path !== path && (atName(ctx.visible, path) || remoteAt(ctx, path).entry))) {
+            refuse('invalid_ready_scope');
+        }
+        if (files && (!raw?.bytes || raw.bytes.sha256 !== expected.sha256 || raw.bytes.size !== expected.size)) {
+            refuse('invalid_ready_scope');
+        }
+    }
+    for (const work of [intent, render]) {
+        if (!work || !files) continue;
+        const expected = ctx.readyPaths.get(work.path);
+        if (expected.sha256 !== work.raw.sha256 || expected.size !== work.raw.size) refuse('invalid_ready_scope');
+    }
+}
+
+async function verifyReadyPublication(ctx) {
+    let verified = 0;
+    for (const [path, expected] of ctx.readyPaths) {
+        const entry = atName(ctx.records, path);
+        if (!entry?.raster || entry.raw.sha256 !== expected.sha256 || entry.raw.size !== expected.size) refuse('invalid_ready_scope');
+        const local = await readVisible(ctx, path);
+        const observed = await ctx.remote.lookup(path);
+        const remote = await observedRemote(ctx, path, observed, [entry.remote]);
+        if (!entry.local || !entry.remote || !localMatches(local, entry.local) || !remoteMatches(remote, entry.remote)
+            || !sameBytes(local.bytes, entry.raster) || !sameBytes(remote.bytes, entry.raster)
+            || !dateMatches(local, entry.mtimeMs) || !dateMatches(remote, entry.mtimeMs)) refuse('invalid_ready_scope');
+        verified++;
+    }
+    return { verified };
+}
+
 async function prepareArchive(settings, options) {
     const moves = movesOf(options.moves);
     if (options.preMove || (options.movesOnly && !moves.length)) refuse('invalid_move_scope');
     const ctx = await openArchive(settings, options);
     verifyMoveSpellings(ctx, moves);
     await guardOriginals(ctx, moves);
+    if (ctx.readyPaths) {
+        checkReadyScope(ctx, options, false);
+        await guardRecords(ctx);
+        return new Map([...ctx.readyPaths.keys()].flatMap((path) => {
+            const record = atName(ctx.records, path);
+            return record ? [[path, record.raw]] : [];
+        }));
+    }
     const legacy = legacyProofs(ctx, options);
     const handoffs = await guardRecords(ctx, { legacy });
     const pending = ctx.state.intent;
@@ -1765,7 +1834,7 @@ async function prepareArchive(settings, options) {
         const planned = planMove(ctx, move);
         if (options.movesOnly) await verifyScopedMove(ctx, planned);
     }
-    const captures = options.movesOnly ? [] : await planCapture(ctx, moves);
+    const captures = options.movesOnly ? [] : await planCapture(ctx, moves, { excluded: options.excluded });
     await verifyInitialCapture(ctx, captures);
     await verifyBootstrap(ctx, captures);
     ctx.report.captured = captures.length;
@@ -1808,6 +1877,8 @@ async function publishArchive(settings, options) {
     verifyMoveSpellings(ctx, moves);
     await guardOriginals(ctx, moves, { preMove });
     const pending = ctx.state.intent;
+    if (ctx.readyPaths) checkReadyScope(ctx, options, true);
+    if (pending && options.excluded?.has(keyOf(pending.path))) refuse('invalid_ready_scope');
     if (movesOnly || preMove) verifyMoveScope(pending, moves);
     if (preMove) {
         if (pending || ctx.state.phase !== 'active') refuse('invalid_move_scope');
@@ -1819,10 +1890,10 @@ async function publishArchive(settings, options) {
     const legacy = legacyProofs(ctx, options);
     const handoffs = await guardRecords(ctx, { legacy: movesOnly ? null : legacy });
     await pendingDate(ctx, pending);
-    const captures = movesOnly ? [] : await planCapture(ctx, moves, { privateOnly: true });
+    const captures = movesOnly ? [] : await planCapture(ctx, moves, { privateOnly: true, excluded: options.excluded });
     await verifyInitialCapture(ctx, captures);
     await verifyBootstrap(ctx, captures);
-    const { work, movePlan } = planPublish(ctx, moves, captures, { movesOnly, handoffs });
+    const { work, movePlan } = planPublish(ctx, moves, captures, { movesOnly, handoffs, excluded: options.excluded });
     if (movesOnly) {
         if (ctx.state.phase !== 'active') refuse('publication_paused');
         for (const move of movePlan) await verifyScopedMove(ctx, move);
@@ -1832,7 +1903,7 @@ async function publishArchive(settings, options) {
     ctx.report.wouldRender = new Set([...work, ...movePlan.filter(({ replay }) => !replay)]
         .filter(({ raw }) => !ctx.cache.has(raw.sha256) && !ctx.stagedRenders.has(raw.sha256)).map(({ raw }) => raw.sha256)).size;
     if (ctx.dryRun) return ctx.report;
-    await initialize(ctx);
+    if (!ctx.readyPaths) await initialize(ctx);
     if (pending) await save(ctx); // Persist dates recovered for legacy in-flight journals before any endpoint mutation.
     if (!movesOnly) await settleRender(ctx);
     // A move's source must already be owned before any raw ingestion. Protect
@@ -1855,6 +1926,7 @@ async function publishArchive(settings, options) {
         error.report = safeFailureReport(report);
         throw error;
     }
+    if (ctx.readyPaths) return verifyReadyPublication(ctx);
     if (ctx.state.phase === 'paused') {
         ctx.state.phase = 'active';
         await save(ctx);

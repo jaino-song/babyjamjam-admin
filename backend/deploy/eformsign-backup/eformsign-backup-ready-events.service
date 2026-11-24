@@ -1,0 +1,9 @@
+[Unit]
+Description=Deliver eformsign PDF-ready archive updates
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env node %h/eformsign-backup/backup.mjs --settings %h/.config/eformsign-backup/settings.json --raster --ready-events
+TimeoutStartSec=120s
+TimeoutStopSec=10s
+KillMode=control-group
