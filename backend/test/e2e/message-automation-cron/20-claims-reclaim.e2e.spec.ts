@@ -91,9 +91,9 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
     beforeAll(async () => {
         stubA = new ScriptedAligoStub();
         harnessA = await bootMessageCronHarness({ aligo: stubA });
+        prisma = harnessA.prisma;
         stubB = new ScriptedAligoStub();
         harnessB = await bootMessageCronHarness({ aligo: stubB });
-        prisma = harnessA.prisma;
 
         // The runner pins SCHEDULER_LEASE_MODE=off, so neither harness can
         // lose the lease to the other; serialization must come from the DB.
@@ -164,7 +164,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         })).id;
     });
 
-    afterAll(async () => {
+    async function cleanupFixtures() {
         if (harnessA) {
             const clientIds = [senderClientId, orphanClientId, ...freshClientIds]
                 .filter((id): id is number => id !== undefined);
@@ -180,10 +180,17 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
             if (ruleId) await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } });
             await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
         }
+    }
+
+    afterAll(async () => {
         try {
-            await harnessB?.close();
+            await cleanupFixtures();
         } finally {
-            await harnessA?.close();
+            try {
+                await harnessB?.close();
+            } finally {
+                await harnessA?.close();
+            }
         }
     });
 

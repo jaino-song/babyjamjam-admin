@@ -160,7 +160,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         if (!trackedRuleIds.includes(greetingRuleId)) trackedRuleIds.push(greetingRuleId);
     });
 
-    afterAll(async () => {
+    async function cleanupFixtures() {
         // Restore the automation parent + rule/override state the fence test
         // disturbed, BEFORE deleting rows so the cleanup itself runs on a
         // normally-configured branch.
@@ -229,11 +229,18 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
                     .catch(() => undefined);
             }
         }
-        // Standby harness first (own module graph), then the main app.
+    }
+
+    afterAll(async () => {
         try {
-            await standbyHarness?.close();
+            await cleanupFixtures();
         } finally {
-            await harness?.close();
+            // Standby harness first (own module graph), then the main app.
+            try {
+                await standbyHarness?.close();
+            } finally {
+                await harness?.close();
+            }
         }
     });
 
