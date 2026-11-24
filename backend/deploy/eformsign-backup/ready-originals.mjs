@@ -66,36 +66,35 @@ export function readyScratch(binding) {
     };
 
     async function remove(stage) {
+        // Only a recorded directory identity grants cleanup ownership.
+        if (stage.id === null) return;
         const { parent } = await scratchParent(stage, binding);
         try {
             const path = join(fdPath(parent), stage.name);
             const info = await stat(path);
             if (!info) { await parent.sync(); return; }
-            if (!info.isDirectory() || (stage.id && !same(identity(info), stage.id))) scratchError();
+            if (!info.isDirectory() || !same(identity(info), stage.id)) scratchError();
             checkPrivate(info, 0o700);
-            if (stage.id) {
-                const directory = await openChildDirectory(parent, stage.name);
-                try {
-                    const opened = await directory.stat({ bigint: true });
-                    if (!same(identity(opened), stage.id)) scratchError();
-                    checkPrivate(opened, 0o700);
-                    const entries = await fs.readdir(fdPath(directory));
-                    const files = [];
-                    for (const name of entries) {
-                        if (stage.kind === 'original' ? name !== payload : !/^(?:input-[1-9][0-9]*|merged)\.pdf$/.test(name)) {
-                            scratchError();
-                        }
-                        const file = join(fdPath(directory), name);
-                        checkPayload(await stat(file));
-                        files.push(file);
+            const directory = await openChildDirectory(parent, stage.name);
+            try {
+                const opened = await directory.stat({ bigint: true });
+                if (!same(identity(opened), stage.id)) scratchError();
+                checkPrivate(opened, 0o700);
+                const entries = await fs.readdir(fdPath(directory));
+                const files = [];
+                for (const name of entries) {
+                    if (stage.kind === 'original' ? name !== payload : !/^(?:input-[1-9][0-9]*|merged)\.pdf$/.test(name)) {
+                        scratchError();
                     }
-                    for (const file of files) await fs.unlink(file);
-                    await directory.sync();
-                } finally { await directory.close(); }
-            }
-            // A planned directory without an inode receipt can only be removed if empty.
+                    const file = join(fdPath(directory), name);
+                    checkPayload(await stat(file));
+                    files.push(file);
+                }
+                for (const file of files) await fs.unlink(file);
+                await directory.sync();
+            } finally { await directory.close(); }
             const current = await stat(path);
-            if (!current?.isDirectory() || !same(identity(current), identity(info))) scratchError();
+            if (!current?.isDirectory() || !same(identity(current), stage.id)) scratchError();
             await fs.rmdir(path);
             await parent.sync();
         } finally { await parent.close(); }
@@ -145,9 +144,9 @@ export function readyScratch(binding) {
                 checkPrivate(info, 0o700);
                 stage.id = identity(info);
                 await parent.sync();
+                // Persist ownership before creating another directory or writing PDF bytes.
+                await save(receipt);
             }
-            // PDF bytes are written only after both directory identities are durable.
-            await save(receipt);
             return await use(join(fdPath(live[0].directory), payload), live[1]);
         } finally {
             try {
