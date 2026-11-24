@@ -1,3 +1,6 @@
+import { randomInt } from "node:crypto";
+
+import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
 import {
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
@@ -85,11 +88,18 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
     let greetingJobId: string | undefined;
     let greetingRuleId: string | undefined;
 
-    let batchJobIds: string[] = [];
     const batchElapsedMs = { firstTick: 0, secondTick: 0 };
 
     const trackedRuleIds: string[] = [];
     const trackedClientIds: number[] = [];
+    const phoneSequence = randomInt(10_000).toString().padStart(4, "0");
+    let recipientOrdinal = 0;
+
+    const freshRecipientData = (label: string) => {
+        const phone = `0106${phoneSequence}${String(++recipientOrdinal).padStart(3, "0")}`;
+        return { name: `cron-dispatch-${label}-${RUN}-${recipientOrdinal}`, phone, phoneNormalized: phone,
+            branchId: BRANCH_ID, voucherClient: false, smsAutomationEnabled: true };
+    };
 
     /** Disturbed state captured before the policy test, restored in afterAll. */
     let policySettingSnapshot: { value: string } | undefined;
@@ -183,15 +193,15 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
                 console.warn("[10-dispatch.e2e] policy/rule restore failed:", error);
             }
 
-            // Throwaway rows first (logs → jobs → rules → clients; FK-safe).
-            const allJobIds = [greetingJobId, ...batchJobIds].filter(
-                (value): value is string => value !== undefined,
-            );
-            if (allJobIds.length > 0) {
-                await prisma.message_log
-                    .deleteMany({ where: { triggerJobId: { in: allJobIds } } })
-                    .catch(() => undefined);
-            }
+            // The occurrence ledger's manual attempts restrict log deletion.
+            const clientScope = { in: trackedClientIds };
+            await prisma.message_occurrence_manual_attempt.deleteMany({
+                where: { branchId: BRANCH_ID, log: { clientId: clientScope } },
+            });
+            await prisma.message_occurrence_claim.deleteMany({
+                where: { branchId: BRANCH_ID, lifecycleId: clientScope, recipientKind: "client" },
+            });
+            await prisma.message_log.deleteMany({ where: { clientId: clientScope } });
             if (trackedClientIds.length > 0 || trackedRuleIds.length > 0) {
                 await prisma.message_trigger_job
                     .deleteMany({
@@ -227,34 +237,42 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         }
     });
 
-    const insertDuePendingJob = async (
-        label: string,
-        minutesAgo: number,
-    ): Promise<{ id: string; status: string }> => {
-        // Minimal required columns of an automatic CLIENT recipient job on the
-        // provisioned greeting rule; nextAttemptAt null keeps it claimable.
+    const pendingGreeting = (
+        recipient: { id: number; phone: string }, label: string, scheduledFor: Date,
+    ): Prisma.message_trigger_jobCreateManyInput => {
+        if (!greetingRuleId) throw new Error("Missing greeting rule fixture");
+        return {
+            branchId: BRANCH_ID,
+            ruleId: greetingRuleId,
+            status: "pending",
+            scheduledFor,
+            clientId: recipient.id,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            recipientPhone: recipient.phone,
+            templateKey: GREETING_TEMPLATE,
+            dedupeKey: `cron-dispatch-${label}-${RUN}`,
+            // The legacy automation fixture has no seal or task reference.
+            payload: { templateVariables: {} },
+            nextAttemptAt: null,
+            canceledByUser: false,
+            attempts: 0,
+        };
+    };
+
+    const insertDuePendingJob = async (label: string, minutesAgo: number) => {
+        const data = freshRecipientData(label);
+        const recipient = await prisma.client.create({ data, select: { id: true } });
+        trackedClientIds.push(recipient.id);
         return prisma.message_trigger_job.create({
-            select: { id: true, status: true },
-            data: {
-                branchId: BRANCH_ID,
-                ruleId: greetingRuleId!,
-                status: "pending",
-                scheduledFor: new Date(Date.now() - minutesAgo * 60_000),
-                clientId: clientId!,
-                recipientType: MessageTriggerRecipientType.CLIENT,
-                recipientPhone: clientPhoneDigits,
-                templateKey: GREETING_TEMPLATE,
-                dedupeKey: `cron-dispatch-${label}-${RUN}-${Date.now()}`,
-                // templateVariables must exist for the agent-automation delivery
-                // gate's source-payload binding (agentAutomationSourcePayload);
-                // without a seal and without a task reference the job resolves
-                // as "legacy" authority and dispatches.
-                payload: { templateVariables: {} },
-                nextAttemptAt: null,
-                canceledByUser: false,
-                attempts: 0,
-            },
+            data: pendingGreeting({ id: recipient.id, phone: data.phone }, label, new Date(Date.now() - minutesAgo * 60_000)),
         });
+    };
+
+    const expectAcceptedOnce = async (jobId: string) => {
+        const logs = await prisma.message_log.findMany({ where: { triggerJobId: jobId } });
+        expect(logs).toEqual([expect.objectContaining({
+            status: "sent", providerAcceptanceState: "accepted", providerCallStartedAt: expect.any(Date),
+        })]);
     };
 
     const readJob = async (
@@ -309,39 +327,25 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
     });
 
     it("3. orders a >100 due backlog: the 100 oldest leave pending, the 5 newest remain", async () => {
-        // 105 pending rows: distinct scheduledFor spaced by minutes, every
-        // one in the past, same rule/client, distinct dedupe keys. scheduledFor
-        // is strictly distinct so the (scheduledFor, createdAt) due-query
-        // ordering can never interleave. Index 0 = oldest (deepest past).
+        // Each client has a separate canonical greeting occurrence, even though the rule is shared.
+        const backlogSize = 105;
         const base = Date.now() - 3 * 60 * 60_000;
-        const rows: Prisma.message_trigger_jobCreateManyInput[] = [];
-        for (let index = 0; index < 105; index += 1) {
-            rows.push({
-                branchId: BRANCH_ID,
-                ruleId: greetingRuleId!,
-                status: "pending",
-                scheduledFor: new Date(base + index * 60_000), // all < now
-                nextAttemptAt: null,
-                clientId: clientId!,
-                recipientType: MessageTriggerRecipientType.CLIENT,
-                recipientPhone: clientPhoneDigits,
-                templateKey: GREETING_TEMPLATE,
-                dedupeKey: `cron-dispatch-batch-${RUN}-${index}`,
-                payload: { recipientName: `batch-${RUN}-${index}`, templateVariables: {} },
-                canceledByUser: false,
-                attempts: 0,
-            });
-        }
+        const recipients = await prisma.client.createManyAndReturn({
+            data: Array.from({ length: backlogSize }, () => freshRecipientData("backlog")),
+            select: { id: true, phone: true },
+        });
+        trackedClientIds.push(...recipients.map(({ id }) => id));
+        const rows = recipients.map(({ id, phone }, index) => {
+            if (!phone) throw new Error("Backlog recipient lacks a phone");
+            return pendingGreeting({ id, phone }, `backlog-${index}`, new Date(base + index * 60_000));
+        });
         const created = await prisma.message_trigger_job.createManyAndReturn({
             data: rows,
-            select: { id: true, dedupeKey: true },
+            select: { id: true, scheduledFor: true, recipientPhone: true },
         });
-        batchJobIds = created
-            .map((row) => ({ id: row.id, index: Number(row.dedupeKey.split("-").pop()) }))
-            .sort((left, right) => left.index - right.index)
-            .map((row) => row.id);
-        expect(batchJobIds).toHaveLength(105);
-        expect(new Set(batchJobIds).size).toBe(105);
+        const ordered = created.sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime());
+        const batchJobIds = ordered.map(({ id }) => id);
+        expect(batchJobIds).toHaveLength(backlogSize);
 
         const before = await prisma.message_trigger_job.findMany({
             where: { id: { in: batchJobIds } },
@@ -368,6 +372,8 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
             expect(statusById.get(batchJobIds[index]!)).toBe(index < 100 ? "sent" : "pending");
         }
         expect(stub.sendCalls.length - callsBefore).toBe(100);
+        expect(stub.sendCalls.slice(callsBefore).map(({ receiver }) => toDigits(receiver)).sort())
+            .toEqual(ordered.slice(0, 100).map(({ recipientPhone }) => recipientPhone).sort());
 
         const secondTickStart = Date.now();
         await harness.prepareFreshDispatchWindow();
@@ -383,7 +389,16 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
             select: { status: true },
         });
         expect(after.every((row) => row.status === "sent")).toBe(true);
-        expect(stub.sendCalls.length - callsBefore).toBe(105);
+        expect(stub.sendCalls.slice(callsBefore + 100).map(({ receiver }) => toDigits(receiver)).sort())
+            .toEqual(ordered.slice(100).map(({ recipientPhone }) => recipientPhone).sort());
+        const logs = await prisma.message_log.findMany({
+            where: { triggerJobId: { in: batchJobIds } },
+            select: { triggerJobId: true, providerCallStartedAt: true, providerAcceptanceState: true, status: true },
+        });
+        expect(logs).toHaveLength(backlogSize);
+        expect(logs).toEqual(expect.arrayContaining(batchJobIds.map((triggerJobId) => expect.objectContaining({
+            triggerJobId, status: "sent", providerAcceptanceState: "accepted", providerCallStartedAt: expect.any(Date),
+        }))));
     }, 120_000);
 
     it("4. a standby app holds no lease and dispatches nothing, even with a due job", async () => {
@@ -422,7 +437,7 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
 
             expect(inner).toHaveBeenCalledTimes(1);
             expect((await readJob(dueJob.id)).status).toBe("sent");
-            expect(await prisma.message_log.count({ where: { triggerJobId: dueJob.id } })).toBe(1);
+            await expectAcceptedOnce(dueJob.id);
             expect(stub.sendCalls.length - callsBefore).toBe(1);
         } finally {
             inner.mockRestore();
@@ -455,7 +470,8 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
 
         // Gate: the due automatic job survives the tick still pending, and no
         // provider call happened.
-        expect((await readJob(dueJob.id)).status).toBe("pending");
+        expect(await readJob(dueJob.id)).toMatchObject({ status: "pending", cancelReason: null, sentAt: null });
+        expect(await prisma.message_log.count({ where: { triggerJobId: dueJob.id } })).toBe(0);
         expect(stub.sendCalls.length - callsBefore).toBe(0);
 
         // Re-open dispatch: restore the setting row and the SAME job sends.
@@ -472,8 +488,56 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         await harness.tick.dispatch();
 
         expect((await readJob(dueJob.id)).status).toBe("sent");
-        expect(await prisma.message_log.count({ where: { triggerJobId: dueJob.id } })).toBe(1);
+        await expectAcceptedOnce(dueJob.id);
         expect(stub.sendCalls.length - callsBefore).toBe(1);
+    });
+
+    it("cancels an automatic repeat for the same lifecycle after a date edit and permits manual sends", async () => {
+        if (clientId === undefined || !greetingJobId) throw new Error("Missing original greeting fixture");
+        await expectAcceptedOnce(greetingJobId);
+        await prisma.client.update({
+            where: { id: clientId },
+            data: { startDate: new Date(Date.now() + 7 * 86_400_000) },
+        });
+        const repeat = await prisma.message_trigger_job.create({
+            data: pendingGreeting({ id: clientId, phone: clientPhoneDigits }, "date-edit-repeat", new Date(Date.now() - 60_000)),
+        });
+        const callsBefore = stub.sendCalls.length;
+        await harness.prepareFreshDispatchWindow();
+        await harness.tick.dispatch();
+
+        expect(await readJob(repeat.id)).toMatchObject({
+            status: "canceled", cancelReason: OCCURRENCE_ALREADY_ACCEPTED, sentAt: null,
+        });
+        expect(await prisma.message_log.count({
+            where: { triggerJobId: repeat.id, providerCallStartedAt: { not: null } },
+        })).toBe(0);
+        expect(stub.sendCalls).toHaveLength(callsBefore);
+
+        const manualMessage = {
+            clientId, receiver: clientPhoneDigits, message: "E2E greeting",
+            templateRef: { kind: "system", key: "GREETING" },
+        };
+        const first = await harness.http().post("/message-deliveries/sms")
+            .set("Idempotency-Key", `cron-dispatch-manual-${RUN}-1`)
+            .send(manualMessage);
+        expect(first.status).toBe(201);
+        expect(first.body.result.resultCode).toBe(1);
+        expect(stub.sendCalls).toHaveLength(callsBefore + 1);
+
+        const check = await harness.http().post("/message-deliveries/sms/duplicate-check").send(manualMessage);
+        expect(check.status).toBe(201);
+        const { checkedAt, matchIds, payloadHash } = check.body;
+        expect(matchIds).toHaveLength(1);
+        const second = await harness.http().post("/message-deliveries/sms")
+            .set("Idempotency-Key", `cron-dispatch-manual-${RUN}-2`)
+            .send({ ...manualMessage, duplicateDecision: { confirmed: true, checkedAt, matchIds, payloadHash } });
+        expect(second.status).toBe(201);
+        expect(second.body.result.resultCode).toBe(1);
+        expect(stub.sendCalls).toHaveLength(callsBefore + 2);
+        expect(await prisma.message_occurrence_manual_attempt.count({
+            where: { branchId: BRANCH_ID, state: "accepted", log: { clientId } },
+        })).toBe(2);
     });
 
     it("7. the SystemSettingService setter fences automation off: pending automatic jobs are canceled on disable, zero sends", async () => {
@@ -513,7 +577,12 @@ describeE2E("message-automation cron dispatch happy path and gates (real DB)", (
         // parent on. Nothing pending exists to send, so the provider count
         // stays flat — the fenced did not resurrect.
         await setting.setMessageSettingsPolicyEnabled(BRANCH_ID, "trigger-dispatch", true, actor);
-        expect((await readJob(dueJob.id)).status).toBe("canceled");
+        await harness.prepareFreshDispatchWindow();
+        await harness.tick.dispatch();
+        expect(await readJob(dueJob.id)).toMatchObject({
+            status: "canceled", cancelReason: MESSAGE_AUTOMATION_PARENT_DISABLED_REASON, sentAt: null,
+        });
+        expect(await prisma.message_log.count({ where: { triggerJobId: dueJob.id } })).toBe(0);
         expect(stub.sendCalls.length - callsBefore).toBe(0);
     });
 
