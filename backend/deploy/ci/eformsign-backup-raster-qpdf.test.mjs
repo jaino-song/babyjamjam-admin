@@ -105,17 +105,58 @@ process.exit(child.status ?? 1);
 `;
 
 const mirror = String.raw`
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-export async function inspectRasterArchive({ stateDir }) {
-    const manifestPresent = await fs.stat(join(stateDir, 'fixture-mirror')).then(() => true, () => false);
+import { rootInfo, scanLocal, stat, validBootstrapProof } from './raster-mirror-io.mjs';
+
+const manifestPath = ({ stateDir }) => join(stateDir, 'fixture-mirror');
+async function inventory(root, options) {
+    const entries = [...(await scanLocal(root, options)).values()];
+    return entries.filter(({ bytes }) => bytes)
+        .sort((a, b) => a.path < b.path ? -1 : Number(a.path > b.path))
+        .map(({ path, bytes }) => [path, bytes.sha256]);
+}
+async function bootstrapProof({ archiveDir, originalArchiveDir, stateDir, rcloneRemote }, id) {
+    const inventories = await Promise.all([
+        inventory(archiveDir),
+        inventory(originalArchiveDir, { privateTree: true }),
+        rcloneRemote ? inventory(process.env.TEST_DRIVE) : null,
+    ]);
+    const roots = await Promise.all([archiveDir, originalArchiveDir, stateDir].map(rootInfo));
+    const rootChains = roots.map(({ id, ancestors }) => id ? [...ancestors, id] : ancestors);
+    const digest = createHash('sha256').update(JSON.stringify({ id, rcloneRemote, inventories })).digest('hex');
+    return { id, digest, rootChains, homeId: null, legacy: null };
+}
+async function verifyBootstrap(settings, bootstrap) {
+    assert.ok(validBootstrapProof(bootstrap));
+    assert.deepEqual(bootstrap, await bootstrapProof(settings, bootstrap.id));
+}
+export async function inspectRasterArchive(settings) {
+    const manifestPresent = Boolean(await stat(manifestPath(settings)));
     return { manifestPresent, unpublished: !manifestPresent, retiredPaths: [], phase: manifestPresent ? 'active' : null };
 }
-export async function prepareRasterArchive({ stateDir }, { dryRun }) {
-    if (!dryRun) await fs.writeFile(join(stateDir, 'fixture-mirror'), '');
-}
-export async function publishRasterArchive({ originalArchiveDir, archiveDir }, { dryRun }) {
+export async function prepareRasterArchive(settings, { dryRun, bootstrapId, bootstrap, beforeCapture }) {
+    const { manifestPresent } = await inspectRasterArchive(settings);
+    if (bootstrapId !== undefined) {
+        assert.ok(dryRun && !manifestPresent && bootstrap === undefined);
+        return { bootstrap: await bootstrapProof(settings, bootstrapId) };
+    }
+    if (bootstrap !== undefined) await verifyBootstrap(settings, bootstrap);
     if (dryRun) return;
+    if (!manifestPresent) {
+        assert.ok(bootstrap && beforeCapture);
+        await fs.writeFile(manifestPath(settings), '', { flag: 'wx', mode: 0o600 });
+    }
+    await beforeCapture?.();
+}
+export async function publishRasterArchive(settings, { dryRun, bootstrap }) {
+    if (dryRun) {
+        if (bootstrap !== undefined) await verifyBootstrap(settings, bootstrap);
+        return;
+    }
+    const { originalArchiveDir, archiveDir } = settings;
     const paths = await fs.readdir(originalArchiveDir, { recursive: true });
     for (const path of paths.filter((path) => path.endsWith('.pdf'))) {
         const bytes = await fs.readFile(join(originalArchiveDir, path));
@@ -145,7 +186,8 @@ async function fixture(t, { originalsMount } = {}) {
     const settingsPath = join(home, 'settings.json');
     const tokenFile = join(home, 'token');
     await fs.mkdir(worker);
-    for (const name of ['backup.mjs', 'provider-contract-migration.mjs', 'provider-contract-paths.mjs', 'provider-contract-publication.mjs']) {
+    for (const name of ['backup.mjs', 'provider-contract-migration.mjs', 'provider-contract-paths.mjs',
+        'provider-contract-publication.mjs', 'raster-mirror-io.mjs']) {
         await fs.copyFile(fileURLToPath(new URL(name, source)), join(worker, name));
     }
     await put(qpdfBin, wrapper, 0o700);
