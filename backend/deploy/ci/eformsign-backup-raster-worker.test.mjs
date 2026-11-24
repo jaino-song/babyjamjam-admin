@@ -257,30 +257,72 @@ syncBuiltinESMExports();
 `;
 
 const rawDrive = String.raw`#!/usr/bin/env node
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { dirname, join } = require('node:path');
 const args = process.argv.slice(2);
+const [command] = args;
 const root = process.env.TEST_DRIVE;
-const target = (remote) => join(root, remote.split(':').slice(1).join(':'));
-const operands = args.slice(args.indexOf('--') + 1);
 fs.appendFileSync(process.env.TEST_RAW_DRIVE, JSON.stringify(args) + '\n');
-if (args[0] === 'copy') {
+if (command === 'copy') {
     fs.cpSync(args[2], root, { recursive: true });
-} else if (args[0] === 'lsjson') {
+    process.exit(0);
+}
+const delimiter = args.indexOf('--');
+assert.ok(delimiter > 0);
+const operands = args.slice(delimiter + 1);
+const flags = args.slice(1, delimiter);
+const common = [
+    '--retries', '1', '--low-level-retries', '2', '--contimeout', '10s', '--timeout', '45s',
+    '--log-level', 'ERROR', '--log-file=', '--drive-skip-dangling-shortcuts=false',
+    '--drive-use-trash=true', '--local-unicode-normalization=false', '--links=true', '--copy-links=false',
+    '--drive-skip-shortcuts=true',
+];
+const expected = {
+    listremotes: [['--long']],
+    lsjson: [['--stat'], []],
+    cat: [[]],
+    copyto: [['--immutable', '--ignore-existing']],
+    deletefile: [[]],
+};
+assert.ok(Object.hasOwn(expected, command) && expected[command].some((specific) =>
+    JSON.stringify(flags) === JSON.stringify(specific.concat(common))));
+const operandCount = command === 'listremotes' ? 0 : command === 'copyto' ? 2 : 1;
+assert.equal(operands.length, operandCount);
+const target = (remote) => {
+    assert.ok(remote.startsWith('mock:'));
+    const path = remote.slice(5);
+    assert.ok(!path.startsWith('/') && !path.split('/').includes('..'));
+    return join(root, path);
+};
+const entry = (path, name) => {
+    const stat = fs.lstatSync(path);
+    const isDirectory = stat.isDirectory();
+    return {
+        Name: name, Path: name, IsDir: isDirectory, ID: String(stat.ino),
+        Size: isDirectory ? -1 : stat.size,
+        ModTime: stat.mtime.toISOString(), MimeType: isDirectory ? 'inode/directory' : 'application/pdf',
+    };
+};
+if (command === 'listremotes') {
+    console.log('mock: local');
+} else if (command === 'lsjson') {
     const dir = target(operands[0]);
-    const rows = fs.readdirSync(dir, { withFileTypes: true }).map((entry) => ({
-        Name: entry.name, IsDir: entry.isDirectory(), ID: String(fs.lstatSync(join(dir, entry.name)).ino),
-    }));
-    console.log(JSON.stringify(rows));
-} else if (args[0] === 'cat') {
+    if (flags[0] === '--stat') {
+        assert.equal(operands[0], 'mock:');
+        console.log(JSON.stringify(entry(dir, '')));
+    } else {
+        console.log(JSON.stringify(fs.readdirSync(dir).map((name) => entry(join(dir, name), name))));
+    }
+} else if (command === 'cat') {
     process.stdout.write(fs.readFileSync(target(operands[0])));
-} else if (args[0] === 'copyto') {
+} else if (command === 'copyto') {
     const final = target(operands[1]);
     fs.mkdirSync(dirname(final), { recursive: true });
     fs.copyFileSync(operands[0], final, fs.constants.COPYFILE_EXCL);
-} else if (args[0] === 'deletefile') {
+} else if (command === 'deletefile') {
     fs.unlinkSync(target(operands[0]));
-} else process.exit(13);
+}
 `;
 
 const qpdf = String.raw`#!/usr/bin/env node
@@ -308,7 +350,10 @@ async function fixture(t, { explicit = false, remote = true } = {}) {
     t.after(() => fs.rm(home, { recursive: true, force: true }));
     const worker = join(home, 'worker');
     await fs.mkdir(worker);
-    for (const name of ['backup.mjs', 'provider-contract-migration.mjs', 'provider-contract-paths.mjs', 'provider-contract-publication.mjs']) {
+    for (const name of [
+        'backup.mjs', 'provider-contract-migration.mjs', 'provider-contract-paths.mjs', 'provider-contract-publication.mjs',
+        'raster-mirror-remote.mjs', 'raster-mirror-io.mjs',
+    ]) {
         await fs.copyFile(new URL(name, unit), join(worker, name));
     }
     const publisher = join(worker, 'raster-mirror.mjs');
@@ -1449,7 +1494,18 @@ test('known legacy publication resumes under the timer before operator dry run a
     assert.deepEqual((await f.run([], 0, { legacyLock: true })).requests, ['listing', 'report']);
     await absent(receipt(f));
     f.listing.docs = [revised, eligible];
-    await f.run(['--migrate-provider-contracts']);
+    const beforeDryRun = await tree(f);
+    const rawOffset = (await f.raw()).length;
+    const dryRun = await f.run(['--migrate-provider-contracts']);
+    assert.deepEqual(dryRun.log, [{ migration: 'dry-run', pairs: 1, skipped: 1 }]);
+    assert.deepEqual(await tree(f), beforeDryRun);
+    const rawReads = (await f.raw()).slice(rawOffset);
+    assert.equal(rawReads[0]?.[0], 'listremotes');
+    assert.equal(rawReads.filter(([command]) => command === 'listremotes').length, 1);
+    assert.ok(rawReads.some(([command, flag]) => command === 'lsjson' && flag === '--stat'));
+    assert.ok(rawReads.some(([command, flag]) => command === 'lsjson' && flag === '--retries'));
+    assert.equal(rawReads.filter(([command]) => command === 'cat').length, 2);
+    assert.ok(rawReads.every(([command]) => ['listremotes', 'lsjson', 'cat'].includes(command)));
     await f.run(['--migrate-provider-contracts', '--apply']);
     const journal = await readJson(f.journal);
     assert.equal(journal.phase, 'applied');

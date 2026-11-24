@@ -274,6 +274,7 @@ async function inspectArchive(settings, options) {
     return {
         manifestPresent: Boolean(ctx.state), unpublished: !ctx.state,
         retiredPaths: [...ctx.records.values()].filter(({ retired }) => retired).map(({ path }) => path).sort(),
+        phase: ctx.state === null ? null : ctx.state.phase,
     };
 }
 

@@ -31,6 +31,13 @@ async function writeRender(outputPath, outputHandle, bytes) {
     await assertRenderHandle(outputPath, outputHandle);
 }
 
+const localRcloneFlags = [
+    '--retries', '1', '--low-level-retries', '2', '--contimeout', '10s', '--timeout', '45s',
+    '--log-level', 'ERROR', '--log-file=', '--drive-skip-dangling-shortcuts=false',
+    '--drive-use-trash=true', '--local-unicode-normalization=false', '--links=true', '--copy-links=false',
+    '--drive-skip-shortcuts=true',
+];
+
 const fake = String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
@@ -43,43 +50,35 @@ const stop = () => { console.error('private stderr test marker'); process.exit(4
 const at = args.indexOf('--');
 const operands = args.slice(at + 1);
 const flags = args.slice(0, at);
-const common = [
-    '--retries', '1', '--low-level-retries', '2', '--contimeout', '10s', '--timeout', '45s',
-    '--log-level', 'ERROR', '--log-file=',
-    '--drive-use-trash=true', '--local-unicode-normalization=false', '--links=true', '--copy-links=false',
-];
+const common = ${JSON.stringify(localRcloneFlags)};
 const expected = {
+    listremotes: [['--long']],
     lsjson: [[], ['--stat'], ['--hash-type', 'MD5'], ['--recursive', '--hash-type', 'MD5']],
     cat: [[]],
     copyto: [['--ignore-times']],
     deletefile: [[]],
 };
-const metadata = flags.filter((flag) => flag === '--original' || flag.startsWith('--drive-skip-'));
-const ordinary = flags.filter((flag) => !metadata.includes(flag));
 const valid = Object.hasOwn(expected, command) && expected[command].some((specific) =>
-    JSON.stringify(ordinary) === JSON.stringify(specific.concat(common)))
-    && new Set(metadata.map((flag) => flag.split('=')[0])).size === metadata.length
-    && metadata.every((flag) => flag === '--drive-skip-dangling-shortcuts=false'
-        || flag === '--drive-skip-shortcuts=true'
-        || (command === 'lsjson' && (flag === '--drive-skip-shortcuts=false' || flag === '--original'))
-        // The isolated baseline transport supplies this global flag on every command.
-        || (flag === '--drive-skip-shortcuts=false' && !metadata.includes('--original')
-            && flags.indexOf(flag) === flags.indexOf('--log-file=') + 1
-            && flags[flags.indexOf(flag) + 1] === '--drive-skip-dangling-shortcuts=false'));
-if (at < 0 || !valid || operands.length !== (command === 'copyto' ? 2 : 1)) stop();
+    JSON.stringify(flags) === JSON.stringify(specific.concat(common)));
+const operandCount = command === 'listremotes' ? 0 : command === 'copyto' ? 2 : 1;
+if (at < 0 || !valid || operands.length !== operandCount) stop();
 function getKey(operand) {
     if (!operand.startsWith('fake:')) stop();
     const key = operand.slice(5);
     if (key.startsWith('/') || key.split('/').includes('..')) stop();
     return key;
 }
-const key = getKey(operands.at(-1));
-const file = path.join(root, key);
+const key = command === 'listremotes' ? null : getKey(operands.at(-1));
 let locked = false;
 try { fs.fstatSync(3); locked = fs.readlinkSync('/proc/self/fd/3') === path.join(__dirname, 'lock'); } catch {}
 const hash = (bytes, kind = 'sha256') => crypto.createHash(kind).update(bytes).digest('hex');
 const input = command === 'copyto' ? fs.readFileSync(operands[0]) : null;
 fs.appendFileSync(path.join(__dirname, 'calls.jsonl'), JSON.stringify({ command, key, locked, sha: input && hash(input), flags }) + '\n');
+if (command === 'listremotes') {
+    process.stdout.write('fake: local\n');
+    process.exit(0);
+}
+const file = path.join(root, key);
 function info(key, relative) {
     const full = path.join(root, key);
     const stat = fs.lstatSync(full);
@@ -192,7 +191,7 @@ test('dry-run is read-only, then captures a complete corpus and transforms bytes
     assert.equal((await f.publish({ dryRun: true })).wouldRender, 3);
     assert.deepEqual((await fs.readdir(f.root)).filter((name) => name !== 'calls.jsonl'), before);
     assert.equal(f.renders.length, 0);
-    assert.ok((await f.calls()).every(({ command }) => ['lsjson', 'cat'].includes(command)));
+    assert.ok((await f.calls()).every(({ command }) => ['listremotes', 'lsjson', 'cat'].includes(command)));
     assert.deepEqual(await fs.readFile(localPath), docs[localOnly]);
     assert.equal((await prepareRasterArchive(f.settings)).captured, 3);
     assert.equal(await mode(f.original), 0o700);
@@ -215,8 +214,8 @@ test('dry-run is read-only, then captures a complete corpus and transforms bytes
     const idle = await f.publish();
     assert.deepEqual([idle.rendered, idle.localPublished, idle.remotePublished], [0, 0, 0]);
     const idleCalls = (await f.calls()).slice(offset);
-    assert.ok(idleCalls.every(({ command }) => command === 'lsjson'));
-    assert.equal(idleCalls.length, 10);
+    const idleCommands = ['listremotes', ...Array(5).fill('lsjson')];
+    assert.deepEqual(idleCalls.map(({ command }) => command), [...idleCommands, ...idleCommands]);
     assert.equal(idleCalls.filter(({ flags }) => flags.includes('--recursive')).length, 2);
     assert.equal((await fs.stat(localPath)).mtimeMs, idleMtime);
     assert.equal((await fs.stat(join(f.remote, localOnly))).mtimeMs, idleRemoteMtime);
@@ -419,7 +418,7 @@ test('populated rollback dry-run preserves all trees, manifest and uploaded byte
     const result = await rollbackRasterArchive(f.settings, { dryRun: true });
     const calls = (await f.calls()).slice(offset);
     assert.ok(calls.length > 0);
-    assert.deepEqual(calls.filter(({ command, sha }) => !['lsjson', 'cat'].includes(command) || sha !== null), []);
+    assert.deepEqual(calls.filter(({ command, sha }) => !['listremotes', 'lsjson', 'cat'].includes(command) || sha !== null), []);
     assert.deepEqual([result.dryRun, result.wouldRestore, result.localRestored, result.remoteRestored], [true, 1, 0, 0]);
     assert.deepEqual(await Promise.all(roots.map(treeSnapshot)), before);
     assert.deepEqual(await readManifest(f), manifest);
@@ -706,7 +705,7 @@ test('zero-exit stderr with a nonempty recursive JSON listing fails before any m
     });
     await absent(f.original);
     await absent(f.settings.stateDir);
-    assert.ok((await f.calls()).every(({ command, sha }) => command === 'lsjson' && sha === null));
+    assert.ok((await f.calls()).every(({ command, sha }) => ['listremotes', 'lsjson'].includes(command) && sha === null));
     assert.deepEqual(await fs.readFile(local), localSource);
     assert.deepEqual(await fs.readFile(remote), remoteSource);
 
@@ -824,8 +823,9 @@ async function useLocalRclone(f) {
 const { appendFileSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const args = process.argv.slice(2);
+const delimiter = args.indexOf('--');
 appendFileSync(${JSON.stringify(join(f.root, 'calls.jsonl'))}, JSON.stringify({
-    command: args[0], flags: args.slice(1, args.indexOf('--')), key: args.at(-1),
+    command: args[0], flags: args.slice(1, delimiter), operands: args.slice(delimiter + 1),
 }) + '\\n');
 const result = spawnSync(${JSON.stringify(systemRclone)}, args, {
     cwd: ${JSON.stringify(join(f.root, 'drive'))}, stdio: 'inherit',
@@ -873,18 +873,22 @@ test('installed rclone uses one recursive listing per idle prepare and publish f
         }
     }
     const idle = (await f.calls()).slice(offset, offset + batches[0].length + batches[1].length);
-    t.diagnostic(`First idle prepare + publish: ${idle.filter(({ command }) => command === 'lsjson').length} lsjson, ${idle.filter(({ command }) => command === 'cat').length} cat`);
+    t.diagnostic(`First idle prepare + publish: ${idle.filter(({ command }) => command === 'listremotes').length} listremotes, ${idle.filter(({ command }) => command === 'lsjson').length} lsjson, ${idle.filter(({ command }) => command === 'cat').length} cat`);
+    const expected = [
+        ['listremotes', ['--long'], []],
+        ['lsjson', ['--stat'], ['sandbox:']],
+        ['lsjson', [], ['sandbox:']],
+        ['lsjson', ['--recursive', '--hash-type', 'MD5'], ['sandbox:archive']],
+        ['lsjson', ['--stat'], ['sandbox:']],
+        ['lsjson', [], ['sandbox:']],
+    ].map(([command, options, operands]) => ({ command, flags: [...options, ...localRcloneFlags], operands }));
     for (const calls of batches) {
-        assert.deepEqual(calls.map(({ command, key }) => [command, key]), [
-            ['lsjson', 'sandbox:'], ['lsjson', 'sandbox:'], ['lsjson', 'sandbox:archive'],
-            ['lsjson', 'sandbox:'], ['lsjson', 'sandbox:'],
-        ]);
-        assert.equal(calls.filter(({ flags }) => flags.includes('--recursive')).length, 1);
-        assert.equal(calls.filter(({ flags }) => flags.includes('--stat')).length, 2);
+        assert.deepEqual(calls, expected);
     }
     for (const report of reports) {
         assert.deepEqual([report.captured, report.rendered, report.localPublished, report.remotePublished], [0, 0, 0, 0]);
     }
+    assert.equal(f.renders.length, 3);
     for (const [path, before, bytes] of states) {
         const after = await fs.stat(path, { bigint: true });
         assert.deepEqual([after.ino, after.size, after.mtimeNs, after.ctimeNs], [before.ino, before.size, before.mtimeNs, before.ctimeNs]);
@@ -1821,7 +1825,7 @@ test('scoped provider moves preflight both dated renditions, replay, reserve old
     assert.equal((await f.publish({ moves, movesOnly: true })).moved, 0);
     const callCount = (await f.calls()).length;
     assert.deepEqual(await inspectRasterArchive(f.settings), {
-        manifestPresent: true, unpublished: false, retiredPaths: moves.map(({ from }) => from),
+        manifestPresent: true, unpublished: false, retiredPaths: moves.map(({ from }) => from), phase: 'active',
     });
     assert.equal((await f.calls()).length, callCount);
     for (const [index, { from, to }] of moves.entries()) {
@@ -1905,43 +1909,60 @@ test('paused legacy handoff requires authenticated per-path bytes and retains ea
     }
 });
 
-test('manifest inspection is metadata-only and fails closed on ambiguous absence or an invalid binding', async (t) => {
+test('manifest inspection reports validated phases without side effects and refuses ambiguous or invalid state', async (t) => {
     const f = await fixture(t);
-    const noState = { manifestPresent: false, unpublished: true, retiredPaths: [] };
-    assert.deepEqual(await inspectRasterArchive(f.settings), noState);
+    const lock = await fs.open(join(f.root, 'lock'), 'wx', 0o600);
+    t.after(() => lock.close());
+    const inspect = (settings = f.settings) => inspectRasterArchive(settings, { lockFd: lock.fd });
+    const assertPhase = async (phase) => {
+        const before = await treeSnapshot(f.root);
+        const renderCount = f.renders.length;
+        assert.deepEqual(await inspect(), {
+            manifestPresent: phase !== null, unpublished: phase === null, retiredPaths: [], phase,
+        });
+        assert.deepEqual(await treeSnapshot(f.root), before);
+        assert.equal(f.renders.length, renderCount);
+    };
+    await assertPhase(null);
     assert.deepEqual(await f.calls(), []);
     const path = 'known.pdf';
     const bytes = raw('known original');
     await put(f.settings.archiveDir, path, bytes);
     await put(f.remote, path, raw('conflict'));
     await assert.rejects(prepareRasterArchive(f.settings), { code: 'raster_archive_original_authority_conflict' });
-    assert.deepEqual(await inspectRasterArchive(f.settings), noState);
+    await assertPhase(null);
     const home = dirname(manifestPath(f));
     const scaffold = join(home, 'rendered');
     await fs.mkdir(scaffold, { recursive: true, mode: 0o700 });
-    assert.deepEqual(await inspectRasterArchive(f.settings), noState);
+    await assertPhase(null);
     const unowned = await put(scaffold, 'foreign.receipt', 'synthetic receipt');
-    await assert.rejects(inspectRasterArchive(f.settings), { code: 'raster_archive_unproven_manifest_absence' });
+    await assert.rejects(inspect(), { code: 'raster_archive_unproven_manifest_absence' });
     await fs.unlink(unowned);
     await put(f.remote, path, bytes);
     await prepareRasterArchive(f.settings);
     await f.publish();
-    const before = (await f.calls()).length;
     await fs.link(join(f.original, path), join(f.original, '.provider-recovery-stage.tmp'));
-    assert.deepEqual(await inspectRasterArchive(f.settings), { manifestPresent: true, unpublished: false, retiredPaths: [] });
-    assert.equal((await f.calls()).length, before);
+    await assertPhase('active');
     await assert.rejects(prepareRasterArchive(f.settings), { code: 'raster_archive_unsafe_file' });
     await fs.unlink(join(f.original, '.provider-recovery-stage.tmp'));
     await prepareRasterArchive(f.settings);
-    await assert.rejects(inspectRasterArchive({ ...f.settings, rcloneRemote: 'fake:foreign' }), { code: 'raster_archive_binding_changed' });
+    const beforeRefusal = await treeSnapshot(f.root);
+    await assert.rejects(inspect({ ...f.settings, rcloneRemote: 'fake:foreign' }), { code: 'raster_archive_binding_changed' });
+    assert.deepEqual(await treeSnapshot(f.root), beforeRefusal);
     const manifest = await fs.readFile(manifestPath(f));
-    await fs.writeFile(manifestPath(f), 'malformed');
-    await assert.rejects(inspectRasterArchive(f.settings), { code: 'raster_archive_invalid_manifest' });
+    for (const invalid of ['malformed', JSON.stringify({ ...JSON.parse(manifest), phase: 'unknown' })]) {
+        await fs.writeFile(manifestPath(f), invalid);
+        await assert.rejects(inspect(), { code: 'raster_archive_invalid_manifest' });
+    }
     await fs.writeFile(manifestPath(f), manifest);
+    await f.control({ failBefore: 'copyto' });
+    await assert.rejects(rollbackRasterArchive(f.settings), { code: 'raster_archive_remote_copyto_failed' });
+    await assertPhase('rolling-back');
+    await f.control({});
     await rollbackRasterArchive(f.settings);
-    assert.deepEqual(await inspectRasterArchive(f.settings), { manifestPresent: true, unpublished: false, retiredPaths: [] });
+    await assertPhase('paused');
     await fs.unlink(manifestPath(f));
-    await assert.rejects(inspectRasterArchive(f.settings), { code: 'raster_archive_unproven_manifest_absence' });
+    await assert.rejects(inspect(), { code: 'raster_archive_unproven_manifest_absence' });
 });
 
 test('rollback resumes its older issued journal and then restores the latest proven private version', async (t) => {
