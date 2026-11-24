@@ -7,24 +7,26 @@ import * as fs from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { inDailyHandoff } from '../eformsign-backup/ready-events.mjs';
 
 const exec = promisify(execFile);
+// The closure tests reuse the offline CLI fixture without registering these cases.
+const test = process.argv[1] === fileURLToPath(import.meta.url) ? nodeTest : () => {};
 const source = new URL('../eformsign-backup/', import.meta.url);
 const worker = fileURLToPath(new URL('backup.mjs', source));
 const token = 'synthetic-ready-event-token';
-const baseTime = Date.parse('2026-11-24T01:05:00.000Z');
-const v1 = '2026-11-24T00:01:00.000Z';
-const v2 = '2026-11-24T00:02:00.000Z';
+export const baseTime = Date.parse('2026-11-24T01:05:00.000Z');
+export const v1 = '2026-11-24T00:01:00.000Z';
+export const v2 = '2026-11-24T00:02:00.000Z';
 const v3 = '2026-11-24T00:03:00.000Z';
 const timestamp = (time) => new Date(time).toISOString();
-const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+export const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-function pdf(width) {
+export function pdf(width) {
     const objects = [
         '<< /Type /Catalog /Pages 2 0 R >>',
         '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -40,11 +42,30 @@ function pdf(width) {
         + `trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${text.length}\n%%EOF\n`);
 }
 
-async function put(path, bytes, mode = 0o600) {
+export async function put(path, bytes, mode = 0o600) {
     await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 });
     await fs.writeFile(path, bytes, { mode });
 }
-const json = async (path) => JSON.parse(await fs.readFile(path, 'utf8'));
+export const json = async (path) => JSON.parse(await fs.readFile(path, 'utf8'));
+export async function readReadyQueue(path) {
+    const checkpoint = await json(path);
+    const pending = Object.entries(checkpoint.pending);
+    const seen = checkpoint.seen.flat();
+    const pages = join(dirname(path), '.ready-events-pages');
+    async function readRows(index, name, prefix, rows) {
+        if (index.rows) {
+            for (const [, key, value] of index.rows) rows.push([key, name === 'seen' ? value.at : value]);
+            return;
+        }
+        for (const digit of Object.keys(index.children)) {
+            const branch = prefix + digit;
+            await readRows(await json(join(pages, name + '-' + branch)), name, branch, rows);
+        }
+    }
+    if (checkpoint.pendingIndex) await readRows(checkpoint.pendingIndex, 'pending', '', pending);
+    if (checkpoint.seenIndex) await readRows(checkpoint.seenIndex, 'seen', '', seen);
+    return { ...checkpoint, pending: Object.fromEntries(pending), seen: [seen] };
+}
 const absent = (path) => assert.rejects(fs.lstat(path), { code: 'ENOENT' });
 const reducer = (rows, key) => rows.filter(([route]) => route === key).map(([, value]) => value);
 const rcloneWrapper = `#!/usr/bin/env node
@@ -67,7 +88,7 @@ globalThis.Date = class extends NativeDate {
 };
 `;
 
-async function fixture(t, initialise = true) {
+export async function fixture(t, initialise = true) {
     const root = await fs.mkdtemp(join(tmpdir(), 'ready-archive-'));
     t.after(() => fs.rm(root, { force: true, recursive: true }));
     const home = join(root, 'home');
@@ -175,13 +196,14 @@ async function fixture(t, initialise = true) {
             assert.deepEqual(parsed.pages.map(({ object }) => Math.round(parsed.qpdf[1]['obj:' + object].value['/MediaBox'][2])), expected[i]);
         }
     };
-    return { root, settings, calls, targets, files, dailyDocs, doc, event, target, tick, run, guardPath, lock, config, queue: () => json(queuePath),
+    return { root, settings, calls, targets, files, dailyDocs, doc, event, target, tick, run, guardPath, lock, config,
+        queue: () => readReadyQueue(queuePath),
         queuePath, checkCopies, remoteCalls, remoteUploads: async () => (await remoteCalls()).filter((command) => command === 'copyto').length };
 }
 
-const pair = (folder, name) => [`${folder}/${name}.pdf`, `${folder}/감사추적/[감사추적]_${name}.pdf`];
-const providerPair = (suffix = '') => pair('제공인력 계약서', '제공인력_계약서_Synthetic Reviewer_2026-11-24' + suffix);
-const provider = { providerContract: { signerName: 'Synthetic Reviewer', signedDate: '2026-11-24' } };
+export const pair = (folder, name) => [`${folder}/${name}.pdf`, `${folder}/감사추적/[감사추적]_${name}.pdf`];
+export const providerPair = (suffix = '') => pair('제공인력 계약서', '제공인력_계약서_Synthetic Reviewer_2026-11-24' + suffix);
+export const provider = { providerContract: { signerName: 'Synthetic Reviewer', signedDate: '2026-11-24' } };
 
 test('delivers a healthy review while completion is pending, then resumes Drive and deduplicates current copies', async (t) => {
     const f = await fixture(t);
@@ -294,7 +316,8 @@ test('retains the target through missing Drive or an inactive cutover and observ
     const a = f.doc('a', [101, 102], provider);
     f.targets.set('a', f.target(v2, a));
     f.event(501, 'a', true, v2);
-    const { rcloneRemote, ...localOnly } = f.settings;
+    const localOnly = { ...f.settings };
+    delete localOnly.rcloneRemote;
     const before = (await f.remoteCalls()).length;
     await f.config(localOnly);
     assert.equal((await f.tick()).delivered, 0);
@@ -338,7 +361,8 @@ test('retains the target through missing Drive or an inactive cutover and observ
 
 test('resumes the same pending delivery after Drive is configured', async (t) => {
     const f = await fixture(t);
-    const { rcloneRemote, ...localOnly } = f.settings;
+    const localOnly = { ...f.settings };
+    delete localOnly.rcloneRemote;
     await f.config(localOnly);
     f.event(501, 'a', true, v2);
     f.targets.set('a', f.target(v2, f.doc('a', [101, 102], provider)));

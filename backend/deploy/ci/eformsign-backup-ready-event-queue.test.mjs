@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { pollReadyEvents } from '../eformsign-backup/ready-events.mjs';
+import { readReadyQueue } from './eformsign-backup-ready-event.test.mjs';
 
 const day = 86_400_000;
 const t0 = Date.parse('2026-11-24T01:05:00.000Z');
@@ -16,7 +17,7 @@ test('resumes the fixed cursor, retains stronger duplicates and admits fresh wor
     const stateDir = await fs.mkdtemp(join(tmpdir(), 'ready-queue-'));
     t.after(() => fs.rm(stateDir, { recursive: true, force: true }));
     const file = join(stateDir, 'ready-events.json');
-    const load = async () => JSON.parse(await fs.readFile(file, 'utf8'));
+    const load = () => readReadyQueue(file);
     const cursorQueries = [];
     const deliveries = [];
     let interrupted = true;
@@ -87,12 +88,12 @@ test('expires prolonged pending into the nightly fallback count and preserves a 
     const current = await poll();
     assert.equal(current.expired, 1);
     assert.equal(current.delivered, 1);
-    const after = JSON.parse(await fs.readFile(file, 'utf8'));
+    const after = await readReadyQueue(file);
     assert.deepEqual(after.pending, {});
     assert.deepEqual(after.seen.flat().map(([id]) => id), [502]);
 
     now -= 30_000;
     assert.equal((await poll()).pages, 0);
     assert.equal(requestCount, 2);
-    assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).watermark, after.watermark);
+    assert.equal((await readReadyQueue(file)).watermark, after.watermark);
 });

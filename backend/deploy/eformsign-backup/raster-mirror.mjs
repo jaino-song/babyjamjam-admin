@@ -93,6 +93,7 @@ const relativeParent = (root, path) => dirname(join(root, path));
 const validStage = (stage, pattern) => typeof stage?.directory === 'string' && pattern.test(stage.directory)
     && validIdentity(stage.parentId) && validIdentity(stage.directoryId) && validIdentity(stage.fileId);
 const stageReady = (op) => op.stage && op.stage.ready !== false; // Legacy intents only saved fully copied stages.
+const validReadyPublication = (ready) => shaName(ready?.owner) && shaName(ready.authority);
 
 function validateVersion(entry) {
     if (!validBytes(entry?.raw) || !(entry.raster === null || validBytes(entry.raster))
@@ -128,7 +129,9 @@ function readRecords(state) {
         if (op.uploadStage !== undefined && (!validStage(op.uploadStage, uploadStageName)
             || !validIdentity(op.uploadStage.homeId)
             || (op.uploadStage.cleaning !== undefined && op.uploadStage.cleaning !== true))) refuse('invalid_manifest');
-        if (op.discarding !== undefined && (op.discarding !== true || op.kind !== 'publish' || state.phase !== 'rolling-back')) {
+        if (op.ready !== undefined && (op.kind !== 'publish' || !validReadyPublication(op.ready))) refuse('invalid_manifest');
+        if (op.discarding !== undefined && (op.discarding !== true || op.kind !== 'publish'
+            || !['active', 'rolling-back'].includes(state.phase))) {
             refuse('invalid_manifest');
         }
         if (op.kind === 'move') {
@@ -376,6 +379,7 @@ async function openArchive(settings, options) {
             phase: 'active', records: [], intent: null,
         },
         existed: Boolean(state), readyPaths, beforeVisible: options.beforeVisible, deadline: options.deadline,
+        readyPublication: options.readyPublication,
     };
     await guardBinding(ctx);
     const caches = await readCache(ctx);
@@ -1275,6 +1279,7 @@ function newIntent(ctx, kind, path, raw, mtimeMs, target, from) {
         before: { local: record?.local ?? null, remote: record?.remote ?? null },
         remoteChain: remoteAt(ctx, path).chain,
         remoteStarted: false, remoteAfter: null, stage: null,
+        ...(ctx.readyPublication && { ready: ctx.readyPublication }),
         ...(from && { from, deletingLocal: false, deletingRemote: false }),
     };
 }
@@ -1771,7 +1776,8 @@ function checkReadyScope(ctx, options, files) {
         refuse('invalid_ready_scope');
     }
     const intent = ctx.state.intent;
-    if (intent && (intent.kind !== 'publish' || !ctx.readyPaths.has(intent.path))) refuse('invalid_ready_scope');
+    if (intent && (intent.kind !== 'publish' || intent.discarding || !ctx.readyPaths.has(intent.path))) refuse('invalid_ready_scope');
+    if (files && !validReadyPublication(ctx.readyPublication)) refuse('invalid_ready_scope');
     const render = ctx.state.renderStage;
     if (render && (!render.path || !ctx.readyPaths.has(render.path))) refuse('invalid_ready_scope');
     for (const sha256 of ctx.stagedRenders.keys()) {
@@ -1827,6 +1833,11 @@ async function prepareArchive(settings, options) {
     }
     const legacy = legacyProofs(ctx, options);
     const handoffs = await guardRecords(ctx, { legacy });
+    const issued = ctx.state.intent;
+    if (options.reconcileReady && !ctx.dryRun && !moves.length && ctx.state.phase === 'active' && issued?.kind === 'publish'
+        && (issued.ready || issued.discarding || options.excluded?.has(keyOf(issued.path)))) {
+        await settleIssuedPublish(ctx, issued);
+    }
     const pending = ctx.state.intent;
     if (options.movesOnly) verifyMoveScope(pending, moves);
     for (const move of moves) {
@@ -1878,7 +1889,7 @@ async function publishArchive(settings, options) {
     await guardOriginals(ctx, moves, { preMove });
     const pending = ctx.state.intent;
     if (ctx.readyPaths) checkReadyScope(ctx, options, true);
-    if (pending && options.excluded?.has(keyOf(pending.path))) refuse('invalid_ready_scope');
+    if (pending && (pending.discarding || options.excluded?.has(keyOf(pending.path)))) refuse('invalid_ready_scope');
     if (movesOnly || preMove) verifyMoveScope(pending, moves);
     if (preMove) {
         if (pending || ctx.state.phase !== 'active') refuse('invalid_move_scope');
@@ -1934,21 +1945,47 @@ async function publishArchive(settings, options) {
     return ctx.report;
 }
 
-async function settlePublishForRollback(ctx, op) {
+// Release the shared intent by recording only the endpoints already observed.
+// An authority change never authorizes another write or removal at either endpoint.
+async function settleIssuedPublish(ctx, op, rollback = false) {
     const record = atName(ctx.records, op.path);
-    const { local, remote } = await guardRecord(ctx, record, { strong: true });
+    if (!record) refuse('public_version_conflict');
+    let local, remote;
+    if (rollback) ({ local, remote } = await guardRecord(ctx, record, { strong: true }));
+    else {
+        local = await readVisible(ctx, op.path);
+        if (!localAllowed(local, op)) refuse('public_version_conflict');
+        remote = ctx.remote ? (await guardRemoteIntent(ctx, op, null, true)).actual : null;
+    }
     await protectedRaw(ctx, op.raw, null, { required: true });
+    await pendingDate(ctx, op);
     if (!op.discarding) {
         op.discarding = true;
-        ctx.state.phase = 'rolling-back';
+        if (rollback) ctx.state.phase = 'rolling-back';
         await save(ctx);
     }
     await cleanStage(ctx, op);
     await cleanUploadStage(ctx, op);
-    const proposed = { raw: op.raw, raster: op.target, local, remote, mtimeMs: op.mtimeMs };
-    ctx.records.set(keyOf(op.path), { ...record, ...proposed, history: [...record.history, proposed] });
+    if (rollback || !same(local, record.local) || !same(remote, record.remote)) {
+        const proposed = { raw: op.raw, raster: op.target, local, remote, mtimeMs: op.mtimeMs };
+        ctx.records.set(keyOf(op.path), { ...record, ...proposed, history: [...record.history, proposed] });
+    }
     ctx.state.intent = null;
     await save(ctx);
+}
+
+async function settleReadyPublication(settings, options) {
+    const { owner, authority } = options.readyPublication ?? {};
+    if (!shaName(owner) || !(authority === null || shaName(authority))) refuse('invalid_ready_scope');
+    const bound = await readBinding(settings, options);
+    const op = bound.state?.intent;
+    if (bound.state?.phase !== 'active' || !bound.remote || op?.ready?.owner !== owner
+        || (!op.discarding && op.ready.authority === authority)) return;
+    const ctx = await openArchive(settings, { ...options, readyPaths: new Map([[op.path, null]]) });
+    if (!same(ctx.state.intent, op)) refuse('invalid_ready_scope');
+    await guardOriginals(ctx, []);
+    await guardRecords(ctx);
+    await settleIssuedPublish(ctx, ctx.state.intent);
 }
 
 async function rollbackArchive(settings, options) {
@@ -1999,7 +2036,7 @@ async function rollbackArchive(settings, options) {
     }
     if (captures.length || historyChanged) await save(ctx);
     await settleRender(ctx);
-    if (pending?.kind === 'publish') await settlePublishForRollback(ctx, pending);
+    if (pending?.kind === 'publish') await settleIssuedPublish(ctx, pending, true);
     if (ctx.state.phase !== 'rolling-back') {
         ctx.state.phase = 'rolling-back';
         await save(ctx);
@@ -2050,6 +2087,10 @@ export function prepareRasterArchive(settings, options = {}) {
 
 export function publishRasterArchive(settings, options = {}) {
     return redact(publishArchive, settings, options, 'publish');
+}
+
+export function settleReadyRasterPublication(settings, options = {}) {
+    return redact(settleReadyPublication, settings, options, 'settle_ready');
 }
 
 export function rollbackRasterArchive(settings, options = {}) {

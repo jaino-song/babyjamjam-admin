@@ -11,7 +11,7 @@ import {
 } from './provider-contract-migration.mjs';
 import { providerPublication } from './provider-contract-publication.mjs';
 import { inDailyHandoff, pollReadyEvents, readyTarget } from './ready-events.mjs';
-import { writeReadyOriginals } from './ready-originals.mjs';
+import { originalPairIntact, readyScratch, writeReadyOriginals } from './ready-originals.mjs';
 import { pairPaths, providerBase, providerFolder, matchesProviderPair, pairedPaths, sanitize, syncDirectory, writeJson } from './provider-contract-paths.mjs';
 
 let token = '';
@@ -213,14 +213,14 @@ async function copyMergeBytes(source, destination, hash) {
     return bytes;
 }
 
-async function rasterMerge(bin, stageInputs, target, createdAt, deadline) {
+async function rasterMerge(bin, stageInputs, target, createdAt, deadline, workspace) {
     // The system qpdf profile permits ordinary PDFs under /tmp. mkdtemp makes
     // the directory private before any input or output is placed in it.
     const tmpInfo = await fs.lstat('/tmp');
     if (!tmpInfo.isDirectory() || tmpInfo.uid !== 0 || !(tmpInfo.mode & 0o1000)) throw mergeGuard();
-    const scratch = await fs.mkdtemp('/tmp/eformsign-backup-qpdf-');
+    const scratch = workspace?.path ?? await fs.mkdtemp('/tmp/eformsign-backup-qpdf-');
     const created = await fs.lstat(scratch);
-    const directory = await fs.open(scratch, directoryFlags);
+    const directory = workspace?.directory ?? await fs.open(scratch, directoryFlags);
     const artifacts = [];
     try {
         const root = await directory.stat();
@@ -253,10 +253,10 @@ async function rasterMerge(bin, stageInputs, target, createdAt, deadline) {
     } finally {
         try {
             for (const artifact of artifacts) await removeMergeFile(artifact);
-            if (created.isDirectory() && created.uid === process.getuid() && sameInode(await stat(scratch), created)) {
+            if (!workspace && created.isDirectory() && created.uid === process.getuid() && sameInode(await stat(scratch), created)) {
                 await fs.rmdir(scratch);
             }
-        } finally { await directory.close(); }
+        } finally { if (!workspace) await directory.close(); }
     }
 }
 
@@ -275,6 +275,7 @@ async function rasterMirror(settings, lockFd) {
     return {
         prepare: call(mirror.prepareRasterArchive, 'prepare'),
         publish: call(mirror.publishRasterArchive, 'publish'),
+        settleReady: call(mirror.settleReadyRasterPublication, 'settle_ready'),
         rollback: call(mirror.rollbackRasterArchive, 'rollback'),
         async inspect(options) {
             try {
@@ -520,6 +521,8 @@ async function main() {
 
 const readyBinding = (settings) => ({ ...cutoverBinding(settings), apiOrigin: new URL(settings.apiBaseUrl).origin,
     lockRoot: timerLockDirectory(), uid: process.getuid() });
+const readyScratchBinding = (settings) => ({ originalRoot: settings.originalArchiveDir,
+    stateRoot: settings.stateDir, lockRoot: timerLockDirectory(), uid: process.getuid() });
 
 async function runReadyEvents(settings, lockFd) {
     const started = Date.now();
@@ -545,6 +548,10 @@ async function runReadyEvents(settings, lockFd) {
         await refusePublicationReceipts(settings.stateDir);
         return { guard, migration, mirror: await rasterMirror(settings, lockFd) };
     };
+    await readyScratch(readyScratchBinding(settings)).recover(async () => {
+        context = await deliveryContext();
+        return Boolean(context);
+    });
     const queueBinding = { ...readyBinding(settings), remote: null };
     const report = await pollReadyEvents({
         stateDir: settings.stateDir, binding: queueBinding, request, now: started,
@@ -553,21 +560,29 @@ async function runReadyEvents(settings, lockFd) {
             context ??= await deliveryContext();
             if (!context) return 'pending';
             const authority = await readyTarget(request, docId, expected);
-            if (typeof authority === 'string') return authority;
-            let becameIneligible = false;
+            if (authority === 'pending') return authority;
+            const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+            const publicationOwner = { owner: hash(docId), authority: authority === 'ineligible' ? null : hash(authority) };
+            const settle = (current) => context.mirror.settleReady({ readyPublication: current, deadline });
+            await settle(publicationOwner);
+            if (authority === 'ineligible') return authority;
+            let changed;
             const recheck = async () => {
                 const current = await readyTarget(request, docId, expected);
-                becameIneligible = current === 'ineligible';
-                if (!isDeepStrictEqual(authority, current)) throw rasterError('ready_authority_changed');
+                if (!isDeepStrictEqual(authority, current)) {
+                    changed = current;
+                    throw rasterError('ready_authority_changed');
+                }
             };
             const counts = { totalDocs: 0, savedFiles: 0, skippedFiles: 0, failedFiles: 0 };
             try {
                 return await backup({
                     settings, lockFd, ...context, request, report: counts, failure: () => { counts.failedFiles++; },
-                    ready: { docId, docs: authority.items, revision: authority.sourceUpdatedAt, recheck, deadline },
+                    ready: { docId, docs: authority.items, revision: authority.sourceUpdatedAt, publicationOwner, recheck, deadline },
                 });
             } catch (error) {
-                if (becameIneligible) return 'ineligible';
+                if (changed) await settle({ ...publicationOwner, authority: null });
+                if (changed === 'ineligible') return 'ineligible';
                 throw error;
             }
         },
@@ -621,6 +636,7 @@ async function run(settings, lockFd, guard) {
                 if (!migration?.raster.pending && settings.action !== 'rollback') await auth();
             } else if (migrationInProgress(migration)) throw rasterError('resume_previous_action');
             if (!settings.migration || settings.action !== 'dry-run') await syncDirectory(timerLockDirectory());
+            if (!settings.migration) await readyScratch(readyScratchBinding(settings)).recover();
             mirror = await rasterMirror(settings, lockFd);
         }
         await backup({ settings, lockFd, report, request, reason, failure, timeout, mirror, migration, guard });
@@ -837,7 +853,7 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
     }
     if (!settings.migration && !ready) {
         const excluded = mirror && publicationFence();
-        if (mirror) await mirror.prepare(excluded.size ? { ...ordinaryOptions, excluded } : ordinaryOptions);
+        if (mirror) await mirror.prepare({ ...ordinaryOptions, excluded, reconcileReady: true });
         await saveState();
     }
 
@@ -955,10 +971,28 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         unit.fork = entry !== null && (reallocate || entry.completed && entry.fingerprint !== unit.fingerprint);
         const receipt = reservations[unit.key];
         if (receipt) {
-            if (!isDeepStrictEqual(receipt.before, entry) || (!unit.fork && entry
-                && !isDeepStrictEqual(receipt.paths, Object.keys(entry.files)))) throw rasterError('ready_allocation_changed');
-            unit.files = Object.fromEntries(receipt.paths.map((path) => [path, null]));
-            return;
+            const oldPaths = entry ? Object.keys(entry.files) : [];
+            const inPlace = isDeepStrictEqual(receipt.paths, oldPaths);
+            if (!isDeepStrictEqual(receipt.before, entry) || (entry && !unit.fork && !inPlace)) {
+                throw rasterError('ready_allocation_changed');
+            }
+            const oldNames = new Set(oldPaths.map(reserve));
+            if (unit.fork && receipt.paths.some((path) => oldNames.has(reserve(path)))) {
+                // The historical pair still belongs to the old entry. Release
+                // the stale in-place reservation only if its bytes survived.
+                if (!inPlace || !await originalPairIntact(unit, receipt, (path) => prepare(path, false, false))) {
+                    throw rasterError('ready_allocation_changed');
+                }
+                delete reservations[unit.key];
+                try { await saveState(); }
+                catch (error) {
+                    if (!error.statePublished) reservations[unit.key] = receipt;
+                    throw error;
+                }
+            } else {
+                unit.files = Object.fromEntries(receipt.paths.map((path) => [path, null]));
+                return;
+            }
         }
         if (entry !== null && !unit.fork) { unit.files = { ...entry.files }; return; }
         for (let n = 1; ; n += 1) {
@@ -1005,10 +1039,9 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         }
     }
     // A file is written beside its final path first, so a failed download never touches an existing file.
-    const scratchPath = (final) => ready ? resolve(dirname(final), '.ready-raw-' + randomUUID() + '.tmp') : tempPath(final);
-    const fetchTemp = async (file, path, createdAt) => {
-        const final = await prepare(path);
-        const tmp = scratchPath(final);
+    const fetchTemp = async (file, path, createdAt, staged) => {
+        const final = staged?.final ?? await prepare(path);
+        const tmp = staged?.tmp ?? tempPath(final);
         try {
             const handle = await fs.open(tmp, 'wx', 0o600);
             try {
@@ -1018,7 +1051,10 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             } finally { await handle.close(); }
             if (!mirror) await fs.utimes(tmp, new Date(createdAt), new Date(createdAt));
             return { tmp, final };
-        } catch (error) { await fs.rm(tmp, { force: true }); throw error; }
+        } catch (error) {
+            if (!staged) await fs.rm(tmp, { force: true });
+            throw error;
+        }
     };
     const verifyOriginal = async (path, input) => {
         const handle = await fs.open(finalPath(path), constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -1055,10 +1091,12 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         const completed = isCompleted(unit) || (!unit.fork && old?.completed === true);
         const provider = unit.providerBase && matchesProviderPair(unit.files, unit.providerBase)
             ? { providerBase: unit.providerBase } : {};
-        const { readyBytes, readyPending, ...previous } = old ?? {};
+        const previous = { ...old };
+        delete previous.readyBytes;
+        delete previous.readyPending;
         return { ...previous, files: unit.files, fingerprint: unit.fingerprint, completed, ...provider,
             ...(unit.chunks && unit.readyBytes && { readyBytes: unit.readyBytes }),
-            ...((ready || (!unit.fork && readyPending)) && { readyPending: true }),
+            ...((ready || (!unit.fork && old?.readyPending)) && { readyPending: true }),
             ...(unit.sourceRevision && { readyRevision: unit.sourceRevision }) };
     };
     const historicalKey = (unit, old) => {
@@ -1097,10 +1135,15 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         if (revision) entry.readyRevision = unit.sourceRevision;
         await saveState();
     };
-    const writeReservedUnit = async (unit, stage, replace, cleanup) => {
+    const scratch = mirror && readyScratch(readyScratchBinding(settings));
+    const withReservedStage = async (path, merge, use) => {
+        const final = await prepare(path);
+        await scratch.stage(final, merge, (tmp, qpdf) => use({ final, tmp, qpdf }));
+    };
+    const writeReservedUnit = async (unit, withStage, replace) => {
         await writeReadyOriginals({
             unit, before: state.units[unit.key] ?? null, reservations, mirrorProof, save: saveState, report,
-            record, location: (path) => prepare(path, false, false), stage, replace, cleanup,
+            record, location: (path) => prepare(path, false, false), withStage, replace,
         });
         await tighten(unit);
         unit.ready = true;
@@ -1110,7 +1153,6 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         await fs.rename(tmp, final);
         await syncDirectory(dirname(final));
     };
-    const cleanOriginalStage = ({ tmp }) => fs.rm(tmp, { force: true });
     // Keep expected sizes for both paths even when a download fails mid-pair,
     // so the next run repairs the missing file under its recorded name.
     for (const unit of units) {
@@ -1119,8 +1161,9 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         let unitError;
         try {
             if (ready || reservations[unit.key]) {
-                await writeReservedUnit(unit, (path, i) => fetchTemp(unit.inputs[i], path, unit.createdAt),
-                    replaceOriginal, cleanOriginalStage);
+                await writeReservedUnit(unit, (path, i, place) => withReservedStage(path, false, async (workspace) => {
+                    await place(await fetchTemp(unit.inputs[i], path, unit.createdAt, workspace));
+                }), replaceOriginal);
                 continue;
             }
             const { paths, replace, sizes, need } = await plan(unit, unit.inputs);
@@ -1185,9 +1228,9 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
             if (['original_state_size_mismatch', 'original_sha256_mismatch'].includes(unitError.rasterReason)) throw unitError;
         }
     }
-    const stageMerge = async (unit, path, i, stages) => {
-        const final = await prepare(path);
-        const tmp = scratchPath(final);
+    const stageMerge = async (unit, path, i, stages, workspace) => {
+        const final = workspace?.final ?? await prepare(path);
+        const tmp = workspace?.tmp ?? tempPath(final);
         const target = { tmp, final, path };
         stages.push(target);
         if (mirror) {
@@ -1198,7 +1241,7 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
                 throw mergeGuard();
             }
             const parentRef = `/proc/self/fd/${target.parent.fd}`;
-            target.tmp = resolve(parentRef, basename(tmp));
+            if (!workspace) target.tmp = resolve(parentRef, basename(tmp));
             target.finalRef = resolve(parentRef, basename(final));
             await rasterMerge(settings.qpdfBin, async (create) => {
                 const inputs = [];
@@ -1220,7 +1263,7 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
                     } finally { await handle.close(); }
                 }
                 return inputs;
-            }, target, unit.createdAt, ready?.deadline);
+            }, target, unit.createdAt, ready?.deadline, workspace?.qpdf);
         } else {
             const inputs = unit.chunks.map((chunk) => finalPath(Object.keys(chunk.files)[i]));
             await execute(settings.qpdfBin, ['--empty', '--pages', ...inputs, '--', tmp]);
@@ -1253,7 +1296,14 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         let unitError;
         try {
             if (ready || reservations[unit.key]) {
-                await writeReservedUnit(unit, (path, i) => stageMerge(unit, path, i, temps), placeMerge, async () => {});
+                await writeReservedUnit(unit, (path, i, place) => withReservedStage(path, true, async (workspace) => {
+                    try {
+                        await place(await stageMerge(unit, path, i, temps, workspace));
+                    } finally {
+                        const item = temps.pop();
+                        if (item) await cleanMergeStage(item);
+                    }
+                }), placeMerge);
                 continue;
             }
             const { paths, replace, sizes, need } = await plan(unit, [true, unit.chunks.every((chunk) => chunk.inputs[1])]);
@@ -1318,7 +1368,8 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         }
         if (!seed?.ready || !files.size) return 'pending';
         await ready.recheck();
-        const receipt = await mirror.publish({ readyPaths: files, beforeVisible: ready.recheck, deadline: ready.deadline });
+        const receipt = await mirror.publish({ readyPaths: files, readyPublication: ready.publicationOwner,
+            beforeVisible: ready.recheck, deadline: ready.deadline });
         if (receipt?.verified !== files.size) return 'pending';
         await ready.recheck();
         await clearPublicationFence(verifiedUnits);
