@@ -144,7 +144,16 @@ export async function prepareRasterArchive(settings, options) {
         return { opaque: 301 };
     }
     const current = await checkCapture(settings, options);
-    if (options.dryRun) return { opaque: 301 };
+    if (options.dryRun) {
+        if (!options.bootstrapId) return { opaque: 301 };
+        const inventory = [];
+        for (const root of [settings.archiveDir, settings.originalArchiveDir, TEST_DRIVE]) {
+            const entries = await list(root);
+            inventory.push(await Promise.all(entries.map(async (path) => [path, digest(await read(join(root, path)))])));
+        }
+        return { bootstrap: { id: options.bootstrapId, digest: digest(JSON.stringify(inventory)),
+            rootChains: [[], [], []], homeId: null, legacy: null } };
+    }
     const { archiveDir, originalArchiveDir } = settings;
     await fs.mkdir(originalArchiveDir, { mode: 0o700, recursive: true });
     if (!current || current.phase === 'paused' && Object.hasOwn(options, 'legacyProofs')) {
@@ -154,6 +163,7 @@ export async function prepareRasterArchive(settings, options) {
         }
     }
     if (!current) await store(settings, { phase: 'active', retiredPaths: [] });
+    await options.beforeCapture?.();
     return { opaque: 301 };
 }
 export async function publishRasterArchive(settings, options) {
@@ -1328,6 +1338,63 @@ const remoteWrites = async (f) => (await f.raw()).filter(({ command }) => ['copy
 const predecessorFor = (f) => ({ version: 1, id: '00000000-0000-0000-0000-000000000001',
     phase: 'applied', moves: [], archive: f.publicRoot, remote: 'mock:' });
 const predecessorRecord = (f, legacy) => join(dirname(f.journal), 'records', 'pre-raster-' + legacy.id + '-applied.json');
+
+test('ordinary bootstrap custody accepts a preseeded original and repeats without rewriting', async (t) => {
+    const f = await fixture(t, { real: true, explicit: true, remote: false });
+    const path = '2026/signed.pdf';
+    const signed = syntheticPdf('preseeded signed source');
+    await f.seed(f.originals, [path], [signed]);
+    const original = join(f.originals, path);
+    const before = await fs.stat(original);
+
+    await stand(f, ['--apply'], 0);
+    assert.equal((await readJson(f.guard)).phase, 'active');
+    await expect(f.originals, [path], [signed]);
+    const after = await fs.stat(original);
+    assert.deepEqual([after.ino, after.mtimeMs], [before.ino, before.mtimeMs]);
+    await realDerivative(f.publicRoot, path, signed);
+    const roots = [f.originals, f.publicRoot, mirrorHome(f)];
+    const settled = await Promise.all(roots.map(snapshot));
+
+    await stand(f, ['--apply'], 0);
+    assert.deepEqual(await Promise.all(roots.map(snapshot)), settled);
+});
+
+test('ordinary provider destination accepts existing and newly required public directories', async (t) => {
+    const f = await fixture(t, { real: true });
+    const signed = [syntheticPdf('provider document'), syntheticPdf('provider audit')];
+    await stand(f, ['--apply'], 0);
+    await f.token();
+    const doc = f.doc('provider', {}, signed);
+    f.listing.docs = [doc];
+    await f.run(raster);
+
+    const destinations = newPair.map((path) => dirname(join(f.publicRoot, path)));
+    await fs.mkdir(destinations[0]);
+    await absent(destinations[1]);
+    const published = (paths) => Promise.all(paths.map((path, i) => realDerivative(f.publicRoot, path, signed[i])));
+    const derivatives = await published(oldPair);
+    f.listing.docs = [{ ...doc, providerContract: { signerName: 'Synthetic Private Name', signedDate: '2026-01-02' } }];
+
+    await f.run([...migrate, '--apply']);
+    assert.equal((await readJson(f.journal)).phase, 'applied');
+    assert.ok((await fs.stat(destinations[1])).isDirectory());
+    await expect(f.originals, newPair, signed);
+    assert.deepEqual(await published(newPair), derivatives);
+    assert.deepEqual(await Promise.all(newPair.map((path) => fs.readFile(join(f.drive, path)))), derivatives);
+    for (const root of [f.originals, f.publicRoot, f.drive]) {
+        for (const path of oldPair) await absent(join(root, path));
+    }
+
+    await f.run([...migrate, '--rollback']);
+    assert.equal((await readJson(f.journal)).phase, 'rolledBack');
+    await expect(f.originals, oldPair, signed);
+    assert.deepEqual(await published(oldPair), derivatives);
+    assert.deepEqual(await Promise.all(oldPair.map((path) => fs.readFile(join(f.drive, path)))), derivatives);
+    for (const root of [f.originals, f.publicRoot, f.drive]) {
+        for (const path of newPair) await absent(join(root, path));
+    }
+});
 
 test('real cutover cannot cancel or retry after publication and loss of custody metadata', async (t) => {
     const f = await fixture(t, { real: true, explicit: true });

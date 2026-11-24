@@ -11,9 +11,10 @@ import * as fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import {
     atName, checkPrivate, checkPrivateState, checkRoot, directory, exclusiveFile, fdPath, identity,
-    inspectFile, isPdf, keyOf, MAX_FILE, MirrorError, mirrorErrorCode, openChildDirectory, openDirectory, openStagePayload,
+    inspectFile, isPdf, keyOf, legacyBootstrapName, MAX_FILE, MAX_JSON, MirrorError, mirrorErrorCode, openChildDirectory,
+    openDirectory, openStagePayload,
     readJson, refuse, rootInfo, rootPath, same, sameBytes,
-    saveJson, scanLocal, segments, shaName, stat, syncDir, validBytes, validIdentity,
+    saveJson, scanLocal, segments, shaName, stat, syncDir, validBootstrapProof, validBytes, validIdentity,
 } from './raster-mirror-io.mjs';
 import { remoteTransport, validRemoteId } from './raster-mirror-remote.mjs';
 
@@ -23,8 +24,8 @@ const uploadPrefix = '.upload-';
 const renderStage = /^\.render-(?:[a-zA-Z0-9]{6}|[a-f0-9-]{36})$/;
 const stageName = /^\.raster-mirror-[a-f0-9-]{36}$/;
 const uploadStageName = /^\.upload-[a-f0-9-]{36}$/;
-const bootstrapPrefix = '.bootstrap-';
-const bootstrapName = /^\.bootstrap-[a-f0-9-]{36}\.tmp$/;
+const bootstrapPayload = (proof) => `.bootstrap-${proof.id}.writing`;
+const bootstrapOwner = (proof) => `.bootstrap-${proof.id}.owner.json`;
 const documentRefusals = new Set(['RASTER_INVALID_SOURCE', 'RASTER_LIMIT', 'RASTER_RENDER_FAILED', 'RASTER_INVALID_OUTPUT']);
 const diagnosticLimit = 10;
 const aggregateReports = new WeakMap();
@@ -201,6 +202,7 @@ async function readBinding(settings, options) {
 
     const info = await Promise.all(roots.map(rootInfo));
     const rootIds = info.map(({ id }) => id);
+    const rootChains = info.map(({ id, ancestors }) => id ? [...ancestors, id] : ancestors);
     if (info.some(({ id }, index) => id && info.some((other, second) => index !== second
         && (same(id, other.id) || other.ancestors.some((parent) => same(id, parent)))))) refuse('overlapping_roots');
     // Legacy workers may have created the state root under the default umask.
@@ -224,7 +226,8 @@ async function readBinding(settings, options) {
     const records = state ? readRecords(state) : new Map();
     if (state?.initialCapture !== undefined) readInitialCapture(state);
     const binding = { roots, rootIds, target, remoteRoot: null };
-    const bound = { archiveDir, originalArchiveDir, stateDir, home, homeId, manifest, rasterDir, rawDir, remote, records, lockFd, binding, state };
+    const bound = { archiveDir, originalArchiveDir, stateDir, home, homeId, manifest, rasterDir, rawDir,
+        remote, records, lockFd, binding, rootChains, state };
     await guardBinding(bound, binding);
     return bound;
 }
@@ -248,23 +251,40 @@ async function guardBinding(ctx, binding = ctx.state.binding) {
         || !same(await checkRoot(ctx.home), ctx.homeId)) refuse('binding_changed');
 }
 
-async function inspectScaffold(ctx) {
-    if (!ctx.homeId) return;
-    // The only write allowed before manifest installation is its prepared
-    // bootstrap journal. Existing bytes in any other location are evidence
-    // of a lost authority or of foreign state.
+async function readBootstrapStage(home, ctx, proof, complete = false) {
+    const marker = await readJson(join(fdPath(home), bootstrapOwner(proof)));
+    const name = complete ? basename(ctx.manifest) : bootstrapPayload(proof);
+    if (!marker && !complete && !await stat(join(fdPath(home), name))) return null;
+    if (!marker || !same(marker.proof, proof) || !validIdentity(marker.fileId)
+        || !same(marker.binding?.homeId, ctx.homeId)) refuse('unproven_manifest_absence');
+    const { roots, rootIds, target } = ctx.binding;
+    validateBinding(marker, roots, rootIds, ctx.homeId, target);
+    if (!await checkStagePayload(home, name, marker)) refuse('unproven_manifest_absence');
+    return marker;
+}
+
+async function inspectScaffold(ctx, proof) {
+    if (!ctx.homeId) return {};
+    // Only baseline complete journals and allocations named by the current
+    // guard may participate in bootstrap. A writing payload is never parsed.
     const home = await openDirectory(ctx.home);
     let candidate;
     try {
         if (!same(ctx.homeId, identity(await home.stat({ bigint: true })))) refuse('binding_changed');
         for await (const entry of await fs.opendir(fdPath(home))) {
-            if (bootstrapName.test(entry.name) && entry.isFile() && !candidate) {
-                const state = await readJson(join(fdPath(home), entry.name));
+            if (proof && !proof.legacy && [bootstrapPayload(proof), bootstrapOwner(proof)].includes(entry.name)) continue;
+            if ((!proof || proof.legacy?.name === entry.name) && legacyBootstrapName.test(entry.name)
+                && entry.isFile() && !candidate) {
+                const path = join(fdPath(home), entry.name);
+                const info = await stat(path);
+                if (!info || (proof && !same(proof.legacy.id, identity(info)))) refuse('unproven_manifest_absence');
+                const id = identity(info);
+                const state = await readJson(path, { expectedId: id });
                 if (!state) refuse('unproven_manifest_absence');
                 const { roots, rootIds, target } = ctx.binding;
                 validateBinding(state, roots, rootIds, ctx.homeId, target);
                 readInitialCapture(state);
-                candidate = { name: entry.name, state };
+                candidate = { name: entry.name, id, state };
                 continue;
             }
             if (!['original-blobs', 'rendered'].includes(entry.name) || !entry.isDirectory()) refuse('unproven_manifest_absence');
@@ -277,20 +297,24 @@ async function inspectScaffold(ctx) {
                 } finally { await entries.close(); }
             } finally { await child.close(); }
         }
+        if (proof?.legacy && !candidate) refuse('unproven_manifest_absence');
+        const stage = proof && !proof.legacy ? await readBootstrapStage(home, ctx, proof) : null;
+        return { candidate, stage };
     } finally { await home.close(); }
-    return candidate;
 }
 
 async function inspectArchive(settings, options) {
     const ctx = await readBinding(settings, options);
+    if (options.bootstrap) await verifyBootstrapRoots(ctx, options.bootstrap);
     let unpublished = !ctx.state;
     if (!ctx.state) {
-        const candidate = await inspectScaffold(ctx);
-        if (options.absence !== 'bootstrap') {
+        const { candidate, stage } = await inspectScaffold(ctx, options.bootstrap);
+        if (options.absence === 'retry') {
+            // Prepare must verify the complete current inventory against this authority.
+            unpublished = Boolean(candidate || options.bootstrap);
+        } else if (options.absence !== 'bootstrap') {
             const rawFootprint = ctx.binding.rootIds[1] && (await fs.readdir(ctx.originalArchiveDir)).length > 0;
-            // The retry preflight will revalidate a staged first authority
-            // against the complete source inventory before accepting it.
-            unpublished = candidate ? options.absence === 'retry' : !rawFootprint;
+            unpublished = !candidate && !stage && !rawFootprint;
         }
         if (await stat(ctx.manifest)) refuse('state_changed');
     } else if (options.beforePublication) {
@@ -300,6 +324,7 @@ async function inspectArchive(settings, options) {
             || (await directory(ctx.rasterDir, { privateFrom: ctx.home }) && (await fs.readdir(ctx.rasterDir)).length)) {
             refuse('unproven_manifest_absence');
         }
+        if (options.bootstrap && !ctx.state.initialCapture) refuse('unproven_manifest_absence');
     }
     await guardBinding(ctx, ctx.binding);
     return {
@@ -312,7 +337,8 @@ async function inspectArchive(settings, options) {
 async function openArchive(settings, options) {
     const bound = await readBinding(settings, options);
     const { archiveDir, originalArchiveDir, home, rasterDir, remote, records, state, binding } = bound;
-    const candidate = !state && await inspectScaffold(bound);
+    const { bootstrap } = options;
+    const { candidate, stage } = state ? {} : await inspectScaffold(bound, bootstrap);
     await checkPrivateState(home, (path) => path === rasterDir);
     await checkUploadAllocations(bound);
     // Read the pause receipt before launching any child for a scheduled publish.
@@ -323,7 +349,7 @@ async function openArchive(settings, options) {
         // may be opened or reclaimed, even when the stage name looks familiar.
         scanLocal(archiveDir, { skipName: (name) => stageName.test(name) }),
         scanLocal(originalArchiveDir, { privateTree: true }),
-        remote ? remote.inventory((state ?? candidate?.state)?.binding.remoteRoot) : null,
+        remote ? remote.inventory((state ?? candidate?.state ?? stage)?.binding.remoteRoot) : null,
     ]);
     for (const result of inventories) if (result.status === 'rejected') throw result.reason;
     const [visible, originals, remoteInventory] = inventories.map(({ value }) => value);
@@ -340,7 +366,7 @@ async function openArchive(settings, options) {
         localRestored: 0, remoteRestored: 0,
     };
     const ctx = {
-        ...bound, visible, originals, names, candidate,
+        ...bound, visible, originals, names, candidate, bootstrap, bootstrapStage: stage,
         remoteNames: remoteInventory?.names, dryRun: Boolean(options.dryRun), report,
         gsBin: options.gsBin ?? settings.gsBin, qpdfBin: options.qpdfBin ?? settings.qpdfBin,
         state: state ?? {
@@ -371,16 +397,60 @@ async function save(ctx) {
         const scratch = fdPath(home);
         if (ctx.candidate) {
             const source = join(scratch, ctx.candidate.name);
-            if (!same(await readJson(source), ctx.state) || await stat(ctx.manifest)) refuse('unproven_manifest_absence');
+            if (!same(await readJson(source, { expectedId: ctx.candidate.id, sync: true }), ctx.state) || await stat(ctx.manifest)) {
+                refuse('unproven_manifest_absence');
+            }
             await fs.rename(source, join(scratch, basename(ctx.manifest)));
             await home.sync();
             ctx.candidate = null;
+        } else if (!ctx.existed && ctx.bootstrap) {
+            await saveBootstrap(ctx, home);
         } else {
-            const prefix = ctx.existed ? undefined : bootstrapPrefix;
-            await saveJson(ctx.manifest, ctx.state, { scratch, parentHandle: home, prefix });
+            await saveJson(ctx.manifest, ctx.state, { scratch, parentHandle: home });
         }
         ctx.existed = true;
     } finally { await home.close(); }
+}
+
+async function saveBootstrap(ctx, home) {
+    const { bootstrap: proof } = ctx;
+    const scratch = fdPath(home);
+    const name = bootstrapPayload(proof);
+    const path = join(scratch, name);
+    const markerPath = join(scratch, bootstrapOwner(proof));
+    const destination = join(scratch, basename(ctx.manifest));
+    const text = JSON.stringify(ctx.state) + '\n';
+    if (Buffer.byteLength(text) > MAX_JSON) refuse('state_size');
+    if (await stat(destination)) refuse('unproven_manifest_absence');
+    let marker = ctx.bootstrapStage;
+    let output;
+    try {
+        if (marker) {
+            if (!same(await readBootstrapStage(home, ctx, proof), marker)
+                || !same(marker.binding, ctx.state.binding)) refuse('unproven_manifest_absence');
+            output = await openStagePayload(path);
+            await home.sync();
+        } else {
+            if (proof.legacy || await stat(markerPath)) refuse('unproven_manifest_absence');
+            output = await fs.open(path, 'wx+', 0o600);
+            marker = { proof, binding: ctx.state.binding, fileId: identity(await output.stat({ bigint: true })) };
+            await checkStagePayload(home, name, marker, output);
+            await output.sync();
+            // The marker and the empty allocation are durable before any JSON is written.
+            await saveJson(markerPath, marker, { scratch, parentHandle: home });
+        }
+        await checkStagePayload(home, name, marker, output);
+        await output.truncate(0);
+        await output.writeFile(text);
+        await output.sync();
+        await guardBinding(ctx);
+        if (!same(await readJson(path, { expectedId: marker.fileId }), ctx.state) || await stat(destination)) {
+            refuse('unproven_manifest_absence');
+        }
+        // Publishing into the manifest slot is the first time this payload is authoritative.
+        await fs.rename(path, destination);
+        await home.sync();
+    } finally { await output?.close(); }
 }
 
 async function initialize(ctx) {
@@ -394,6 +464,10 @@ async function initialize(ctx) {
     ctx.state.binding.rootIds = rootIds;
     ctx.homeId = await checkRoot(ctx.home);
     ctx.state.binding.homeId = ctx.homeId;
+    if (ctx.bootstrap && !ctx.existed) {
+        ctx.binding.rootIds = rootIds;
+        await verifyBootstrapRoots(ctx, ctx.bootstrap);
+    }
 }
 
 async function checkUploadAllocations(ctx) {
@@ -997,6 +1071,48 @@ function readInitialCapture(state) {
 
 const captureProof = ({ path, raw, original, local, remote, mtimeMs }) =>
     ({ path, raw, original: snapshot(original), local: snapshot(local), remote, mtimeMs });
+const byPath = (a, b) => a.path < b.path ? -1 : Number(a.path > b.path);
+const initialPlan = (captures) => captures.map(captureProof).sort(byPath);
+const legacyReceipt = (candidate) => candidate ? { name: candidate.name, id: candidate.id } : null;
+
+function bootstrapDigest(ctx, captures) {
+    const { roots, target, remoteRoot } = ctx.state.binding;
+    const names = [ctx.visible, ctx.originals].map((inventory) => [...inventory.values()].sort(byPath)
+        .map(({ path, isDir }) => [path, isDir]));
+    return createHash('sha256').update(JSON.stringify({ roots, target, remoteRoot, names, captures: initialPlan(captures) })).digest('hex');
+}
+
+async function verifyBootstrapRoots(ctx, { rootChains, homeId }) {
+    const roots = await Promise.all(ctx.binding.roots.map(rootInfo));
+    if ((homeId && !same(homeId, ctx.homeId)) || roots.some(({ ancestors, id }, i) => {
+        const chain = id ? [...ancestors, id] : ancestors;
+        return rootChains[i].some((expected, j) => !same(expected, chain[j]));
+    })) refuse('binding_changed');
+}
+
+async function verifyBootstrap(ctx, captures) {
+    const proof = ctx.bootstrap;
+    if (!proof) return;
+    await verifyBootstrapRoots(ctx, proof);
+    if (proof.digest !== bootstrapDigest(ctx, captures)) refuse('original_authority_conflict');
+    if (!ctx.existed) {
+        if (!same(proof.legacy, legacyReceipt(ctx.candidate))) refuse('unproven_manifest_absence');
+        return;
+    }
+    if (!ctx.state.initialCapture) refuse('unproven_manifest_absence');
+    const home = await openDirectory(ctx.home);
+    try {
+        const info = await home.stat({ bigint: true });
+        checkPrivate(info, 0o700);
+        if (!same(identity(info), ctx.homeId)) refuse('binding_changed');
+        const marker = proof.legacy ?? await readBootstrapStage(home, ctx, proof, true);
+        const id = proof.legacy ? marker.id : marker.fileId;
+        if ((!proof.legacy && (!same(marker.binding, ctx.state.binding) || await stat(join(fdPath(home), bootstrapPayload(proof)))))
+            || !same(await readJson(join(fdPath(home), basename(ctx.manifest)), { expectedId: id }), ctx.state)) {
+            refuse('unproven_manifest_absence');
+        }
+    } finally { await home.close(); }
+}
 
 async function verifyInitialCapture(ctx, captures) {
     const state = ctx.candidate?.state ?? ctx.state;
@@ -1586,6 +1702,9 @@ async function preflightMove(ctx, { from, to }) {
     const dest = atName(ctx.records, to);
     if (atName(ctx.originals, to) || atName(ctx.visible, to)
         || (dest && dest.retired !== from)) refuse('move_collision');
+    // Move spellings were checked against the normalized inventory. Walk the
+    // actual public parents too, before a missing leaf can count as available.
+    if (await readVisible(ctx, to)) refuse('move_collision');
     if (ctx.remote) {
         const observed = remoteAt(ctx, to);
         const checked = await ctx.remote.lookup(to);
@@ -1648,13 +1767,20 @@ async function prepareArchive(settings, options) {
     }
     const captures = options.movesOnly ? [] : await planCapture(ctx, moves);
     await verifyInitialCapture(ctx, captures);
+    await verifyBootstrap(ctx, captures);
     ctx.report.captured = captures.length;
+    if (options.bootstrapId && ctx.dryRun && !ctx.existed) {
+        ctx.report.bootstrap = { id: options.bootstrapId, digest: bootstrapDigest(ctx, captures),
+            rootChains: ctx.rootChains, homeId: ctx.homeId, legacy: legacyReceipt(ctx.candidate) };
+    }
     if (ctx.dryRun || (ctx.state.phase !== 'active' && !legacy) || options.movesOnly) return ctx.report;
     await initialize(ctx);
     if (!ctx.existed) {
-        ctx.state.initialCapture = captures.map(captureProof)
-            .sort((a, b) => a.path < b.path ? -1 : Number(a.path > b.path));
+        ctx.state.initialCapture = initialPlan(captures);
         await save(ctx);
+    } else if (ctx.state.initialCapture && options.beforeCapture) {
+        // A previous invocation can have placed the complete manifest before syncing its directory.
+        await syncDir(ctx.home);
     }
     await options.beforeCapture?.();
     await settleRender(ctx);
@@ -1695,6 +1821,7 @@ async function publishArchive(settings, options) {
     await pendingDate(ctx, pending);
     const captures = movesOnly ? [] : await planCapture(ctx, moves, { privateOnly: true });
     await verifyInitialCapture(ctx, captures);
+    await verifyBootstrap(ctx, captures);
     const { work, movePlan } = planPublish(ctx, moves, captures, { movesOnly, handoffs });
     if (movesOnly) {
         if (ctx.state.phase !== 'active') refuse('publication_paused');
@@ -1831,6 +1958,7 @@ async function rollbackArchive(settings, options) {
 
 async function redact(operation, settings, options, action) {
     try {
+        if (options.bootstrap !== undefined && !validBootstrapProof(options.bootstrap)) refuse('unproven_manifest_absence');
         return await operation(settings, { ...options, action });
     } catch (error) {
         // Native fs, JSON and renderer errors may contain paths or document

@@ -143,8 +143,12 @@ async function readCutover(settings) {
     const predecessor = guard?.predecessor;
     const oldGuard = guard?.version === 1 && Object.keys(guard).length === 4
         && ['preparing', 'active', 'rollingBack'].includes(guard.phase);
+    const initialGuard = guard?.origin === 'fresh' && guard.phase === 'preparing' && guard.publication === 'initial';
+    const boundInitialGuard = guard?.version === 3 && initialGuard && Object.keys(guard).length === 8
+        && (await import('./raster-mirror-io.mjs')).validBootstrapProof(guard.bootstrap);
     const originGuard = ((guard?.version === 2 && Object.keys(guard).length === 6)
-        || (guard?.version === 3 && Object.keys(guard).length === 7
+        || (guard?.version === 3 && ((Object.keys(guard).length === 7 && !Object.hasOwn(guard, 'bootstrap'))
+                || boundInitialGuard)
             && (guard.publication === 'possible'
                 || (guard.origin === 'fresh' && guard.phase === 'preparing'
                     && ['initial', 'capturing'].includes(guard.publication)))))
@@ -382,7 +386,8 @@ async function standaloneRaster(settings, guard, lockFd) {
     if (!guard || beforePublication) await checkPublicScratch(settings.archiveDir);
     const mirror = await rasterMirror(settings, lockFd);
     const absence = rollback ? undefined : guard ? 'retry' : 'bootstrap';
-    const inspection = await mirror.inspect({ beforePublication, absence });
+    const storedBootstrap = guard?.bootstrap ? { bootstrap: guard.bootstrap } : {};
+    const inspection = await mirror.inspect({ beforePublication, absence, ...storedBootstrap });
     if (!inspection.manifestPresent && ((guard && (!initial || !inspection.unpublished || journal?.raster))
         || await hasRasterMigrationHistory(settings))) {
         throw rasterError('raster_cutover_manifest_required');
@@ -394,6 +399,7 @@ async function standaloneRaster(settings, guard, lockFd) {
         } else {
             if (beforePublication) await mirror.rollback({ dryRun: true });
             const rollbackGuard = { ...guard, phase: 'rollingBack', ...(guard.version === 3 && { publication: 'possible' }) };
+            delete rollbackGuard.bootstrap;
             await writeJson(guardPath(), rollbackGuard);
             await mirror.rollback();
             if (journal?.raster) await preserveMigration(settings.stateDir, journal, 'post-raster');
@@ -424,8 +430,16 @@ async function standaloneRaster(settings, guard, lockFd) {
         options.legacyProofs = legacyProofs;
     }
     const dryOptions = { ...options, dryRun: true };
-    await mirror.prepare(dryOptions);
-    await mirror.publish(dryOptions);
+    const bootstrapId = !dryRun && !guard && origin === 'fresh' && !inspection.manifestPresent ? randomUUID() : null;
+    const prepared = await mirror.prepare({ ...dryOptions, ...storedBootstrap, ...(bootstrapId && { bootstrapId }) });
+    let bootstrapOptions = storedBootstrap;
+    if (bootstrapId) {
+        const { validBootstrapProof } = await import('./raster-mirror-io.mjs');
+        const bootstrap = prepared?.bootstrap;
+        if (!validBootstrapProof(bootstrap) || bootstrap.id !== bootstrapId) throw rasterError('raster_prepare_failed');
+        bootstrapOptions = { bootstrap };
+    }
+    await mirror.publish({ ...dryOptions, ...bootstrapOptions });
     if (dryRun) {
         log({ rasterArchive: settings.action, exitCode: 0 });
         return;
@@ -434,18 +448,21 @@ async function standaloneRaster(settings, guard, lockFd) {
     if (guard?.phase !== 'partial') {
         if (legacyJournal) await preserveMigration(settings.stateDir, legacyJournal, 'pre-raster', false);
         const publication = guard?.publication ?? (!guard && origin === 'fresh' ? 'initial' : 'possible');
-        guard = { version: 3, phase: 'preparing', binding: cutoverBinding(settings), predecessor, origin, proofDigest, publication };
+        // Install the read-only inventory proof and allocation name in the first durable guard.
+        guard = { version: 3, phase: 'preparing', binding: cutoverBinding(settings), predecessor, origin, proofDigest, publication,
+            ...bootstrapOptions };
         await writeJson(guardPath(), guard);
     }
     const markPublication = async (publication) => {
         const next = { ...guard, publication };
+        delete next.bootstrap;
         await writeJson(guardPath(), next);
         guard = next;
     };
     await fs.mkdir(settings.stateDir, { recursive: true, mode: 0o700 });
     if (legacyJournal) await preserveMigration(settings.stateDir, legacyJournal, 'pre-raster');
     await mirror.prepare(guard.publication === 'initial'
-        ? { ...options, beforeCapture: () => markPublication('capturing') }
+        ? { ...options, ...bootstrapOptions, beforeCapture: () => markPublication('capturing') }
         : options);
     await canonicalDirectory(settings.originalArchiveDir, true);
     // Record the possibility of publication before the mirror can place any

@@ -68,6 +68,18 @@ export function validIdentity(value) {
     return Array.isArray(value) && value.length === 3 && value.every((part) => typeof part === 'string' && /^\d+$/.test(part));
 }
 
+const bootstrapId = (value) => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
+export const legacyBootstrapName = /^\.bootstrap-[a-f0-9-]{36}\.tmp$/;
+
+export function validBootstrapProof(proof) {
+    return bootstrapId(proof?.id) && shaName(proof.digest) && Array.isArray(proof.rootChains)
+        && proof.rootChains.length === 3 && proof.rootChains.every((chain) => Array.isArray(chain) && chain.every(validIdentity))
+        && (proof.homeId === null || validIdentity(proof.homeId))
+        && (proof.legacy === null || (typeof proof.legacy?.name === 'string'
+            && legacyBootstrapName.test(proof.legacy.name) && validIdentity(proof.legacy.id)))
+        && Object.keys(proof).length === 5;
+}
+
 export function validBytes(value) {
     return shaName(value?.sha256) && typeof value.md5 === 'string' && /^[a-f0-9]{32}$/.test(value.md5)
         && Number.isSafeInteger(value.size) && value.size > 0 && value.size <= MAX_FILE;
@@ -259,11 +271,12 @@ export async function scanLocal(root, { privateTree = false, skipName = () => fa
     return names;
 }
 
-export async function readJson(path) {
+export async function readJson(path, { expectedId, sync = false } = {}) {
     const before = await stat(path);
     if (!before) return null;
     checkFile(before);
     checkPrivate(before, 0o600);
+    if (expectedId && !same(identity(before), expectedId)) refuse('state_changed');
     if (before.size > BigInt(MAX_JSON)) refuse('state_size');
     const handle = await fs.open(path, readFlags);
     try {
@@ -279,6 +292,7 @@ export async function readJson(path) {
         const current = await stat(path);
         if (!current?.isFile() || current.nlink !== 1n || !same(identity(opened), identity(current))
             || current.ctimeNs !== opened.ctimeNs || current.size !== opened.size) refuse('state_changed');
+        if (sync) await handle.sync();
         return JSON.parse(utf8.decode(contents));
     } finally {
         await handle.close();
