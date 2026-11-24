@@ -112,7 +112,6 @@ export function useEformsign(): UseEformsignResult {
       };
 
       const errorCallback = (response: EformsignErrorResponse) => {
-        console.error("Eformsign error:", { code: response.code });
         callbacks?.onError?.(response);
       };
 

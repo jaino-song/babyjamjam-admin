@@ -6,6 +6,7 @@ import {
     BUILTIN_PUBLIC_HOLIDAY_NAME,
     BranchHolidayOverrideRecord,
     HOLIDAY_CALENDAR_REPOSITORY,
+    HolidayCalendarReadData,
     HolidayOverrideKind,
     IHolidayCalendarRepository,
 } from "domain/repositories/holiday-calendar.repository.interface";
@@ -120,6 +121,11 @@ export class HolidayCalendarService {
 
     async forBranch(branchId: string, opts: HolidayCalendarOptions = {}): Promise<KrBusinessDayCalendar> {
         return (await this.modelFor(branchId, opts)).calendar;
+    }
+
+    /** Build from observations supplied by a caller that owns the transaction. */
+    fromReadData(data: HolidayCalendarReadData): KrBusinessDayCalendar {
+        return this.buildModel(data).calendar;
     }
 
     /**
@@ -257,7 +263,8 @@ export class HolidayCalendarService {
         const entry = { revision, model: undefined as unknown as Promise<BranchCalendarModel> };
         // The model is labelled with the revision read inside the same transaction as its
         // data, so the cache key is never older or newer than what it holds.
-        entry.model = this.buildModel(branchId).then((model) => {
+        entry.model = this.repository.readCalendar(branchId).then((data) => {
+            const model = this.buildModel(data);
             entry.revision = model.revision;
             return model;
         });
@@ -268,9 +275,7 @@ export class HolidayCalendarService {
         return entry.model;
     }
 
-    private async buildModel(branchId: string): Promise<BranchCalendarModel> {
-        const { revision, snapshots, holidays: publicRows, overrides } = await this.repository.readCalendar(branchId);
-
+    private buildModel({ revision, snapshots, holidays: publicRows, overrides }: HolidayCalendarReadData): BranchCalendarModel {
         const snapshotValidatedAt = new Map<number, Date>();
         for (const snapshot of snapshots) snapshotValidatedAt.set(snapshot.year, snapshot.validatedAt);
 

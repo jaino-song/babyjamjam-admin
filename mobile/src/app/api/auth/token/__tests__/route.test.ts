@@ -55,7 +55,7 @@ describe("POST /api/auth/token", () => {
     beforeEach(() => {
         mockPost.mockReset();
         mockCookies.mockReset();
-        mockCookies.mockResolvedValue({ set: jest.fn() } as never);
+        mockCookies.mockResolvedValue({ set: jest.fn(), delete: jest.fn() } as never);
         consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     });
 

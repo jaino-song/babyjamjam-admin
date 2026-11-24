@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
 
@@ -8,6 +8,7 @@ import {
     ServiceRecordEditConflictError,
     ServiceRecordEditDraftConflictError,
     ServiceRecordEditNotFoundError,
+    ServiceRecordOwnerWriteAccessDeniedError,
     ServiceRecordRevisionOperationUnresolvedError,
     SERVICE_RECORD_BORN_STUCK_ERROR_CODES,
 } from "domain/errors/service-record-edit.error";
@@ -27,6 +28,8 @@ import {
     type ServiceRecordEditConfirmOperationPlan,
     type ServiceRecordEditConfirmNewSession,
     type ServiceRecordEditConfirmSnapshot,
+    type ServiceRecordOwnerJsonConfirmInput,
+    type ServiceRecordOwnerWritePrincipal,
     type CreateServiceRecordEditDraftInput,
     type DiscardServiceRecordEditDraftInput,
     type IServiceRecordEditRepository,
@@ -50,6 +53,7 @@ import {
 } from "domain/repositories/service-record-edit.repository.interface";
 import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { readHolidayCalendarRows } from "./sb.holiday-calendar.repository";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import {
@@ -641,6 +645,25 @@ function sameSortedNumbers(left: number[], right: number[]): boolean {
     const a = [...new Set(left)].sort((x, y) => x - y);
     const b = [...new Set(right)].sort((x, y) => x - y);
     return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function confirmEmployeeIds(source: ServiceRecordEditSource): number[] {
+    return [...new Set(source.assignments.flatMap((assignment) => [
+        assignment.employeeId, assignment.primaryEmployeeId, assignment.secondaryEmployeeId,
+    ]).filter((id): id is number => id !== null))].sort((left, right) => left - right);
+}
+
+function confirmScheduleIds(source: ServiceRecordEditSource): number[] {
+    return source.assignments.map((assignment) => assignment.scheduleId).filter((id): id is number => id !== null);
+}
+
+function ownerJsonDraftId(scope: string): string {
+    // A namespaced UUIDv8 keeps receipts separate from the editor's UUIDv4 draft IDs and caller keys.
+    const hash = createHash("sha256").update(scope).digest();
+    hash[6] = (hash[6]! & 0x0f) | 0x80;
+    hash[8] = (hash[8]! & 0x3f) | 0x80;
+    const hex = hash.subarray(0, 16).toString("hex");
+    return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
 }
 
 type OptionalQueryTransaction = Prisma.TransactionClient & {
@@ -1356,6 +1379,7 @@ async function lockRowsByBranchAndIds(
             FROM ${Prisma.raw(table)}
             WHERE branch_id = ${branchId}::uuid
               AND id IN (${values})
+            ORDER BY id ASC
             FOR UPDATE
         `);
         return;
@@ -1384,6 +1408,7 @@ async function lockCaseChildren(
             FROM ${Prisma.raw(table)}
             WHERE branch_id = ${branchId}::uuid
               AND ${Prisma.raw(caseColumn)} = ${caseId}::uuid
+            ORDER BY id ASC
             FOR UPDATE
         `);
         return;
@@ -3448,10 +3473,179 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return this.prisma.$transaction((tx) => this.confirmDraftWithClient(tx, input));
     }
 
+    async confirmOwnerJson(input: ServiceRecordOwnerJsonConfirmInput) {
+        const { principal, clientId, caseId, idempotencyKey, requestFingerprint } = input;
+        const { branchId, userId } = principal;
+        const scope = JSON.stringify(["owner-service-record-json-v1", branchId, userId, idempotencyKey]);
+        const draftId = ownerJsonDraftId(scope);
+        const target = { clientId, caseId };
+        try {
+            return await this.prisma.$transaction(async (tx) => {
+                await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`);
+                const saved = await this.findDraftByIdWithClient(tx, branchId, draftId);
+                let replay: ServiceRecordEditConfirmResponse | null = null;
+                if (saved) {
+                    replay = parseConfirmationResponse(saved.confirmationResponse);
+                    if (saved.status !== "CONFIRMED" || saved.confirmedByUserId !== userId
+                        || saved.confirmationIdempotencyKey !== draftId || saved.confirmationFingerprint !== requestFingerprint
+                        || saved.serviceRecordCaseId !== caseId || replay?.status !== "confirmed"
+                        || replay.caseId !== caseId || replay.clientId !== clientId || replay.draftId !== draftId) {
+                        throw new ServiceRecordEditConflictError("The idempotency key was reused with different input");
+                    }
+                }
+
+                const discovered = await this.loadSourceWithClient(tx, branchId, target);
+                if (!discovered) throw new ServiceRecordEditNotFoundError();
+                await this.lockConfirmSourceTargets(tx, branchId, discovered);
+                const source = await this.loadSourceWithClient(tx, branchId, target);
+                if (!source) throw new ServiceRecordEditNotFoundError();
+                if (!sameSortedNumbers(confirmScheduleIds(discovered), confirmScheduleIds(source))
+                    || !sameSortedNumbers(confirmEmployeeIds(discovered), confirmEmployeeIds(source))) {
+                    throw new ServiceRecordEditConflictError("Service-record ownership changed while waiting for locks");
+                }
+                await this.lockOwnerJsonPrincipal(tx, principal);
+
+                if (replay) return { confirmed: replay, replayed: true };
+
+                if (await this.findActiveDraftWithClient(tx, branchId, caseId)) {
+                    throw new ServiceRecordEditDraftConflictError("The service-record case has an active draft");
+                }
+                const activeEmployeeIds = await this.assertOwnerJsonDayScope(tx, source, principal, input.targets);
+                const projectedFill = source.plannedSessions === null && input.targets.some(({ op, sessionIndex }) =>
+                    op === "fill" && !source.sessions.some((day) => day.sessionIndex === sessionIndex));
+                const draft = input.prepareDraft(source);
+                await tx.service_record_edit_draft.create({
+                    data: {
+                        id: draftId,
+                        branchId,
+                        serviceRecordCaseId: caseId,
+                        createdByUserId: userId,
+                        updatedByUserId: userId,
+                        sourceCaseVersion: draft.sourceCaseVersion,
+                        sourceFingerprint: draft.sourceFingerprint,
+                        sourceSnapshot: toPrismaJson(draft.sourceSnapshot),
+                        changes: toPrismaJson(draft.changes ?? {}),
+                        draftVersion: 1,
+                        status: "ACTIVE",
+                    },
+                });
+                const projectionCheck: { run?: () => Promise<void> } = {};
+                const confirmed = await this.confirmDraftWithClient(tx, {
+                    branchId,
+                    draftId,
+                    expectedDraftVersion: 1,
+                    idempotencyKey: draftId,
+                    requestFingerprint,
+                    actorUserId: userId,
+                    serviceRecordTemplateIds: input.serviceRecordTemplateIds,
+                    prepare: async (snapshot) => {
+                        const revisionQuery = { where: { id: 1 }, select: { revision: true } } as const;
+                        const revision = (await tx.holiday_calendar_revision.findUnique(revisionQuery))?.revision ?? null;
+                        if (projectedFill && revision === null) {
+                            throw new ServiceRecordEditConflictError("The holiday calendar revision is unavailable");
+                        }
+                        const rows = await readHolidayCalendarRows(tx, branchId);
+                        if (!projectedFill) {
+                            const current = (await tx.holiday_calendar_revision.findUnique(revisionQuery))?.revision ?? null;
+                            if (current !== revision) {
+                                throw new ServiceRecordEditConflictError("The holiday calendar changed while being read");
+                            }
+                        }
+                        const { plan, verifyInsertedProjection } = input.prepare(snapshot, { ...rows, revision: Number(revision ?? 0n) });
+                        if (projectedFill) {
+                            if (!verifyInsertedProjection || plan.newSessions.some((session) => !activeEmployeeIds.has(session.employeeId))) {
+                                throw new ServiceRecordEditConflictError("The projected fill could not be verified");
+                            }
+                            projectionCheck.run = async () => {
+                                const updated = await this.loadSourceWithClient(tx, branchId, target);
+                                if (!updated) throw new ServiceRecordEditConflictError("The service-record source changed");
+                                verifyInsertedProjection(updated);
+                                // The existing revision row fences calendar writers through commit.
+                                // NOWAIT keeps the editor's lock order free of new wait edges.
+                                const current = await tx.$queryRaw<Array<{ revision: bigint }>>(Prisma.sql`
+                                    SELECT revision FROM "holiday_calendar_revision" WHERE id = 1 FOR SHARE NOWAIT
+                                `);
+                                if (current[0]?.revision !== revision) {
+                                    throw new ServiceRecordEditConflictError("The holiday calendar changed during the projected fill");
+                                }
+                            };
+                        }
+                        return plan;
+                    },
+                }, source);
+                await projectionCheck.run?.();
+                // The shared row locks fence mutable auth state through commit.
+                // Check the time-dependent session expiry again after the writes.
+                await this.lockOwnerJsonPrincipal(tx, principal);
+                return { confirmed, replayed: false };
+            }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+        } catch (error) {
+            if (isUniqueConstraintError(error) || (error instanceof Prisma.PrismaClientKnownRequestError
+                && (error.code === "P2034" || (error.code === "P2010" && error.meta?.["code"] === "55P03")))) {
+                throw new ServiceRecordEditConflictError("A concurrent write changed the service-record target");
+            }
+            throw error;
+        }
+    }
+
+    private async lockOwnerJsonPrincipal(tx: Prisma.TransactionClient, principal: ServiceRecordOwnerWritePrincipal) {
+        // These auth rows are outside the editor's lock hierarchy. NOWAIT avoids
+        // adding a wait edge to a branch or session update coupled to another write.
+        const active = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT s.id
+            FROM "auth_session" s
+            JOIN "user" u ON u.id = s.user_id
+            JOIN "branch" b ON b.id = s.selected_branch_id
+            WHERE s.id = ${principal.sessionId}::uuid
+              AND u.id = ${principal.userId}::uuid
+              AND b.id = ${principal.branchId}::uuid
+              AND b.is_active = true AND u.role = 'owner'
+              AND u.token_version = ${principal.tokenVersion}
+              AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+            FOR SHARE OF s, u, b NOWAIT
+        `);
+        if (active.length !== 1) throw new ServiceRecordOwnerWriteAccessDeniedError();
+    }
+
+    private async assertOwnerJsonDayScope(
+        tx: Prisma.TransactionClient,
+        source: ServiceRecordEditSource,
+        { branchId }: ServiceRecordOwnerWritePrincipal,
+        targets: ServiceRecordOwnerJsonConfirmInput["targets"],
+    ): Promise<ReadonlySet<number>> {
+        const scheduleIds = confirmScheduleIds(source);
+        const employeeIds = confirmEmployeeIds(source);
+        if (!scheduleIds.length || !employeeIds.length) throw new ServiceRecordEditConflictError();
+        const employees = await tx.employee.findMany({
+            where: { branchId, id: { in: employeeIds } },
+            select: { id: true, deletedAt: true },
+        });
+        if (employees.length !== employeeIds.length) throw new ServiceRecordEditConflictError();
+
+        // A legacy day can still hang off a locked schedule rather than this
+        // case. It must not be mistaken for an empty slot or a second record.
+        const indexes = targets.map(({ sessionIndex }) => sessionIndex);
+        const dates = targets.map(({ serviceDate }) => Prisma.sql`${serviceDate}::date`);
+        const fills = targets.filter(({ op }) => op === "fill").map(({ sessionIndex }) => sessionIndex);
+        const collisions = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT id FROM "service_record_day"
+            WHERE (service_record_case_id IS DISTINCT FROM ${source.caseId}::uuid
+                AND schedule_id IN (${Prisma.join(scheduleIds)})
+                AND (service_date IN (${Prisma.join(dates)}) OR session_index IN (${Prisma.join(indexes)})))
+            ${fills.length ? Prisma.sql`OR (service_record_case_id = ${source.caseId}::uuid
+                AND case_session_index IN (${Prisma.join(fills)}) AND period_mismatch_kept_at IS NOT NULL)` : Prisma.empty}
+            LIMIT 1
+        `);
+        if (collisions.length) throw new ServiceRecordEditConflictError("A legacy service-record row conflicts with a target");
+        return new Set(employees.filter((employee) => employee.deletedAt === null).map((employee) => employee.id));
+    }
+
     private async confirmDraftWithClient(
         tx: Prisma.TransactionClient,
-        input: ServiceRecordEditConfirmInput,
+        input: Omit<ServiceRecordEditConfirmInput, "previewId">,
+        lockedSource?: ServiceRecordEditSource,
     ): Promise<ServiceRecordEditConfirmResponse> {
+        const contentOnly = lockedSource !== undefined;
         // Discovery is branch-scoped and intentionally happens before the
         // common lock sequence. A confirmed row can replay without reading
         // mutable case/provider state at all.
@@ -3472,13 +3666,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             throw new ServiceRecordEditDraftConflictError("The service-record draft is already closed");
         }
 
-        const discoveredSource = await this.loadSourceWithClient(
+        const discoveredSource = lockedSource ?? await this.loadSourceWithClient(
             tx,
             input.branchId,
             { caseId: discovered.serviceRecordCaseId },
         );
         if (!discoveredSource) throw new ServiceRecordEditNotFoundError();
-        await this.lockConfirmTargets(tx, input.branchId, discoveredSource, input.draftId);
+        if (!lockedSource) await this.lockConfirmSourceTargets(tx, input.branchId, discoveredSource);
+        await this.lockConfirmDraftTargets(tx, input.branchId, discoveredSource, input.draftId);
 
         // The parent/case/employee locks serialize all cooperating writers.
         // Re-read every business row after those locks and reject a writer
@@ -3500,7 +3695,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (draft.draftVersion !== input.expectedDraftVersion) {
             throw new ServiceRecordEditDraftConflictError();
         }
-        const source = await this.loadSourceWithClient(tx, input.branchId, { caseId: draft.serviceRecordCaseId });
+        const source = lockedSource ?? await this.loadSourceWithClient(tx, input.branchId, { caseId: draft.serviceRecordCaseId });
         if (!source) throw new ServiceRecordEditNotFoundError();
         if (
             source.client.id !== discoveredSource.client.id
@@ -3539,6 +3734,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }
         if (!/^[0-9a-f]{64}$/i.test(plan.sourceFingerprint)) {
             throw new ServiceRecordEditConflictError("Confirmation plan source fingerprint is invalid");
+        }
+        if (contentOnly && (plan.status !== "confirmed" || !plan.revision || plan.clientServiceDays
+            || plan.materializedPlannedSessions || plan.finalizationDueAt || plan.tokenExpiryMode)) {
+            throw new ServiceRecordEditConflictError("Owner JSON confirmation requires a content-only revision");
         }
         assertFutureSessionPlan(plan, source);
 
@@ -3619,19 +3818,24 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 revision = await this.appendRevisionWithClient(tx, plan.revision);
             }
             const caseUpdate = await tx.service_record_case.update({
-                where: { id: source.caseId },
+                where: {
+                    id: source.caseId,
+                    ...(contentOnly ? { branchId: input.branchId, clientId: source.client.id, version: source.caseVersion } : {}),
+                },
                 data: {
-                    startDate: dateValue(plan.startDate),
-                    endDate: dateValue(plan.endDate),
-                    requiredSessionCount: plan.requiredSessionCount,
-                    plannedSessions: plan.plannedSessions === null ? Prisma.JsonNull : toPrismaJson(plan.plannedSessions),
-                    momName: plan.header.momName,
-                    momBirth: plan.header.momBirth,
-                    babyName: plan.header.babyName,
-                    babyBirth: plan.header.babyBirth,
-                    deliveryType: plan.header.deliveryType,
-                    babyWeight: plan.header.babyWeight,
-                    ...(plan.finalizationDueAt ? { finalizationDueAt: new Date(plan.finalizationDueAt) } : {}),
+                    ...(!contentOnly ? {
+                        startDate: dateValue(plan.startDate),
+                        endDate: dateValue(plan.endDate),
+                        requiredSessionCount: plan.requiredSessionCount,
+                        plannedSessions: plan.plannedSessions === null ? Prisma.JsonNull : toPrismaJson(plan.plannedSessions),
+                        momName: plan.header.momName,
+                        momBirth: plan.header.momBirth,
+                        babyName: plan.header.babyName,
+                        babyBirth: plan.header.babyBirth,
+                        deliveryType: plan.header.deliveryType,
+                        babyWeight: plan.header.babyWeight,
+                        ...(plan.finalizationDueAt ? { finalizationDueAt: new Date(plan.finalizationDueAt) } : {}),
+                    } : {}),
                     ...(revision ? { currentRevisionId: revision.id } : {}),
                     version: { increment: 1 },
                 },
@@ -3639,26 +3843,31 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             });
             caseVersion = caseUpdate.version;
 
-            await tx.client.updateMany({
-                where: { id: source.client.id, branchId: input.branchId },
-                data: {
-                    startDate: dateValue(plan.startDate),
-                    endDate: dateValue(plan.endDate),
-                },
-            });
+            if (!contentOnly) {
+                await tx.client.updateMany({
+                    where: { id: source.client.id, branchId: input.branchId },
+                    data: {
+                        startDate: dateValue(plan.startDate),
+                        endDate: dateValue(plan.endDate),
+                    },
+                });
+            }
             for (const session of plan.sessions) {
-                await tx.service_record_day.updateMany({
+                const written = await tx.service_record_day.updateMany({
                     where: { id: session.sourceRowId, branchId: input.branchId, serviceRecordCaseId: source.caseId },
                     data: {
-                        serviceDate: dateValue(session.serviceDate) ?? undefined,
-                        ...(session.serviceDate && source.sessions.find((row) => row.sourceRowId === session.sourceRowId)?.serviceDate !== session.serviceDate
-                            ? { periodMismatchKeptAt: null } : {}),
+                        ...(!contentOnly ? {
+                            serviceDate: dateValue(session.serviceDate) ?? undefined,
+                            ...(session.serviceDate && source.sessions.find((row) => row.sourceRowId === session.sourceRowId)?.serviceDate !== session.serviceDate
+                                ? { periodMismatchKeptAt: null } : {}),
+                            paymentConfirmed: session.paymentConfirmed,
+                        } : {}),
                         answers: toPrismaJson(session.answers),
                         etcService: session.etcService,
                         notes: session.notes,
-                        paymentConfirmed: session.paymentConfirmed,
                     },
                 });
+                if (contentOnly && written.count !== 1) throw new ServiceRecordEditConflictError();
             }
             for (const session of plan.newSessions) {
                 const serviceDate = dateValue(session.serviceDate);
@@ -3692,7 +3901,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             for (const assignment of plan.assignments) {
                 // An assignment whose two tables already hold the computed dates is emitted for
                 // message automation only; otherwise both tables are re-synced to those dates.
-                if (assignment.datesChanged === false) continue;
+                if (contentOnly || assignment.datesChanged === false) continue;
                 if (assignment.assignmentId) {
                     await tx.service_record_assignment.updateMany({
                         where: { id: assignment.assignmentId, branchId: input.branchId, serviceRecordCaseId: source.caseId },
@@ -3712,7 +3921,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     });
                 }
             }
-            if (plan.endDate) {
+            if (!contentOnly && plan.endDate) {
                 await writeActiveTokenExpiry(tx, input.branchId, source.caseId, plan.endDate, plan.tokenExpiryMode);
             }
             if (plan.documentJob) {
@@ -3848,7 +4057,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
         }
 
-        await this.persistReevaluationIntents(tx, input.branchId, source, plan, `${input.draftId}:${draft.draftVersion}`, now);
+        if (!contentOnly) {
+            await this.persistReevaluationIntents(tx, input.branchId, source, plan, `${input.draftId}:${draft.draftVersion}`, now);
+        }
 
         const response: ServiceRecordEditConfirmResponse = {
             status: plan.status,
@@ -3941,33 +4152,31 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }
     }
 
-    private async lockConfirmTargets(
+    private async lockConfirmSourceTargets(
         tx: Prisma.TransactionClient,
         branchId: string,
         source: ServiceRecordEditSource,
-        draftId: string,
     ): Promise<void> {
         // Common order: client -> sorted employees -> case -> sorted child
         // schedules/assignments/days/docs -> draft -> revision/jobs.
         await lockRowsByBranchAndIds(tx, "client", "client", branchId, [source.client.id], false);
-        const employeeIds = source.assignments.flatMap((assignment) => [
-            assignment.employeeId,
-            assignment.primaryEmployeeId,
-            assignment.secondaryEmployeeId,
-        ]).filter((id): id is number => id !== null).sort((left, right) => left - right);
-        await lockRowsByBranchAndIds(tx, "employee", "employee", branchId, [...new Set(employeeIds)], false);
+        await lockRowsByBranchAndIds(tx, "employee", "employee", branchId, confirmEmployeeIds(source), false);
         await lockRowsByBranchAndIds(tx, "service_record_case", "service_record_case", branchId, [source.caseId], true);
 
-        const scheduleIds = source.assignments
-            .map((assignment) => assignment.scheduleId)
-            .filter((id): id is number => id !== null)
-            .sort((left, right) => left - right);
+        const scheduleIds = confirmScheduleIds(source).sort((left, right) => left - right);
         await lockRowsByBranchAndIds(tx, "employee_schedule", "employee_schedule", branchId, [...new Set(scheduleIds)], false);
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_assignment", "service_record_assignment", "service_record_case_id");
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_day", "service_record_day", "service_record_case_id");
         await lockCaseChildren(tx, branchId, source.caseId, "eformsign_doc", "eformsign_doc", "service_record_case_id");
         await lockClientOwnedContractDocuments(tx, branchId, source.client.id);
+    }
 
+    private async lockConfirmDraftTargets(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        source: ServiceRecordEditSource,
+        draftId: string,
+    ): Promise<void> {
         await lockRowsByBranchAndIds(tx, "service_record_edit_draft", "service_record_edit_draft", branchId, [draftId], true);
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_revision", "service_record_revision", "service_record_case_id");
         // Operation state is a document child and must be locked before jobs
@@ -4014,7 +4223,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         scope: DocumentJobSupersessionScope = "all",
     ): Promise<void> {
         // Legacy create/finalize jobs do not carry a case id in their payload.
-        // lockConfirmTargets already locked every eformsign job owned by this
+        // lockConfirmDraftTargets already locked every eformsign job owned by this
         // branch/client, so use that durable ownership fence instead of a
         // payload-only case predicate that would let an active provider job
         // race confirmation. `caseId` remains part of the private seam for
@@ -4153,7 +4362,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
 
     private async enqueueRevisionJob(
         tx: Prisma.TransactionClient,
-        input: ServiceRecordEditConfirmInput,
+        input: Pick<ServiceRecordEditConfirmInput, "branchId" | "actorUserId">,
         plan: ServiceRecordEditConfirmPlan,
         revision: ServiceRecordRevision,
         caseVersion: number,

@@ -946,6 +946,7 @@ describe("AuthController (Integration)", () => {
                 "010-1234-5678",
                 "1990-01-01",
                 "user",
+                false,
             );
         });
 
@@ -1161,6 +1162,7 @@ describe("AuthController pending account linking with production exception filte
         const response = await request(app.getHttpServer())
             .post(method === "kakao" ? "/auth/kakao/complete-signup" : "/auth/register")
             .set("x-pending-signup-token", "pending-token")
+            .set("x-account-link-version", "1")
             .send(method === "kakao" ? { ...body, role: "user" }
                 : { ...body, email: "qa@example.invalid", password: "Password1!", name: "QA Link" });
         expect(response.status).toBe(403);
@@ -1168,9 +1170,9 @@ describe("AuthController pending account linking with production exception filte
         expect(response.body.code).toBe("PENDING_APPROVAL");
         expect(response.body.status).toBe(403);
         if (method === "kakao") expect(authService.completeKakaoOnboarding)
-            .toHaveBeenCalledWith("pending-token", body.phone, body.birthDate, "user");
+            .toHaveBeenCalledWith("pending-token", body.phone, body.birthDate, "user", true);
         else expect(authService.registerWithEmail)
-            .toHaveBeenCalledWith("qa@example.invalid", "Password1!", "QA Link", body.phone, body.birthDate);
+            .toHaveBeenCalledWith("qa@example.invalid", "Password1!", "QA Link", body.phone, body.birthDate, true);
         expect(rateLimitGuard.resetForKey).not.toHaveBeenCalled();
     });
 });

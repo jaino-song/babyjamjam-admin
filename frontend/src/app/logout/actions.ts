@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { clearPendingOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { clearAuthSessionCookies } from "@/lib/auth/session-cookies";
 import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
@@ -41,6 +42,7 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
     }
 
     clearAuthSessionCookies(cookieStore);
+    clearPendingOnboarding(cookieStore);
     cookieStore.delete("selected_branch_id");
     cookieStore.delete("selected_organization_id");
 

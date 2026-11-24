@@ -976,6 +976,7 @@ export class AuthService {
         phone: string,
         birthDate: string,
         role: string,
+        supportsAccountLink = false,
     ): Promise<RegistrationResult> {
         const hashedToken = this.hashToken(token);
 
@@ -1014,12 +1015,8 @@ export class AuthService {
             const holders = await this.findPhoneHolders(tx, phone);
             const otherHolders = holders.filter(holder => holder.id !== existingUser?.id);
             if (otherHolders.length) {
-                if (holders.length !== 1 || otherHolders[0]!.kakaoId || existingUser) {
-                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                        pointer: "/phone",
-                        code: "INVALID_VALUE",
-                        detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
-                    }));
+                if (supportsAccountLink !== true || holders.length !== 1 || otherHolders[0]!.kakaoId || existingUser) {
+                    throw this.registrationPhoneRefusal();
                 }
                 if (this.isPendingLinkMatch(otherHolders[0]!, birthDate)) {
                     return { pendingApproval: true } as const;
@@ -1135,6 +1132,14 @@ export class AuthService {
             pointer: "/code",
             code: "INVALID_VALUE",
             detail: "계정을 연결할 수 없어요. 처음부터 다시 시도해 주세요.",
+        }));
+    }
+
+    private registrationPhoneRefusal() {
+        return new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/phone",
+            code: "INVALID_VALUE",
+            detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
         }));
     }
 
@@ -1420,7 +1425,7 @@ export class AuthService {
 
     /**
      * Register a new user with email/password
-     * Always returns success to prevent email enumeration
+     * Duplicate email registration keeps a generic response to prevent enumeration.
      */
     async registerWithEmail(
         email: string,
@@ -1428,6 +1433,7 @@ export class AuthService {
         name: string,
         phone: string,
         birthDate: string,
+        supportsAccountLink = false,
     ): Promise<RegistrationResult> {
         // Validate password strength
         const passwordValidation = this.validatePasswordStrength(password);
@@ -1447,6 +1453,9 @@ export class AuthService {
         const holders = await this.findPhoneHolders(this.prisma, phone);
         const candidate = holders.length === 1 && holders[0]!.kakaoId && !holders[0]!.passwordHash
             ? holders[0]! : null;
+        if (candidate && supportsAccountLink !== true) {
+            throw this.registrationPhoneRefusal();
+        }
         if (existingUser && existingUser.id !== candidate?.id) {
             // User already has email account (with or without Kakao)
             // Don't reveal that the email exists - return generic success
@@ -1473,10 +1482,7 @@ export class AuthService {
             return this.linkVerificationResponse(challenge.challengeToken);
         }
         if (holders.length) {
-            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                pointer: "/phone", code: "INVALID_VALUE",
-                detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
-            }));
+            throw this.registrationPhoneRefusal();
         }
 
         const passwordHash = await this.hashPassword(password);
