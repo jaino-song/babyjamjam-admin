@@ -406,6 +406,24 @@ describe("EformsignDocumentJobController (Integration)", () => {
         expect(documentJobService.enqueueCreateDocument).toHaveBeenCalledTimes(1);
     });
 
+    it("accepts an explicit copayment date on the nested creation DTO", async () => {
+        documentJobService.enqueueCreateDocument.mockResolvedValue({
+            job: job({ status: "queued" }),
+            existing: false,
+        });
+        const contractData = {
+            ...validContractData, paymentYear: "26", paymentMonth: "11", paymentDay: "21",
+            copaymentReceivedDate: "2026-11-21",
+        };
+        const response = await request(app.getHttpServer())
+            .post("/eformsign-docs/jobs/creation")
+            .send({ requestKey: "request-dated", clientId: 42, contractData });
+
+        expect(response.status).toBe(202);
+        expect(response.body).toEqual({ jobId: "job-1", status: "queued", existing: false });
+        expect(documentJobService.enqueueCreateDocument).toHaveBeenCalledWith(expect.objectContaining({ contractData }));
+    });
+
     it("queues finalization with the authenticated branch and staff source", async () => {
         documentJobService.enqueueFinalizeDocument.mockResolvedValue({
             job: job({ jobType: "finalize_document", documentId: "document-99", status: "queued" }),

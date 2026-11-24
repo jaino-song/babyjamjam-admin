@@ -89,14 +89,18 @@ export class EformsignDispatchBoundaryService {
         return { intent: claimed, disposition: "uncertain" };
     }
 
-    async claimContract(input: DispatchIntentClaimInput, worker?: ContractWorkerContext, effect?: { contractData: unknown; force?: boolean; workflow?: unknown }): Promise<DispatchIntentClaim> {
+    async claimContract(
+        input: DispatchIntentClaimInput,
+        worker?: ContractWorkerContext,
+        effect?: { contractData: unknown; force?: boolean; workflow?: unknown; copaymentReceivedDateToSave?: Date },
+    ): Promise<DispatchIntentClaim> {
         if (!this.contracts) throw new ContractRecoveryError("RECOVERY_UNAVAILABLE", 503);
         const prepared = { ...input, businessKey: input.businessKey ?? buildEformsignDispatchBusinessKey(input) };
         if (worker) {
             if (!effect) throw new ContractRecoveryError("RECOVERY_STALE");
             return this.contracts.claimCreation(prepared, worker, effect);
         }
-        return this.contracts.claimLegacyCreation(prepared);
+        return this.contracts.claimLegacyCreation(prepared, effect?.copaymentReceivedDateToSave);
     }
 
     async markAccepted(

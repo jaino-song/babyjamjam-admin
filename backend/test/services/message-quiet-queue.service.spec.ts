@@ -61,6 +61,8 @@ import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { MANUAL_SMS_TEMPLATE_KEY, isConfigurableSmsTriggerTemplate, isRetiredFixedEventTemplate, findMessageTriggerTemplate, MESSAGE_TRIGGER_TEMPLATE_CATALOG } from "domain/constants/message-trigger-catalog";
 
+import { memoryQueue } from "../fixtures/message-quiet-queue.fixture";
+
 // The SQL/Prisma boundary is synthetic; all application controls and repositories execute.
 type Row = Record<string, unknown>;
 function expectPublicRetryVariables(variables: Record<string, string>) {
@@ -68,151 +70,6 @@ function expectPublicRetryVariables(variables: Record<string, string>) {
         "quietHoursPolicyRevision", "quietHoursReason", "manualQueueMode", "manualQueueCount", "manualQueueOrdinal", "manualQueueStatus",
         "manualQueueScheduledAt", "manualQueueRequestKey", "manualQueueFingerprintInput", "manualQueueSenderIdentity", "manualQueueReason",
         "retryInvocation", "retrySenderIdentity"]) expect(variables).not.toHaveProperty(key);
-}
-function memoryQueue() {
-    const branchId = "88000000-0000-4000-8000-000000000001";
-    const tables: Record<string, Row[]> = { message_log: [], message_trigger_job: [], message_trigger_rule: [], message_trigger_rule_branch_override: [], system_setting: [],
-        client: [{ id: 7, branchId, name: "synthetic", phone: "01000000011", deletedAt: null }], employee: [] };
-    let active = false;
-    let commitFailure = false;
-    let logCasFailure = false;
-    let afterPrepared: ((row: Row) => void) | undefined;
-    let duplicateMatches: Array<{ id: number; sentAt: Date }> = [];
-    const matches = (row: Row, where: Row): boolean => Object.entries(where).every(([key, value]) => {
-        if (key === "AND") return (Array.isArray(value) ? value : [value]).every(part => matches(row, part as Row));
-        if (key === "OR") return (value as Row[]).some(part => matches(row, part));
-        if (key === "NOT") return !(Array.isArray(value) ? value : [value]).some(part => matches(row, part as Row));
-        if (value && typeof (value as Date).getTime === "function") return !!row[key] && typeof (row[key] as Date).getTime === "function" && (row[key] as Date).getTime() === (value as Date).getTime();
-        if (value && typeof value === "object") {
-            const predicate = value as Row;
-            const actual = predicate["path"] ? (predicate["path"] as string[]).reduce<unknown>((nested, field) => (nested as Row | null)?.[field], row[key]) : row[key];
-            if (predicate["equals"] === Prisma.DbNull) return actual === undefined;
-            if ("startsWith" in predicate) return typeof actual === "string" && actual.startsWith(String(predicate["startsWith"]));
-            if ("equals" in predicate) return JSON.stringify(actual) === JSON.stringify(predicate["equals"]);
-            if ("in" in predicate) return (predicate["in"] as unknown[]).includes(actual);
-            if ("notIn" in predicate) return !(predicate["notIn"] as unknown[]).includes(actual);
-            if ("not" in predicate) return actual !== predicate["not"];
-            if ("some" in predicate && key === "logs") return tables["message_log"]!.some(log => log["triggerJobId"] === row["id"] && matches(log, predicate["some"] as Row));
-            if ("lt" in predicate) return Number(actual) < Number(predicate["lt"]);
-            if ("lte" in predicate) return actual != null && Number(actual) <= Number(predicate["lte"]);
-            return true;
-        }
-        return value === undefined || row[key] === value;
-    });
-    const model = (name: string) => ({
-        findUnique: jest.fn(async ({ where, include }: { where: Row; include?: Row }) => {
-            const row = structuredClone(tables[name]!.find(row => matches(row, where)) ?? null);
-            if (row && include?.["rule"]) row["rule"] = structuredClone(tables["message_trigger_rule"]!.find(rule => rule["id"] === row["ruleId"]) ?? null);
-            return row;
-        }),
-        findFirst: jest.fn(async ({ where }: { where: Row }) => structuredClone(tables[name]!.find(row => matches(row, where)) ?? null)),
-        findMany: jest.fn(async ({ where = {}, include }: { where?: Row; include?: Row } = {}) => tables[name]!.filter(row => matches(row, where)).map(row => {
-            const result = structuredClone(row);
-            if (include?.["logs"]) result["logs"] = tables["message_log"]!.filter(log => log["triggerJobId"] === row["id"] && matches(log, ((include["logs"] as Row)["where"] ?? {}) as Row));
-            return result;
-        })),
-        create: jest.fn(async ({ data }: { data: Row }) => {
-            const row: Row = { id: name === "message_log" ? tables[name]!.length + 1 : randomUUID(),
-                createdAt: new Date(Date.now()), updatedAt: new Date(Date.now()), triggerJobId: null, deletedAt: null, groupId: null,
-                isActive: false, jobsStale: false, providerCallStartedAt: null, providerAcceptedAt: null, aligoMid: null,
-                errorMessage: null, lastAttemptAt: null, nextRetryAt: null, ...structuredClone(data) };
-            if (name === "message_log" && tables[name]!.some(existing => existing["providerAcceptanceKey"] === row["providerAcceptanceKey"])) throw new Error("Duplicate acceptance");
-            tables[name]!.push(row);
-            const result = structuredClone(row);
-            if (name === "message_log" && !active) afterPrepared?.(result);
-            return result;
-        }),
-        updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
-            if (name === "message_log" && logCasFailure) return { count: 0 };
-            const found = tables[name]!.filter(row => matches(row, where));
-            for (const row of found) Object.assign(row, structuredClone(data), { updatedAt: new Date(Date.now()) });
-            return { count: found.length };
-        }),
-        update: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
-            const row = tables[name]!.find(row => matches(row, where));
-            if (!row) throw new Error("Missing row");
-            Object.assign(row, structuredClone(data)); return structuredClone(row);
-        }),
-        upsert: jest.fn(async ({ where, create }: { where: Row; create: Row }) => {
-            const existing = tables[name]!.find(row => matches(row, where));
-            if (existing) return structuredClone(existing);
-            const row = { deletedAt: null, jobsStale: false, ...create }; tables[name]!.push(row); return structuredClone(row);
-        }),
-    });
-    const db = {
-        message_log: model("message_log"), message_trigger_job: model("message_trigger_job"), message_trigger_rule: model("message_trigger_rule"),
-        message_trigger_rule_branch_override: model("message_trigger_rule_branch_override"),
-        client: model("client"), employee: model("employee"), system_setting: model("system_setting"),
-        $executeRaw: jest.fn(async () => 1),
-        $transaction: jest.fn(async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => {
-            expect(active).toBe(false); active = true;
-            const snapshot = structuredClone(tables);
-            try { const result = await work(db as never); if (commitFailure) throw new Error("late commit failure"); return result; }
-            catch (error) { for (const key of Object.keys(tables)) tables[key] = snapshot[key]!; throw error; }
-            finally { active = false; }
-        }),
-        $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
-            if (sql.sql.includes("SELECT ml.id")) return duplicateMatches;
-            if (sql.sql.includes("WITH RECURSIVE ancestors")) return tables["message_log"]!.map(log => ({ id: log["id"] }));
-            if (sql.sql.includes('FROM "user"')) return [...tables["client"]!.map(client => ({ phone: client["phone"], group_name: "CLIENT" })), ...tables["employee"]!.map(employee => ({ phone: employee["phone"], group_name: "CAREGIVER" }))];
-            if (sql.sql.includes("SELECT id, branch_id, is_active, template_key, target_client_status, retry_on_failure")) return tables["message_trigger_rule"]!.filter(rule => sql.values.includes(rule["id"] as string)).map(rule => ({
-                id: rule["id"], branch_id: rule["branchId"], is_active: rule["isActive"], template_key: rule["templateKey"],
-                target_client_status: rule["targetClientStatus"], retry_on_failure: rule["retryOnFailure"],
-            }));
-            const row = tables["message_trigger_job"]!.find(job => sql.values.includes(job["id"] as string));
-            if (!row) return [];
-            if (sql.sql.includes("SET status = 'processing'")) {
-                if (row["status"] !== "pending") return [];
-                Object.assign(row, { status: "processing", claimToken: randomUUID(), processingDeadlineAt: sql.values.find(value => value && typeof (value as Date).getTime === "function"), updatedAt: new Date(Date.now()) });
-                return [{ id: row["id"], claim_token: row["claimToken"] }];
-            }
-            if (sql.sql.includes("SET status = 'dispatching'")) {
-                if (row["status"] !== "processing" || !sql.values.includes(row["claimToken"] as string)) return [];
-                row["status"] = "dispatching"; return [{ id: row["id"] }];
-            }
-            return [{ ...row, claim_token: row["claimToken"], branch_id: row["branchId"], rule_id: row["ruleId"], client_id: row["clientId"],
-                employee_schedule_id: row["employeeScheduleId"], recipient_type: row["recipientType"], template_key: row["templateKey"] }];
-        }),
-    };
-    const configuration = defaultMessageAutomationPolicy();
-    configuration.quietHours.enabled = true;
-    const key = `branch:${branchId}:message_automation:policy`;
-    tables["system_setting"]!.push({ key, value: JSON.stringify(configuration) });
-    const jobs = new SbMessageTriggerJobRepository(db as never);
-    const logs = new SbMessageLogRepository(db as never);
-    const lock = new MessageAutomationBranchLockService(db as never);
-    const readSetting = async (settingKey: string) => tables["system_setting"]!.find(row => row["key"] === settingKey)?.["value"] ?? null;
-    const get = { execute: readSetting, executeWithDefault: async (settingKey: string, fallback: string) => await readSetting(settingKey) ?? fallback };
-    const update = { executeIfVersion: async (settingKey: string, value: string, expected: string, versionOf: (raw: string | null) => string) => {
-        const row = tables["system_setting"]!.find(item => item["key"] === settingKey)!;
-        if (versionOf(row["value"] as string) !== expected) return null;
-        row["value"] = value; return { value };
-    } };
-    const settings = new SystemSettingService(get as never, update as never, undefined, undefined, undefined, jobs, logs, lock);
-    const quiet = new MessageQuietHoursService(settings, logs, lock);
-    const duplicates = new MessageDuplicateCheckService(logs, { getMessageSettingsPolicyEnabled: async () => false } as never, get as never);
-    const approval = { ensureApproved: jest.fn(async () => { expect(active).toBe(false); }), getApprovedBranchIds: async () => new Set([branchId]) };
-    const templates = { findByKey: jest.fn(() => { throw new Error("Automatic renderer must not run"); }) };
-    const aligo = { sendSms: jest.fn(async (request: Row) => {
-        expect(active).toBe(false);
-        return { request, response: { result_code: 1, message: "accepted", msg_id: 91, success_cnt: 1, error_cnt: 0 } };
-    }) };
-    const sender = { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) };
-    const gate = new AgentAutomationDeliveryGateService(db as never, lock, {} as never);
-    const sms = new SmsTriggerDeliveryService(aligo as never, templates as never, logs, new SmsProviderAcceptanceService(logs), undefined, gate,
-        undefined, settings, undefined, quiet, jobs, sender as never);
-    const acceptance = new SmsProviderAcceptanceService(logs);
-    const activation = new MessageAutomationActivationService(db as never, lock, {} as never);
-    const retry = new SmsRetryService(logs, aligo as never, approval as never, acceptance, activation, undefined, sms, jobs, undefined, settings, quiet, sender as never);
-    const core = new MessageTriggerService(db as never, new MessageTriggerDeliveryService(sms), approval as never, {} as never, jobs, logs,
-        templates as never, {} as never, settings, undefined, activation, lock);
-    const controller = new MessageDeliveryController(aligo as never, approval as never, db as never, duplicates, quiet, jobs, sender as never);
-    const send = (extra = {}) => controller.sendSms({ branchId }, { receiver: "01000000011", message: "  synthetic {{literal}}\n", idempotencyKey: "body-key", ...extra }, "ignored-header");
-    return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates, approval, acceptance, activation, sender, quiet,
-        newDuplicates: () => { duplicateMatches = [{ id: 999, sentAt: new Date(Date.now()) }]; },
-        configure: (draft: typeof configuration) => { tables["system_setting"]![0]!["value"] = JSON.stringify(draft); },
-        afterPrepared: (hook: (row: Row) => void) => { afterPrepared = hook; },
-        commitFailure: () => { commitFailure = true; }, logCasFailure: () => { logCasFailure = true; } };
 }
 
 
@@ -1170,17 +1027,20 @@ describe("quiet retry scheduler release", () => {
         expect((await f.logs.findByIdInBranch(f.branchId, held.id))!.attempts).toBe(1);
     });
 
-    async function holdAutomaticRetry(global = false, throughScheduler = false) {
+    async function holdAutomaticRetry(global = false, throughScheduler = false, bodyOnly = false) {
         const f = memoryQueue();
         const ruleId = randomUUID();
         const rule: Row = { id: ruleId, branchId: global ? null : f.branchId, isActive: true, deletedAt: null,
-            templateKey: "INFO", targetClientStatus: "all", retryOnFailure: true };
+            templateKey: "INFO", eventType: "SERVICE_START", targetClientStatus: "all", retryOnFailure: true };
         f.tables["message_trigger_rule"]!.push(rule);
         const linked = await f.jobs.create(MessageTriggerJobEntity.create({ branchId: f.branchId, ruleId, clientId: 7,
             templateKey: MessageTriggerTemplateKey.INFO, dedupeKey: "automatic:quiet-retry", scheduledFor: original,
             recipientType: MessageTriggerRecipientType.CLIENT,
-            payload: { memberId: "", recipientName: "synthetic", recipientPhone: "01000000011", templateVariables: {} } }));
-        const draft = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "INFO",
+            recipientPhone: "01000000011",
+            payload: { memberId: "", recipientName: "synthetic", recipientPhone: "01000000011", messageBody: "automatic held body",
+                templateVariables: bodyOnly ? { triggerType: "agent_scheduled" } : {} } }));
+        const templateKey = bodyOnly ? "agent_scheduled_sms" : "info_sms";
+        const draft = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey,
             triggerJobId: linked.id, receiver: "01000000011", clientId: 7, messageBody: "automatic held body",
             variables: {}, providerAcceptanceKey: "auto-source", providerAcceptanceFingerprint: "auto-source-fingerprint", providerAcceptanceState: "rejected" });
         draft.status = "failed"; draft.attempts = 1;
@@ -1195,7 +1055,7 @@ describe("quiet retry scheduler release", () => {
             const held = (await f.logs.findByIdInBranch(f.branchId, 2))!;
             return { f, rule, held, scheduler };
         }
-        const pending = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "INFO",
+        const pending = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey,
             triggerJobId: linked.id, receiver: source.receiver, clientId: 7, messageBody: source.messageBody,
             variables: { retryOfLogId: String(source.id), retryInvocation: "automatic", retrySafety: "uncertain" },
             providerAcceptanceKey: "auto-held", providerAcceptanceFingerprint: "auto-held-fingerprint", providerAcceptanceState: "prepared" });
@@ -1334,23 +1194,53 @@ describe("quiet retry scheduler release", () => {
         // Ordinary SMS retry does not depend on the Core trigger-job-retry switch.
         f.tables["system_setting"]!.push({ key: `branch:${f.branchId}:message_policy:trigger-job-retry:enabled`, value: "false" });
         const sourceBefore = structuredClone(f.tables["message_log"]![0]);
-        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
-        f.approval.ensureApproved.mockClear(); f.db.$transaction.mockClear();
+        const send = f.aligo.sendSms.getMockImplementation()!;
+        const admission = jest.fn();
+        f.aligo.sendSms.mockImplementation(async request => {
+            const row = f.tables["message_log"]![1]!;
+            const claim = f.tables["message_occurrence_claim"]!.find(row => row["holderLogId"] === held.id);
+            admission(row["providerAcceptanceState"], row["providerCallStartedAt"], claim?.["state"], claim?.["templateKey"]);
+            return send(request);
+        });
+        f.approval.ensureApproved.mockClear();
         jest.setSystemTime(release);
         await scheduler.retryFailedMessages();
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(allowed ? 1 : 0);
-        expect(begin).toHaveBeenCalledTimes(allowed ? 1 : 0);
+        expect(admission).toHaveBeenCalledTimes(allowed ? 1 : 0);
+        if (allowed) expect(admission).toHaveBeenCalledWith("started", release, "in_flight", "system:INFO");
         expect(f.approval.ensureApproved).toHaveBeenCalledTimes(mode === "sms retry off" ? 0 : 1);
-        // The fixture rejects nested root transactions and provider calls in a transaction.
-        expect(f.db.$transaction).toHaveBeenCalledTimes(["sms retry off", "activation missing"].includes(mode) ? 0 : 1);
         expect(f.tables["message_log"]).toHaveLength(2);
         expect(f.tables["message_log"]![0]).toEqual(sourceBefore);
         const current = (await f.logs.findByIdInBranch(f.branchId, held.id))!;
         expect(current.attempts).toBe(allowed ? 2 : 1);
+        expect(current.providerCallStartedAt).toEqual(allowed ? release : null);
+        const claims = f.tables["message_occurrence_claim"]!.filter(row => row["holderLogId"] !== null);
+        expect(claims).toEqual(allowed ? [expect.objectContaining({ state: "accepted", acceptedLogId: held.id })] : []);
         if (mode === "retry off" || mode === "target mismatch") {
             expect(current).toMatchObject({ status: "failed", nextRetryAt: null });
             expect(current.errorMessage).toContain(mode === "retry off" ? "rule_retry_disabled" : "target_client_status_mismatch");
         } else if (!allowed) expect(current).toMatchObject({ status: "pending", nextRetryAt: release });
+    });
+
+    it("releases a body-only automatic retry through its per-log fence", async () => {
+        const { f, held, scheduler } = await holdAutomaticRetry(false, false, true);
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.tables["message_occurrence_claim"]).toEqual([]);
+        expect(await f.logs.findByIdInBranch(f.branchId, held.id)).toMatchObject({
+            status: "sent", attempts: 2, providerCallStartedAt: release,
+        });
+    });
+
+    it("rolls back a canonical held retry's provider start and occurrence claim on commit failure", async () => {
+        const { f, scheduler } = await holdAutomaticRetry();
+        const before = structuredClone(f.tables);
+        f.commitFailure();
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.tables).toEqual(before);
     });
 
     it.each(["invocation", "job FK"])("rejects a changed current %s before using the captured eligibility", async kind => {
@@ -1365,7 +1255,8 @@ describe("quiet retry scheduler release", () => {
         jest.setSystemTime(release);
         await scheduler.retryFailedMessages();
         expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
-        expect(f.tables["message_log"]![1]).toMatchObject({ status: "pending", attempts: 1, nextRetryAt: release });
+        expect(f.tables["message_log"]![1]).toMatchObject({ status: "pending", attempts: 1, nextRetryAt: release, providerCallStartedAt: null });
+        expect(f.tables["message_occurrence_claim"]).toEqual([]);
     });
 });
 

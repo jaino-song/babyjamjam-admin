@@ -2,7 +2,8 @@ import {
     SMS_DELIVERY_MAX_ATTEMPTS,
     TRIGGER_JOB_MAX_ATTEMPTS,
 } from "domain/constants/message-automation-policy";
-import { Allow, IsObject, IsArray, IsBoolean, IsIn, IsInt, IsString, Max, Min } from "class-validator";
+import { Allow, IsObject, IsArray, IsBoolean, IsIn, IsInt, IsString, Matches, Max, Min } from "class-validator";
+import type { UpdateCanceledAutomationRetryRequest } from "@babyjamjam/shared/types/message";
 import {
     DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED,
     STORED_MESSAGE_SETTINGS_POLICY_IDS,
@@ -64,6 +65,16 @@ export class UpdateMessageAutomationPolicyConfigDto {
 
     @IsObject()
     configuration!: MessageAutomationPolicyConfiguration;
+}
+
+export class CanceledAutomationRetryRoutineParamsDto {
+    @Matches(/^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/)
+    id!: string;
+}
+
+export class UpdateCanceledAutomationRetryDto implements UpdateCanceledAutomationRetryRequest {
+    @IsBoolean()
+    enabled!: boolean;
 }
 
 export class UpdateMessageAutomationPastTriggerConfigDto {

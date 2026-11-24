@@ -29,7 +29,10 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             areaId: "global",
         };
         const findClient = { execute: jest.fn().mockResolvedValue(existingClient) };
-        const clientRepository = { findByPhone: jest.fn().mockResolvedValue(null) };
+        const clientRepository = {
+            findByPhone: jest.fn().mockResolvedValue(null),
+            findByIdForUpdate: jest.fn().mockResolvedValue(existingClient),
+        };
         const transaction = { agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
         const serviceRecordLifecycle = {
             validatePeriodChange: jest.fn().mockResolvedValue(undefined),
@@ -56,7 +59,11 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) },
             employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
         };
-        const serviceRecordLinkService = { scheduleForServiceStart: jest.fn().mockResolvedValue(true) };
+        const serviceRecordLinkService = {
+            scheduleForServiceStart: jest.fn().mockResolvedValue(true),
+            recordClientTransitionInTransaction: jest.fn().mockResolvedValue(undefined),
+            recheckClientRecovery: jest.fn().mockResolvedValue(undefined),
+        };
         const provider = new ClientWriteAgentCapabilitiesProvider(
             createClient as never,
             updateClient as never,
@@ -219,9 +226,9 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             await capability.execute(context, { id: 1, name: "새 이름" });
 
             expect(updateClient.execute).toHaveBeenCalledWith(
-                "branch-a", 1, expect.objectContaining({ name: "새 이름" }), undefined, calendar,
+                "branch-a", 1, expect.objectContaining({ name: "새 이름" }), expect.anything(), calendar,
             );
-            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, undefined, calendar);
+            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
         });
     });
 
@@ -704,9 +711,9 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             type: "standard",
             grant: "50000",
             actualPrice: "50000",
-        }), undefined, KR_BUILTIN_CALENDAR);
+        }), expect.anything(), KR_BUILTIN_CALENDAR);
         expect(serviceRecordLifecycle.validatePeriodChange).toHaveBeenCalledWith(expect.objectContaining({ clientId: 1 }), undefined);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, undefined, KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("normalizes a voucher toggle to canonical non-voucher pricing", async () => {
@@ -732,7 +739,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             fullPrice: "140000",
             grant: "0",
             actualPrice: "140000",
-        }), undefined, KR_BUILTIN_CALENDAR);
+        }), expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("rejects invalid dates and preserves leap-day calendar dates", async () => {
@@ -787,7 +794,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         await update.executeApprovedTarget!(context, { id: 1, birthday }, "approved-target");
 
         expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.objectContaining({ birthday }), expect.anything(), KR_BUILTIN_CALENDAR);
-        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ birthday }), undefined, KR_BUILTIN_CALENDAR);
+        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ birthday }), expect.anything(), KR_BUILTIN_CALENDAR);
         expect(updateClient.executeApprovedTarget).toHaveBeenCalledWith(
             "branch-a", 1, expect.objectContaining({ birthday }), "approved-target", transaction, KR_BUILTIN_CALENDAR,
         );
@@ -914,7 +921,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
         clientRepository.findByPhone.mockResolvedValueOnce(existingClient);
         await updateCapability.execute(context, { id: 1, phone: "010-1234-5678" });
-        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ phone: "010-1234-5678" }), undefined, KR_BUILTIN_CALENDAR);
+        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ phone: "010-1234-5678" }), expect.anything(), KR_BUILTIN_CALENDAR);
 
         clientRepository.findByPhone.mockResolvedValueOnce({ ...existingClient, id: 2 });
         await expect(updateCapability.execute(context, { id: 1, phone: "010 1234 5678" })).rejects.toThrow("같은 전화번호의 고객이 이미 등록되어 있습니다.");
@@ -935,7 +942,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         await capability.execute(context, { id: 1, endDate: "2024-01-01" });
         await capability.execute(context, { id: 1, startDate: null });
         expect(updateClient.execute).toHaveBeenCalledTimes(2);
-        expect(updateClient.execute).toHaveBeenLastCalledWith("branch-a", 1, expect.objectContaining({ startDate: null }), undefined, KR_BUILTIN_CALENDAR);
+        expect(updateClient.execute).toHaveBeenLastCalledWith("branch-a", 1, expect.objectContaining({ startDate: null }), expect.anything(), KR_BUILTIN_CALENDAR);
 
         await expect(capability.execute(context, { id: 1, endDate: null, duration: 5 }))
             .rejects.toThrow("서비스 기간을 지정하려면 시작일과 종료일이 모두 있어야 합니다.");
@@ -1325,119 +1332,85 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    describe("service-record link SMS for already-assigned schedules when a client leaves 예약 전", () => {
+    describe("service-record-link recovery on an AI customer write", () => {
         const context = {
             principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
             sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
         } as const;
         const entryPoints = ["execute", "executeApprovedTarget"] as const;
 
-        function arrange(after: { serviceStatus: string }) {
+        beforeEach(() => jest.useFakeTimers({ now: new Date("2026-11-23T04:00:00Z") }));
+        afterEach(() => jest.useRealTimers());
+
+        function arrange(after: "pre_booking" | "waiting" | "active" | "completed") {
             const fixture = setup();
-            const before = { ...fixture.existingClient, serviceStatus: "pre_booking", endDate: null };
+            const startDate = new Date(after === "waiting" ? "2026-11-27" : "2026-11-20");
+            const endDate = after === "pre_booking" ? null : new Date(after === "completed" ? "2026-11-22" : "2026-12-15");
+            const before = { ...fixture.existingClient, serviceStatus: "pre_booking", startDate, endDate: null };
             fixture.findClient.execute.mockResolvedValue(before);
-            const updated = { ...fixture.existingClient, ...after,
-                endDate: after.serviceStatus === "pre_booking" ? null : fixture.existingClient.endDate };
+            fixture.clientRepository.findByIdForUpdate.mockResolvedValue(before);
+            const updated = { ...before, serviceStatus: after, endDate };
             fixture.updateClient.execute.mockResolvedValue(updated);
             fixture.updateClient.executeApprovedTarget.mockResolvedValue(updated);
             const capability = fixture.capabilities.find((entry) => entry.meta.name === "clients.update")!;
-            const updates = { id: 1, endDate: after.serviceStatus === "pre_booking" ? null : "2024-06-01" };
+            const updates = { id: 1, endDate: endDate?.toISOString().slice(0, 10) ?? null };
             const run = (entry: (typeof entryPoints)[number]) => entry === "execute"
                 ? capability.execute!(context, updates)
                 : capability.executeApprovedTarget!(context, updates, "approved-target");
-            return { ...fixture, capability, run };
+            return { ...fixture, before, run };
         }
 
-        it.each(entryPoints)("%s schedules the link for the active schedule once the update has resolved", async (entry) => {
-            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
-            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+        it.each(entryPoints)("%s records the transition before commit and only rechecks after commit", async entry => {
+            const { run, prisma, transaction, before, serviceRecordLinkService } = arrange("waiting");
+            const events: string[] = [];
+            const callback = prisma.$transaction.getMockImplementation()!;
+            prisma.$transaction.mockImplementation(async operation => {
+                const result = await callback(operation);
+                events.push("commit");
+                return result;
+            });
+            serviceRecordLinkService.recordClientTransitionInTransaction.mockImplementation(async () => { events.push("record"); });
+            serviceRecordLinkService.recheckClientRecovery.mockImplementation(async () => { events.push("recheck"); });
 
             await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
 
-            expect(prisma.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                where: { branchId: "branch-a", clientId: 1, replaced: false, terminatedAt: null },
-                orderBy: { id: "asc" },
-            }));
-            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
-            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+            expect(serviceRecordLinkService.recordClientTransitionInTransaction)
+                .toHaveBeenCalledWith(transaction, "branch-a", 1, before);
+            expect(serviceRecordLinkService.recheckClientRecovery).toHaveBeenCalledWith("branch-a", 1);
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            expect(events).toEqual(["record", "commit", "recheck"]);
         });
 
-        // The schedule read and the scheduling call must wait for the write to
-        // COMMIT: from outside the transaction the client still reads as 예약 전,
-        // so `scheduleForServiceStart` would refuse and the provider would get no
-        // link. The write is held unresolved after its work has run; nothing may
-        // be scheduled (or even read) until it is released.
-        it.each(entryPoints)("%s schedules only after the write has resolved, never inside it", async (entry) => {
-            const { run, prisma, updateClient, existingClient, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
-            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
-            let release!: () => void;
-            const held = new Promise<void>((resolve) => { release = resolve; });
-            let writeBodyDone = false;
-            if (entry === "execute") {
-                // `execute` writes through the update use case, whose own transaction
-                // commits when its promise resolves.
-                updateClient.execute.mockImplementation(async () => {
-                    writeBodyDone = true;
-                    await held;
-                    return { ...existingClient, serviceStatus: "waiting" };
-                });
-            } else {
-                const callback = prisma.$transaction.getMockImplementation()!;
-                prisma.$transaction.mockImplementation(async (operation) => {
-                    const result = await callback(operation);
-                    writeBodyDone = true;
-                    await held;
-                    return result;
-                });
+        it.each(entryPoints)("%s rechecks an active exit and keeps the write successful on recheck failure", async entry => {
+            const { run, serviceRecordLinkService } = arrange("active");
+            serviceRecordLinkService.recheckClientRecovery.mockRejectedValueOnce(new Error("recheck unavailable"));
+
+            await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+            expect(serviceRecordLinkService.recheckClientRecovery).toHaveBeenCalledWith("branch-a", 1);
+        });
+
+        it.each(entryPoints)("%s does not recheck an unchanged or completed pre-booking exit", async entry => {
+            for (const after of ["pre_booking", "completed"] as const) {
+                const { run, serviceRecordLinkService } = arrange(after);
+
+                await run(entry);
+
+                expect(serviceRecordLinkService.recheckClientRecovery).not.toHaveBeenCalled();
             }
-
-            const running = run(entry);
-            for (let turn = 0; turn < 50 && !writeBodyDone; turn += 1) await new Promise((resolve) => setImmediate(resolve));
-            await new Promise((resolve) => setImmediate(resolve));
-            expect(writeBodyDone).toBe(true);
-            expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();
-            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-
-            release();
-            await expect(running).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
-
-            expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7]]);
         });
 
-        it.each(entryPoints)("%s schedules every active schedule", async (entry) => {
-            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
-            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }, { id: 9 }]);
-
-            await run(entry);
-
-            expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
-        });
-
-        it.each(entryPoints)("%s does nothing when the client stays 예약 전", async (entry) => {
-            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "pre_booking" });
-            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
-
-            await run(entry);
-
-            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-        });
-
-        it.each(entryPoints)("%s keeps the update successful and logs when scheduling a link rejects", async (entry) => {
-            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
-            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
-            serviceRecordLinkService.scheduleForServiceStart.mockRejectedValue(new Error("sms unavailable"));
-
-            await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
-
-            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
-        });
-
-        it("does not schedule from the task-automation path (its link intents are staged by the reviewed artifact)", async () => {
-            const fixture = setup();
-            fixture.findClient.execute.mockResolvedValue({ ...fixture.existingClient, serviceStatus: "pre_booking" });
-            fixture.prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+        it("records the task's no-send decision in the same transaction as the eligible exit", async () => {
+            const fixture = arrange("waiting");
+            const impact = {
+                availability: "available", effects: [], complete: true, affectedJobs: [],
+                clientIdentity: "1".repeat(64), sourceGuard: "2".repeat(64),
+            };
+            const transaction = {
+                ...fixture.transaction,
+                client: { findFirst: jest.fn().mockResolvedValue({ id: 1, createdAt: new Date("2026-01-01") }) },
+            };
             const automationRecords = {
-                runTaskMutation: jest.fn().mockResolvedValue({ result: { id: 1, name: "홍길동", status: "updated" } }),
+                runTaskMutation: jest.fn(async (_context, _artifact, apply) => ({ result: (await apply(transaction)).result })),
             };
             const provider = new ClientWriteAgentCapabilitiesProvider(
                 fixture.createClient as never,
@@ -1450,7 +1423,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
                 undefined,
                 fixture.triggerService as never,
                 fixture.messageAutomationIntentService as never,
-                undefined,
+                { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
                 automationRecords as never,
                 fixture.serviceRecordLinkService as never,
             );
@@ -1465,15 +1438,18 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
                     capability: "clients.update",
                     branchId: "branch-a",
                     targetClientId: 1,
-                    impact: { availability: "available", effects: [], complete: true },
+                    impact,
                     consent: { choice: "no" },
                     noSend: true,
                 },
-            } as never, { id: 1, serviceStatus: "waiting" }, "approved-target")).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+            } as never, { id: 1, endDate: "2026-12-15" }, "approved-target")).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
 
             expect(automationRecords.runTaskMutation).toHaveBeenCalledTimes(1);
             expect(fixture.serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-            expect(fixture.prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+            expect(fixture.serviceRecordLinkService.recordClientTransitionInTransaction).toHaveBeenCalledWith(
+                transaction, "branch-a", 1, fixture.before, false,
+            );
+            expect(fixture.serviceRecordLinkService.recheckClientRecovery).not.toHaveBeenCalled();
         });
     });
 

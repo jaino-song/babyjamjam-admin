@@ -29,6 +29,7 @@ import {
 } from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
+import { RECEIPT_LINK_KIND } from "domain/repositories/receipt-link-token.repository.interface";
 import {
     type AppendServiceRecordRevisionInput,
     type ServiceRecordEditConfirmInput,
@@ -176,7 +177,7 @@ type DocumentScopeRow = {
     createdDate: Date;
     receiptLinkTokens?: Array<{
         id: string;
-        eformsignDocId: number;
+        eformsignDocId: number | null;
         clientId: number | null;
         branchId: string;
         active: boolean;
@@ -286,6 +287,7 @@ async function loadDocumentScope(
                     updatedDate: true,
                     createdDate: true,
                     receiptLinkTokens: {
+                        where: { kind: RECEIPT_LINK_KIND.CONTRACT },
                         select: {
                             id: true,
                             eformsignDocId: true,
@@ -360,6 +362,7 @@ async function loadDocumentScope(
         .filter((token) => (
             token.branchId === branchId
             && token.clientId === client.id
+            && token.eformsignDocId !== null
             && token.active
             && token.revokedAt === null
         ));
@@ -507,6 +510,7 @@ export async function loadRevisionFactsSource(
                 stepRecipientSms: true,
                 detailPayload: true,
                 receiptLinkTokens: {
+                    where: { kind: RECEIPT_LINK_KIND.CONTRACT },
                     select: {
                         id: true,
                         eformsignDocId: true,
@@ -537,14 +541,14 @@ export async function loadRevisionFactsSource(
                 : toDomainJson(row.detailPayload),
         });
         const toFactsTokens = (row: FactsRow): ServiceRecordEditRevisionFactsReceiptToken[] => row.receiptLinkTokens
-            .map((token) => ({
+            .flatMap((token) => token.eformsignDocId === null ? [] : [{
                 id: token.id,
                 eformsignDocId: token.eformsignDocId,
                 branchId: token.branchId,
                 clientId: token.clientId,
                 active: token.active,
                 revokedAt: token.revokedAt,
-            }));
+            }]);
 
         const contractRow = factsDocumentId === null
             ? null

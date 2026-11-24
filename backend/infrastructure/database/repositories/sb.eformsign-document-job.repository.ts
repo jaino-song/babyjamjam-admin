@@ -46,6 +46,7 @@ import { ContractRecoveryError } from "domain/repositories/eformsign-contract-re
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import { normalizeVerifiedAuthority, retireProvenNoEffect } from "../utils/eformsign-contract-authority-release";
 import { AuthorityConflictError, lockAuthorityScope, reserveAuthority } from "../utils/eformsign-contract-authority";
+import { saveContractCopaymentDate } from "../utils/save-contract-copayment-date";
 import {
     authorizeServiceRecordDispatch,
     deriveServiceRecordDocumentSyncStatus,
@@ -638,6 +639,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         if (inserted[0]) {
             if (generation) await reserveAuthority(tx, { branchId: input.branchId, clientId: input.clientId!, jobId: inserted[0].id,
                 generation, fingerprint: input.payloadFingerprint, priorDocumentId });
+            if (generation && input.copaymentReceivedDate) {
+                await saveContractCopaymentDate(tx, input.branchId, input.clientId!, input.copaymentReceivedDate);
+            }
             return { job: this.toDomain(inserted[0]), existing: false };
         }
 

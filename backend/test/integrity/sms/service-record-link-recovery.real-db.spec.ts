@@ -1,0 +1,832 @@
+import { ConfigService } from "@nestjs/config";
+import { randomUUID } from "node:crypto";
+import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
+import { CanceledAutomationRetrySettingsService } from "application/services/canceled-automation-retry-settings.service";
+import { ClientService } from "application/services/client.service";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
+import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { ServiceRecordLinkService } from "application/services/service-record-link.service";
+import { ServiceRecordTokenService } from "application/services/service-record-token.service";
+import { buildSmsProviderAcceptanceFingerprint, buildSmsProviderAcceptanceKey, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
+import { SmsRetryService } from "application/services/sms-retry.service";
+import { SystemSettingService } from "application/services/system-setting.service";
+import { CreateClientUsecase } from "application/usecases/client/create-client.usecase";
+import { FindClientByIdUsecase } from "application/usecases/client/find-client-by-id.usecase";
+import { UpdateClientUsecase } from "application/usecases/client/update-client.usecase";
+import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
+import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import {
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+    getServiceRecordLinkScheduledFor,
+    serviceRecordAutomaticJobKey,
+} from "domain/constants/service-record-link-message";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
+import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
+import { occurrenceVariables, storedOccurrence } from "infrastructure/database/repositories/message-occurrence-ledger";
+import { hasRecordLinkAcceptance, readRecordLinkAssignment, RECORD_LINK_RECOVERY_REFUSED } from "infrastructure/database/repositories/record-link-recovery.repository";
+import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
+import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
+import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/database/repositories/sb.message-trigger-rule-branch-override.repository";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
+import type { PrismaService } from "infrastructure/database/prisma.service";
+import * as telemetry from "infrastructure/observability/service-record-sentry";
+import { createBranch, createClient, createEformsignDoc, createEmployee, createEmployeeSchedule } from "../helpers/factories";
+import { closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
+import { RowTracker } from "../helpers/tracker";
+import { noopApprovalStub, RecordingDeliveryStub, wireMessageTriggerService } from "./sms-wiring.local";
+
+type TriggerFixture = ReturnType<typeof wireMessageTriggerService>;
+
+class RecordingRecordLinkDelivery extends RecordingDeliveryStub {
+    accepts = true;
+    private readonly acceptance: SmsProviderAcceptanceService;
+
+    constructor(database: PrismaService, ...rest: Tail<ConstructorParameters<typeof RecordingDeliveryStub>>) {
+        super(database, ...rest);
+        this.acceptance = new SmsProviderAcceptanceService(new SbMessageLogRepository(database));
+    }
+
+    protected override async completePreparedDelivery(job: MessageTriggerJobEntity): Promise<boolean> {
+        const log = await this.acceptance.prepare(MessageLogEntity.create({
+            branchId: job.branchId!,
+            clientId: job.clientId!,
+            triggerJobId: job.id,
+            provider: "aligo_sms",
+            templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+            receiver: job.recipientPhone!,
+            messageBody: job.payload.messageBody!,
+            variables: { scheduleId: String(job.employeeScheduleId), employeeId: String(job.payload.employeeId) },
+            providerAcceptanceKey: buildSmsProviderAcceptanceKey("record-link-fixture", job.id),
+            providerAcceptanceFingerprint: buildSmsProviderAcceptanceFingerprint({ id: job.id }),
+            providerAcceptanceState: "prepared",
+        }));
+        const started = await this.acceptance.beginProviderCall(log);
+        await super.completePreparedDelivery(job);
+        started.recordProviderResult({ accepted: this.accepts,
+            ...(this.accepts ? { providerMessageId: randomUUID() } : { errorMessage: "synthetic transport rejection" }) });
+        if (!this.accepts) {
+            started.status = "failed";
+            started.nextRetryAt = new Date();
+            job.markFailed("synthetic transport rejection");
+        }
+        await this.acceptance.persist(started);
+        return this.accepts;
+    }
+}
+
+type Tail<T extends readonly unknown[]> = T extends readonly [unknown, ...infer Rest] ? Rest : never;
+
+describeReal("service-record-link recovery through customer writes (PostgreSQL)", () => {
+    let db: IntegrityPrisma;
+    let tracker: RowTracker;
+    let branchIds: string[];
+    const dates = { startDate: "2026-11-27", endDate: "2026-12-15" };
+    const due = getServiceRecordLinkScheduledFor(new Date(dates.startDate));
+
+    beforeAll(async () => { db = await createIntegrityPrisma(); });
+
+    beforeEach(() => {
+        tracker = new RowTracker();
+        branchIds = [];
+        jest.useFakeTimers({ doNotFake: ["nextTick", "setTimeout", "clearTimeout", "setImmediate", "clearImmediate", "hrtime", "performance"] });
+        jest.setSystemTime(new Date("2026-11-23T04:00:00Z"));
+    });
+
+    afterEach(async () => {
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+        for (const branchId of branchIds) {
+            await db.raw.message_occurrence_manual_attempt.deleteMany({ where: { branchId } });
+            await db.raw.message_occurrence_claim.deleteMany({ where: { branchId } });
+            await db.raw.message_log.deleteMany({ where: { branchId } });
+            await db.raw.message_trigger_job.deleteMany({ where: { branchId, originalJobId: { not: null } } });
+            await db.raw.message_trigger_job.deleteMany({ where: { branchId } });
+            await db.raw.service_record_token.deleteMany({ where: { branchId } });
+            await db.raw.message_trigger_rule_branch_override.deleteMany({ where: { branchId } });
+            await db.raw.system_setting.deleteMany({ where: { key: { startsWith: `branch:${branchId}:` } } });
+        }
+        await tracker.cleanup(db.raw);
+    });
+
+    afterAll(async () => { if (db) await closeIntegrityPrisma(db); });
+
+    async function fixture(withRecordLifecycle = false) {
+        const { id: branchId } = await createBranch(db.raw, tracker, { smsSenderApprovalStatus: "approved" });
+        branchIds.push(branchId);
+        const employee = await createEmployee(db.raw, tracker, { branchId, smsAutomationEnabled: true, openToNextWork: true });
+        const lock = new MessageAutomationBranchLockService(db.service);
+        const activation = new MessageAutomationActivationService(db.service, lock, new AdminAuditEventWriter(db.service));
+        const retry = new CanceledAutomationRetrySettingsService(new CanceledAutomationRetryRepository(db.service), lock, activation);
+        const trigger = wireMessageTriggerService(db, branchId, RecordingRecordLinkDelivery, new MessageSenderApprovalService(db.service));
+        const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as ConstructorParameters<typeof ClientService>[11];
+        const lifecycle = withRecordLifecycle ? new ServiceRecordLifecycleService(db.service, calendar) : undefined;
+        const newLinkWorker = () => new ServiceRecordLinkService(db.service, new ServiceRecordTokenService(db.service), new ConfigService(),
+            trigger.jobRepository, trigger.logRepository, new SbMessageTriggerRuleBranchOverrideRepository(db.service),
+            new MessageTemplateAutomationLockService(db.service), lifecycle, lock, activation);
+        const link = newLinkWorker();
+        const intent = new MessageAutomationIntentService(db.service, trigger.service, link, {} as ConstructorParameters<typeof MessageAutomationIntentService>[3]);
+        const repository = new SbClientRepository(db.service);
+        const systemRepo = new SbSystemSettingRepository(db.service);
+        const clients = new ClientService(new CreateClientUsecase(repository, calendar), new FindClientByIdUsecase(repository),
+            {} as ConstructorParameters<typeof ClientService>[2], {} as ConstructorParameters<typeof ClientService>[3],
+            new UpdateClientUsecase(repository, calendar), {} as ConstructorParameters<typeof ClientService>[5],
+            db.service, repository, new SystemSettingService(new GetSettingUsecase(systemRepo), new UpdateSettingUsecase(systemRepo)),
+            {} as ConstructorParameters<typeof ClientService>[9], intent, calendar, undefined, link,
+            lifecycle, undefined, undefined, undefined, undefined, lock);
+        await db.raw.message_trigger_rule.upsert({
+            where: { id: SERVICE_RECORD_LINK_RULE_ID },
+            create: { id: SERVICE_RECORD_LINK_RULE_ID, name: "제공기록지 작성 링크", eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.SAME_DAY, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, isActive: true },
+            update: {},
+        });
+        const toggle = (on: boolean) => retry.update(branchId, SERVICE_RECORD_LINK_RULE_ID, on);
+        const create = async (serviceStatus = "pre_booking", applyMessageAutomation = false, period = dates) => {
+            const client = await clients.create(branchId, {
+                ...period, name: "QA-제공기록 링크 테스트", primaryEmployeeId: employee.id, serviceStatus, applyMessageAutomation,
+                careCenter: false, voucherClient: false, birthday: null, dueDate: null, birthDate: null, breastPump: false,
+            });
+            const schedule = await db.raw.employee_schedule.findFirstOrThrow({ where: { branchId, clientId: client.id } });
+            tracker.track("client", client.id);
+            tracker.track("employee_schedule", schedule.id);
+            return { client, schedule };
+        };
+        return { branchId, employee, link, newLinkWorker, clients, trigger, toggle, create, lock };
+    }
+
+    async function acceptedFor(branchId: string) {
+        return db.raw.message_log.findMany({ where: { branchId, templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+            providerAcceptanceState: "accepted" } });
+    }
+
+    async function deliver(trigger: TriggerFixture, id: string, branchId: string): Promise<void> {
+        await trigger.service.dispatchPendingJobNow(id, { expectedBranchId: branchId });
+    }
+
+    it("keeps a pre-booking attachment inert with the actual record lifecycle wired", async () => {
+        const { branchId, create, toggle } = await fixture(true);
+        await toggle(true);
+        const { schedule } = await create("pre_booking", true);
+        expect(await db.raw.message_trigger_job.findFirst({ where: { employeeScheduleId: schedule.id } }))
+            .toMatchObject({ status: "canceled", recoveryState: "awaiting_transition" });
+        expect(await db.raw.service_record_case.count({ where: { branchId } })).toBe(0);
+        expect(await db.raw.service_record_token.count({ where: { branchId } })).toBe(0);
+        expect(await db.raw.message_log.count({ where: { branchId } })).toBe(0);
+    });
+
+    it.each([false, true])("observes a new pre-booking assignment with automation=%s and leaves OFF inert", async apply => {
+        const { branchId, link, clients, create, toggle } = await fixture();
+        const { client, schedule } = await create("pre_booking", apply);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID } });
+        expect(original).toMatchObject({ status: "canceled", recoveryEpoch: null, recoveryState: "awaiting_transition", scheduledFor: due });
+        expect(await db.raw.service_record_token.count({ where: { branchId } })).toBe(0);
+        await toggle(true); // OFF at observation stays excluded.
+        await clients.confirmBooking(branchId, client.id);
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
+        expect(await db.raw.message_log.count({ where: { branchId } })).toBe(0);
+    });
+
+    it("reports missing occurrence lookup and leaves the original recoverable without a successor", async () => {
+        const { branchId, create, clients, toggle, link, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        expect(original).toMatchObject({ recoveryState: "eligible", scheduledFor: due });
+        const capture = jest.spyOn(telemetry, "captureServiceRecordError").mockImplementation(() => undefined);
+        const repo = trigger.jobRepository;
+        // Simulate the old in-process repository shape without the now-required method.
+        Object.defineProperty(repo, "hasAcceptedOccurrence", { value: undefined, configurable: true });
+        jest.setSystemTime(due);
+        try {
+            expect(await link.sweepRecovery()).toBe(0);
+            expect(capture).toHaveBeenCalledWith(
+                expect.objectContaining({ message: expect.stringContaining("hasAcceptedOccurrence") }),
+                { operation: "link-schedule", handled: true },
+            );
+            expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
+            expect(await acceptedFor(branchId)).toHaveLength(0);
+            const retained = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: original.id } });
+            expect(retained).toMatchObject({ recoveryState: "eligible", recoveryEpoch: original.recoveryEpoch });
+            expect(retained.nextCheckAt!.getTime()).toBeGreaterThan(due.getTime());
+        } finally {
+            Reflect.deleteProperty(repo, "hasAcceptedOccurrence");
+        }
+    });
+
+    it.each(["waiting", "active"])("records %s before a worker crash and admits and sends exactly once", async status => {
+        const { branchId, employee, link, newLinkWorker, clients, create, toggle, trigger } = await fixture();
+        const { enabledAt } = await toggle(true);
+        const { client, schedule } = await create();
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        expect(original.recoveryEpoch?.toISOString()).toBe(enabledAt);
+        if (status === "active") jest.setSystemTime(new Date("2026-11-27T04:00:00Z"));
+        const hook = jest.spyOn(link, "recheckClientRecovery").mockResolvedValueOnce(undefined);
+        await clients.confirmBooking(branchId, client.id);
+        expect(hook).toHaveBeenCalledTimes(1);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } })).toMatchObject({
+            recoveryState: "eligible", recoveryTransitionStatus: status, scheduledFor: due, status: "canceled",
+        });
+        if (status === "waiting") {
+            jest.setSystemTime(new Date(due.getTime() - 1));
+            expect(await link.sweepRecovery()).toBe(0);
+            jest.setSystemTime(due);
+        }
+        const acceptance = jest.spyOn(trigger.jobRepository, "hasAcceptedOccurrence");
+        await Promise.all([link.recheckClientRecovery(branchId, client.id),
+            newLinkWorker().recheckClientRecovery(branchId, client.id), newLinkWorker().sweepRecovery()]);
+        expect(acceptance).toHaveBeenCalledTimes(1);
+        await expect(acceptance.mock.results[0]?.value).resolves.toBe(false);
+        const successor = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
+        expect(successor).toMatchObject({ dedupeKey: `record-retry:${original.id}`, recipientPhone: employee.phone, scheduledFor: new Date() });
+        const secondWorker = wireMessageTriggerService(db, branchId, RecordingRecordLinkDelivery);
+        await Promise.all([deliver(trigger, successor.id, branchId), deliver(secondWorker, successor.id, branchId)]);
+        expect([...trigger.delivery.providerCalls, ...secondWorker.delivery.providerCalls]).toHaveLength(1);
+        expect(await acceptedFor(branchId)).toHaveLength(1);
+        expect(await db.raw.message_log.count({ where: { triggerJobId: original.id } })).toBe(0);
+        jest.setSystemTime(new Date("2026-11-28T04:00:00Z"));
+        await clients.update(branchId, client.id, { name: "QA-진행 상태" });
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(1);
+    });
+
+    it.each(["off", "new-epoch", "legacy", "completed"])("keeps %s terminal including after a later edit", async mode => {
+        const { branchId, employee, link, clients, create, toggle } = await fixture();
+        await toggle(true);
+        const { client, schedule } = mode === "legacy" ? await (async () => {
+            const client = await createClient(db.raw, tracker, { branchId, serviceStatus: "pre_booking",
+                startDate: new Date(dates.startDate), endDate: new Date(dates.endDate) });
+            const schedule = await createEmployeeSchedule(db.raw, tracker, { clientId: client.id, primaryEmployeeId: employee.id },
+                { branchId, startDate: new Date(dates.startDate), endDate: new Date(dates.endDate) });
+            return { client, schedule };
+        })() : await create();
+        if (mode === "off" || mode === "new-epoch") await toggle(false);
+        if (mode === "new-epoch") await toggle(true);
+        const missedHook = mode === "completed" ? jest.spyOn(link, "recheckClientRecovery").mockResolvedValue(undefined) : undefined;
+        if (missedHook) jest.setSystemTime(new Date("2026-12-16T04:00:00Z"));
+        await clients.confirmBooking(branchId, client.id);
+        if (missedHook) {
+            missedHook.mockRestore();
+            expect(await db.raw.message_trigger_job.findFirst({ where: { employeeScheduleId: schedule.id } }))
+                .toMatchObject({ recoveryState: "ineligible_terminal", recoveryTransitionStatus: "completed" });
+            await clients.update(branchId, client.id, { endDate: "2026-12-30" });
+        } else jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await link.scheduleForServiceStart(schedule.id)).toBe(false);
+        expect(await db.raw.message_trigger_job.findMany({ where: { employeeScheduleId: schedule.id } }))
+            .toEqual([expect.objectContaining({ status: "canceled", cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON, originalJobId: null })]);
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it.each([false, true])("gives a confirmed fresh assignment its first ordinary send with automation=%s and retry OFF", async apply => {
+        const { branchId, create, trigger } = await fixture();
+        const { schedule } = await create("waiting", apply);
+        const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID } });
+        expect(job).toMatchObject({ status: "pending", originalJobId: null, recoveryReason: null, scheduledFor: due });
+        jest.setSystemTime(new Date(due.getTime() - 1));
+        await deliver(trigger, job.id, branchId);
+        expect(trigger.delivery.providerCalls).toHaveLength(0);
+        jest.setSystemTime(due);
+        await deliver(trigger, job.id, branchId);
+        expect(await acceptedFor(branchId)).toHaveLength(1);
+    });
+
+    it("reschedules the same recipient on the original ordinary job", async () => {
+        const { branchId, create, link, lock } = await fixture();
+        const { schedule } = await create("waiting");
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        const startDate = new Date("2026-12-01");
+        await lock.runExclusive(branchId, tx => tx.employee_schedule.update({ where: { id: schedule.id, branchId }, data: { startDate } }));
+        const read = jest.spyOn(db.service.message_trigger_job, "findUnique");
+        expect(await link.scheduleForServiceStart(schedule.id, { rescheduleAutomatic: true, branchId })).toBe(true);
+        expect(read.mock.calls.filter(([options]) => options.where.dedupeKey === original.dedupeKey)).toHaveLength(1);
+        expect(await db.raw.message_trigger_job.findMany({ where: { employeeScheduleId: schedule.id } })).toEqual([
+            expect.objectContaining({ id: original.id, status: "pending", scheduledFor: getServiceRecordLinkScheduledFor(startDate) }),
+        ]);
+    });
+
+    it("keeps the first due time and honors a delayed schedule, even when a date refresh rechecks it", async () => {
+        const { branchId, lock, create, toggle, clients, link, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        const moved = new Date("2026-12-01");
+        await lock.runExclusive(branchId, tx => tx.employee_schedule.update({ where: { id: schedule.id }, data: { startDate: moved } }));
+        await clients.confirmBooking(branchId, client.id);
+        const movedDue = getServiceRecordLinkScheduledFor(moved);
+        for (const time of [due, new Date(movedDue.getTime() - 1)]) {
+            jest.setSystemTime(time);
+            await link.scheduleForServiceStart(schedule.id, { rescheduleAutomatic: true, branchId });
+            expect(await link.sweepRecovery()).toBe(0);
+        }
+        jest.setSystemTime(movedDue);
+        expect(await link.sweepRecovery()).toBe(1);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, originalJobId: null } });
+        const successor = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
+        expect(original.scheduledFor).toEqual(due);
+        expect(successor.scheduledFor).toEqual(movedDue);
+        await deliver(trigger, successor.id, branchId);
+        expect(await acceptedFor(branchId)).toHaveLength(1);
+    });
+
+    it.each(["before claim", "after preparation", "earlier"])("retimes an admitted successor when the schedule changes %s", async change => {
+        const { branchId, lock, create, toggle, clients, link, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(1);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({
+            where: { employeeScheduleId: schedule.id, originalJobId: null },
+        });
+        const successor = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
+        const changedStart = new Date(change === "earlier" ? "2026-11-26" : "2026-12-01");
+        const changedDue = getServiceRecordLinkScheduledFor(changedStart);
+        const editSchedule = () => lock.runExclusive(branchId, tx => tx.employee_schedule.update({
+            where: { id: schedule.id, branchId }, data: { startDate: changedStart },
+        }));
+        let prepare: jest.SpyInstance | undefined;
+        if (change === "after preparation") {
+            const realPrepare = trigger.delivery.prepareJob.bind(trigger.delivery);
+            prepare = jest.spyOn(trigger.delivery, "prepareJob").mockImplementationOnce(async job => {
+                const prepared = await realPrepare(job);
+                await editSchedule();
+                return prepared;
+            });
+        } else {
+            await editSchedule();
+        }
+        if (change === "earlier") {
+            jest.setSystemTime(changedDue);
+            await deliver(trigger, successor.id, branchId);
+            expect(trigger.delivery.providerCalls).toHaveLength(0);
+            jest.setSystemTime(due);
+        } else {
+            await deliver(trigger, successor.id, branchId);
+            if (prepare) expect(prepare).toHaveBeenCalledTimes(1);
+            expect(trigger.delivery.providerCalls).toHaveLength(0);
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } })).toMatchObject({
+                id: successor.id, status: "pending", scheduledFor: changedDue, claimToken: null, processingDeadlineAt: null,
+            });
+            jest.setSystemTime(changedDue);
+        }
+        await trigger.service.dispatchDueJobs();
+        await trigger.service.dispatchDueJobs();
+        expect(trigger.delivery.providerCalls).toHaveLength(1);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } })).toMatchObject({
+            status: "canceled", cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON, scheduledFor: due,
+        });
+        expect(await db.raw.message_trigger_job.findMany({ where: { originalJobId: original.id } })).toEqual([
+            expect.objectContaining({ id: successor.id, status: "sent" }),
+        ]);
+    });
+
+    it.each(["direct dispatch", "dispatch tick"])("makes denied sender terminal at a real due attempt via %s, even after approval", async entry => {
+        const { branchId, create, clients, toggle, link, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create("waiting");
+        const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        await clients.update(branchId, client.id, { startDate: null });
+        await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+        const discover = jest.spyOn(trigger.jobRepository, "findDueRecordLinkJobsForSenderCheck");
+        const fence = jest.spyOn(trigger.jobRepository, "fenceServiceRecordLinkAttempt");
+        if (entry === "dispatch tick") {
+            jest.setSystemTime(new Date(due.getTime() - 1));
+            await trigger.service.dispatchDueJobs();
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } }))
+                .toMatchObject({ status: "pending", recoveryReason: null, scheduledFor: due });
+        }
+        jest.setSystemTime(due);
+        if (entry === "dispatch tick") await trigger.service.dispatchDueJobs();
+        else await deliver(trigger, job.id, branchId);
+        if (entry === "dispatch tick") {
+            expect(discover).toHaveBeenCalledWith([branchId], due);
+            expect(fence).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: job.id }), due, "pending", true);
+        }
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({
+            status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, recoveryReason: null, recoveryEpoch: null,
+        });
+        await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
+        await trigger.service.dispatchDueJobs();
+        await clients.update(branchId, client.id, { startDate: dates.startDate });
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await link.scheduleForServiceStart(schedule.id)).toBe(false);
+        await trigger.service.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findMany({ where: { branchId, employeeScheduleId: schedule.id } })).toEqual([
+            expect.objectContaining({ id: job.id, status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, originalJobId: null }),
+        ]);
+        expect(trigger.delivery.providerCalls).toHaveLength(0);
+        expect(await db.raw.message_log.count({ where: { branchId } })).toBe(0);
+    });
+
+    it.each([false, true])("dispatches an approved eligible job once (approval changes after discovery: %s)", async changes => {
+        const { branchId, create, trigger } = await fixture();
+        const { schedule } = await create("waiting");
+        const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        if (changes) {
+            await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+            const discover = trigger.jobRepository.findDueRecordLinkJobsForSenderCheck.bind(trigger.jobRepository);
+            const fence = jest.spyOn(trigger.jobRepository, "fenceServiceRecordLinkAttempt");
+            jest.spyOn(trigger.jobRepository, "findDueRecordLinkJobsForSenderCheck").mockImplementationOnce(async (branches, now) => {
+                const rows = await discover(branches, now);
+                expect(rows.map(row => row.id)).toContain(job.id);
+                await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
+                return rows;
+            });
+            jest.setSystemTime(due);
+            await trigger.service.dispatchDueJobs();
+            expect(fence).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: job.id }), due, "pending", true);
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({ status: "pending" });
+            expect(trigger.delivery.providerCalls).toHaveLength(0);
+        }
+        jest.setSystemTime(new Date(due.getTime() + 60_000));
+        await trigger.service.dispatchDueJobs();
+        await trigger.service.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({ status: "sent" });
+        expect(trigger.delivery.providerCalls).toHaveLength(1);
+    });
+
+    it.each([false, true])("captures the %s epoch at a pending original's first actual cancellation", async enabled => {
+        const { branchId, create, clients, toggle, link, trigger } = await fixture();
+        const epoch = enabled ? (await toggle(true)).enabledAt : null;
+        const { client, schedule } = await create("waiting");
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        await clients.update(branchId, client.id, { startDate: null });
+        jest.setSystemTime(new Date(due.getTime() - 1));
+        await deliver(trigger, original.id, branchId);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } }))
+            .toMatchObject({ status: "pending", recoveryReason: null, scheduledFor: due });
+        jest.setSystemTime(due);
+        await deliver(trigger, original.id, branchId);
+        const blocked = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: original.id } });
+        expect(blocked).toMatchObject({ status: "canceled", cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+            firstBlockedAt: due, scheduledFor: due, recoveryState: "awaiting_transition" });
+        expect(blocked.recoveryEpoch?.toISOString() ?? null).toBe(epoch);
+        if (!enabled) await toggle(true);
+        await clients.update(branchId, client.id, { startDate: dates.startDate });
+        await link.sweepRecovery();
+        const successor = await db.raw.message_trigger_job.findUnique({ where: { originalJobId: original.id } });
+        if (enabled) await deliver(trigger, successor!.id, branchId);
+        else expect(successor).toBeNull();
+        expect(await acceptedFor(branchId)).toHaveLength(enabled ? 1 : 0);
+        expect(await db.raw.message_log.count({ where: { triggerJobId: original.id } })).toBe(0);
+    });
+
+    it("keeps an unattempted pre-due original on its normal path with retry OFF", async () => {
+        const { branchId, create, clients, trigger } = await fixture();
+        const { client, schedule } = await create("waiting");
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        await clients.update(branchId, client.id, { startDate: null });
+        await clients.update(branchId, client.id, { startDate: dates.startDate });
+        jest.setSystemTime(new Date(due.getTime() - 1));
+        await deliver(trigger, original.id, branchId);
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+        jest.setSystemTime(due);
+        await deliver(trigger, original.id, branchId);
+        expect(await db.raw.message_trigger_job.findMany({ where: { employeeScheduleId: schedule.id } }))
+            .toEqual([expect.objectContaining({ id: original.id, status: "sent", scheduledFor: due, originalJobId: null })]);
+        expect(await acceptedFor(branchId)).toHaveLength(1);
+    });
+
+    it.each(["same", "off", "new-epoch"])("rechecks the %s setting at the provider fence after preparation", async mode => {
+        const { branchId, create, clients, link, toggle, trigger } = await fixture();
+        const { enabledAt: epoch } = await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(1);
+        const successor = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, originalJobId: { not: null } } });
+        const realPrepare = trigger.delivery.prepareJob.bind(trigger.delivery);
+        const prepare = jest.spyOn(trigger.delivery, "prepareJob").mockImplementationOnce(async job => {
+            const prepared = await realPrepare(job);
+            expect(prepared).not.toBeNull();
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } }))
+                .toMatchObject({ status: "processing", claimToken: job.claimToken });
+            if (mode !== "same") await toggle(false);
+            if (mode === "new-epoch") expect((await toggle(true)).enabledAt).not.toBe(epoch);
+            return prepared;
+        });
+        await deliver(trigger, successor.id, branchId);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(trigger.delivery.providerCalls).toHaveLength(mode === "same" ? 1 : 0);
+        expect(await acceptedFor(branchId)).toHaveLength(mode === "same" ? 1 : 0);
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: successor.originalJobId } })).toBe(1);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } }))
+            .toMatchObject(mode === "same" ? { status: "sent" } : { status: "canceled", cancelReason: RECORD_LINK_RECOVERY_REFUSED });
+    });
+
+    it.each(["same", "off", "new-epoch"])("rechecks the %s setting after the preliminary read and before insert", async mode => {
+        const { branchId, create, clients, link, toggle, trigger } = await fixture();
+        const { enabledAt: epoch } = await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        const issue = link["issueServiceRecordLinkJob"].bind(link);
+        const prepare = jest.spyOn(link as unknown as { issueServiceRecordLinkJob: typeof issue }, "issueServiceRecordLinkJob")
+            .mockImplementationOnce(async (id, options) => {
+                expect(options.recovery).toEqual(expect.any(Function));
+                if (mode !== "same") await toggle(false);
+                if (mode === "new-epoch") expect((await toggle(true)).enabledAt).not.toBe(epoch);
+                return issue(id, options);
+            });
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(mode === "same" ? 1 : 0);
+        expect(prepare).toHaveBeenCalledTimes(1);
+        const rows = await db.raw.message_trigger_job.findMany({ where: { originalJobId: original.id } });
+        expect(rows).toHaveLength(mode === "same" ? 1 : 0);
+        await trigger.service.dispatchDueJobs();
+        expect(trigger.delivery.providerCalls).toHaveLength(mode === "same" ? 1 : 0);
+    });
+
+    it.each(["branch disabled", "rule disabled", "sender denied", "assignment replaced", "link revoked"])(
+        "refuses provider entry when %s after recovery preparation",
+        async mode => {
+            const { branchId, create, clients, link, lock, toggle, trigger } = await fixture();
+            await toggle(true);
+            const { client, schedule } = await create();
+            await clients.confirmBooking(branchId, client.id);
+            jest.setSystemTime(due);
+            expect(await link.sweepRecovery()).toBe(1);
+            const successor = await db.raw.message_trigger_job.findFirstOrThrow({
+                where: { branchId, employeeScheduleId: schedule.id, originalJobId: { not: null } },
+            });
+            const realPrepare = trigger.delivery.prepareJob.bind(trigger.delivery);
+            const prepare = jest.spyOn(trigger.delivery, "prepareJob").mockImplementationOnce(async job => {
+                const prepared = await realPrepare(job);
+                await lock.runExclusive(branchId, async tx => {
+                    switch (mode) {
+                        case "branch disabled":
+                            await tx.system_setting.create({ data: {
+                                key: `branch:${branchId}:message_policy:trigger-dispatch:enabled`, value: "false",
+                            } });
+                            break;
+                        case "rule disabled":
+                            await tx.message_trigger_rule.update({ where: { id: SERVICE_RECORD_LINK_RULE_ID }, data: { isActive: false } });
+                            break;
+                        case "sender denied":
+                            await tx.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+                            break;
+                        case "assignment replaced":
+                            await tx.employee_schedule.update({ where: { id: schedule.id, branchId }, data: { replaced: true } });
+                            break;
+                        case "link revoked":
+                            await tx.service_record_token.updateMany({ where: { branchId, scheduleId: schedule.id, active: true },
+                                data: { active: false, revokedAt: due } });
+                            break;
+                    }
+                });
+                return prepared;
+            });
+            try {
+                if (mode === "branch disabled") {
+                    await expect(deliver(trigger, successor.id, branchId)).rejects.toMatchObject({ status: 409 });
+                } else {
+                    await deliver(trigger, successor.id, branchId);
+                    expect(await db.raw.message_trigger_job.findUnique({ where: { id: successor.id } })).toMatchObject({
+                        status: "canceled", claimToken: null,
+                        ...(mode === "sender denied" ? { cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } : {}),
+                    });
+                }
+                expect(prepare).toHaveBeenCalledTimes(1);
+                expect(trigger.delivery.providerCalls).toHaveLength(0);
+                expect(await db.raw.message_log.count({ where: { branchId, triggerJobId: successor.id } })).toBe(0);
+            } finally {
+                if (mode === "rule disabled") {
+                    await db.raw.message_trigger_rule.update({ where: { id: SERVICE_RECORD_LINK_RULE_ID }, data: { isActive: true } });
+                }
+            }
+        },
+    );
+
+    it("keeps a provider-rejected attempt terminal after pre-booking supersedes transport retry", async () => {
+        const { branchId, create, clients, link, toggle, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create("waiting");
+        const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        (trigger.delivery as RecordingRecordLinkDelivery).accepts = false;
+        jest.setSystemTime(due);
+        await deliver(trigger, job.id, branchId);
+        expect(trigger.delivery.providerCalls).toHaveLength(1);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({ status: "failed" });
+        const { id: logId } = await db.raw.message_log.findFirstOrThrow({ where: { triggerJobId: job.id } });
+        const source = await trigger.logRepository.findByIdInBranch(branchId, logId);
+        await clients.update(branchId, client.id, { startDate: null });
+        const retryProvider = { sendSms: jest.fn() };
+        const retry = new SmsRetryService(trigger.logRepository,
+            retryProvider as unknown as ConstructorParameters<typeof SmsRetryService>[1],
+            noopApprovalStub() as unknown as ConstructorParameters<typeof SmsRetryService>[2],
+            undefined, undefined, undefined, undefined, trigger.jobRepository);
+        await retry.retry(source!, "automatic");
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } }))
+            .toMatchObject({ status: "canceled", recoveryReason: null, recoveryEpoch: null });
+        await clients.update(branchId, client.id, { startDate: dates.startDate });
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(retryProvider.sendSms).not.toHaveBeenCalled();
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it("closes a terminated transition and retains the pre-booking replacement restriction", async () => {
+        const { branchId, employee, create, clients, link, toggle } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        const replacement = await createEmployee(db.raw, tracker, { branchId });
+        await expect(clients.requestReplacement(branchId, client.id, replacement.id)).rejects.toThrow();
+        expect(await db.raw.employee_schedule.count({ where: { clientId: client.id } })).toBe(1);
+        await clients.terminateService(branchId, client.id);
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await db.raw.message_trigger_job.findFirst({ where: { employeeScheduleId: schedule.id } }))
+            .toMatchObject({ recoveryState: "ineligible_terminal", recoveryTransitionStatus: "terminated",
+                payload: expect.objectContaining({ employeeId: employee.id }) });
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it.each(["employee", "replaced assignment"])("never admits a pre-booking observation for a changed %s", async field => {
+        const { branchId, create, clients, link, toggle, trigger, lock } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        const replacement = await createEmployee(db.raw, tracker, { branchId, smsAutomationEnabled: true });
+        await lock.runExclusive(branchId, tx => tx.employee_schedule.update({
+            where: { id: schedule.id, branchId },
+            data: field === "employee" ? { primaryEmployeeId: replacement.id } : { replaced: true },
+        }));
+        jest.setSystemTime(new Date("2026-11-28T04:00:00Z"));
+        await clients.confirmBooking(branchId, client.id);
+        expect(await link.sweepRecovery()).toBe(0);
+        await trigger.service.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findMany({ where: {
+            OR: [{ originalJobId: original.id }, { dedupeKey: serviceRecordAutomaticJobKey(schedule.id, replacement.id) }],
+        } })).toHaveLength(0);
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } })).toMatchObject({
+            status: "canceled", cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON, recoveryState: "ineligible_terminal",
+        });
+        expect(trigger.delivery.providerCalls).toHaveLength(0);
+    });
+
+    it("blocks an alternate ordinary record-link key when a legacy terminal sibling exists", async () => {
+        const { branchId, create, clients, trigger, toggle } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        await db.raw.message_trigger_job.update({ where: { id: original.id }, data: {
+            recoveryReason: null, recoveryEpoch: null, firstBlockedAt: null, recoveryState: null,
+        } });
+        await clients.confirmBooking(branchId, client.id);
+        const rekey = MessageTriggerJobEntity.create({
+            branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID, clientId: client.id, employeeScheduleId: schedule.id,
+            scheduledFor: new Date("2026-11-26T04:00:00Z"), recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: original.recipientPhone, templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: `system:service_record_link:schedule:${schedule.id}:primary:alternate`,
+            payload: { memberId: "", recipientName: "", recipientPhone: "", templateVariables: {} },
+        });
+        expect((await trigger.jobRepository.upsertPending(rekey)).id).toBe(original.id);
+        expect(await db.raw.message_trigger_job.count({ where: { employeeScheduleId: schedule.id } })).toBe(1);
+    });
+
+    it("records an exit to replacement requested as terminal, including after replacement completion", async () => {
+        const { branchId, create, clients, link, toggle, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create("waiting");
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        await clients.update(branchId, client.id, { startDate: null });
+        jest.setSystemTime(due);
+        await deliver(trigger, original.id, branchId);
+        await clients.update(branchId, client.id, { startDate: dates.startDate, serviceStatus: "replacement_requested" });
+        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } }))
+            .toMatchObject({ recoveryState: "ineligible_terminal", recoveryTransitionStatus: "replacement_requested" });
+        await clients.completeReplacement(branchId, client.id);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it("does not infer a booking transition from a signed contract or a later name edit", async () => {
+        const { branchId, create, clients, link, toggle } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        const signed = await createEformsignDoc(db.raw, tracker, { branchId, clientId: client.id });
+        await db.raw.client.update({ where: { id: client.id }, data: { eDocId: signed.documentId } });
+        await clients.update(branchId, client.id, { name: "QA-서명된 예약 전 고객" });
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await db.raw.message_trigger_job.findFirst({ where: { employeeScheduleId: schedule.id } }))
+            .toMatchObject({ recoveryState: "awaiting_transition", recoveryTransitionStatus: null });
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it("honors an operator cancellation of an admitted successor", async () => {
+        const { branchId, create, clients, link, toggle, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(1);
+        const successor = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, originalJobId: { not: null } } });
+        await trigger.service.cancelJobByUser(branchId, successor.id);
+        await deliver(trigger, successor.id, branchId);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: successor.originalJobId } })).toBe(1);
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it("persists an explicit no-send choice across worker restart", async () => {
+        const { branchId, create, clients, link, toggle } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        const record = link.recordClientTransitionInTransaction.bind(link);
+        jest.spyOn(link, "recordClientTransitionInTransaction")
+            .mockImplementationOnce((tx, branch, id, before) => record(tx, branch, id, before, false));
+        await clients.confirmBooking(branchId, client.id);
+        jest.setSystemTime(due);
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(await db.raw.message_trigger_job.findFirst({ where: { employeeScheduleId: schedule.id } }))
+            .toMatchObject({ recoveryState: "ineligible_terminal", recoveryTransitionStatus: "waiting" });
+        expect(await acceptedFor(branchId)).toHaveLength(0);
+    });
+
+    it("reads accepted legacy manual job history with an absent incarnation directly from the repository", async () => {
+        const { branchId, create, employee, link } = await fixture();
+        const { client, schedule } = await create("waiting");
+        const otherBranch = await createBranch(db.raw, tracker);
+        const otherEmployee = await createEmployee(db.raw, tracker, { branchId });
+        const assignment = await db.service.$transaction(tx => readRecordLinkAssignment(tx, branchId, schedule.id));
+        if (!assignment) throw new Error("Expected the persisted record-link assignment");
+        const hasAcceptance = (candidate = assignment) => db.service.$transaction(tx => hasRecordLinkAcceptance(tx, candidate));
+        expect(await hasAcceptance()).toBe(false);
+
+        const manual = await link.sendNow(schedule.id);
+        const job = await db.raw.message_trigger_job.update({ where: { id: manual.jobId }, data: { status: "sent", sentAt: new Date() } });
+        expect(job.payload).toMatchObject({ employeeId: employee.id });
+        expect(job.payload).not.toHaveProperty("scheduleIncarnationId");
+        await db.raw.message_log.create({ data: {
+            branchId, clientId: client.id, triggerJobId: job.id, provider: "aligo_sms",
+            receiver: employee.phone!, messageBody: "제공기록지 링크", templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+            status: "sent", providerAcceptanceState: "accepted", providerAcceptedAt: new Date(),
+        } });
+        expect(await db.raw.message_occurrence_claim.count({ where: { branchId } })).toBe(0);
+        expect(await db.raw.message_occurrence_manual_attempt.count({ where: { branchId } })).toBe(0);
+        expect(await hasAcceptance()).toBe(true);
+        expect(await hasAcceptance({ ...assignment, branchId: otherBranch.id })).toBe(false);
+
+        const setIdentity = (employeeId: number, scheduleIncarnationId: string | null) => db.raw.message_trigger_job.update({
+            where: { id: job.id }, data: { payload: { employeeId, scheduleIncarnationId } },
+        });
+        await setIdentity(employee.id, randomUUID());
+        expect(await hasAcceptance()).toBe(false);
+        await setIdentity(otherEmployee.id, schedule.incarnationId);
+        expect(await hasAcceptance()).toBe(false);
+        await setIdentity(employee.id, schedule.incarnationId);
+        expect(await hasAcceptance()).toBe(true);
+        await setIdentity(employee.id, null);
+        expect(await hasAcceptance()).toBe(true);
+    });
+
+    it.each([
+        { history: "linked message history", detached: false },
+        { history: "the common ledger after detaching the manual job", detached: true },
+    ])("refuses recovery from $history and still admits an explicit repeat", async ({ detached }) => {
+        const { branchId, create, clients, toggle, link, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        const manual = await link.sendNow(schedule.id);
+        await deliver(trigger, manual.jobId, branchId);
+        if (detached) {
+            const [accepted] = await acceptedFor(branchId);
+            if (!accepted) throw new Error("Expected the manual provider acceptance");
+            const occurrence = storedOccurrence(accepted);
+            if (!occurrence) throw new Error("Expected a committed occurrence for the manual send");
+            await db.raw.message_log.update({ where: { id: accepted.id }, data: {
+                triggerJobId: null, variables: occurrenceVariables(occurrence),
+            } });
+            await db.raw.message_trigger_job.delete({ where: { id: manual.jobId } });
+        }
+        jest.setSystemTime(due);
+        const acceptance = jest.spyOn(trigger.jobRepository, "hasAcceptedOccurrence");
+        expect(await link.sweepRecovery()).toBe(0);
+        expect(acceptance).toHaveBeenCalledTimes(detached ? 1 : 0);
+        if (detached) await expect(acceptance.mock.results[0]?.value).resolves.toBe(true);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, status: "canceled" } });
+        expect(original).toMatchObject({ recoveryState: "ineligible_terminal", scheduledFor: due });
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
+        expect(trigger.delivery.providerCalls).toHaveLength(1);
+        expect(await acceptedFor(branchId)).toHaveLength(1);
+        const resend = await link.sendNow(schedule.id);
+        expect(resend.jobId).not.toBe(manual.jobId);
+        await deliver(trigger, resend.jobId, branchId);
+        expect(trigger.delivery.providerCalls.map(call => call.jobId)).toEqual([manual.jobId, resend.jobId]);
+        expect(await acceptedFor(branchId)).toHaveLength(2);
+    });
+});

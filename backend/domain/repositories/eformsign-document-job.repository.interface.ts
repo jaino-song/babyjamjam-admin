@@ -23,6 +23,8 @@ export interface EnqueueEformsignDocumentJobInput {
     payload: EformsignDocumentJobPayload;
     payloadFingerprint: string;
     createdByUserId?: string | null;
+    /** Validated explicit date from a new creation request. Retries omit it. */
+    copaymentReceivedDate?: Date;
 }
 
 export interface InitialDocumentRegenerationProjection {

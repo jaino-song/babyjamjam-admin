@@ -23,6 +23,7 @@ export interface ContractCreationPrefill {
     grant?: string;
     actualPrice?: string;
     paymentDate?: string;
+    copaymentReceivedDate?: string | null;
     isContractReissue?: boolean;
     voucherType?: string;
     voucherDuration?: string;
@@ -65,6 +66,7 @@ interface FormStore {
     grant: string;
     actualPrice: string;
     paymentDate: string;
+    historicalPaymentDate: string;
     isContractReissue: boolean;
     voucherType: string;
     voucherDuration: string;
@@ -119,6 +121,7 @@ interface FormStore {
         fullPrice?: string | null;
         grant?: string | null;
         actualPrice?: string | null;
+        copaymentReceivedDate?: string | null;
         startDate?: string | null;
         endDate?: string | null;
         primaryEmployee?: { id: number; name: string } | null;
@@ -161,6 +164,7 @@ export const useFormStore = create<FormStore>((set) => {
         grant: "",
         actualPrice: "",
         paymentDate: todayIsoDate(),
+        historicalPaymentDate: "",
         isContractReissue: false,
         voucherType: "",
         voucherDuration: "",
@@ -173,6 +177,7 @@ export const useFormStore = create<FormStore>((set) => {
         setClientId: (clientId: number | null) => set((state) => ({
             clientId,
             isContractReissue: clientId === state.clientId && state.isContractReissue,
+            historicalPaymentDate: clientId === state.clientId ? state.historicalPaymentDate : "",
         })),
         setIsManualEntry: (isManualEntry: boolean) => set({ isManualEntry }),
         setName: (name: string) => set({ name }),
@@ -182,6 +187,7 @@ export const useFormStore = create<FormStore>((set) => {
         setAddress: (address: string) => set({ address }),
         resetClientFields: () => set({
             clientId: null,
+            historicalPaymentDate: "",
             isManualEntry: false,
             name: "",
             phone: "",
@@ -239,6 +245,7 @@ export const useFormStore = create<FormStore>((set) => {
         setPreservePrefilledPrices: (preservePrefilledPrices: boolean) => set({ preservePrefilledPrices }),
         prefillFromClient: (client) => set({
             isContractReissue: false,
+            historicalPaymentDate: "",
             supersede: null,
             clientId: client.id,
             isManualEntry: false,
@@ -254,7 +261,7 @@ export const useFormStore = create<FormStore>((set) => {
             actualPrice: client.actualPrice || "",
             startDate: client.startDate || "",
             endDate: client.endDate || "",
-            paymentDate: todayIsoDate(),
+            paymentDate: client.copaymentReceivedDate || todayIsoDate(),
             employeeId: client.primaryEmployee?.id ?? null,
             employeeName: client.primaryEmployee?.name ?? "",
             employee2Id: client.secondaryEmployee?.id ?? null,
@@ -263,6 +270,7 @@ export const useFormStore = create<FormStore>((set) => {
         }),
         prefillFromContract: (prefill) => set({
             isContractReissue: prefill.isContractReissue ?? false,
+            historicalPaymentDate: prefill.isContractReissue ? prefill.paymentDate ?? "" : "",
             supersede: prefill.supersedeDocumentId && prefill.clientId != null
                 ? { clientId: prefill.clientId, documentId: prefill.supersedeDocumentId }
                 : null,
@@ -287,7 +295,7 @@ export const useFormStore = create<FormStore>((set) => {
             fullPrice: prefill.fullPrice ?? "",
             grant: prefill.grant ?? "",
             actualPrice: prefill.actualPrice ?? "",
-            paymentDate: prefill.paymentDate || (prefill.isContractReissue ? "" : todayIsoDate()),
+            paymentDate: prefill.paymentDate || prefill.copaymentReceivedDate || (prefill.isContractReissue ? "" : todayIsoDate()),
             voucherType: prefill.voucherType ?? "",
             voucherDuration: prefill.voucherDuration ?? "",
             voucherYear: prefill.voucherYear ?? currentYear,
@@ -296,6 +304,7 @@ export const useFormStore = create<FormStore>((set) => {
         }),
         resetAll: () => set({
             isContractReissue: false,
+            historicalPaymentDate: "",
             supersede: null,
             clientId: null,
             isManualEntry: false,

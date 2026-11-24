@@ -1,11 +1,12 @@
-// F5: ReceiptLinkModule transitively imports MessageModule, EformsignDocModule,
-// SystemSettingModule and SchedulerLeaseModule, so compiling it in isolation with
-// Test.createTestingModule needs heavy overrides this unit test has no reason to stand up
-// (mirrors the reasoning in test/services/sms-trigger-payload-enricher.spec.ts's
-// "MessageModule providers/exports" describe block). Asserting the module's own @Module
-// metadata instead still catches the regression this test exists for: deleting a provider
-// (e.g. the enricher or the cleanup scheduler) or the AppModule import cannot pass silently
-// with a green suite.
+import { StandaloneReceiptIssueService } from "application/services/standalone-receipt-issue.service";
+import { StandaloneReceiptPreparationService } from "application/services/standalone-receipt-preparation.service";
+import { ConfigModule } from "@nestjs/config";
+import { Test } from "@nestjs/testing";
+import { MessageTriggerService } from "application/services/message-trigger.service";
+import { SmsRetryService } from "application/services/sms-retry.service";
+import { TenantModule } from "infrastructure/tenant/tenant.module";
+import { RECEIPT_LINK_TOKEN_REPOSITORY } from "domain/repositories/receipt-link-token.repository.interface";
+import { SupabaseStorageAdapter } from "infrastructure/adapters/supabase-storage.adapter";
 import { ReceiptLinkCleanupSchedulerService } from "application/services/receipt-link-cleanup-scheduler.service";
 import { ReceiptLinkDeliveryEnricher } from "application/services/receipt-link-delivery-enricher.service";
 import { ReceiptLinkIssueService } from "application/services/receipt-link-issue.service";
@@ -31,6 +32,29 @@ jest.mock("nanoid", () => ({ nanoid: () => "test-id" }));
 const { AppModule } = require("../../app.module") as typeof import("../../app.module");
 
 describe("ReceiptLinkModule wiring", () => {
+    it("resolves the receipt enricher and MessageModule retry graph through Nest", async () => {
+        const module = await Test.createTestingModule({
+            imports: [
+                ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+                TenantModule, ReceiptLinkModule,
+            ],
+        }).overrideProvider(SupabaseStorageAdapter).useValue({}).compile();
+        try {
+            const messages = module.select(MessageModule);
+            const triggers = messages.get(MessageTriggerService, { strict: true });
+            const retry = messages.get(SmsRetryService, { strict: true });
+            expect(triggers).toBeInstanceOf(MessageTriggerService);
+            expect(retry).toBeInstanceOf(SmsRetryService);
+            expect(retry).toHaveProperty("messageTriggers", triggers);
+            const receipts = module.select(ReceiptLinkModule);
+            const enricher = receipts.get(ReceiptLinkDeliveryEnricher, { strict: true });
+            expect(enricher).toHaveProperty("tokenRepository", receipts.get(RECEIPT_LINK_TOKEN_REPOSITORY, { strict: true }));
+            expect(enricher).toHaveProperty("standalone", receipts.get(StandaloneReceiptPreparationService, { strict: true }));
+        } finally {
+            await module.close();
+        }
+    });
+
     it("declares the delivery enricher, cleanup scheduler, token and issue services as providers", () => {
         const providers = Reflect.getMetadata("providers", ReceiptLinkModule) as unknown[];
 
@@ -39,6 +63,8 @@ describe("ReceiptLinkModule wiring", () => {
         expect(providers).toContain(ReceiptLinkTokenService);
         expect(providers).toContain(ReceiptLinkIssueService);
         expect(providers).toContain(ReceiptLinkManualSendService);
+        expect(providers).toContain(StandaloneReceiptIssueService);
+        expect(providers).toContain(StandaloneReceiptPreparationService);
     });
 
     it("declares ReceiptLinkController and ReceiptLinkAdminController as controllers", () => {
@@ -48,9 +74,6 @@ describe("ReceiptLinkModule wiring", () => {
         expect(controllers).toContain(ReceiptLinkAdminController);
     });
 
-    // Deleting MessageModule here is boot-breaking (the enricher injects
-    // SmsTriggerPayloadEnricherRegistry, which only MessageModule provides) yet no default-suite
-    // spec DI-compiles this module, so pin the non-global imports explicitly.
     it("imports MessageModule, EformsignDocModule and SystemSettingModule", () => {
         const imports = Reflect.getMetadata("imports", ReceiptLinkModule) as unknown[];
 

@@ -52,6 +52,7 @@ import { ClientAutomationImpactService } from "application/services/client-autom
 import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
 import { MessageTriggerRecipientResolverService, describeCaregiverMessageEffect } from "application/services/message-trigger-recipient-resolver.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { buildSmsProviderAcceptanceKey, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
@@ -66,6 +67,8 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+
+import { createSmsProviderAttemptFixture } from "../fixtures/sms-provider-attempt.fixture";
 
 /** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
 const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
@@ -174,6 +177,9 @@ describe("ClientService", () => {
     });
 
     const createMockServiceRecordLinkService = () => ({
+        observeAssignmentInTransaction: jest.fn().mockResolvedValue(false),
+        recordClientTransitionInTransaction: jest.fn().mockResolvedValue(undefined),
+        recheckClientRecovery: jest.fn().mockResolvedValue(undefined),
         scheduleForServiceStart: jest.fn().mockResolvedValue(undefined),
         revoke: jest.fn().mockResolvedValue(undefined),
     });
@@ -2466,7 +2472,7 @@ describe("ClientService", () => {
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(33);
             });
 
-            it("preserves the automation opt-out when reuse creates a missing assignment", async () => {
+            it("keeps general automation off and schedules the link for a fresh assignment to a reused client", async () => {
                 const existingClient = createClientEntity();
                 clientRepository.findByPhone.mockResolvedValue(existingClient);
                 prismaService.employee_schedule.findFirst.mockResolvedValue(null);
@@ -2488,7 +2494,7 @@ describe("ClientService", () => {
 
                 expect(prismaService.employee_schedule.create).toHaveBeenCalled();
                 expect(triggerService.syncEmployeeAssignmentRulesForSchedule).not.toHaveBeenCalled();
-                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(33);
             });
 
             it("rejects an employee that does not belong to the client branch", async () => {
@@ -4276,177 +4282,82 @@ describe("ClientService", () => {
             });
         });
 
-        describe("given a client that leaves 예약 전 (service-record link SMS for already-assigned schedules)", () => {
-            const futureStart = new Date("2026-11-02T00:00:00.000Z");
-            const futureEnd = new Date("2026-11-30T00:00:00.000Z");
+        describe("service-record link recovery after a customer save", () => {
+            const startDate = new Date("2026-11-02T00:00:00Z");
+            const endDate = new Date("2026-11-30T00:00:00Z");
+            const bookingConfirmedAt = new Date("2026-01-01");
+            type Inputs = { serviceStatus: string | null; startDate: Date | null; endDate: Date | null };
+            const before: Inputs = { serviceStatus: "pre_booking", startDate, endDate: null };
+            const waiting: Inputs = { serviceStatus: "waiting", startDate, endDate };
 
-            type StatusInputs = {
-                serviceStatus: string | null;
-                startDate: Date | null;
-                endDate: Date | null;
-            };
+            beforeEach(() => jest.useFakeTimers({ now: new Date("2026-10-30T00:00:00Z") }));
+            afterEach(() => jest.useRealTimers());
 
-            // The preflight read (and the locked row, absent from this mock) sees
-            // the client before the write; the re-read after commit sees it after.
-            const arrange = (before: StatusInputs, after: StatusInputs) => {
-                const beforeClient = Object.assign(createClientEntity(), before);
-                const afterClient = Object.assign(createClientEntity(), after);
+            function arrange(previous: Inputs, next: Inputs) {
+                const beforeClient = Object.assign(createClientEntity(), { ...previous, bookingConfirmedAt });
+                const afterClient = Object.assign(createClientEntity(), { ...next, bookingConfirmedAt });
                 findClientByIdUsecase.execute.mockImplementation(async () =>
-                    prismaService.client.updateMany.mock.calls.length > 0 ? afterClient : beforeClient);
+                    prismaService.client.updateMany.mock.calls.length ? afterClient : beforeClient);
                 const events: string[] = [];
                 prismaService.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
                     const result = await callback(prismaService);
-                    events.push("committed");
+                    events.push("commit");
                     return result;
                 });
-                serviceRecordLinkService.scheduleForServiceStart.mockImplementation(async (scheduleId: number) => {
-                    events.push(`schedule:${scheduleId}`);
-                });
+                serviceRecordLinkService.recordClientTransitionInTransaction.mockImplementation(async () => { events.push("record"); });
+                serviceRecordLinkService.recheckClientRecovery.mockImplementation(async () => { events.push("recheck"); });
                 return { events, afterClient };
-            };
+            }
 
-            const activeSchedulesAfterCommit = (ids: number[]) => {
-                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
-                    where["terminatedAt"] === null ? ids.map((id) => ({ id })) : []);
-            };
-
-            const preBooking: StatusInputs = { serviceStatus: "pre_booking", startDate: futureStart, endDate: null };
-            const waiting: StatusInputs = { serviceStatus: "waiting", startDate: futureStart, endDate: futureEnd };
-
-            it("schedules the link for the one active schedule after the transaction commits", async () => {
-                const { events } = arrange(preBooking, waiting);
-                activeSchedulesAfterCommit([7]);
+            it.each(["pre_booking", null])("records the observed %s exit inside the write and rechecks after commit", async serviceStatus => {
+                const { events } = arrange({ ...before, serviceStatus }, waiting);
 
                 await service.update(branchId, 1, { endDate: "2026-11-30" });
 
-                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
-                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
-                expect(events).toEqual(["committed", "schedule:7"]);
-                expect(prismaService.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
-                    where: expect.objectContaining({
-                        branchId,
-                        clientId: 1,
-                        replaced: false,
-                        terminatedAt: null,
-                    }),
-                    orderBy: { id: "asc" },
-                }));
-            });
-
-            it("schedules the link for every active schedule, in id order", async () => {
-                arrange(preBooking, waiting);
-                activeSchedulesAfterCommit([7, 9]);
-
-                await service.update(branchId, 1, { endDate: "2026-11-30" });
-
-                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
-            });
-
-            it("does not schedule while the end date is still missing (effective status stays 예약 전)", async () => {
-                arrange(
-                    preBooking,
-                    { serviceStatus: "waiting", startDate: futureStart, endDate: null },
+                expect(serviceRecordLinkService.recordClientTransitionInTransaction).toHaveBeenCalledWith(
+                    prismaService, branchId, 1, expect.objectContaining({ serviceStatus, bookingConfirmedAt, endDate: null }),
                 );
-                activeSchedulesAfterCommit([7]);
-
-                await service.update(branchId, 1, { serviceStatus: "waiting" });
-
+                expect(serviceRecordLinkService.recheckClientRecovery).toHaveBeenCalledWith(branchId, 1);
                 expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+                expect(events).toEqual(["record", "commit", "recheck"]);
             });
 
-            it("schedules the link when the save fills in the missing end date of a client with no stored status", async () => {
-                arrange(
-                    { serviceStatus: null, startDate: futureStart, endDate: null },
-                    { serviceStatus: null, startDate: futureStart, endDate: futureEnd },
-                );
-                activeSchedulesAfterCommit([7]);
-
-                await service.update(branchId, 1, { endDate: "2026-11-30" });
-
-                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
-                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
-            });
-
-            it("does not schedule when the save keeps the client in 예약 전", async () => {
-                arrange(preBooking, preBooking);
-                activeSchedulesAfterCommit([7]);
+            it.each([
+                [before, { ...waiting, endDate: null }],
+                [before, before],
+                [waiting, waiting],
+                [before, { ...waiting, serviceStatus: "terminated" }],
+            ])("keeps an ineligible save out of the post-commit recheck", async (previous, next) => {
+                arrange(previous, next);
 
                 await service.update(branchId, 1, { name: "새 고객 이름" });
 
+                expect(serviceRecordLinkService.recheckClientRecovery).not.toHaveBeenCalled();
                 expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
 
-            it("does not schedule when the client was not 예약 전 before the save", async () => {
-                arrange(waiting, waiting);
-                activeSchedulesAfterCommit([7]);
+            it("classifies an attachment made while 예약 전 before rechecking the transition", async () => {
+                arrange(before, waiting);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({ id: 10, clientId: 1, primaryEmployeeId: 5, secondaryEmployeeId: null });
+                prismaService.employee_schedule.update.mockResolvedValue({});
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+                serviceRecordLinkService.observeAssignmentInTransaction.mockResolvedValue(true);
 
-                await service.update(branchId, 1, { name: "새 고객 이름" });
+                await service.update(branchId, 1, { endDate: "2026-11-30", primaryEmployeeId: 7 });
 
+                expect(serviceRecordLinkService.observeAssignmentInTransaction).toHaveBeenCalledWith(prismaService, branchId, 20);
                 expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.recheckClientRecovery).toHaveBeenCalledWith(branchId, 1);
             });
 
-            it("schedules a schedule created by the same save exactly once", async () => {
-                arrange(preBooking, waiting);
-                prismaService.employee_schedule.findFirst.mockResolvedValue({
-                    id: 10,
-                    clientId: 1,
-                    primaryEmployeeId: 5,
-                    secondaryEmployeeId: null,
-                });
-                prismaService.employee_schedule.update.mockResolvedValue({});
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
-                activeSchedulesAfterCommit([20]);
-
-                await service.update(branchId, 1, { endDate: "2026-11-30", primaryEmployeeId: 7 });
-
-                expect(prismaService.employee_schedule.create).toHaveBeenCalled();
-                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20]]);
-            });
-
-            it("still schedules the other active schedules when the save also creates one", async () => {
-                arrange(preBooking, waiting);
-                prismaService.employee_schedule.findFirst.mockResolvedValue({
-                    id: 10,
-                    clientId: 1,
-                    primaryEmployeeId: 5,
-                    secondaryEmployeeId: null,
-                });
-                prismaService.employee_schedule.update.mockResolvedValue({});
-                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
-                activeSchedulesAfterCommit([20, 21]);
-
-                await service.update(branchId, 1, { endDate: "2026-11-30", primaryEmployeeId: 7 });
-
-                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20], [21]]);
-            });
-
-            it("keeps the save successful and logs when scheduling a link rejects", async () => {
-                const { afterClient } = arrange(preBooking, waiting);
-                activeSchedulesAfterCommit([7, 9]);
-                serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
+            it("keeps the save successful when the post-commit recheck fails", async () => {
+                const { afterClient } = arrange(before, waiting);
+                serviceRecordLinkService.recheckClientRecovery.mockRejectedValueOnce(new Error("recheck unavailable"));
                 const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
                     .mockImplementation(() => undefined);
 
                 await expect(service.update(branchId, 1, { endDate: "2026-11-30" })).resolves.toBe(afterClient);
-
-                expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms unavailable"));
-                // The failure of one schedule does not stop the next one.
-                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
-            });
-
-            it("keeps the save successful and logs when reading the active schedules fails", async () => {
-                const { afterClient } = arrange(preBooking, waiting);
-                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
-                    if (where["terminatedAt"] === null) throw new Error("read unavailable");
-                    return [];
-                });
-                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
-                    .mockImplementation(() => undefined);
-
-                await expect(service.update(branchId, 1, { endDate: "2026-11-30" })).resolves.toBe(afterClient);
-
-                expect(logError).toHaveBeenCalledWith(expect.stringContaining("read unavailable"));
-                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+                expect(logError).toHaveBeenCalledWith(expect.stringContaining("recheck unavailable"));
             });
         });
 
@@ -6787,7 +6698,7 @@ describe("ClientService", () => {
             triggerService.syncClientRulesForClient.mockImplementation(async () => { followUpSawCommit.push(committed); });
             prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
                 where["terminatedAt"] === null ? [{ id: 7 }] : []);
-            serviceRecordLinkService.scheduleForServiceStart.mockImplementation(async () => { followUpSawCommit.push(committed); });
+            serviceRecordLinkService.recheckClientRecovery.mockImplementation(async () => { followUpSawCommit.push(committed); });
         };
         const expectRefusal = async (detail: string) => {
             const error = await service.confirmBooking(branchId, 1).catch((cause: unknown) => cause);
@@ -6939,8 +6850,8 @@ describe("ClientService", () => {
             await expect(service.confirmBooking(branchId, 1)).resolves.toBe(confirmed);
 
             expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 1, false);
-            // The client left 예약 전, so the provider link SMS is scheduled for the active schedule.
-            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+            expect(serviceRecordLinkService.recordClientTransitionInTransaction).toHaveBeenCalledWith(tx, branchId, 1, expect.anything());
+            expect(serviceRecordLinkService.recheckClientRecovery).toHaveBeenCalledWith(branchId, 1);
             expect(followUpSawCommit).toEqual([true, true]);
         });
 
@@ -6948,7 +6859,7 @@ describe("ClientService", () => {
             const confirmed = confirmedRow();
             arrange(unconfirmedRow(), confirmed);
             triggerService.syncClientRulesForClient.mockRejectedValue(new Error("trigger sync down"));
-            serviceRecordLinkService.scheduleForServiceStart.mockRejectedValue(new Error("sms down"));
+            serviceRecordLinkService.recheckClientRecovery.mockRejectedValue(new Error("sms down"));
             const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
                 .mockImplementation(() => undefined);
 
@@ -8669,9 +8580,14 @@ describe("ClientService ordinary caregiver authority successors", () => {
         const sender = { read: () => ({ availability: "available", identityDigest: digest }) };
         const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(records), sources, sender as never, undefined, resolver);
         const gate = new AgentAutomationDeliveryGateService(database as never, lock, authority);
-        const provider = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
-        const delivery = new SmsTriggerDeliveryService(provider as never, {} as never, { save: async (log: unknown) => log } as never,
-            undefined, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
+        const logs = createSmsProviderAttemptFixture();
+        const provider = { sendSms: jest.fn(async (request: { receiver: string }) => {
+            expect(logs.rows).toEqual([expect.objectContaining({ providerAcceptanceState: "started" })]);
+            return { response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request };
+        }) };
+        const delivery = new SmsTriggerDeliveryService(provider as never, {} as never, logs,
+            new SmsProviderAcceptanceService(logs), undefined, gate, undefined,
+            { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
         const impact = new ClientAutomationImpactService(sources, delivery, sender as never,
             { findForClientAutomationReview: async () => rows.filter((row) => row.id === uuid(12)).map((row) => ({ ...row, canceledByUser: false })) } as never, undefined, resolver);
         const resolve = async () => (await resolver.resolve(branchId, 7, [rule], database as never)).recipients[0]!.recipe!;
@@ -8714,7 +8630,7 @@ describe("ClientService ordinary caregiver authority successors", () => {
             undefined as never, undefined as never, database as never, { findByPhone: async () => null } as never, undefined as never, undefined as never, undefined as never,
             { forBranch: async () => branchCalendar2026([]) } as never, undefined, undefined, undefined, undefined, undefined, impact, records, lock);
         const append = jest.spyOn(records, "appendOrdinarySuccessors");
-        return { client, schedule, rows, database, sources, records, authority, gate, delivery, provider, impact, service, job, reference, check, refresh, render, storeJob, append };
+        return { client, schedule, rows, database, sources, records, authority, gate, delivery, provider, logs, impact, service, job, reference, check, refresh, render, storeJob, append };
     }
 
     it.each(["START", "END"] as const)("keeps reviewed %s authority through the real ordinary caller and sends the refreshed literal body once", async (event) => {
@@ -8760,8 +8676,20 @@ describe("ClientService ordinary caregiver authority successors", () => {
         expect(f.provider.sendSms).toHaveBeenCalledWith(expect.objectContaining({ receiver: "01000000011", message: event === "START"
             ? "합성 주 관리사님, 변경 후 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - 합성 지점"
             : "합성 주 관리사님, 변경 후 고객 고객님의 서비스가 2026-11-20에 종료됩니다. 마무리 안내를 확인해 주세요. - 합성 지점" }));
+        const acceptedRows = f.logs.rows;
+        expect(acceptedRows).toEqual([expect.objectContaining({
+            branchId,
+            triggerJobId: f.job.id,
+            providerAcceptanceKey: buildSmsProviderAcceptanceKey("automation", `${branchId}:${f.job.id}`),
+            providerAcceptanceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+            providerAcceptanceState: "accepted",
+            aligoMid: "9876",
+        })]);
+        expect(acceptedRows[0]?.providerCallStartedAt?.getTime()).toBe(Date.now());
         await expect(f.delivery.sendPreparedJob(f.job, preparation!)).rejects.toThrow();
         expect(f.provider.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.logs.startedCount).toBe(1);
+        expect(f.logs.rows).toEqual(acceptedRows);
     });
 
     it.each(["deny", "noSend"] as const)("preserves task %s and rolls back the ordinary name mutation", async (decision) => {

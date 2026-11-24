@@ -7,6 +7,7 @@ export * from "./types/start-date-change";
 export * from "./message/presentation";
 export * from "./client/out-of-pocket-pricing";
 export * from "./client/voucher-duration";
+export * from "./client/standalone-receipt";
 export * from "./template/utils";
 export * from "./template/data-sources";
 export * from "./constants/eformsign-status-codes";

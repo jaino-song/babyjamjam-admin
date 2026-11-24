@@ -316,6 +316,7 @@ export class SbClientRepository implements IClientRepository {
             fullPrice: true,
             grant: true,
             actualPrice: true,
+            copaymentReceivedDate: true,
             startDate: true,
             endDate: true,
             careCenter: true,

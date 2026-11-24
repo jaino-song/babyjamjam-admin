@@ -196,6 +196,7 @@ export class ClientEntity {
         public allowSaturdayService: boolean = false,
         public allowSundayService: boolean = false,
         public allowHolidayService: boolean = false,
+        public readonly copaymentReceivedDate: string | null = null,
     ) {}
 
     isGoingToCareCenter(): boolean {
@@ -374,6 +375,7 @@ export class ClientEntity {
         allowSaturdayService: boolean = false,
         allowSundayService: boolean = false,
         allowHolidayService: boolean = false,
+        copaymentReceivedDate: string | null = null,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -409,6 +411,7 @@ export class ClientEntity {
             allowSaturdayService,
             allowSundayService,
             allowHolidayService,
+            copaymentReceivedDate,
         );
     }
 }

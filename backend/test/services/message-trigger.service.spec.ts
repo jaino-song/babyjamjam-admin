@@ -65,6 +65,7 @@ import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.erro
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
+    SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
@@ -1045,6 +1046,50 @@ describe("MessageTriggerService", () => {
                 { branchId, automaticEnabled: true, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
             ], at21, 100, []);
             expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it.each([false, true])("rechecks a due record link under the denied branch lock (live approved=%s)", async approved => {
+            const fx = createDispatchService(settings());
+            const approvedBranch = "approved-branch";
+            const job = createJob({ ruleId: SERVICE_RECORD_LINK_RULE_ID, templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, employeeScheduleId: 10, scheduledFor: at21 });
+            fx.jobRepository.findDueDispatchBranchIds.mockResolvedValue([branchId, approvedBranch]);
+            fx.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([approvedBranch]));
+            const persistedJobs = {
+                findFirst: jest.fn().mockResolvedValue({ id: job.id, canceledByUser: false, employeeScheduleId: 10, clientId: job.clientId }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            };
+            const transaction = Object.assign(fx.transaction, { message_trigger_job: { ...fx.transaction.message_trigger_job, ...persistedJobs } });
+            transaction.$queryRaw.mockResolvedValue([{ approved }]);
+            const repository = new SbMessageTriggerJobRepository(fx.prisma as never);
+            const findDue = jest.fn().mockResolvedValue([job]);
+            const fence = jest.fn(repository.fenceServiceRecordLinkAttempt.bind(repository));
+            Object.assign(fx.jobRepository, { findDueRecordLinkJobsForSenderCheck: findDue, fenceServiceRecordLinkAttempt: fence });
+
+            await fx.service.dispatchDueJobs();
+
+            expect(findDue).toHaveBeenCalledWith([branchId], at21);
+            expect(fx.messageAutomationBranchLockService.runExclusive).toHaveBeenCalledWith(branchId, expect.any(Function));
+            expect(fence).toHaveBeenCalledTimes(1);
+            expect(fence).toHaveBeenCalledWith(transaction, job, at21, "pending", true);
+            expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(transaction.employee_schedule.findFirst).not.toHaveBeenCalled();
+            if (approved) {
+                expect(persistedJobs.updateMany).not.toHaveBeenCalled();
+            } else {
+                expect(persistedJobs.updateMany).toHaveBeenCalledTimes(1);
+                expect(persistedJobs.updateMany).toHaveBeenCalledWith({
+                    where: expect.objectContaining({ id: job.id, branchId, status: "pending", scheduledFor: { lte: at21 } }),
+                    data: { status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, canceledAt: at21,
+                        claimToken: null, processingDeadlineAt: null, nextAttemptAt: null },
+                });
+            }
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
+                expect.objectContaining({ branchId: approvedBranch }),
+            ], at21, 100, []);
+            expect(fx.jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.prepareJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
         });
 
         it("fails closed on corrupt policy reads before cadence consumption or provider calls", async () => {
@@ -2921,27 +2966,6 @@ describe("MessageTriggerService", () => {
         });
     });
 
-    it("cancels a queued automatic service-end notice when the client was already notified", async () => {
-        const dispatcher = createDispatchService();
-        const job = createJob({
-            clientId: 7,
-            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
-            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
-        });
-        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
-        dispatcher.claimedJobRead.mockResolvedValue(job);
-        dispatcher.transaction.$queryRaw
-            .mockResolvedValueOnce([{ service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z") }])
-            .mockResolvedValueOnce([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }])
-            .mockResolvedValueOnce([{ id: job.id }]);
-
-        await dispatcher.service.dispatchDueJobs();
-
-        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(job.status).toBe("canceled");
-        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
-    });
-
     it("still allows an explicitly requested manual service-end notice", async () => {
         const dispatcher = createDispatchService();
         const job = createJob({
@@ -2956,30 +2980,6 @@ describe("MessageTriggerService", () => {
 
         expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
-    });
-
-    it("blocks an already-sent automatic service-end notice before receipt-link preparation", async () => {
-        const dispatcher = createDispatchService();
-        const job = createJob({
-            clientId: 7,
-            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
-            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
-        });
-        const prepareJob = jest.fn();
-        const sendPreparedJob = jest.fn();
-        Object.assign(dispatcher.deliveryService, { prepareJob, sendPreparedJob });
-        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
-        dispatcher.claimedJobRead.mockResolvedValue(job);
-        dispatcher.transaction.$queryRaw.mockResolvedValueOnce([{
-            service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z"),
-        }]);
-
-        await dispatcher.service.dispatchDueJobs();
-
-        expect(prepareJob).not.toHaveBeenCalled();
-        expect(sendPreparedJob).not.toHaveBeenCalled();
-        expect(job.status).toBe("canceled");
-        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
     });
 
     it("leaves initial pending jobs untouched while branch dispatch is disabled", async () => {
@@ -6923,7 +6923,7 @@ describe("MessageTriggerService", () => {
         expect(persistedJob?.dedupeKey).toContain(":client:42:");
     });
 
-    it("does not enqueue an automatic service-end notice after one was already sent", async () => {
+    it("passes a service-end notice candidate to the occurrence-aware repository even with a legacy stamp", async () => {
         const serviceEndNoticeRule = createRule({
             id: "rule-service-end-notice",
             eventType: MessageTriggerEventType.SERVICE_END,
@@ -6939,7 +6939,7 @@ describe("MessageTriggerService", () => {
 
         await sync.service.syncClientRulesForClient(branchId, 1, true);
 
-        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledWith(expect.objectContaining({ templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE }));
     });
 
     it("stamps a task commit reference on every materialized task-origin client job", async () => {
@@ -8659,7 +8659,10 @@ async function deferredCaregiverIntentFixture(clientFuture = false, coverageOnly
     const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
     const aligo = { sendSms: jest.fn(async (request: unknown) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
     const delivery = new SmsTriggerDeliveryService(aligo as never, { getByKeyForBranch: async () => ({ id: "synthetic-info", content: "{{clientName}} 안내", requiredVariables: [], customVariables: [], updatedAt: new Date("2026-10-01T00:00:00Z") }) } as never,
-        { save: async (log: unknown) => log } as never, undefined, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
+        { save: async (log: unknown) => log } as never, {
+            prepare: async (log: MessageLogEntity) => log,
+            beginProviderCall: async (log: MessageLogEntity) => { log.markProviderCallStarted(); return log; },
+        } as SmsProviderAcceptanceService, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
     const core = new MessageTriggerService(db as never, delivery as never, approval as never, rules as never, jobs as never, {} as never, {} as never, {} as never,
         undefined, undefined, activation as never, lock, sources, gate, undefined, undefined, recipients, templates);
     const impact = new ClientAutomationImpactService(sources, delivery, sender as never, jobs as never, undefined, recipients);
@@ -9333,31 +9336,171 @@ describe("service-record date reconciliation", () => {
         expect(f.jobs.claimPendingWithRuleFence).not.toHaveBeenCalled();
     });
 
-    it.each([CLIENT_DATE_AUTOMATION_CHANGED_REASON, MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON])(
-        "moves an operator reservation into %s history without suppressing an independent rule for the same date", async (cancelReason) => {
-            const f = dispatchFixture();
-            const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
-            f.client.endDate = new Date("2026-11-25Z");
-            const destination = f.seed(f.endRule, { status: "canceled", cancelReason });
-            f.client.endDate = new Date("2026-11-20Z");
-            const independent = f.rule("independent"); f.activeRules.push(independent);
-            await f.confirm();
+    it("moves an operator reservation into date-change history without suppressing an independent rule", async () => {
+        const f = dispatchFixture();
+        const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
+        f.client.endDate = new Date("2026-11-25Z");
+        const destination = f.seed(f.endRule, { status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON });
+        f.client.endDate = new Date("2026-11-20Z");
+        const independent = f.rule("independent"); f.activeRules.push(independent);
+        await f.confirm();
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        expect(operator).toMatchObject({ status: "needs_setup", cancelReason: "QA-setup", attempts: 0 });
+        expect(f.rows.filter((row) => row.ruleId === "end")).toEqual([operator, destination]);
+        expect(destination.status).toBe("canceled");
+        expect(destination.dedupeKey).not.toBe(operator.dedupeKey);
+        const automatic = f.rows.find((row) => row.ruleId === independent.id)!;
+        expect(automatic.status).toBe("pending");
+        jest.setSystemTime(automatic.scheduledFor);
+        // Only the independent rule is eligible for the automatic claim.
+        const prepared = (await f.prepare(automatic))!;
+        expect(await f.authorize(prepared)).toBe(true);
+        await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+        expect(operator.status).toBe("needs_setup");
+    });
+
+    it("protects an approval-canceled date destination from an operator reservation move", async () => {
+        const f = dispatchFixture();
+        const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
+        f.client.endDate = new Date("2026-11-25Z");
+        const canceled = f.seed(f.endRule, { status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON });
+        const before = structuredClone(f.rows);
+        const persist = jest.spyOn(f.service as unknown as { persistPendingJob: () => Promise<boolean> }, "persistPendingJob");
+
+        for (let attempt = 0; attempt < 2; attempt++) {
             await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
-            expect(operator).toMatchObject({ status: "needs_setup", cancelReason: "QA-setup", attempts: 0 });
-            expect(f.rows.filter((row) => row.ruleId === "end")).toEqual([operator, destination]);
-            expect(destination.status).toBe("canceled");
-            expect(destination.dedupeKey).not.toBe(operator.dedupeKey);
-            const automatic = f.rows.find((row) => row.ruleId === independent.id)!;
-            expect(automatic.status).toBe("pending");
-            jest.setSystemTime(automatic.scheduledFor);
-            // Only the independent rule is eligible for the automatic claim.
-            const prepared = (await f.prepare(automatic))!;
-            expect(await f.authorize(prepared)).toBe(true);
-            await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
-            expect(f.provider).toHaveBeenCalledTimes(1);
-            expect(operator.status).toBe("needs_setup");
-        },
-    );
+        }
+        expect(persist).not.toHaveBeenCalled();
+        expect(f.rows).toEqual(before);
+        expect(f.rows).toEqual([operator, canceled]);
+        expect(f.rows.filter((row) => row.status === "pending")).toHaveLength(0);
+        await expect(f.service.dispatchPendingJobNow(canceled.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "canceled" });
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("keeps an ordinary date destination canceled (previous catch-up key=%s)", async (catchUp) => {
+        const f = dispatchFixture();
+        const canceled = f.seed(f.endRule, { status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON });
+        if (catchUp) {
+            const originalScheduledFor = canceled.scheduledFor.toISOString();
+            canceled.scheduledFor = new Date("2026-11-21T01:30:00Z");
+            canceled.dedupeKey = buildMessageRecipeDedupeKey(canceled.ruleId, "client:7", canceled.scheduledFor, canceled.recipientType);
+            canceled.payload.catchUp = { originalScheduledFor, batchId: "prior", sequence: 1, intervalMinutes: 3, predecessorDedupeKey: null };
+        }
+        const before = structuredClone(canceled);
+        const persist = jest.spyOn(f.service as unknown as { persistPendingJob: () => Promise<boolean> }, "persistPendingJob");
+        for (let attempt = 0; attempt < 2; attempt++) {
+            await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        }
+        expect(persist).not.toHaveBeenCalled();
+        expect(f.rows).toEqual([before]);
+        expect(f.rows.filter((row) => row.status === "pending")).toHaveLength(0);
+        await expect(f.service.dispatchPendingJobNow(canceled.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "canceled" });
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it.each(["future", "catch-up"])("keeps the old occurrence canceled after approval and two catch-up re-keys, then sends a distinct %s occurrence", async (kind) => {
+        const f = dispatchFixture();
+        f.activeRules.splice(1);
+        const old = f.seed();
+        const originalScheduledFor = old.scheduledFor.toISOString();
+        old.scheduledFor = new Date("2026-11-20T04:30:00Z");
+        old.dedupeKey = buildMessageRecipeDedupeKey(old.ruleId, "client:7", old.scheduledFor, old.recipientType);
+        old.payload.catchUp = { originalScheduledFor, batchId: "old-batch", sequence: 1, intervalMinutes: 3, predecessorDedupeKey: null };
+        old.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+        const before = structuredClone(old);
+
+        const isApproved = jest.fn().mockResolvedValue(false);
+        Object.assign(f.service["messageSenderApprovalService"], { isApproved });
+        Object.assign(f.service["ruleRepository"], { findActiveByEventTypes: async () => f.activeRules });
+        f.sources.getMessagePolicyEnabled.mockResolvedValue(true);
+        const lookup = jest.spyOn(f.db.message_trigger_job as unknown as {
+            findFirst: (query: { where: Prisma.message_trigger_jobWhereInput }) => Promise<unknown>;
+        }, "findFirst");
+        const read = lookup.getMockImplementation()!;
+        lookup.mockImplementation(async (query) => {
+            const { where } = query;
+            if (where.status !== "canceled") return read(query);
+            if (where.ruleId !== old.ruleId) return null;
+            const clauses = where.OR!;
+            expect(where).toMatchObject({ status: "canceled", branchId, clientId: 7, ruleId: old.ruleId, employeeScheduleId: null,
+                recipientType: old.recipientType, cancelReason: old.cancelReason, dedupeKey: { not: expect.any(String) } });
+            expect(where.dedupeKey).not.toEqual({ not: old.dedupeKey });
+            return clauses.some((clause) => clause.payload && "equals" in clause.payload
+                && clause.payload.equals === old.payload.catchUp?.originalScheduledFor) ? old : null;
+        });
+        const findUnique = jest.spyOn(f.db.message_trigger_job as unknown as {
+            findUnique: (query: { where: Prisma.message_trigger_jobWhereUniqueInput }) => Promise<unknown>;
+        }, "findUnique");
+        const readUnique = findUnique.getMockImplementation()!;
+        findUnique.mockImplementation(async (query) => {
+            const { dedupeKey } = query.where;
+            if (typeof dedupeKey !== "string") return readUnique(query);
+            return structuredClone(f.rows.find((row) => row.dedupeKey === dedupeKey) ?? null);
+        });
+        const queryRaw = f.db.$queryRaw as unknown as jest.Mock<Promise<unknown[]>, [Prisma.Sql]>;
+        const raw = queryRaw.getMockImplementation()!;
+        const insert = jest.fn();
+        queryRaw.mockImplementation(async (sql) => {
+            if (sql.sql.includes("SELECT id, branch_id, jobs_stale")) {
+                const rule = f.activeRules.find((rule) => sql.values.includes(rule.id))!;
+                return [{ id: rule.id, branch_id: branchId, jobs_stale: false, updated_at: rule.updatedAt }];
+            }
+            if (sql.sql.includes('INSERT INTO "message_trigger_job"')) {
+                const [, ruleId, scheduledFor, , , , , , dedupeKey, payload] = sql.values;
+                if (f.rows.some((row) => row.dedupeKey === dedupeKey)) return [];
+                insert(ruleId);
+                const rule = f.activeRules.find((rule) => rule.id === ruleId)!;
+                const job = f.seed(rule, { scheduledFor: scheduledFor as Date, dedupeKey: String(dedupeKey), payload: JSON.parse(String(payload)) });
+                return [{ id: job.id, status: job.status, branch_id: job.branchId, client_id: job.clientId, rule_id: job.ruleId,
+                    recipient_type: job.recipientType, template_key: job.templateKey, payload: job.payload, dedupe_key: job.dedupeKey,
+                    scheduled_for: job.scheduledFor, created_at: job.createdAt, updated_at: job.updatedAt, recipient_phone: job.recipientPhone,
+                    employee_schedule_id: null, sent_at: null, canceled_at: null, cancel_reason: null, attempts: 0, next_attempt_at: null,
+                    claim_token: null, processing_deadline_at: null }];
+            }
+            return raw(sql);
+        });
+        const repo = new SbMessageTriggerJobRepository(f.db as never);
+        f.jobs.upsertPendingForRuleGeneration.mockImplementation(repo.upsertPendingForRuleGeneration.bind(repo) as never);
+
+        jest.setSystemTime(new Date("2026-11-21T01:30:00Z"));
+        const sync = (preserveExisting: boolean) => f.service.syncClientRulesForClient(branchId, 7, true, false,
+            { preserveExisting, stableBatchAt: new Date() });
+        await sync(true);
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        isApproved.mockResolvedValue(true);
+        await sync(true);
+        jest.setSystemTime(new Date("2026-11-21T01:31:00Z"));
+        await sync(true);
+        const attempted = f.jobs.upsertPendingForRuleGeneration.mock.calls.map(([job]) => job);
+        expect(attempted).toHaveLength(2);
+        expect(new Set(attempted.map((job) => job.dedupeKey)).size).toBe(2);
+        for (const job of attempted) {
+            expect(job.dedupeKey).not.toBe(old.dedupeKey);
+            expect(job.payload.catchUp?.originalScheduledFor).toBe(originalScheduledFor);
+        }
+        expect(insert).not.toHaveBeenCalled();
+        expect(f.rows).toEqual([before]);
+        await expect(f.service.dispatchPendingJobNow(old.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "canceled" });
+        expect(f.provider).not.toHaveBeenCalled();
+
+        const independent = kind === "catch-up" ? f.rule("independent") : f.endRule;
+        if (kind === "catch-up") f.activeRules.push(independent);
+        else f.client.endDate = new Date("2026-11-25Z");
+        await sync(true);
+        await sync(true);
+        expect(insert).toHaveBeenCalledTimes(1);
+        expect(insert).toHaveBeenCalledWith(independent.id);
+        const pending = f.rows.filter((row) => row.status === "pending");
+        expect(pending).toHaveLength(1);
+        const next = pending[0]!;
+        jest.setSystemTime(next.scheduledFor);
+        await expect(f.service.dispatchPendingJobNow(next.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "sent" });
+        expect(f.provider).toHaveBeenCalledTimes(1);
+        if (kind === "catch-up") expect(next.payload.catchUp).toMatchObject({ sequence: 1, predecessorDedupeKey: null });
+        expect(old).toEqual(before);
+    });
 
     it("refreshes only the exact operator row alongside protected history without creating automatic work", async () => {
         const f = fixture();
@@ -10106,8 +10249,19 @@ describe("service-record date reconciliation", () => {
             ...defaultMessageAutomationPolicy(), pastExpiryHours: 24,
             quietHours: { timezone: "Asia/Seoul", enabled: quietEnabled, start: "21:00", end: "09:00", action: "DEFER", recipientGroups: ["CAREGIVER"] },
         } }) };
-        Object.assign(logRepository, { resolvePolicyRecipientGroups: async () => [{ recipientPhone: job.recipientPhone,
-            recipientGroups: ["CAREGIVER"], dueAt: job.scheduledFor }] });
+        Object.assign(logRepository, {
+            resolvePolicyRecipientGroups: async () => [{ recipientPhone: job.recipientPhone,
+                recipientGroups: ["CAREGIVER"], dueAt: job.scheduledFor }],
+            claimProviderAttempt: async (log: MessageLogEntity) => {
+                const selector = { id: log.id, branchId: log.branchId, providerAcceptanceState: "prepared" };
+                const started = await logModel.updateMany({ where: selector, data: {
+                    providerAcceptanceState: "started", providerCallStartedAt: new Date(),
+                } });
+                if (started.count !== 1) return null;
+                log.markProviderCallStarted();
+                return log;
+            },
+        });
         const lock = { runExclusive: async (_branchId: string, work: (tx: Prisma.TransactionClient) => Promise<unknown>) => work(tx as never) };
         const quiet = new MessageQuietHoursService(settings as never, logRepository, lock as never);
         const provider = jest.fn(async () => ({ request: { receiver: job.recipientPhone, msgType: "LMS" },
@@ -10120,7 +10274,7 @@ describe("service-record date reconciliation", () => {
             deliveryRules as never, settings as never, templates as never, quiet, repository);
         Object.assign(f.service, { smsDelivery: sms, deliveryService: sms });
         const send = async () => {
-            job.markProcessing("quiet-claim");
+            job.markProcessing("quiet-claim", new Date(Date.now() + 60_000));
             const prepared = await sms.prepareJob(job); if (!prepared) throw new Error("Missing preparation");
             job.markDispatchAuthorized();
             return sms.sendPreparedJob(job, prepared);

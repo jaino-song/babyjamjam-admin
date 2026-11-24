@@ -376,6 +376,7 @@ export class EformsignDocController {
                 clientId: dto.clientId,
                 progressId: dto.progressId,
                 force: dto.force,
+                ...(dto.contractData.copaymentReceivedDate !== undefined ? { saveCopaymentReceivedDate: true } : {}),
             },
             tenant,
         );

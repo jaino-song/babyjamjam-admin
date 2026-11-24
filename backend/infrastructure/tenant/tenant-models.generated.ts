@@ -31,6 +31,8 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
     "legacy_chat_confirmation_intent",
     "message",
     "message_log",
+    "message_occurrence_claim",
+    "message_occurrence_manual_attempt",
     "message_template",
     "message_trigger_job",
     "message_trigger_rule",

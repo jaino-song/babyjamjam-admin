@@ -132,13 +132,6 @@ export function buildClientMessageRecipe(
 ): MessageTriggerJobRecipe | null {
     if (rule.recipientType !== MessageTriggerRecipientType.CLIENT) return null;
     if (!client.phone) return null;
-    if (
-        rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
-        && client.serviceEndNoticeSentAt !== null
-    ) {
-        return null;
-    }
-
     const anchorDate = getClientAnchorDate(rule.eventType, client);
     if (!anchorDate) return null;
 
@@ -289,6 +282,17 @@ export function buildMessageRecipeDedupeKey(
     recipientType: MessageTriggerRecipientType,
 ): string {
     return `${ruleId}:${sourceKey}:${recipientType}:${scheduledFor.toISOString()}`;
+}
+
+/** Recover the source slot even when catch-up or a debug move changed the delivery time. */
+export function clientMessageOriginalSlot(job: Pick<MessageTriggerJobEntity,
+    "ruleId" | "clientId" | "employeeScheduleId" | "recipientType" | "dedupeKey" | "payload">): { key: string; time: string } | null {
+    if (job.clientId === null || job.employeeScheduleId !== null || job.recipientType !== MessageTriggerRecipientType.CLIENT) return null;
+    const prefix = `${job.ruleId}:client:${job.clientId}:${job.recipientType}:`;
+    if (!job.dedupeKey.startsWith(prefix)) return null;
+    const time = job.payload.catchUp?.originalScheduledFor ?? job.dedupeKey.slice(prefix.length);
+    if (typeof time !== "string" || !Number.isFinite(Date.parse(time)) || new Date(time).toISOString() !== time) return null;
+    return { key: `${prefix}${time}`, time };
 }
 
 export function formatMessageRecipeDate(date: Date | null): string {

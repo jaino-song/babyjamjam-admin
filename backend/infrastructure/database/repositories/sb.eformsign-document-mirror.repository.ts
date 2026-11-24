@@ -631,6 +631,7 @@ implements IEformsignDocumentMirrorRepository {
                     where: {
                         clientId,
                         sentAt: null,
+                        standaloneRequestId: null,
                         logs: { none: {} },
                     },
                 });

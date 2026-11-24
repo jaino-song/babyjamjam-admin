@@ -19,6 +19,7 @@ import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pip
 import { TenantModule } from "infrastructure/tenant/tenant.module";
 import { E2eAligoApiStub } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 import { ClientModule } from "module/client.module";
+import { MessageDeliveryModule } from "module/message-delivery.module";
 import { MessageModule } from "module/message.module";
 import { SchedulerLeaseModule } from "module/scheduler-lease.module";
 
@@ -58,7 +59,7 @@ export interface MessageCronHarness {
 }
 
 /**
- * Boots the real Nest module graph (Client + Message + Tenant + SchedulerLease) against the
+ * Boots the real client and message modules against the
  * seeded e2e database and exposes the six message-automation cron facades as manual ticks.
  * Scheduler mode follows the production resolution: non-production with no SCHEDULER_LEASE_MODE
  * override is "off" (holdsLease() always true), while standby:true forces SCHEDULERS_ENABLED=false
@@ -83,7 +84,14 @@ export async function bootMessageCronHarness(options: BootOptions = {}): Promise
             process.env["SCHEDULERS_ENABLED"] = "false";
         }
         moduleRef = await Test.createTestingModule({
-            imports: [ConfigModule.forRoot({ isGlobal: true }), ClientModule, MessageModule, TenantModule, SchedulerLeaseModule],
+            imports: [
+                ConfigModule.forRoot({ isGlobal: true }),
+                ClientModule,
+                MessageModule,
+                MessageDeliveryModule,
+                TenantModule,
+                SchedulerLeaseModule,
+            ],
         })
             .overrideGuard(JwtGuard)
             .useValue({

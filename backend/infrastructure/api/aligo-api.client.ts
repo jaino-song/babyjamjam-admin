@@ -83,7 +83,7 @@ export class AligoApiClient implements IAligoSmsApiPort {
             formData.append("testmode_yn", params.testModeYn);
         }
 
-        this.logger.debug(`[Aligo] Sending sms to ${params.receiver}`);
+        if (!params.confidential) this.logger.debug(`[Aligo] Sending sms to ${params.receiver}`);
 
         const response = await fetch(url, {
             method: "POST",
@@ -92,6 +92,7 @@ export class AligoApiClient implements IAligoSmsApiPort {
         });
 
         if (!response.ok) {
+            if (params.confidential) throw new Error(`Aligo confidential SMS API error (${response.status})`);
             const errorText = await response.text();
             this.logger.error(`[Aligo] SMS API error: ${response.status} - ${errorText}`);
             throw new Error(`Aligo SMS API error (${response.status}): ${errorText}`);

@@ -39,6 +39,7 @@ import {
 import { useCallback, useState, useEffect, useRef, type ReactNode } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useEnqueueEformsignDocumentCreation } from "@/hooks/useEformsignDocumentJobs";
+import type { ContractDataDto } from "@/backend/application/dto/contract.dto";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
@@ -132,7 +133,7 @@ import { ContactInput } from "@/components/app/messages/forms/form-components/Co
 import { TitleTextInputMolecule } from "@/components/app/messages/forms/form-components/TitleTextInputMolecule";
 import { ContractClientSelector } from "@/components/app/contracts/ContractClientSelector";
 import { ContractEmployeeSelector } from "@/components/app/contracts/ContractEmployeeSelector";
-import { useCreateClient, useDeleteClient, useUpdateClient } from "@/hooks/useClients";
+import { useAllClients, useCreateClient, useDeleteClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees } from "@/hooks/useEmployees";
 import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
@@ -144,34 +145,6 @@ import {
   DETAIL_PANEL_FOOTER_CLASS_NAME,
   DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME,
 } from "@/components/app/v3/DetailPanel";
-
-interface ContractDataDto {
-  customerName: string;
-  customerContact: string;
-  customerDOB: string;
-  customerAddress: string;
-  caretaker1Name: string;
-  caretaker1Contact: string;
-  type: string;
-  days: string;
-  area: string;
-  contractDuration: string;
-  startYear: string;
-  startMonth: string;
-  startDay: string;
-  startDate: string;
-  endYear: string;
-  endMonth: string;
-  endDay: string;
-  endDate: string;
-  paymentYear: string;
-  paymentMonth: string;
-  paymentDay: string;
-  fullPrice: string;
-  grant: string;
-  actualPrice: string;
-  issuerPhone?: string;
-}
 
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
@@ -620,6 +593,7 @@ export const ContractCreationForm = ({
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
   const [paymentDateInput, setPaymentDateInput] = useState("");
+  const paymentDateTouchedRef = useRef(false);
   // 필드별 입력 이력(값을 가졌었는지, 떠났는지, 포커스 중인지). 메시지는 이 이력으로 정해져요.
   const fields = useFieldInputStates<ContractInputField>();
   const resetFieldStates = fields.reset;
@@ -681,6 +655,12 @@ export const ContractCreationForm = ({
     setArea,
     resetAll,
   } = useFormStore();
+  const { data: clients } = useAllClients();
+  const selectedClient = clients?.find((client) => client.id === clientId);
+  const initialClientSelected = Boolean(initialClient && initialClient.id === clientId);
+  const historicalPaymentDate = initialClientSelected ? initialPaymentDate : undefined;
+  const savedPaymentDate = selectedClient?.copaymentReceivedDate
+    ?? (initialClientSelected ? initialClient?.copaymentReceivedDate : undefined);
 
   // 종료일은 계약서와 고객 정보에 저장되므로 지점 달력을 다 받은 뒤에만 자동 계산해요.
   const {
@@ -704,7 +684,9 @@ export const ContractCreationForm = ({
   useEffect(() => { setBirthDateInput(toIsoDateOnly(birthDate)); }, [birthDate]);
   useEffect(() => { setStartDateInput(startDate); }, [startDate]);
   useEffect(() => { setEndDateInput(endDate); }, [endDate]);
-  useEffect(() => { setPaymentDateInput(paymentDate); }, [paymentDate]);
+  useEffect(() => {
+    if (!paymentDateTouchedRef.current) setPaymentDateInput(paymentDate);
+  }, [paymentDate]);
 
   // 출산 예정일·출산일은 YYYY-MM-DD로 입력해요. 실제 있는 날짜가 되면 같은 ISO 문자열이 저장돼요.
   const handleDueDateInputChange = useCallback((value: string) => {
@@ -855,6 +837,8 @@ export const ContractCreationForm = ({
   };
 
   const resetCreationSession = () => {
+    paymentDateTouchedRef.current = false;
+    setPaymentDateInput("");
     setIsSubmitting(false);
     setSubmitError(null);
     creationRequestRef.current = null;
@@ -900,6 +884,15 @@ export const ContractCreationForm = ({
     keptEndDateInputsRef.current = null;
     setRegisteredBaseline(nextBaseline);
     setClientId(selectedClientId);
+    if (selectedClientId !== clientId || !paymentDateTouchedRef.current) {
+      paymentDateTouchedRef.current = false;
+      const isInitialClient = Boolean(client && initialClient?.id === selectedClientId);
+      const nextPaymentDate = (isInitialClient ? initialPaymentDate : undefined)
+        || client?.copaymentReceivedDate
+        || (isInitialClient ? "" : toIsoDateOnly(client?.startDate ?? ""));
+      setPaymentDate(nextPaymentDate);
+      setPaymentDateInput(nextPaymentDate);
+    }
     resetEmployeeFields();
     resetEmployee2Fields();
 
@@ -931,7 +924,6 @@ export const ContractCreationForm = ({
       const clientStartDate = toIsoDateOnly(client.startDate ?? "");
       if (clientStartDate) {
         setStartDate(clientStartDate);
-        setPaymentDate(clientStartDate);
       }
       const clientEndDate = toIsoDateOnly(client.endDate ?? "");
       if (clientEndDate) {
@@ -981,11 +973,12 @@ export const ContractCreationForm = ({
     }
   };
 
-  const initialClientAppliedRef = useRef(false);
+  const initialClientAppliedRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!initialClient || initialClientAppliedRef.current) return;
-    initialClientAppliedRef.current = true;
+    if (!initialClient || initialClientAppliedRef.current === initialClient.id) return;
+    initialClientAppliedRef.current = initialClient.id;
+    if (initialClient.id === useFormStore.getState().clientId && paymentDateTouchedRef.current) return;
 
     resetAll();
     setDueDateInput("");
@@ -994,16 +987,22 @@ export const ContractCreationForm = ({
 
     handleClientSelect(initialClient.id, initialClient);
     setArea(initialClient.areaId ?? "");
-    setPaymentDate(initialPaymentDate ?? "");
-    setPaymentDateInput(initialPaymentDate ?? "");
   }, [initialClient]);
 
-  const initialClientEmployeePrefillAppliedRef = useRef(false);
+  useEffect(() => {
+    if (paymentDateTouchedRef.current || useFormStore.getState().clientId !== clientId) return;
+    const nextPaymentDate = historicalPaymentDate || savedPaymentDate;
+    if (!nextPaymentDate) return;
+    setPaymentDate(nextPaymentDate);
+    setPaymentDateInput(nextPaymentDate);
+  }, [clientId, historicalPaymentDate, savedPaymentDate, setPaymentDate]);
+
+  const initialClientEmployeePrefillAppliedRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!initialClient || !employees || initialClientEmployeePrefillAppliedRef.current) return;
+    if (!initialClient || !employees || initialClientEmployeePrefillAppliedRef.current === initialClient.id) return;
     if (employeeId !== null || employeeName || employeePhone) return;
-    initialClientEmployeePrefillAppliedRef.current = true;
+    initialClientEmployeePrefillAppliedRef.current = initialClient.id;
 
     if (initialClient.primaryEmployee) {
       const primaryEmp = employees.find((e) => e.id === initialClient.primaryEmployee?.id);
@@ -1267,8 +1266,6 @@ export const ContractCreationForm = ({
         }
         const start = dayjs(startDate);
         const end = endDate ? dayjs(endDate) : null;
-        const payment = dayjs(paymentDate);
-
         const contractData: ContractDataDto = {
           customerName: name,
           customerContact: phone,
@@ -1292,9 +1289,10 @@ export const ContractCreationForm = ({
           endMonth: end ? end.format("MM") : "",
           endDay: end ? end.format("DD") : "",
           endDate,
-          paymentYear: payment.format("YY"),
-          paymentMonth: payment.format("MM"),
-          paymentDay: payment.format("DD"),
+          paymentYear: paymentDateInput.slice(2, 4),
+          paymentMonth: paymentDateInput.slice(5, 7),
+          paymentDay: paymentDateInput.slice(8, 10),
+          copaymentReceivedDate: paymentDateInput,
           fullPrice,
           grant,
           actualPrice,
@@ -2139,6 +2137,7 @@ export const ContractCreationForm = ({
                 required
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
+                  paymentDateTouchedRef.current = true;
                   fields.onChange("paymentDate", paymentDateInput, formatted);
                   setPaymentDateInput(formatted);
                   if (formatted.length === 10) setPaymentDate(formatted);

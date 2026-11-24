@@ -3,6 +3,10 @@
   "collection": "@nestjs/schematics",
   "sourceRoot": ".",
   "compilerOptions": {
-    "deleteOutDir": true
+    "deleteOutDir": true,
+    "assets": [
+      "infrastructure/pdf/fonts/NanumMyeongjo.ttf",
+      "infrastructure/pdf/fonts/OFL-NanumMyeongjo.txt"
+    ]
   }
 }

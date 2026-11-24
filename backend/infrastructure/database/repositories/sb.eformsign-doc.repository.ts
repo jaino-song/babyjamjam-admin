@@ -399,6 +399,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             select: {
                 id: true,
                 documentId: true,
+                branchId: true,
+                clientId: true,
+                expired: true,
                 documentKind: true,
                 serviceRecordCaseId: true,
                 templateId: true,

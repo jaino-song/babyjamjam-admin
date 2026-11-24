@@ -31,11 +31,13 @@ import {
     parseClientDate,
     resolveSavedServiceStatus,
 } from "./client-write-validation";
-import { CLIENT_REPOSITORY, IClientRepository, getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
 import { SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { permitsRecordLinkRecovery, recordLinkClientStatus } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
     isVoucherServiceLabel,
@@ -314,6 +316,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         @Optional() @Inject(CLIENT_AUTOMATION_IMPACT) private readonly automationImpact?: ClientAutomationImpactPort,
         @Optional() private readonly automationRecords?: AgentAutomationRecordStoreService,
         @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
+        @Optional() private readonly messageAutomationBranchLock?: MessageAutomationBranchLockService,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -492,22 +495,22 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         duration: parsedUpdates.duration,
                     });
                     try {
-                        const client = await this.updateClient.execute(
-                            context.principal.branchId,
-                            id,
-                            parsedUpdates,
-                            undefined,
-                            calendar,
-                        );
-                        await this.serviceRecordLifecycleService.ensureForClient(client.id, undefined, calendar);
+                        const branchId = context.principal.branchId;
+                        const { client, before } = await this.withRecordLinkWrite(branchId, async (transaction) => {
+                            const before = await this.readRecordLinkStatusBeforeWrite(transaction, branchId, id, existing);
+                            const client = await this.updateClient.execute(branchId, id, parsedUpdates, transaction, calendar);
+                            await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchId, id, before);
+                            await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
+                            return { client, before };
+                        });
                         await this.refreshEmployeeAssignmentJobsAfterProfileChange(
                             context.principal.branchId,
                             client.id,
                             input.name !== undefined,
                         );
-                        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                        await this.recheckRecordLinkTransition(
                             context.principal.branchId,
-                            existing,
+                            before,
                             client,
                         );
                         return { id: client.id, name: client.name, status: "updated" };
@@ -527,10 +530,13 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
+                        const branchId = context.principal.branchId;
+                        let before: ClientStatusInputs = existing;
                         let updatedClient = null as ClientStatusInputs | null;
                         const result = context.taskAutomation
                             ? await this.executeTaskClientMutation(context, "clients.update", parsedUpdates, expectedTargetVersion, calendar)
-                            : await this.prisma.$transaction(async (transaction) => {
+                            : await this.withRecordLinkWrite(branchId, async (transaction) => {
+                                before = await this.readRecordLinkStatusBeforeWrite(transaction, branchId, id, existing);
                                 await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                                     clientId: existing.id,
                                     startDate: parsedUpdates.startDate,
@@ -545,6 +551,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                     transaction,
                                     calendar,
                                 );
+                                await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchId, id, before);
                                 await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
                                 updatedClient = client;
                                 const result = { id: client.id, name: client.name, status: "updated" };
@@ -564,9 +571,9 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             // The task-automation path stages its link intents
                             // through the reviewed artifact and never schedules here.
                             if (updatedClient) {
-                                await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                                await this.recheckRecordLinkTransition(
                                     context.principal.branchId,
-                                    existing,
+                                    before,
                                     updatedClient,
                                 );
                             }
@@ -607,53 +614,28 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         ];
     }
 
-    /**
-     * A provider assigned while the client was 예약 전 never got the service-record
-     * link SMS (the gates skip a pre-booking client). When this write takes the
-     * client out of 예약 전, schedule the link for each active schedule.
-     * `scheduleForServiceStart` owns the timing, dedupe and refusals. A failure
-     * here never fails the write.
-     */
-    private async scheduleServiceRecordLinksAfterLeavingPreBooking(
-        branchId: string,
-        before: ClientStatusInputs,
-        after: ClientStatusInputs,
-    ): Promise<void> {
-        if (!this.serviceRecordLinkService) return;
-        const wasPreBooking = getEffectiveClientServiceStatus(
-            before.serviceStatus ?? null,
-            before.startDate ?? null,
-            before.endDate ?? null,
-            before.bookingConfirmedAt,
-        ) === SERVICE_STATUS.PRE_BOOKING;
-        if (!wasPreBooking) return;
-        const isPreBooking = getEffectiveClientServiceStatus(
-            after.serviceStatus ?? null,
-            after.startDate ?? null,
-            after.endDate ?? null,
-            after.bookingConfirmedAt,
-        ) === SERVICE_STATUS.PRE_BOOKING;
-        if (isPreBooking) return;
+    private withRecordLinkWrite<T>(branchId: string, work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+        return this.messageAutomationBranchLock
+            ? this.messageAutomationBranchLock.runExclusive(branchId, work)
+            : this.prisma.$transaction(work);
+    }
 
-        try {
-            const activeSchedules = await this.prisma.employee_schedule.findMany({
-                where: { branchId, clientId: after.id, replaced: false, terminatedAt: null },
-                select: { id: true },
-                orderBy: { id: "asc" },
-            });
-            const scheduleIds = [...new Set(activeSchedules.map(({ id }) => id))]
-                .sort((left, right) => left - right);
-            for (const scheduleId of scheduleIds) {
-                await this.serviceRecordLinkService.scheduleForServiceStart(scheduleId).catch((error) => {
-                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
-                });
-            }
-        } catch (error) {
-            this.logger.error(
-                `Failed to schedule service-record link SMS after client ${after.id} left pre-booking: ` +
-                `${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
+    private async readRecordLinkStatusBeforeWrite(
+        tx: Prisma.TransactionClient, branchId: string, clientId: number, fallback: ClientStatusInputs,
+    ): Promise<ClientStatusInputs> {
+        if (!this.serviceRecordLinkService?.recordClientTransitionInTransaction) return fallback;
+        const current = await this.clientRepository.findByIdForUpdate(branchId, clientId, tx);
+        if (!current) throw new AgentActionCertainFailureError("Client no longer exists");
+        return current;
+    }
+
+    private async recheckRecordLinkTransition(branchId: string, before: ClientStatusInputs, after: ClientStatusInputs): Promise<void> {
+        const now = new Date();
+        if (recordLinkClientStatus(before, now) !== SERVICE_STATUS.PRE_BOOKING
+            || !permitsRecordLinkRecovery(recordLinkClientStatus(after, now))) return;
+        await this.serviceRecordLinkService?.recheckClientRecovery?.(branchId, after.id).catch((error) => {
+            this.logger.error(`Failed to recheck service-record link recovery for client ${after.id}: ${error}`);
+        });
     }
 
     private automationValues(values: ClientAutomationWriteValues): ClientAutomationWriteValues {
@@ -683,7 +665,10 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         }
 
         try {
+            const branchId = context.principal.branchId;
+            const allowRecovery = artifact.consent.choice === "yes" && !artifact.noSend;
             let committedClientId: number | null = artifact.targetClientId;
+            let recoveryTransition: { before: ClientStatusInputs; after: ClientStatusInputs } | undefined;
             const receipt = await records.runTaskMutation(
                 context,
                 artifact,
@@ -712,7 +697,9 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             endDate: updates.endDate,
                             duration: updates.duration,
                         }, transaction);
-                        client = await this.updateClient.executeApprovedTarget(
+                        const before = this.serviceRecordLinkService?.recordClientTransitionInTransaction
+                            ? await this.clientRepository.findByIdForUpdate(branchId, artifact.targetClientId, transaction) : null;
+                        const updated = await this.updateClient.executeApprovedTarget(
                             context.principal.branchId,
                             artifact.targetClientId,
                             updates as unknown as Parameters<UpdateClientUsecase["executeApprovedTarget"]>[2],
@@ -720,6 +707,15 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             transaction,
                             calendar,
                         );
+                        client = updated;
+                        if (before) {
+                            // Persist the exit even when the task declined SMS, so a later
+                            // sweep cannot turn that decision into an automatic send.
+                            await this.serviceRecordLinkService?.recordClientTransitionInTransaction(
+                                transaction, branchId, updated.id, before, allowRecovery,
+                            );
+                            if (allowRecovery) recoveryTransition = { before, after: updated };
+                        }
                     }
                     await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
                     committedClientId = client.id;
@@ -742,6 +738,9 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     await this.stageTaskAutomation(transaction, artifact, batch, committedClientId);
                 },
             );
+            if (recoveryTransition) {
+                await this.recheckRecordLinkTransition(branchId, recoveryTransition.before, recoveryTransition.after);
+            }
             return receipt.result;
         } catch (error) {
             if (error instanceof AgentActionCertainFailureError) throw error;

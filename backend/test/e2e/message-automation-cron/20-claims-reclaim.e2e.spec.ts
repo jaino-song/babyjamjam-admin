@@ -83,6 +83,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
     let senderName: string;
     let senderPhone: string;
     let orphanClientId: number | undefined;
+    const freshClientIds: number[] = [];
 
     /** Jobs created by this spec (cleanup). */
     const createdJobIds: string[] = [];
@@ -90,9 +91,9 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
     beforeAll(async () => {
         stubA = new ScriptedAligoStub();
         harnessA = await bootMessageCronHarness({ aligo: stubA });
+        prisma = harnessA.prisma;
         stubB = new ScriptedAligoStub();
         harnessB = await bootMessageCronHarness({ aligo: stubB });
-        prisma = harnessA.prisma;
 
         // The runner pins SCHEDULER_LEASE_MODE=off, so neither harness can
         // lose the lease to the other; serialization must come from the DB.
@@ -163,27 +164,55 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         })).id;
     });
 
-    afterAll(async () => {
+    async function cleanupFixtures() {
         if (harnessA) {
-            // FK-safe order: logs (trigger_job_id/client SetNull) → jobs → rule → clients.
-            await prisma.message_log.deleteMany({ where: { triggerJobId: { in: [...createdJobIds] } } }).catch(() => undefined);
-            await prisma.message_log.deleteMany({ where: { clientId: { in: [senderClientId, orphanClientId].filter((id): id is number => id !== undefined) } } }).catch(() => undefined);
-            await prisma.message_trigger_job.deleteMany({ where: { id: { in: [...createdJobIds] } } }).catch(() => undefined);
-            await prisma.message_trigger_job.deleteMany({ where: { clientId: { in: [senderClientId, orphanClientId].filter((id): id is number => id !== undefined) } } }).catch(() => undefined);
-            if (ruleId) {
-                await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } }).catch(() => undefined);
-            }
-            await prisma.client.deleteMany({ where: { id: { in: [orphanClientId].filter((id): id is number => id !== undefined) } } }).catch(() => undefined);
+            const clientIds = [senderClientId, orphanClientId, ...freshClientIds]
+                .filter((id): id is number => id !== undefined);
+            await prisma.message_occurrence_claim.deleteMany({
+                where: { branchId: BRANCH_ID, lifecycleId: { in: clientIds }, recipientKind: "client" },
+            });
+            await prisma.message_log.deleteMany({
+                where: { OR: [{ triggerJobId: { in: createdJobIds } }, { clientId: { in: clientIds } }] },
+            });
+            await prisma.message_trigger_job.deleteMany({
+                where: { OR: [{ id: { in: createdJobIds } }, { clientId: { in: clientIds } }] },
+            });
+            if (ruleId) await prisma.message_trigger_rule.deleteMany({ where: { id: ruleId } });
+            await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
         }
+    }
+
+    afterAll(async () => {
         try {
-            await harnessB?.close();
+            await cleanupFixtures();
         } finally {
-            await harnessA?.close();
+            try {
+                await harnessB?.close();
+            } finally {
+                await harnessA?.close();
+            }
         }
     });
 
-    async function createDueJob(overrides: Partial<Prisma.message_trigger_jobUncheckedCreateInput> = {}) {
-        if (senderClientId === undefined) throw new Error("sender client fixture missing");
+    async function freshRecipient() {
+        const ordinal = freshClientIds.length + 1;
+        const phone = `0105${RUN.slice(-5)}${String(ordinal).padStart(2, "0")}`;
+        const recipient = await prisma.client.create({
+            data: {
+                branchId: BRANCH_ID, name: `cron-claim-${RUN}-${ordinal}`, phone, phoneNormalized: phone,
+                voucherClient: false, smsAutomationEnabled: true,
+            },
+            select: { id: true, name: true },
+        });
+        freshClientIds.push(recipient.id);
+        return { ...recipient, phone };
+    }
+
+    async function createDueJob(
+        overrides: Partial<Prisma.message_trigger_jobUncheckedCreateInput> = {},
+        recipient = { id: senderClientId, name: senderName, phone: senderPhone },
+    ) {
+        if (recipient.id === undefined) throw new Error("sender client fixture missing");
         const job = await harnessA.prisma.message_trigger_job.create({
             data: {
                 branchId: BRANCH_ID,
@@ -191,19 +220,19 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
                 status: "pending",
                 scheduledFor: new Date(Date.now() - 60_000),
                 attempts: 0,
-                clientId: senderClientId,
+                clientId: recipient.id,
                 recipientType: MessageTriggerRecipientType.CLIENT,
-                recipientPhone: senderPhone,
+                recipientPhone: recipient.phone,
                 templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
                 dedupeKey: `e2e:claims-reclaim:${RUN}:${createdJobIds.length}:${Date.now()}`,
                 payload: {
-                    clientId: senderClientId,
-                    clientName: senderName,
-                    memberId: String(senderClientId),
-                    recipientName: senderName,
-                    recipientPhone: senderPhone,
-                    templateVariables: { name: senderName, clientName: senderName, phone: senderPhone },
-                } as unknown as Prisma.InputJsonValue,
+                    clientId: recipient.id,
+                    clientName: recipient.name,
+                    memberId: String(recipient.id),
+                    recipientName: recipient.name,
+                    recipientPhone: recipient.phone,
+                    templateVariables: { name: recipient.name, clientName: recipient.name, phone: recipient.phone },
+                },
                 ...overrides,
             },
         });
@@ -235,7 +264,8 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         const attemptsPerIteration: Array<{ stubACalls: number; stubBCalls: number; logCount: number }> = [];
 
         for (let iteration = 0; iteration < 5; iteration += 1) {
-            const job = await createDueJob();
+            const recipient = await freshRecipient();
+            const job = await createDueJob({}, recipient);
             stubA.reset();
             stubB.reset();
 
@@ -256,7 +286,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
             }
 
             const sentTo = callsA > 0 ? stubA.sendCalls[0]! : stubB.sendCalls[0]!;
-            expect(digits(sentTo.receiver)).toBe(digits(senderPhone));
+            expect(digits(sentTo.receiver)).toBe(recipient.phone);
             expect(row?.status).toBe("sent");
             expect(row?.claimToken).not.toBeNull();
             expect(row?.claimToken).not.toBe("");
@@ -278,10 +308,11 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
     // 2. Stale `processing` → transient defer, never sent in the same tick.
     // ---------------------------------------------------------------------
     it("2. a stale processing row defers (attempts+1, pending, nextAttemptAt ~now+5min) and sends on the next due tick", async () => {
+        const recipient = await freshRecipient();
         const job = await createDueJob({
             status: "processing",
             claimToken: `e2e-stale-processing:${RUN}`,
-        });
+        }, recipient);
         await makeStale(job.id);
         expect((await jobRow(job.id))?.status).toBe("processing");
 
@@ -309,15 +340,29 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         expect(stubA.sendCalls.length - stubCallsBefore).toBe(0);
         expect(await logsForJob(job.id)).toEqual([]);
 
-        // Backdate → the deferred job is due again and dispatches exactly once.
-        await harnessA.backdate(job.id, new Date(Date.now() - 60_000));
+        // A new dispatch window alone cannot advance the retry deadline.
+        await harnessA.prepareFreshDispatchWindow();
+        await harnessA.tick.dispatch();
+        expect(await jobRow(job.id)).toMatchObject({
+            status: "pending", attempts: 1, scheduledFor: job.scheduledFor, nextAttemptAt: deferredRow.nextAttemptAt,
+        });
+        expect(stubA.sendCalls.length - stubCallsBefore).toBe(0);
+        expect(await logsForJob(job.id)).toEqual([]);
+
+        // Move only the retry deadline past the current clock.
+        await prisma.message_trigger_job.update({
+            where: { id: job.id },
+            data: { nextAttemptAt: new Date(Date.now() - 1_000) },
+        });
         await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
         const sentRow = await jobRow(job.id);
         expect(sentRow?.status).toBe("sent");
         expect(stubA.sendCalls.length - stubCallsBefore).toBe(1);
-        expect(digits(stubA.sendCalls.at(-1)!.receiver)).toBe(digits(senderPhone));
-        expect((await logsForJob(job.id)).length).toBe(1);
+        expect(digits(stubA.sendCalls.at(-1)!.receiver)).toBe(recipient.phone);
+        expect(await logsForJob(job.id)).toEqual([expect.objectContaining({
+            status: "sent", providerAcceptanceState: "accepted", providerCallStartedAt: expect.any(Date),
+        })]);
     });
 
     // ---------------------------------------------------------------------

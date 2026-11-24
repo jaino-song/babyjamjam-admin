@@ -205,24 +205,27 @@ export class ReceiptLinkManualSendService {
      */
     private async ensureSystemRule(): Promise<void> {
         const now = new Date();
-        const rule = new MessageTriggerRuleEntity(
-            SERVICE_END_NOTICE_RULE_ID,
-            null,
-            // "(수동 발송)" makes it visibly obvious in every branch's rule list (findAll
-            // includes branchId: null rows) that this row is read-only and never fires on its
-            // own — a manual send is the only thing that ever writes a job against it.
-            `${SERVICE_END_NOTICE_SMS_TITLE} (수동 발송)`,
-            true,
-            MessageTriggerEventType.SERVICE_END,
-            MessageTriggerOffsetType.SAME_DAY,
-            0,
-            MessageTriggerRecipientType.CLIENT,
-            MessageTriggerTemplateKey.SERVICE_END_NOTICE,
-            now,
-            now,
-            false,
-            false,
-        );
-        await this.ruleRepository.ensureSystemRule(rule);
+        await this.ruleRepository.ensureSystemRule(buildManualReceiptLinkRule(now));
     }
+}
+
+export function buildManualReceiptLinkRule(now: Date): MessageTriggerRuleEntity {
+    return new MessageTriggerRuleEntity(
+        SERVICE_END_NOTICE_RULE_ID,
+        null,
+        // "(수동 발송)" makes it visibly obvious in every branch's rule list (findAll
+        // includes branchId: null rows) that this row is read-only and never fires on its
+        // own — a manual send is the only thing that ever writes a job against it.
+        `${SERVICE_END_NOTICE_SMS_TITLE} (수동 발송)`,
+        true,
+        MessageTriggerEventType.SERVICE_END,
+        MessageTriggerOffsetType.SAME_DAY,
+        0,
+        MessageTriggerRecipientType.CLIENT,
+        MessageTriggerTemplateKey.SERVICE_END_NOTICE,
+        now,
+        now,
+        false,
+        false,
+    );
 }

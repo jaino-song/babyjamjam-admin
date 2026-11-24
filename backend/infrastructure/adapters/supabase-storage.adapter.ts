@@ -4,6 +4,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   FileStorageObjectNotFoundError,
   FileStoragePort,
+  type StandaloneReceiptStorage,
 } from '../../domain/ports/file-storage.port';
 
 const DEFAULT_SIGNED_URL_TTL_SECONDS = 300;
@@ -33,7 +34,7 @@ export class StorageSignedUrlError extends Error {
 }
 
 @Injectable()
-export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
+export class SupabaseStorageAdapter implements FileStoragePort, StandaloneReceiptStorage, OnModuleInit {
   private supabase: SupabaseClient | null = null;
   private readonly bucketName = 'documents';
   private readonly logger = new Logger(SupabaseStorageAdapter.name);
@@ -101,6 +102,11 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
     path: string,
     mimetype: string,
   ): Promise<string> {
+    await this.createPrivateObject(file, path, mimetype);
+    return this.createSignedUrl(path);
+  }
+
+  async createPrivateObject(file: Buffer, path: string, mimetype: string): Promise<void> {
     const supabase = this.getSupabaseClient();
     const { error } = await supabase.storage
       .from(this.bucketName)
@@ -112,8 +118,6 @@ export class SupabaseStorageAdapter implements FileStoragePort, OnModuleInit {
     if (error) {
       throw new Error(`Failed to upload file: ${error.message}`);
     }
-
-    return this.createSignedUrl(path);
   }
 
   async delete(path: string): Promise<void> {

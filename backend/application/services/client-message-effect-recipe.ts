@@ -1,4 +1,5 @@
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
+import type { Prisma } from "@prisma/client";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { EVENT_OFFSET_OPTIONS, isCompatibleMessageTriggerTemplate, isConfigurableSmsTriggerTemplate, MessageTriggerEventType,
     MessageTriggerOffsetType, MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
@@ -48,7 +49,9 @@ export async function describeClientMessageEffect(input: {
     change: AgentAutomationEffect["change"];
     policy: ClientMessageEffectPolicy;
     now: Date;
-    delivery: Pick<SmsTriggerDeliveryService, "resolveCanonicalDeliverySnapshot">;
+    delivery: Pick<SmsTriggerDeliveryService, "resolveCanonicalDeliverySnapshot">
+        & Partial<Pick<SmsTriggerDeliveryService, "hasAcceptedOccurrence">>;
+    transaction?: Prisma.TransactionClient;
 }): Promise<ClientMessageEffectDescription> {
     const { rule, client, policy, subject } = input;
     // Generic client rules are branch-owned. Global/dedicated and manual jobs
@@ -70,6 +73,14 @@ export async function describeClientMessageEffect(input: {
     const recipe = buildClientMessageRecipe(rule, subject.kind === "task-client"
         ? { ...client, createdAt: input.now } : client, input.now);
     if (!recipe) return { status: "none" };
+    const previewJob = MessageTriggerJobEntity.create(recipe);
+    if (subject.kind === "client" && input.change !== "cancel") {
+        try {
+            if (await input.delivery.hasAcceptedOccurrence?.(previewJob, input.transaction)) return { status: "none" };
+        } catch {
+            return { status: "unavailable", reason: "source-unavailable" };
+        }
+    }
     if (!policy.senderApproved || !policy.senderIdentityDigest || !DIGEST.test(policy.senderIdentityDigest)) {
         return { status: "unavailable", reason: "sender-unavailable" };
     }
@@ -80,7 +91,8 @@ export async function describeClientMessageEffect(input: {
         // preview copy instead of the raw recipe job; `recipe.payload` itself
         // (used below for sourceDigest) is untouched.
         const snapshot = await input.delivery.resolveCanonicalDeliverySnapshot(
-            withServiceEndNoticePreviewLink(MessageTriggerJobEntity.create(recipe)),
+            withServiceEndNoticePreviewLink(previewJob),
+            input.transaction,
         );
         const scheduling = rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
             ? { kind: "materialization-time" }

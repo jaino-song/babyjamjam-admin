@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 export const RECEIPT_LINK_TOKEN_REPOSITORY = "RECEIPT_LINK_TOKEN_REPOSITORY";
 
 /**
@@ -8,9 +10,13 @@ export const RECEIPT_LINK_TOKEN_REPOSITORY = "RECEIPT_LINK_TOKEN_REPOSITORY";
  */
 export const RECEIPT_LINK_MAX_FAILED_ATTEMPTS = 5;
 
-export interface ReceiptLinkTokenRecord {
+export const RECEIPT_LINK_KIND = {
+    CONTRACT: "contract",
+    STANDALONE: "standalone",
+} as const;
+
+interface ReceiptLinkTokenFields {
     id: string;
-    eformsignDocId: number;
     accessTokenHash: string | null;
     expectedBirthdayHash: string;
     verifiedAt: Date | null;
@@ -21,9 +27,23 @@ export interface ReceiptLinkTokenRecord {
     storagePath: string;
     /** The issuing branch's display name. */
     branchName: string | null;
-    /** The client's display name; null when the client is unset. */
-    clientName: string | null;
 }
+
+export type ContractReceiptLinkTokenRecord = ReceiptLinkTokenFields & {
+    kind: typeof RECEIPT_LINK_KIND.CONTRACT;
+    eformsignDocId: number;
+    clientName: string | null;
+};
+
+export type StandaloneReceiptLinkTokenRecord = ReceiptLinkTokenFields & {
+    kind: typeof RECEIPT_LINK_KIND.STANDALONE;
+    eformsignDocId: null;
+    clientName: string;
+    clientAvailable: boolean;
+    revokedAt: Date | null;
+};
+
+export type ReceiptLinkTokenRecord = ContractReceiptLinkTokenRecord | StandaloneReceiptLinkTokenRecord;
 
 export interface CreateReceiptLinkTokenData {
     branchId: string;
@@ -42,6 +62,30 @@ export interface CreateReceiptLinkTokenData {
     createdAt: Date;
 }
 
+/** Metadata for an already uploaded, private, write-once standalone receipt PNG. */
+export interface InsertStandaloneReceiptLinkTokenData {
+    branchId: string;
+    clientId: number;
+    jobId: string;
+    /** SHA-256 hex digest of the randomly generated link token. */
+    linkTokenHash: string;
+    /** Salted receipt-link birthday hash of the normalized eight-digit birthday at issuance. */
+    expectedBirthdayHash: string;
+    frozenClientName: string;
+    expiresAt: Date;
+    /** receipts/<issuing branch UUID>/standalone/<fresh artifact UUID>.png */
+    storagePath: string;
+    contentSha256: string;
+    byteSize: number;
+    createdBy: string | null;
+    createdAt: Date;
+}
+
+export interface IStandaloneReceiptLinkTokenInsertionRepository {
+    /** Inserts one manual receipt snapshot. Job coordination and object upload belong to the caller. */
+    insertStandaloneLink(data: InsertStandaloneReceiptLinkTokenData): Promise<{ id: string; expiresAt: Date }>;
+}
+
 export interface UpdateReceiptLinkTokenData {
     accessTokenHash?: string | null;
     verifiedAt?: Date | null;
@@ -52,7 +96,6 @@ export interface UpdateReceiptLinkTokenData {
 export interface ExpiredReceiptLinkToken {
     id: string;
     storagePath: string;
-    eformsignDocId: number;
 }
 
 /**
@@ -138,12 +181,12 @@ export type RefreshReceiptClientFields = (client: { birthday: string | null }) =
 
 export interface IReceiptLinkTokenIssuanceRepository {
     /** Refreshes the same contract token atomically, preserving earlier URLs and authentication state. */
-    createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date, refreshClient?: RefreshReceiptClientFields): Promise<ReceiptLinkTokenRecord>;
-    /** The active token already issued for this job, if any. */
-    findActiveByJobId(jobId: string): Promise<ReceiptLinkTokenRecord | null>;
+    createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date, refreshClient?: RefreshReceiptClientFields): Promise<ContractReceiptLinkTokenRecord>;
+    /** The active contract token already issued for this job, if any. */
+    findActiveByJobId(jobId: string): Promise<ContractReceiptLinkTokenRecord | null>;
 }
 
-export interface IReceiptLinkTokenRepository extends IReceiptLinkTokenIssuanceRepository {
+export interface IReceiptLinkTokenRepository extends IReceiptLinkTokenIssuanceRepository, IStandaloneReceiptLinkTokenInsertionRepository {
     /**
      * Serializes issuance attempts for one delivery job across application instances. The
      * callback receives whether this attempt had to wait for another holder; callers use that
@@ -158,6 +201,11 @@ export interface IReceiptLinkTokenRepository extends IReceiptLinkTokenIssuanceRe
     /** The token this hash belongs to, with its branch and client display names, or null if no
      *  such token was ever issued. */
     findByLinkTokenHash(linkTokenHash: string): Promise<ReceiptLinkTokenRecord | null>;
+    /** Read the active contract link within the delivery's tenant, without restoring revoked links. */
+    findActiveContractForDelivery?(
+        scope: { branchId: string; clientId: number; linkTokenHash: string; now: Date },
+        transaction?: Prisma.TransactionClient,
+    ): Promise<{ eformsignDocId: number | null; storagePath: string } | null>;
     /** Applies a partial state change (verification outcome, post-lock-window reset, ...) to
      *  one token. */
     update(id: string, data: UpdateReceiptLinkTokenData): Promise<ReceiptLinkTokenRecord>;

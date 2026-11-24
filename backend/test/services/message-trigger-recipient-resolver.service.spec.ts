@@ -14,6 +14,7 @@ import { AgentAutomationJobAuthorityService } from "application/services/agent-a
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { buildSmsProviderAcceptanceKey, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { MESSAGE_TRIGGER_TEMPLATE_CATALOG, isCompatibleMessageTriggerTemplate } from "domain/constants/message-trigger-catalog";
@@ -22,6 +23,8 @@ import { CaregiverTemplateResolverService } from "application/services/caregiver
 import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+
+import { createSmsProviderAttemptFixture } from "../fixtures/sms-provider-attempt.fixture";
 
 const branchId = "33000000-0000-4000-8000-000000000001";
 const incarnationId = "44000000-0000-4000-8000-000000000001";
@@ -201,8 +204,8 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
         { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) } as never, undefined, f.resolver);
     const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
     const aligo = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
-    const logs = { save: jest.fn(async (log: unknown) => log) };
-    const service = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, undefined, undefined, gate, undefined,
+    const logs = createSmsProviderAttemptFixture();
+    const service = new SmsTriggerDeliveryService(aligo as never, {} as never, logs, new SmsProviderAcceptanceService(logs), undefined, gate, undefined,
         { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, f.templates);
     const render = (candidate: MessageTriggerJobEntity, transaction: Parameters<typeof service.resolveCanonicalDeliverySnapshot>[1]) => service.resolveCanonicalDeliverySnapshot(candidate, transaction);
     const store = () => { stored = structuredClone(job); };
@@ -235,7 +238,7 @@ describe("RULE-2 automatic caregiver real permit path (repository-bound unit)", 
         expect(authorization.kind).toBe("stale");
         expect((await f.resolve()).recipients[0]).toMatchObject({ outcome: "needs_setup", reason: "template_unavailable" });
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
-        expect(f.logs.save).not.toHaveBeenCalled();
+        expect(f.logs.rows).toHaveLength(0);
     });
     it("allows a primitive active v2 lifecycle through actual preparation and final permit", async () => {
         const f = await automaticFixture();
@@ -259,6 +262,11 @@ describe("RULE-2 automatic caregiver real permit path (repository-bound unit)", 
             : "합성 주 관리사님, 합성 고객 고객님의 서비스가 2026-11-20에 종료됩니다. 마무리 안내를 확인해 주세요. - 합성 지점" }));
         expect(await f.dispatch()).toBe(false);
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.logs.startedCount).toBe(1);
+        expect(f.logs.rows).toEqual([expect.objectContaining({
+            providerAcceptanceKey: buildSmsProviderAcceptanceKey("automation", `${f.job.branchId}:${f.job.id}`),
+            providerAcceptanceState: "accepted",
+        })]);
     });
     it.each(["START", "END"] as const)("delivers independent BOTH template choices for %s using the same event due time", async (event) => {
         const primary = await automaticFixture(event, 0, true); const secondary = await automaticFixture(event, 1, true);
@@ -280,13 +288,13 @@ describe("RULE-2 automatic caregiver real permit path (repository-bound unit)", 
             } },
         };
         expect(await f.dispatch()).toBe(false);
-        expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.save).not.toHaveBeenCalled();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.rows).toHaveLength(0);
     });
     it("refuses relabeling a caregiver job as a direct manual/old agent sender", async () => {
         const f = await automaticFixture();
         Object.assign(f.job, { ruleId: "agent-sms:forged" });
         await expect(f.service.sendJob(f.job)).rejects.toThrow("Caregiver service source");
-        expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.save).not.toHaveBeenCalled();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.rows).toHaveLength(0);
     });
 
     it.each(["missing", "unknown-version", "changed-phone", "wrong-incarnation", "replaced", "terminated", "changed-group"])("refuses %s current source without provider work", async (change) => {
@@ -299,7 +307,7 @@ describe("RULE-2 automatic caregiver real permit path (repository-bound unit)", 
         if (change === "terminated") Object.assign(f.schedule, { terminatedAt: new Date() });
         if (change === "changed-group") f.groups.findGroup.mockResolvedValue({ id: "group-a", version: 4 });
         expect((await f.start()).kind).toBe("stale");
-        expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.save).not.toHaveBeenCalled();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.rows).toHaveLength(0);
     });
 });
 
@@ -351,8 +359,8 @@ async function timingFixture(enabled: boolean, future = false, mixed = false) {
         { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) } as never, undefined, resolver);
     const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
     const aligo = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
-    const logs = { save: jest.fn(async (log: unknown) => log) };
-    const delivery = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, undefined, undefined, gate, undefined, settings as never, f.templates);
+    const logs = createSmsProviderAttemptFixture();
+    const delivery = new SmsTriggerDeliveryService(aligo as never, {} as never, logs, new SmsProviderAcceptanceService(logs), undefined, gate, undefined, settings as never, f.templates);
     const jobRepository = { findForClientAutomationReview: jest.fn(async () => jobs), upsertPendingForRuleGeneration: jest.fn(async (job: MessageTriggerJobEntity, version: Date, stale: boolean, preserve: boolean, tx: unknown) => {
         expect(version).toBeInstanceOf(Date); expect(stale).toBe(false); expect(preserve).toBe(true); expect(tx).toBe(db);
         const previous = jobs.find((row) => row.dedupeKey === job.dedupeKey);
@@ -445,7 +453,7 @@ describe("Phase7 C3 canonical caregiver catch-up timing", () => {
         if (change === "missing-predecessor") f.jobs.splice(f.jobs.findIndex((row) => row.ruleId === "child-secondary"), 1);
         if (change === "malformed") Object.assign(job.payload, { catchUp: { batchId: "forged" } });
         if (change === "source") f.schedule.primaryEmployee.phone = "01000000099";
-        expect(await f.send(job)).toBe(false); expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.save).not.toHaveBeenCalled();
+        expect(await f.send(job)).toBe(false); expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.rows).toHaveLength(0);
     });
 });
 
@@ -598,7 +606,7 @@ describe("Phase7 C4 completed slots and canonical predecessor retry", () => {
         if (change === "source") f.schedule.primaryEmployee.phone = "01000000099";
         if (change === "metadata") primary.payload.catchUp!.originalScheduledFor = "2026-11-04T00:00:00.000Z";
         if (change === "predecessor") f.jobs.splice(f.jobs.findIndex((row) => row.ruleId === "child-secondary"), 1);
-        expect(await f.send(primary)).toBe(false); expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.save).not.toHaveBeenCalled();
+        expect(await f.send(primary)).toBe(false); expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.logs.rows).toHaveLength(0);
     });
 
 });
@@ -846,8 +854,8 @@ async function timingFixture(enabled: boolean, future = false, mixed = false) {
         { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) } as never, undefined, resolver);
     const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
     const aligo = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
-    const logs = { save: jest.fn(async (log: unknown) => log) };
-    const delivery = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, undefined, undefined, gate, undefined, settings as never, f.templates);
+    const logs = createSmsProviderAttemptFixture();
+    const delivery = new SmsTriggerDeliveryService(aligo as never, {} as never, logs, new SmsProviderAcceptanceService(logs), undefined, gate, undefined, settings as never, f.templates);
     const jobRepository = { findForClientAutomationReview: jest.fn(async () => jobs), upsertPendingForRuleGeneration: jest.fn(async (job: MessageTriggerJobEntity, version: Date, stale: boolean, preserve: boolean, tx: unknown) => {
         expect(version).toBeInstanceOf(Date); expect(stale).toBe(false); expect(preserve).toBe(true); expect(tx).toBe(db);
         const previous = jobs.find((row) => row.dedupeKey === job.dedupeKey);

@@ -11,6 +11,7 @@ import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/sy
 import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { ActionCoordinatorService, AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { redactModelValue } from "application/agent/agent-model-redaction";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -19,6 +20,7 @@ import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.e
 
 import { MessageExternalAgentCapabilitiesProvider } from "./message-external-agent-capabilities.provider";
 import { createSchedulerLeaseMock } from "../../../test/utils/mocks/scheduler-lease.mock";
+import { createSmsProviderAttemptFixture } from "../../../test/fixtures/sms-provider-attempt.fixture";
 
 const principal = { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" };
 const context = { principal, sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a" };
@@ -115,11 +117,13 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                 response: { result_code: 1, message: "성공", msg_id: 88, success_cnt: 1, error_cnt: 0 },
             }),
         };
+        const logs = createSmsProviderAttemptFixture();
         const smsDelivery = new SmsTriggerDeliveryService(
             aligoService as unknown as AligoService,
             { getByKey: jest.fn() } as never,
-            { save: jest.fn() } as never,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+            logs,
+            new SmsProviderAcceptanceService(logs), undefined, createLegacyAutomationDeliveryGate(), undefined,
+            new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const senderApproval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
         const provider = new MessageExternalAgentCapabilitiesProvider(
             prisma as never,
@@ -822,11 +826,13 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
                 updatedAt: new Date("2026-08-01T00:00:00.000Z"),
             })),
         };
+        const logs = createSmsProviderAttemptFixture();
         const smsDelivery = new SmsTriggerDeliveryService(
             aligoService,
             systemTemplateService as never,
-            { save: jest.fn().mockImplementation(async (log: unknown) => log) } as never,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+            logs,
+            new SmsProviderAcceptanceService(logs), undefined, createLegacyAutomationDeliveryGate(), undefined,
+            new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const triggerDelivery = new MessageTriggerDeliveryService(smsDelivery);
         const senderApproval = {
             getApprovedBranchIds: jest.fn().mockResolvedValue(new Set([principal.branchId])),

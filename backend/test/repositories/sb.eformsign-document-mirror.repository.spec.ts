@@ -491,6 +491,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
             where: {
                 clientId: 31,
                 sentAt: null,
+                standaloneRequestId: null,
                 logs: { none: {} },
             },
         });

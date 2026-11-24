@@ -15,6 +15,11 @@ export const SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON = "Service record link b
 export const SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN =
     "^system:service_record_link:schedule:[0-9]+:primary:manual:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
+export function serviceRecordAutomaticJobKey(scheduleId: number, employeeId?: number): string {
+    const key = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${scheduleId}:primary`;
+    return employeeId === undefined ? key : `${key}:employee:${employeeId}`;
+}
+
 export function isServiceRecordLinkManualDedupeKey(value: string): boolean {
     return new RegExp(SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN).test(value);
 }

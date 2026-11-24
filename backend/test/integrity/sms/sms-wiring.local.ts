@@ -10,6 +10,7 @@ import { AgentAutomationDeliveryGateService } from "application/services/agent-a
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import type { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
@@ -197,7 +198,7 @@ export interface WiredMessageTriggerService {
  * Wires the real `MessageTriggerService` over the real database: real job/rule/
  * log repositories, real safeguard, activation, branch lock and delivery gate;
  * only the provider boundary (delivery stub) and the sender-approval/system-
- * template collaborators are stubbed. `branchId` only feeds the approval stub.
+ * template collaborators are stubbed by default. `branchId` feeds the approval stub.
  */
 export function wireMessageTriggerService(
     handle: IntegrityPrisma,
@@ -208,6 +209,7 @@ export function wireMessageTriggerService(
         authority: AgentAutomationJobAuthorityService,
         gate: AgentAutomationDeliveryGateService,
     ) => RecordingDeliveryStub = RecordingDeliveryStub,
+    approval?: MessageSenderApprovalService,
 ): WiredMessageTriggerService {
     const service = handle.service;
     const jobRepository = new SbMessageTriggerJobRepository(service);
@@ -245,7 +247,7 @@ export function wireMessageTriggerService(
     const triggerService = new MessageTriggerService(
         service,
         delivery as unknown as ConstructorParameters<typeof MessageTriggerService>[1],
-        stubs.messageSenderApprovalService as unknown as ConstructorParameters<typeof MessageTriggerService>[2],
+        approval ?? stubs.messageSenderApprovalService as unknown as ConstructorParameters<typeof MessageTriggerService>[2],
         ruleRepository,
         jobRepository,
         logRepository,
