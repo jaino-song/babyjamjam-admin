@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import * as fs from 'node:fs/promises';
+import fsPromises, * as fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
 import { describeRasterArchiveError, inspectRasterArchive, prepareRasterArchive, publishRasterArchive, rollbackRasterArchive } from '../eformsign-backup/raster-mirror.mjs';
@@ -1542,6 +1543,61 @@ test('initial refusals count identical sources individually and cap only diagnos
     assert.deepEqual(await fs.readFile(join(f.settings.archiveDir, 'z-last.pdf')), image(raw('last')));
 });
 
+test('a typed refusal aborts publication if the protected source changes', async (t) => {
+    for (const afterCleanup of [false, true]) {
+        await t.test(afterCleanup ? 'same bytes on a new inode after cleanup' : 'changed bytes at renderer rejection', async (t) => {
+            const f = await fixture(t);
+            const name = 'a-first.pdf';
+            const later = 'z-later.pdf';
+            const first = raw('first signed version');
+            const revised = raw('revised signed version');
+            await seed(f, name, first);
+            await f.publish();
+            const before = new Map((await readManifest(f)).records).get(name);
+            const uploads = await mutations(f);
+            await put(f.original, name, revised);
+            await put(f.original, later, raw('later'));
+
+            let stage;
+            if (afterCleanup) {
+                const replacement = join(f.root, 'replacement.pdf');
+                await fs.writeFile(replacement, revised, { mode: 0o600 });
+                const rmdir = fs.rmdir;
+                const hook = t.mock.method(fsPromises, 'rmdir', async (path) => {
+                    await rmdir(path);
+                    if (basename(path) === stage) await fs.rename(replacement, blobPath(f, revised));
+                });
+                syncBuiltinESMExports();
+                t.after(() => {
+                    hook.mock.restore();
+                    syncBuiltinESMExports();
+                });
+            }
+
+            await assert.rejects(f.publish({ async renderRasterPdf(options) {
+                const { sourcePath, outputPath } = options;
+                if (sourcePath !== blobPath(f, revised)) return f.renderRasterPdf(options);
+                stage = basename(dirname(outputPath));
+                if (!afterCleanup) await fs.writeFile(sourcePath, raw('changed protected bytes'));
+                throw typedRefusal();
+            } }), (error) => {
+                assert.deepEqual(describeRasterArchiveError(error), { code: 'raster_archive_protected_bytes_changed' });
+                assert.equal(error.report, undefined);
+                return true;
+            });
+
+            const state = await readManifest(f);
+            assert.equal(state.intent, null);
+            assert.deepEqual(new Map(state.records).get(name), before);
+            await assertEndpoints(f, name, image(first), image(first), revised, first);
+            await absent(join(f.settings.archiveDir, later));
+            await absent(join(f.remote, later));
+            assert.deepEqual(await mutations(f), uploads);
+            assert.equal(f.renders.length, 1);
+        });
+    }
+});
+
 test('a typed refusal cannot hide descriptor tampering, and error descriptions require the internal brand', async (t) => {
     const f = await fixture(t, { localOnly: true });
     await prepareRasterArchive(f.settings);
@@ -1703,6 +1759,31 @@ test('retry repairs mismatching copied date and supports v1 journal and record d
     for (const root of [f.settings.archiveDir, f.remote]) await datedFile(root, name, image(source), dateB);
     assert.equal((await f.publish()).rendered, 0);
     await assertDatedEndpoints(f, name, image(source), dateA);
+    await assertIdle(f);
+});
+
+test('remote-only date drift on a published document is repaired from cache', async (t) => {
+    const f = await fixture(t);
+    const name = 'remote-date-drift.pdf';
+    const source = raw('signed source with a known date');
+    const raster = image(source);
+    await datedFile(f.settings.archiveDir, name, source, dateA);
+    await prepareRasterArchive(f.settings);
+    await f.publish();
+    await assertDatedEndpoints(f, name, raster, dateA);
+    const offset = (await mutations(f)).length;
+
+    const remotePath = join(f.remote, name);
+    await fs.utimes(remotePath, new Date(dateB), new Date(dateB));
+    await assertDate(remotePath, dateB);
+    const repaired = await f.publish();
+
+    assert.deepEqual([repaired.rendered, repaired.localPublished, repaired.remotePublished], [0, 0, 1]);
+    assert.deepEqual((await mutations(f)).slice(offset).map(({ command, key, sha }) => [command, key, sha]),
+        [['copyto', `archive/${name}`, sha(raster)]]);
+    await assertDatedEndpoints(f, name, raster, dateA);
+    await assertDate(join(f.original, name), dateA);
+    assert.equal(f.renders.length, 1);
     await assertIdle(f);
 });
 
