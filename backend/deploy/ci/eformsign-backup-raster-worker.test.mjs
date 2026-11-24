@@ -36,7 +36,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 
-const { TEST_DRIVE, TEST_EVENTS, TEST_FAIL, TEST_LOCK, TEST_EXPLICIT, TEST_AGGREGATE } = process.env;
+const { TEST_DRIVE, TEST_EVENTS, TEST_FAIL, TEST_LOCK, TEST_EXPLICIT, TEST_AGGREGATE, TEST_INSPECTION } = process.env;
 const log = (row) => appendFileSync(TEST_EVENTS, JSON.stringify(row) + '\n');
 const read = (path) => fs.readFile(path, 'utf8').catch((error) => {
     if (error.code !== 'ENOENT') throw error;
@@ -108,6 +108,7 @@ async function strictPrivate(settings) {
 export async function inspectRasterArchive(settings, options) {
     start('inspect', settings, options);
     await strictPrivate(settings);
+    if (TEST_INSPECTION) return JSON.parse(TEST_INSPECTION);
     const state = await manifest(settings);
     const unpublished = !state && (await list(settings.originalArchiveDir)).length === 0;
     const result = { manifestPresent: Boolean(state), unpublished, retiredPaths: state?.retiredPaths ?? [], phase: state?.phase ?? null };
@@ -136,10 +137,10 @@ async function checkCapture(settings, options) {
 }
 export async function prepareRasterArchive(settings, options) {
     start('prepare', settings, options);
+    assert.equal(Object.hasOwn(options, 'preMove'), false);
     await strictPrivate(settings);
     if (options.moves) {
         assert.equal(options.movesOnly, true);
-        assert.equal(Boolean(options.preMove), Boolean(options.dryRun));
         return { opaque: 301 };
     }
     const current = await checkCapture(settings, options);
@@ -441,6 +442,7 @@ async function fixture(t, { explicit = false, remote = true } = {}) {
                 TEST_FAIL_LINK: options.interruptRaw ? 'yes' : '',
                 TEST_KILL_LINK: options.killLink ? 'yes' : '', TEST_KILL_RESTORE: options.killRestore ? 'yes' : '',
                 TEST_AGGREGATE: JSON.stringify(options.aggregate ?? {}),
+                TEST_INSPECTION: options.inspection ? JSON.stringify(options.inspection) : '',
                 TEST_EXPLICIT: options.explicitRetry || args.includes('--raster-archive') && !args.includes('--rollback') ? 'yes' : '' },
         }).catch((error) => error);
         assert.equal(result.signal ?? result.code ?? 0, code, result.stdout + result.stderr);
@@ -458,6 +460,7 @@ async function fixture(t, { explicit = false, remote = true } = {}) {
 }
 
 const names = (result) => result.events.map(({ call }) => call);
+const archiveCalls = (result) => result.events.filter(({ call }) => call === 'prepare' || call === 'publish');
 const report = (f, expected) => {
     const run = f.reports.at(-1);
     for (const [key, value] of Object.entries(expected)) assert.deepEqual(run[key], value, key);
@@ -777,25 +780,32 @@ async function providerFixture(t) {
     return { ...f, sentinelPaths: pair('기타', sentinel.title) };
 }
 
-const movesOf = (result, call = 'publish', dryRun = false) => result.events
-    .filter((event) => event.call === call && Boolean(event.options.dryRun) === dryRun && event.options.moves?.length)
+const movesOf = (result, call = 'publish') => result.events
+    .filter((event) => event.call === call && !event.options.dryRun && event.options.moves?.length)
     .map((event) => event.options.moves);
 const forward = oldPair.map((path, i) => ({ from: path, to: newPair[i] }));
 const reverse = forward.map(({ from, to }) => ({ from: to, to: from }));
+const moveCalls = (result) => archiveCalls(result).map(({ call, options }) => {
+    const flags = { ...options };
+    delete flags.lockFd;
+    return { call, options: flags };
+});
+const moveSteps = (moves) => [
+    { call: 'publish', options: { moves, movesOnly: true, preMove: true, dryRun: true } },
+    { call: 'prepare', options: { moves, movesOnly: true } },
+    { call: 'publish', options: { moves, movesOnly: true } },
+];
 
 test('provider forward and reverse publish exact moves, retain durable intent, and replay only the unfinished direction', async (t) => {
     const f = await providerFixture(t);
     const before = await tree(f);
     const plan = await f.run(migrate);
     assert.deepEqual(plan.requests, ['listing']);
-    assert.deepEqual(movesOf(plan, 'publish', true), [forward]);
+    assert.deepEqual(moveCalls(plan), moveSteps(forward).slice(0, 1));
     assert.deepEqual(await tree(f), before);
     const apply = await f.run([...migrate, '--apply'], 1, { fail: 'move-publish' });
     assert.deepEqual(apply.requests, ['listing']);
-    assert.deepEqual(movesOf(apply), [forward]);
-    assert.deepEqual(movesOf(apply, 'prepare', true), [forward]);
-    assert.ok(apply.events.find(({ call, options }) => call === 'publish' && options.dryRun).options.preMove);
-    assert.deepEqual(movesOf(apply, 'prepare'), [forward]);
+    assert.deepEqual(moveCalls(apply), moveSteps(forward));
     let journal = await readJson(f.journal);
     assert.equal(journal.phase, 'applied');
     assert.deepEqual([journal.raster.direction, journal.raster.pending, journal.raster.moves], ['forward', true, forward]);
@@ -807,8 +817,7 @@ test('provider forward and reverse publish exact moves, retain durable intent, a
     f.listing.status = 503;
     const retry = await f.run([...migrate, '--apply']);
     assert.deepEqual(retry.requests, []);
-    assert.deepEqual(movesOf(retry), [forward]);
-    assert.deepEqual(movesOf(retry, 'prepare'), [forward]);
+    assert.deepEqual(moveCalls(retry), moveSteps(forward).slice(1));
     assert.ok(!names(retry).includes('token'));
     await expectPublished(f, newPair);
     for (const root of [f.publicRoot, f.drive]) for (const path of oldPair) await absent(join(root, path));
@@ -820,7 +829,7 @@ test('provider forward and reverse publish exact moves, retain durable intent, a
 
     const failedReverse = await f.run([...migrate, '--rollback'], 1, { fail: 'move-publish' });
     assert.deepEqual(failedReverse.requests, []);
-    assert.deepEqual(movesOf(failedReverse), [reverse]);
+    assert.deepEqual(moveCalls(failedReverse), moveSteps(reverse));
     journal = await readJson(f.journal);
     assert.equal(journal.phase, 'rolledBack');
     assert.deepEqual([journal.raster.direction, journal.raster.pending, journal.raster.moves], ['reverse', true, reverse]);
@@ -1124,6 +1133,29 @@ test('proven unpublished rollback refuses preparing guards without a v2 fresh or
     }
 });
 
+test('rollback rejects inconsistent inspector observations without modifying the archive or clearing its guard', async (t) => {
+    const observations = [
+        ['active manifest marked unpublished', { manifestPresent: true, unpublished: true, retiredPaths: [], phase: 'active' }],
+        ['present manifest with unknown phase', { manifestPresent: true, unpublished: false, retiredPaths: [], phase: 'unknown' }],
+        ['absent manifest with active phase', { manifestPresent: false, unpublished: true, retiredPaths: [], phase: 'active' }],
+        ['absent manifest with a retired PDF', { manifestPresent: false, unpublished: true, retiredPaths: [oldPair[0]], phase: null }],
+    ];
+    for (const [name, inspection] of observations) {
+        await t.test(name, async (t) => {
+            const f = await fixture(t);
+            await stand(f, ['--apply'], 1, { fail: 'prepare' });
+            assert.equal((await readJson(f.guard)).phase, 'preparing');
+            const before = await tree(f);
+
+            const result = await stand(f, ['--rollback'], 1, { inspection });
+            assert.deepEqual(result.log, [{ rasterArchive: 'rollback', reason: 'raster_inspect_failed', exitCode: 1 }]);
+            assert.deepEqual(names(result), ['inspect']);
+            assert.deepEqual(await tree(f), before);
+            assert.deepEqual(await f.raw(), []);
+        });
+    }
+});
+
 test('pre-manifest capture and older ambiguous guards retain evidence until verified recovery', async (t) => {
     const f = await fixture(t);
     await f.seed(f.publicRoot, oldPair);
@@ -1155,7 +1187,6 @@ test('pre-manifest capture and older ambiguous guards retain evidence until veri
 
 const proofOf = (path, bytes) => ({ path, sha256: sha(bytes), size: Buffer.byteLength(bytes) });
 const orderProofs = (rows) => rows.sort((a, b) => a.path < b.path ? -1 : Number(a.path > b.path));
-const archiveCalls = (result) => result.events.filter(({ call }) => call === 'prepare' || call === 'publish');
 
 test('only authoritative paused legacy proofs can recutover newer public bytes and retry with the same inputs', async (t) => {
     const f = await fixture(t);
@@ -1403,13 +1434,7 @@ test('targeted move replay survives an unrelated bad source and keeps genuine fa
     const result = await f.run([...migrate, '--apply'], 1, { fail: 'move-aggregate', aggregate });
     assert.deepEqual(result.log[0], { migration: 'apply', reason: documentsFailed, failedFiles: 1,
         failures: [{ docId: 'raster:0000000000000001', reason: 'RASTER_LIMIT' }], exitCode: 1 });
-    const phases = archiveCalls(result).map(({ options }) => ({
-        moves: options.moves, movesOnly: options.movesOnly, preMove: options.preMove, dryRun: options.dryRun,
-    }));
-    assert.deepEqual(phases, [
-        ...Array(2).fill({ moves: forward, movesOnly: true, preMove: true, dryRun: true }),
-        ...Array(2).fill({ moves: forward, movesOnly: true, preMove: undefined, dryRun: undefined }),
-    ]);
+    assert.deepEqual(moveCalls(result), moveSteps(forward));
     const guard = await readJson(f.guard);
     const pending = await readJson(f.journal);
     assert.equal(pending.raster.pending, true);
@@ -1449,10 +1474,7 @@ test('NFC-equivalent retired names reserve both paths, with exact journal-owned 
     assert.deepEqual(movesOf(await f.run([...migrate, '--apply'])), [exact]);
     const inverse = exact.map(({ from, to }) => ({ from: to, to: from }));
     const reverseRun = await f.run([...migrate, '--rollback']);
-    assert.deepEqual(movesOf(reverseRun, 'prepare', true), [inverse]);
-    assert.deepEqual(movesOf(reverseRun), [inverse]);
-    assert.ok(reverseRun.events.filter(({ call, options }) => call === 'publish' && options.moves)
-        .every(({ options }) => options.movesOnly && Boolean(options.preMove) === Boolean(options.dryRun)));
+    assert.deepEqual(moveCalls(reverseRun), moveSteps(inverse));
     for (const root of [f.originals, f.publicRoot, f.drive]) for (const path of originalNames) await absent(join(root, path));
     f.listing.docs = [withName(initial, comp), second];
     assert.deepEqual(movesOf(await f.run([...migrate, '--apply'])), [exact]);

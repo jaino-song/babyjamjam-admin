@@ -451,7 +451,6 @@ export async function migrateProviderContracts(context) {
     }
     if (mirror && !pending) {
         const options = { dryRun: true, moves: rasterMoves(moves, reverse ? 'reverse' : 'forward'), movesOnly: true, preMove: true };
-        await mirror.prepare(options);
         await mirror.publish(options);
     }
     if (dryRun) {
