@@ -2,7 +2,16 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 
-import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import {
+    INITIAL_FINALIZATION_REQUEST_PREFIX,
+    initialFinalizationStateSql,
+    initialRegenerationReadiness,
+    type InitialRegenerationReadiness,
+    isInitialFinalizationWorkflowScopeForRevision,
+    newestInitialFinalizationStateSql,
+    releaseTerminalInitialFinalizationKey,
+} from "application/policies/service-record-initial-finalization.policy";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 
 import {
     ServiceRecordEditConflictError,
@@ -42,6 +51,7 @@ import {
     type ServiceRecordEditRevisionFactsReceiptToken,
     type ServiceRecordRevision,
     type ServiceRecordRevisionDocumentState,
+    type ServiceRecordRevisionHistoryResponse,
     type CreateServiceRecordRevisionDocumentStateInput,
     type AdvanceServiceRecordRevisionDocumentStateInput,
     type RetryServiceRecordRevisionDocumentInput,
@@ -51,7 +61,9 @@ import {
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
+import { noProviderDocumentConfirmable } from "infrastructure/database/utils/service-record-initial-no-provider-document-projection";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { initialFinalizationSupersessionMarkerSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { readHolidayCalendarRows } from "./sb.holiday-calendar.repository";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
@@ -73,7 +85,6 @@ import type {
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionOperationJobPayload,
-    ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 
 type DraftRow = Prisma.service_record_edit_draftGetPayload<Record<string, never>>;
@@ -1189,6 +1200,7 @@ async function lockRevisionDocumentTargets(
         documentStateId: string;
         generation: string;
     },
+    initial = false,
 ): Promise<void> {
     const transaction = tx as OptionalQueryTransaction;
     if (typeof transaction.$queryRaw !== "function") return;
@@ -1215,6 +1227,9 @@ async function lockRevisionDocumentTargets(
     )].sort((left, right) => left - right);
     await lockRowsByBranchAndIds(tx, "employee", "employee", input.branchId, employeeIds, false);
     await lockRowsByBranchAndIds(tx, "service_record_case", "service_record_case", input.branchId, [input.serviceRecordCaseId], true);
+    if (initial) {
+        await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    }
     const scheduleIds = [...new Set(
         discovered
             .map((row) => row.scheduleId)
@@ -1226,7 +1241,9 @@ async function lockRevisionDocumentTargets(
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "eformsign_doc", "eformsign_doc", "service_record_case_id");
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_snapshot_chunk", "service_record_snapshot_chunk", "service_record_case_id");
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_revision", "service_record_revision", "service_record_case_id");
-    await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    if (!initial) {
+        await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    }
     await transaction.$queryRaw(Prisma.sql`
         SELECT job.id
         FROM "eformsign_document_job" AS job
@@ -1513,7 +1530,7 @@ function isServiceRecordRevisionGenerationPayload(value: unknown, requestKey?: u
     if (excludedRequestKey) return false;
     if (normalizedRequestKey !== null && (
         normalizedRequestKey.startsWith("service-record-revision:")
-        || normalizedRequestKey.startsWith("service-record-initial-finalization:")
+        || normalizedRequestKey.startsWith(INITIAL_FINALIZATION_REQUEST_PREFIX)
     )) {
         return true;
     }
@@ -1544,7 +1561,7 @@ function documentJobSupersessionPredicate(
                 AND (
                     job.payload->>'kind' = 'service_record_revision'
                     OR COALESCE(job.request_key, '') LIKE 'service-record-revision:%'
-                    OR COALESCE(job.request_key, '') LIKE 'service-record-initial-finalization:%'
+                    OR ${initialFinalizationSupersessionMarkerSql}
                 )
             )
         `;
@@ -1594,6 +1611,8 @@ function eformsignDocumentJobOwnershipPredicate(
 
 type BlockingRevisionDocumentStateRow = {
     id: string;
+    revisionId: string;
+    workflowScope: Prisma.JsonValue;
     operation: string;
     status: string;
     step: string;
@@ -1666,6 +1685,13 @@ function operationRevisionDispatchContext(
     };
 }
 
+export async function assertNoBlockingRevisionDocumentStates(
+    tx: Prisma.TransactionClient,
+    input: { branchId: string; clientId: number; serviceRecordCaseId: string },
+): Promise<void> {
+    await checkRevisionDocumentStatesForConfirm(tx, input);
+}
+
 /**
  * A new confirmation may proceed only after the current revision's external
  * operation markers have reached a terminal outcome.  The partial record
@@ -1678,16 +1704,19 @@ function operationRevisionDispatchContext(
  * were unavailable at confirm time (see SERVICE_RECORD_BORN_STUCK_ERROR_CODES).
  * It has no provider job and no target document, so it cannot duplicate a
  * send; blocking on it would make the record uneditable forever.
+ * Returns whether a terminal INITIAL was ready after lazy key release.
  */
-export async function assertNoBlockingRevisionDocumentStates(
+async function checkRevisionDocumentStatesForConfirm(
     tx: Prisma.TransactionClient,
     input: { branchId: string; clientId: number; serviceRecordCaseId: string },
-): Promise<void> {
+): Promise<boolean> {
     const transaction = tx as OptionalQueryTransaction;
-    if (typeof transaction.$queryRaw !== "function") return;
+    if (typeof transaction.$queryRaw !== "function") return false;
     const rows = await transaction.$queryRaw<BlockingRevisionDocumentStateRow[]>(Prisma.sql`
         SELECT
             state.id,
+            state.revision_id AS "revisionId",
+            state.workflow_scope AS "workflowScope",
             state.operation,
             state.status,
             state.step,
@@ -1701,27 +1730,41 @@ export async function assertNoBlockingRevisionDocumentStates(
         WHERE owner_case.branch_id = ${input.branchId}::uuid
           AND owner_case.client_id = ${input.clientId}
           AND owner_case.id = ${input.serviceRecordCaseId}::uuid
+          AND (NOT ${initialFinalizationStateSql("state")} OR ${newestInitialFinalizationStateSql("state")})
           AND NOT (
-                state.status IN ('not_required', 'completed')
-                OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
-                OR (
-                    state.status = 'manual_review'
-                    AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
-                    AND state.target_document_id IS NULL
-                )
+                state.status = 'completed'
+                OR (NOT ${initialFinalizationStateSql("state")} AND (
+                    state.status = 'not_required'
+                    OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
+                    OR (
+                        state.status = 'manual_review'
+                        AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
+                        AND state.target_document_id IS NULL
+                    )
+                ))
           )
         ORDER BY state.created_at ASC, state.id ASC
         FOR UPDATE OF state
     `);
-    const blocking = rows[0];
-    if (!blocking) return;
-    const detail = blocking.lastErrorCode ?? `${blocking.operation}:${blocking.step}`;
-    throw new ServiceRecordRevisionOperationUnresolvedError(
-        `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
-        blocking.operation,
-        blocking.status,
-        blocking.lastErrorCode,
-    );
+    let terminalInitialReady = false;
+    for (const blocking of rows) {
+        let reason = blocking.lastErrorCode;
+        if (blocking.operation === "record_snapshot"
+            && isInitialFinalizationWorkflowScopeForRevision(blocking.workflowScope, blocking.revisionId)) {
+            const readiness = await releaseTerminalInitialFinalizationKey(tx, input.serviceRecordCaseId, blocking.revisionId);
+            if (readiness.ready) {
+                terminalInitialReady = true;
+                continue;
+            }
+            reason = readiness.reason;
+        }
+        const detail = reason ?? `${blocking.operation}:${blocking.step}`;
+        throw new ServiceRecordRevisionOperationUnresolvedError(
+            `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
+            blocking.operation, blocking.status, reason,
+        );
+    }
+    return terminalInitialReady;
 }
 
 /**
@@ -2623,6 +2666,17 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             documentsByRevision.set(state.revisionId, existing);
         }
 
+        let initialReadiness: InitialRegenerationReadiness | undefined;
+        if (ownerCase.currentRevisionId && states.some(state => state.revisionId === ownerCase.currentRevisionId
+            && state.operation === "record_snapshot" && state.status === "failed"
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId))) {
+            initialReadiness = await initialRegenerationReadiness(tx, ownerCase.caseId, ownerCase.currentRevisionId, { lock: false });
+        }
+        const readyInitialStateId = initialReadiness?.ready ? initialReadiness.state.id : null;
+
+        const confirmable = ownerCase.currentRevisionId && states.some(state => state.status === "manual_review")
+            ? await noProviderDocumentConfirmable(tx, branchId, ownerCase.caseId) : [];
+        const attestableByState = new Map(confirmable.map(projection => [projection.stateId, projection]));
         return {
             caseId: ownerCase.caseId,
             caseVersion: ownerCase.caseVersion,
@@ -2641,11 +2695,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         generation: state.generation,
                         status: state.status,
                         documentVersion: state.documentVersion,
-                        canRetry: canRetryRevisionDocumentState(state)
-                            && !(state.operation === "record_snapshot"
-                                && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(state.revisionId))
-                                && revisionSnapshotRetryJobScope(state) === null),
+                        canRetry: state.operation === "record_snapshot"
+                            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId)
+                            ? state.id === readyInitialStateId : canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
+                        ...(state.status === "failed" && initialReadiness?.ready === false && initialReadiness.state?.id === state.id
+                            ? { regenerationBlockedReason: initialReadiness.reason } : {}),
+                        ...(attestableByState.has(state.id) ? { noProviderDocumentConfirmable: attestableByState.get(state.id) } : {}),
                     })),
             })),
             caregiverEdits: caregiverEdits.map((edit) => ({
@@ -2681,11 +2737,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         branchId: string,
         revisionId: string,
         stateId: string,
+        context?: ServiceRecordEditTransactionContext,
     ): Promise<ServiceRecordRevisionDocumentState | null> {
         assertUuid(branchId, "branch");
         assertUuid(revisionId, "revision");
         assertUuid(stateId, "state");
-        const rows = await selectRevisionDocumentStateForBranch(this.prisma, {
+        const rows = await selectRevisionDocumentStateForBranch(context?.tx ?? this.prisma, {
             branchId,
             revisionId,
             stateId,
@@ -3236,9 +3293,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     async recordInitialFinalizationDocumentsCreatedInTransaction(
         context: ServiceRecordEditTransactionContext,
         input: PromoteServiceRecordRevisionSnapshotInput,
+        precondition?: "cancelled_after_dispatch",
     ): Promise<boolean> {
         assertRevisionPromotionInput(input);
-        await lockRevisionDocumentTargets(context.tx, input);
+        // Recovery already owns case -> state -> chunk/doc locks. Do not acquire
+        // client/employee locks here, which would invert the lifecycle lock order.
+        if (!precondition) await lockRevisionDocumentTargets(context.tx, input, true);
         const ownerCase = await selectRevisionGenerationCase(context.tx, input);
         if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId
             || !["READY_TO_FINALIZE", "FINALIZATION_FAILED", "FINALIZING", "DOCUMENTS_CREATED"].includes(ownerCase.status)) {
@@ -3252,16 +3312,22 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!state || state.operation !== "record_snapshot") return false;
         const current = toRevisionDocumentState(state);
         if (current.documentVersion !== input.documentVersion
-            || !isInitialFinalizationWorkflowScope(current.workflowScope, initialFinalizationRequestKey(input.revisionId))) return false;
+            || !isInitialFinalizationWorkflowScopeForRevision(current.workflowScope, input.revisionId)) return false;
         const replay = current.status === "processing" && current.step === "documents_created"
             && ownerCase.status === "DOCUMENTS_CREATED";
-        if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"
+        if (precondition === "cancelled_after_dispatch") {
+            if (current.status !== "manual_review" || current.lastErrorCode !== "JOB_CANCELLED_AFTER_DISPATCH"
+                || !["READY_TO_FINALIZE", "FINALIZATION_FAILED"].includes(ownerCase.status)) return false;
+        } else if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"
             || ownerCase.status === "DOCUMENTS_CREATED")) return false;
         const rows = await selectRevisionSnapshotChunks(context.tx, input);
         if (rows.length !== input.chunkCount) return false;
         const persistedIds = new Set<string>();
         const indexes = new Set<number>();
         for (const row of rows) {
+            const tombstone = row.documentStatusType === "049" && row.documentClientId === null
+                && row.documentCaseId === null && row.documentKind === null
+                && row.documentSnapshotVersion === null && row.documentSnapshotChunkIndex === null;
             if (
                 row.revisionId !== input.revisionId
                 || row.snapshotVersion !== input.documentVersion
@@ -3274,13 +3340,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 || !row.documentId
                 || !row.storedDocumentId
                 || row.documentId !== row.storedDocumentId
-                || row.documentRevisionId !== input.revisionId
+                || (row.documentRevisionId !== input.revisionId
+                    && !(tombstone && row.documentRevisionId === null))
                 || row.documentBranchId !== input.branchId
-                || row.documentClientId !== input.clientId
-                || row.documentCaseId !== input.serviceRecordCaseId
-                || row.documentKind !== "service_record_snapshot"
-                || row.documentSnapshotVersion !== input.documentVersion
-                || row.documentSnapshotChunkIndex !== row.chunkIndex
+                || (!tombstone && (row.documentClientId !== input.clientId
+                    || row.documentCaseId !== input.serviceRecordCaseId
+                    || row.documentKind !== "service_record_snapshot"
+                    || row.documentSnapshotVersion !== input.documentVersion
+                    || row.documentSnapshotChunkIndex !== row.chunkIndex))
             ) return false;
             indexes.add(row.chunkIndex);
             persistedIds.add(row.documentId);
@@ -3291,7 +3358,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             return false;
         }
 
-        if (replay) return true;
+        if (replay) {
+            for (const documentId of persistedIds) {
+                await ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction({ branchId: input.branchId, documentId }, context.tx);
+            }
+            return true;
+        }
         const stateUpdated = await rawStateExecute(context.tx, Prisma.sql`
             UPDATE "service_record_revision_document_state"
             SET status = 'processing', step = 'documents_created', last_error_code = NULL,
@@ -3313,6 +3385,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             UPDATE "service_record_token" SET active = false, revoked_at = now()
             WHERE service_record_case_id = ${input.serviceRecordCaseId}::uuid AND active = true
         `);
+        for (const documentId of persistedIds) {
+            await ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction({ branchId: input.branchId, documentId }, context.tx);
+        }
         return true;
     }
 
@@ -3669,7 +3744,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         );
         if (!discoveredSource) throw new ServiceRecordEditNotFoundError();
         if (!lockedSource) await this.lockConfirmSourceTargets(tx, input.branchId, discoveredSource);
-        await this.lockConfirmDraftTargets(tx, input.branchId, discoveredSource, input.draftId);
+        const terminalInitialReady = await this.lockConfirmDraftTargets(tx, input.branchId, discoveredSource, input.draftId);
 
         // The parent/case/employee locks serialize all cooperating writers.
         // Re-read every business row after those locks and reject a writer
@@ -3833,6 +3908,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         ...(plan.finalizationDueAt ? { finalizationDueAt: new Date(plan.finalizationDueAt) } : {}),
                     } : {}),
                     ...(revision ? { currentRevisionId: revision.id } : {}),
+                    // Terminal INITIAL failures have no retry time. Make the new revision due
+                    // for the scheduler in the same write that installs it.
+                    ...(revision && terminalInitialReady && source.caseLifecycle.status === "FINALIZATION_FAILED"
+                        ? { nextAttemptAt: now }
+                        : {}),
                     version: { increment: 1 },
                 },
                 select: { version: true },
@@ -4172,13 +4252,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         branchId: string,
         source: ServiceRecordEditSource,
         draftId: string,
-    ): Promise<void> {
+    ): Promise<boolean> {
         await lockRowsByBranchAndIds(tx, "service_record_edit_draft", "service_record_edit_draft", branchId, [draftId], true);
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_revision", "service_record_revision", "service_record_case_id");
         // Operation state is a document child and must be locked before jobs
         // in the common order. Only the current revision blocks a new
         // confirmation; retained partial record history is explicitly safe.
-        await assertNoBlockingRevisionDocumentStates(tx, {
+        const terminalInitialReady = await checkRevisionDocumentStatesForConfirm(tx, {
             branchId,
             clientId: source.client.id,
             serviceRecordCaseId: source.caseId,
@@ -4209,6 +4289,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 select: { id: true },
             });
         }
+        return terminalInitialReady;
     }
 
     private async invalidateSupersededJobs(

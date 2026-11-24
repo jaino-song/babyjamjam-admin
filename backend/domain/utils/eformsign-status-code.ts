@@ -49,6 +49,19 @@ export function normalizeEformsignStatusCode(
     return STATUS_NAME_TO_CODE[normalized] ?? normalized;
 }
 
+/** Canonical codes and the raw numeric/aliased forms accepted by the normalizer. */
+export function eformsignStatusStorageValues(codes: ReadonlySet<string>): string[] {
+    const values = new Set(codes);
+    for (const code of codes) {
+        if (code.startsWith("0")) values.add(code.slice(1));
+        if (code.startsWith("00")) values.add(code.slice(2));
+    }
+    for (const [alias, code] of Object.entries(STATUS_NAME_TO_CODE)) {
+        if (codes.has(code)) values.add(alias);
+    }
+    return [...values];
+}
+
 export function normalizeEformsignStepType(
     stepType: string | number | null | undefined,
 ): string {

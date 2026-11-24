@@ -6,12 +6,47 @@ import { InfoRow } from "@/components/app/v3/InfoRow";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { documentJobOperationLabel, documentJobStatus } from "@/features/document-jobs/job-display";
-import { describeJobFailureDetail } from "@/features/document-jobs/failure-popup-copy";
+import { describeJobFailureDetail, initialDocumentStateLabel } from "@/features/document-jobs/failure-popup-copy";
 import { recoverJobHref } from '@/features/document-jobs/failure-popup-copy';
-import { SERVICE_RECORD_RECOVERY_COPY, serviceRecordMayExist } from "@/features/document-jobs/service-record-recovery-copy";
+import { INITIAL_DOCUMENT_RECOVERY_COPY, initialRegenerationBlockedCopy, SERVICE_RECORD_RECOVERY_COPY, serviceRecordMayExist } from "@/features/document-jobs/service-record-recovery-copy";
+
+import type {
+  InitialDocumentAction,
+  InitialNoProviderDocumentProjection,
+  InitialRegenerationProjection,
+} from "@/lib/eformsign/initial-document-recovery-contract";
 
 import type { ContractDocumentJob } from "./ContractDocumentJobsPopover";
 import { DocumentJobProgressSummary } from "./DocumentJobProgressSummary";
+
+export type InitialDocumentActionHandler = (action: InitialDocumentAction, trigger: HTMLButtonElement) => void;
+
+interface InitialDocumentDetailProps {
+  regeneration?: InitialRegenerationProjection;
+  confirmation?: InitialNoProviderDocumentProjection;
+  clientName?: string;
+  onInitialAction: InitialDocumentActionHandler;
+  "data-component": string;
+}
+
+export function InitialDocumentJobDetail({ regeneration, confirmation, clientName, onInitialAction, "data-component": base }: InitialDocumentDetailProps) {
+  const reason = initialRegenerationBlockedCopy(regeneration?.reasonCode);
+  const state = initialDocumentStateLabel(regeneration?.reasonCode);
+  return <Card data-component={base} data-slot="initial-document-detail" sourceComponent="InitialDocumentJobDetail" className="gap-3 p-4">
+    {clientName && <InfoRow label="고객" value={clientName} data-component={`${base}_client`} />}
+    {confirmation && <InfoRow label="이폼사인 접미사" value={confirmation.suffix} data-component={`${base}_suffix`} />}
+    {state && <p data-component={`${base}_state`} data-slot="initial-document-state">{state}</p>}
+    {reason && <p data-component={`${base}_readiness`} data-slot="initial-document-readiness">{reason}</p>}
+    {regeneration?.ready && <Button type="button" variant="outline"
+      data-component={`${base}_regenerate`} data-slot="initial-document-regenerate"
+      onClick={event => onInitialAction({ kind: "regenerate", target: regeneration }, event.currentTarget)}
+    >{INITIAL_DOCUMENT_RECOVERY_COPY.regenerateLabel}</Button>}
+    {confirmation && <Button type="button" variant="outline"
+      data-component={`${base}_confirm-no-provider-document`} data-slot="initial-document-confirm"
+      onClick={event => onInitialAction({ kind: "confirm-no-provider-document", target: confirmation }, event.currentTarget)}
+    >{INITIAL_DOCUMENT_RECOVERY_COPY.confirmLabel}</Button>}
+  </Card>;
+}
 
 export type DocumentJobCancelHandler = (jobId: string, trigger: HTMLButtonElement, onCancelled?: () => void) => void;
 

@@ -21,6 +21,33 @@ import {
     type OpenManualRecoveryResponse, type VerifyManualRecoveryResponse,
 } from "@/lib/eformsign/manual-recovery-contract";
 
+import {
+    INITIAL_CONFIRM_CLIENT_CONFIG,
+    initialNoProviderDocumentProjectionSchema,
+    initialRegenerationProjectionSchema,
+    type InitialDocumentTarget,
+    type InitialNoProviderDocumentProjection,
+    type InitialRegenerationProjection,
+} from "@/lib/eformsign/initial-document-recovery-contract";
+
+export interface InitialDocumentRecoveryProjections {
+    initialRegenerations?: InitialRegenerationProjection[];
+    noProviderDocumentConfirmable?: InitialNoProviderDocumentProjection[];
+}
+
+function normalizeInitialDocumentRecovery<T extends InitialDocumentRecoveryProjections>(data: T): T {
+    for (const [field, schema] of [
+        ["initialRegenerations", initialRegenerationProjectionSchema],
+        ["noProviderDocumentConfirmable", initialNoProviderDocumentProjectionSchema],
+    ] as const) {
+        const value = data[field];
+        if (value === undefined) continue;
+        const parsed = schema.array().safeParse(value);
+        data = { ...data, [field]: parsed.success ? parsed.data : [] };
+    }
+    return data;
+}
+
 /**
  * Headless dispatch/finalize run a real browser against eformsign, so they blow
  * far past the 30s default on `api`. The three hops must stay ordered — backend
@@ -61,7 +88,7 @@ export const EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES = [
 ] as const;
 export type EformsignDocumentJobFailureReasonCode = (typeof EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES)[number];
 
-export interface EformsignDocumentJobSummary {
+export interface EformsignDocumentJobSummary extends InitialDocumentRecoveryProjections {
     activeCount: number;
     /** 종류와 기간에 관계없이 모든 `requires_attention` 작업 수. 취소된 작업은 제외한다. */
     requiresAttentionCount: number;
@@ -107,7 +134,7 @@ export interface EformsignDocumentJobResponse {
     lastErrorCode: string | null;
 }
 
-export interface EformsignDocumentJobList {
+export interface EformsignDocumentJobList extends InitialDocumentRecoveryProjections {
     active: EformsignDocumentJobResponse[];
     requiresAttention: EformsignDocumentJobResponse[];
     recent: EformsignDocumentJobResponse[];
@@ -324,11 +351,11 @@ export const eformsignApi = {
     },
     getDocumentJobSummary: async (): Promise<EformsignDocumentJobSummary> => {
         const { data } = await api.get<EformsignDocumentJobSummary>('/eformsign-docs/jobs/summary');
-        return data;
+        return normalizeInitialDocumentRecovery(data);
     },
     getDocumentJobs: async (): Promise<EformsignDocumentJobList> => {
         const { data } = await api.get<EformsignDocumentJobList>('/eformsign-docs/jobs');
-        return data;
+        return normalizeInitialDocumentRecovery(data);
     },
     enqueueDocumentCreation: async (
         params: CreateEformsignDocumentJobRequest,
@@ -386,6 +413,12 @@ export const eformsignApi = {
             `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/cancel`,
         );
         return data;
+    },
+    regenerateInitialDocument: async (target: InitialDocumentTarget): Promise<void> => {
+        await api.post("/eformsign-docs/jobs/regenerate-initial", target);
+    },
+    confirmInitialNoProviderDocument: async (target: InitialDocumentTarget): Promise<void> => {
+        await api.post("/eformsign-docs/jobs/confirm-no-provider-document", target, INITIAL_CONFIRM_CLIENT_CONFIG);
     },
     // Documents APIs - token is read from httpOnly cookie on server
     // Note: eformsign routes use /eformsign prefix to avoid conflict with file storage /documents

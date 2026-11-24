@@ -352,6 +352,15 @@ export interface ServiceRecordRevisionDocumentSummary {
     documentVersion: number | null;
     canRetry: boolean;
     reasonCode: string | null;
+    /** Current INITIAL readiness guidance, when regeneration is blocked. */
+    regenerationBlockedReason?: string;
+    noProviderDocumentConfirmable?: {
+        stateId: string;
+        revisionId: string;
+        generation: string;
+        suffix: string;
+        unlinkedChunkOrdinals: string[];
+    };
 }
 
 export interface ServiceRecordRevisionHistoryEntry {

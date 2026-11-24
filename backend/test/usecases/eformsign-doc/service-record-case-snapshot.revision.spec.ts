@@ -3,6 +3,7 @@ import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import type { ServiceRecordRevisionGenerationInput } from "domain/entities/eformsign-document-job.entity";
 import { LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS } from "application/utils/eformsign-historical-template-policy";
+import { initialFinalizationGenerationRequestKey } from "application/policies/service-record-initial-finalization.policy";
 
 describe("revised service-record snapshot boundary", () => {
     it("fails closed before credentials or provider calls", async () => {
@@ -627,15 +628,29 @@ function setAuthorizedInitialState(harness: ReturnType<typeof createRevisionHarn
 }
 
 describe("INITIAL immutable rendering", () => {
-    it("creates review-requested documents and calls Step A instead of promoting", async () => {
+    it.each([
+        { keyKind: "legacy", generation: "generation-1", documentVersion: 3 },
+        { keyKind: "gen2", generation: "22222222-2222-4222-8222-222222222222", documentVersion: 4 },
+    ])("creates review-requested documents and calls Step A for a $keyKind INITIAL key", async ({ keyKind, generation, documentVersion }) => {
         const harness = createRevisionHarness();
-        const input = initialGenerationInput(); setAuthorizedInitialState(harness, input);
+        const input = { ...makeGenerationInput({ generation }),
+            generationKind: "INITIAL_FINALIZATION" as const, lifecycleStatus: "READY_TO_FINALIZE" as const, documentVersion,
+            snapshotReference: keyKind === "gen2"
+                ? initialFinalizationGenerationRequestKey("revision-1", generation)
+                : initialGenerationInput().snapshotReference };
+        setAuthorizedInitialState(harness, input);
         await expect(harness.usecase.executeRevision(input, harness.principal)).resolves.toEqual({
-            documentIds: ["revision-doc-1"], documentVersion: 3, chunkCount: 1,
+            documentIds: ["revision-doc-1"], documentVersion, chunkCount: 1,
         });
+        expect(harness.eformsignClient.createDocument).toHaveBeenCalledTimes(1);
+        expect(harness.eformsignClient.createDocument).toHaveBeenCalledWith("access-token", expect.objectContaining({
+            idempotencyKey: `service-record-revision:${generation}:v${documentVersion}:c1`,
+            documentName: expect.stringContaining(`-r1-v${documentVersion}]`),
+        }));
         expect(harness.prisma.eformsign_doc.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ statusType: "070" }) }));
         expect(harness.repository.recordInitialFinalizationDocumentsCreated).toHaveBeenCalledWith(expect.objectContaining({
-            revisionId: input.revisionId, documentVersion: 3, documentIds: ["revision-doc-1"],
+            revisionId: input.revisionId, documentStateId: input.documentStateId, generation,
+            documentVersion, documentIds: ["revision-doc-1"],
         }));
         expect(harness.repository.promoteServiceRecordRevisionSnapshot).not.toHaveBeenCalled();
     });

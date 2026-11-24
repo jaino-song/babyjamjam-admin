@@ -7,6 +7,7 @@ import { ContractDocumentJobsPopover } from "@/components/app/contracts/Contract
 import { StatMini, type StatMiniDensity } from "@/components/app/v3/StatMini";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { initialDocumentRecoveryItems } from "@/features/document-jobs/initial-document-recovery";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
 
 function SpinningLoader({ className }: { className?: string }) {
@@ -32,7 +33,7 @@ export interface DocumentJobsStatMiniProps {
 export function useDocumentJobsStatVisible(mode: DocumentJobsStatMode | undefined): boolean {
   const { summary, total, isPopoverOpen } = useDocumentJobs();
   if (mode === "always") return true;
-  if (mode === "whenActive") return isPopoverOpen || (summary !== undefined && total > 0);
+  if (mode === "whenActive") return isPopoverOpen || (summary !== undefined && (total > 0 || initialDocumentRecoveryItems(summary).length > 0));
   return false;
 }
 
@@ -71,6 +72,9 @@ export function DocumentJobsStatMini({
 
   const base = `${name}_stats_document-jobs`;
   const hasSummary = summary !== undefined;
+  const recoveryCount = initialDocumentRecoveryItems(summary).length;
+  const attentionCount = unresolvedCount + recoveryCount;
+  const label = unresolvedCount > 0 ? "문서 처리 실패" : recoveryCount > 0 ? "전자문서 확인 필요" : "전자문서 처리중";
   const hasSummaryError = summaryError !== undefined && summaryError !== null;
   const isOpen = isPopoverOpen && primaryCardId === cardId;
   const handleOpenChange = (open: boolean) => {
@@ -83,7 +87,7 @@ export function DocumentJobsStatMini({
       <ContractDocumentJobsPopover
         open={isOpen}
         onOpenChange={handleOpenChange}
-        summary={summary ? { activeCount: summary.activeCount, requiresAttentionCount: summary.unresolvedCount } : null}
+        summary={summary ? { ...summary, requiresAttentionCount: summary.unresolvedCount } : null}
         documentJobs={jobs ?? null}
         isJobsLoading={isJobsLoading}
         jobsError={jobsError}
@@ -93,16 +97,16 @@ export function DocumentJobsStatMini({
         trigger={
           <StatMini
             data-component={`${base}-popover_trigger`}
-            icon={unresolvedCount > 0 ? TriangleAlert : (summary?.activeCount ?? 0) > 0 ? SpinningLoader : FileText}
-            value={hasSummary ? (unresolvedCount > 0 ? unresolvedCount : summary.activeCount) : "—"}
-            label={unresolvedCount > 0 ? "문서 처리 실패" : "전자문서 처리중"}
+            icon={attentionCount > 0 ? TriangleAlert : (summary?.activeCount ?? 0) > 0 ? SpinningLoader : FileText}
+            value={hasSummary ? (attentionCount > 0 ? attentionCount : summary.activeCount) : "—"}
+            label={label}
             counter="건"
-            colorIndex={unresolvedCount > 0 ? 3 : 2}
+            colorIndex={attentionCount > 0 ? 3 : 2}
             animationDelay="0s"
             isLoading={isSummaryLoading}
             density={density}
             interactive
-            aria-label={unresolvedCount > 0 ? "문서 처리 실패 작업 보기" : "전자문서 처리중 작업 보기"}
+            aria-label={`${label} 작업 보기`}
           />
         }
       />

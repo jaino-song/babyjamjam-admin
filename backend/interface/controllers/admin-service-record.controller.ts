@@ -4,9 +4,12 @@ import {
     Controller,
     Get,
     HttpCode,
+    HttpStatus,
     MessageEvent,
+    Optional,
     Param,
     ParseIntPipe,
+    ParseUUIDPipe,
     Patch,
     PipeTransform,
     Post,
@@ -19,12 +22,14 @@ import {
     AdminServiceRecordService,
     ServiceRecordAdminActor,
 } from "application/services/admin-service-record.service";
+import { ConfirmInitialNoProviderDocumentBodyDto } from "interface/dto/eformsign-document-job.dto";
+import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CurrentTenant, TenantGuard, VerifiedTenantPrincipal } from "infrastructure/tenant";
-import { problemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemException, problemBody } from "application/utils/problem-bodies";
 import {
     KeepServiceRecordPeriodMismatchDto,
     FitServiceRecordPeriodMismatchDto,
@@ -74,6 +79,7 @@ export class AdminServiceRecordController {
         private readonly adminServiceRecordService: AdminServiceRecordService,
         private readonly adminServiceRecordEditService: AdminServiceRecordEditService,
         private readonly caseEventBus: ServiceRecordCaseEventBus,
+        @Optional() private readonly initialNoProviderDocument?: ServiceRecordInitialNoProviderDocumentService,
     ) {}
 
     /**
@@ -204,6 +210,24 @@ export class AdminServiceRecordController {
             body.expectedGeneration,
             tenant.userId,
         );
+    }
+
+    @Post("revisions/:revisionId/documents/:documentStateId/confirm-no-provider-document")
+    @UseGuards(BranchManagerGuard)
+    @HttpCode(HttpStatus.OK)
+    confirmInitialNoProviderDocument(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("revisionId", new ParseUUIDPipe()) revisionId: string,
+        @Param("documentStateId", new ParseUUIDPipe()) documentStateId: string,
+        @Body() body: ConfirmInitialNoProviderDocumentBodyDto,
+        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+    ) {
+        void _query;
+        if (!this.initialNoProviderDocument) throw codeOnlyProblemException("DEPENDENCY_UNAVAILABLE");
+        return this.initialNoProviderDocument.confirmInitialNoProviderDocument({
+            branchId: tenant.branchId, actorUserId: tenant.userId, revisionId, documentStateId,
+            expectedGeneration: body.expectedGeneration,
+        });
     }
 
     @Post("client/:clientId/draft")
