@@ -147,6 +147,38 @@ const validRows = () => ({
     [`${archive}/${filePath}`]: pdf('sample_id'),
 });
 
+test('Drive inventory rejects an ordinary MIME type inconsistent with IsDir', async (t) => {
+    const rows = validRows();
+    // Use a non-native directory MIME on an otherwise valid regular PDF row.
+    rows[`${archive}/${filePath}`].MimeType = 'inode/directory';
+    const f = await fixture(t, rows);
+
+    await assert.rejects(f.remote.inventory(), {
+        code: 'raster_archive_unsafe_remote_listing',
+    }, 'the listing must reject the IsDir and MIME mismatch');
+    await assertMetadataOnly(f);
+});
+
+test('Drive recursive inventory rejects a descendant ID matching a named ancestor', async (t) => {
+    const nestedRoot = `${archive}/backup`;
+    const ancestorId = 'archive_id';
+    const f = await fixture(t, {
+        [archive]: folder(ancestorId),
+        [nestedRoot]: folder('backup_id'),
+        [`${nestedRoot}/records`]: folder(ancestorId),
+    });
+    const remote = remoteTransport({ ...f.settings, rcloneRemote: `fixture:${nestedRoot}` }, f.lock.fd);
+
+    await assert.rejects(remote.inventory(), {
+        code: 'raster_archive_ambiguous_remote_identity',
+    }, 'the recursive listing must reject reuse of the named ancestor ID');
+    await assertMetadataOnly(f);
+    const recursiveCalls = (await f.calls()).filter(({ recursive }) => recursive);
+    assert.deepEqual(recursiveCalls.map(({ command, follow, operands }) => ({ command, follow, operands })), [
+        { command: 'lsjson', follow: false, operands: [`fixture:${nestedRoot}`] },
+    ]);
+});
+
 test('mirror proves the named Drive root from its parent and uses one no-follow recursive inventory', async (t) => {
     const f = await fixture(t, validRows(), { [`${archive}/${filePath}`]: bytes });
     const { names, root } = await f.remote.inventory();
