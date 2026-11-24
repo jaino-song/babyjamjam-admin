@@ -76032,7 +76032,7 @@
       "path": "backend/application/services/standalone-receipt-issue.service.ts",
       "root": "backend/application/",
       "classification": "approved-exception",
-      "reason": "Boundary-specific compatibility per docs/error-management.md (호환성 경계) and the standalone-issuance.md dispatch plan (sections 2 and 3). The standalone receipt admission contract uses fixed, code-only bodies for MISSING_RECEIPT_FIELDS (400, L42), INVALID_RECEIVED_DATE (400, L100) and REQUEST_ID_CONFLICT (409, L145 and L152). These three status/code pairs are explicitly recognized by readStandaloneReceiptRefusal in both app routes and use the unregistered 4xx compatibility path in mapHttpProblem. ACCESS_DENIED (403, L106) and RESOURCE_NOT_FOUND (404, L107) use codeOnlyProblemBody and are registered in the shared catalog.",
+      "reason": "Boundary-specific compatibility per docs/error-management.md (호환성 경계) and the signed-in receipt request/response contract in backend/application/services/standalone-receipt-issue.service.ts and packages/shared/src/client/standalone-receipt.ts (covered by frontend/src/app/api/receipt-links/standalone/route.test.ts and mobile/src/app/api/receipt-links/standalone/route.test.ts). The standalone receipt admission contract uses fixed, code-only bodies for MISSING_RECEIPT_FIELDS (400, L42), INVALID_RECEIVED_DATE (400, L100) and REQUEST_ID_CONFLICT (409, L145 and L152). These three status/code pairs are explicitly recognized by readStandaloneReceiptRefusal in both app routes and use the unregistered 4xx compatibility path in mapHttpProblem. ACCESS_DENIED (403, L106) and RESOURCE_NOT_FOUND (404, L107) use codeOnlyProblemBody and are registered in the shared catalog.",
       "seams": [
         {
           "line": 2,
