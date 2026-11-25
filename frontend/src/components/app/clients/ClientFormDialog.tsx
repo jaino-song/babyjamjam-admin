@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
     FETAL_TYPE_LABELS,
     findOutOfPocketPriceInfo,
@@ -32,6 +33,7 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientAllocationWrite, ClientFormData, UpdateClientDto } from "@/features/clients/types";
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { useBabyRecordCapability } from "@/features/clients/hooks/use-baby-record-capability";
 import { getActiveBranchId } from "@/features/system-templates/branch-context";
 import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
@@ -533,6 +535,7 @@ function ClientFormContent({
     const searchParams = useSearchParams();
     const locale = useLocale();
     const isEditMode = !!client;
+    const queryClient = useQueryClient();
     const capability = useBabyRecordCapability(open);
     const activeBranchId = capability.branchId;
     const prefillRef = useRef(prefill);
@@ -1284,9 +1287,9 @@ function ClientFormContent({
         || formData.type !== formDataBaselineRef.current.type
         || formData.voucherClient !== formDataBaselineRef.current.voucherClient
         || voucherYear !== (allocationSnapshot?.voucherIssuanceYear ?? null);
-    const wantsAllocation = formData.voucherClient && (isEditMode
-        ? hasSavedAllocation ? allocationWasEdited : hasBabyDraftChanges
-        : Boolean(formData.type));
+    const isNewVoucherRegistration = !isEditMode && formData.voucherClient;
+    const wantsAllocation = isNewVoucherRegistration || (formData.voucherClient
+        && (hasSavedAllocation ? allocationWasEdited : hasBabyDraftChanges));
     const shouldWriteAllocation = canEditAllocation && wantsAllocation;
     const explicitAllocationBlocked = !canEditAllocation && session.explicitAllocation;
     const areVoucherControlsLocked = Boolean(readOnlyAllocation) || explicitAllocationBlocked || branchChanged;
@@ -1760,11 +1763,18 @@ function ClientFormContent({
     // 종료일을 계산하지 못한 채(지원하지 않는 연도)로도 저장하지 않아요. 직접 입력하거나 기간을 바꾸면 풀려요.
     const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
-    const canWriteInSession = (session: typeof formSessionRef.current, grouped = false) =>
-        session.open && session === formSessionRef.current && !session.branchChanged
-        && session.branchId === getActiveBranchId()
-        && (!session.explicitAllocation || grouped)
-        && (!grouped || capability.isEnabledNow());
+    const canWriteInSession = (session: typeof formSessionRef.current, grouped = false) => {
+        if (!session.open || session !== formSessionRef.current || session.branchChanged
+            || session.branchId !== getActiveBranchId() || (session.explicitAllocation && !grouped)) return false;
+        if (grouped) return capability.isEnabledNow();
+        if (!isNewVoucherRegistration) return true;
+        if (capability.status !== "paused" || !session.branchId) return false;
+
+        // The branch may have started a new capability read while the calendar was refreshing.
+        const current = queryClient.getQueryState<boolean>(clientKeys.babyRecordCapability(session.branchId));
+        return current?.status === "success" && current.fetchStatus === "idle"
+            && !current.isInvalidated && current.data === false;
+    };
 
     const handleSubmit = async (confirmedPeriod?: string) => {
         const session = formSessionRef.current;
@@ -2075,7 +2085,8 @@ function ClientFormContent({
     // message on every problem field. Only work in flight, an unknown outcome, a
     // stale edit form or a phone check that has not finished block them.
     const isAwaitingEditInit = Boolean(isEditMode && client && initializedEditClientId !== client.id);
-    const isAllocationBlockingSubmit = branchChanged || explicitAllocationBlocked;
+    const isAllocationBlockingSubmit = branchChanged || explicitAllocationBlocked
+        || (isNewVoucherRegistration && !canEditAllocation && capability.status !== "paused");
     const isPanelActionBlocked = isSubmitting
         || isUnknownOutcome
         || isAwaitingEditInit
