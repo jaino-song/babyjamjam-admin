@@ -265,6 +265,35 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         expect(replay.body.jobId).toBe(results[0].body.jobId);
         expect(calls().length).toBe(1);
         expect((await getJobs(family.clientId)).filter(job => job.status === "sent")).toHaveLength(1);
+
+        for (const memberCount of [2, 1]) {
+            const canceledFamily = await book([0, 0]);
+            const [canceledJob] = await getJobs(canceledFamily.clientId);
+            const callCount = calls().length;
+            await http().post(`/message-trigger-jobs/${canceledJob!.id}/cancel`).expect(201);
+            await linkService.scheduleForServiceStart(canceledFamily.schedule.id);
+            expect((await getJobs(canceledFamily.clientId)).map(job => [job.id, job.status, job.canceledByUser]))
+                .toEqual([[canceledJob!.id, "canceled", true]]);
+            expect(calls()).toHaveLength(callCount);
+
+            const caseIds = canceledFamily.cases.slice(0, memberCount).map(row => row.id);
+            const prepared = await prepare(canceledFamily.schedule.id, staff[0]!, caseIds);
+            const sent = await postLink(canceledFamily.schedule.id, "send", prepared.input).expect(201);
+            expect(sent.body.status).toBe("sent");
+            expect(sent.body.jobId).not.toBe(canceledJob!.id);
+            expect(calls()).toHaveLength(callCount + 1);
+
+            await linkService.scheduleForServiceStart(canceledFamily.schedule.id);
+            const repeated = await postLink(canceledFamily.schedule.id, "send", prepared.input).expect(201);
+            expect(repeated.body.jobId).toBe(sent.body.jobId);
+            const jobs = await getJobs(canceledFamily.clientId);
+            expect(jobs).toHaveLength(2);
+            expect(jobs.find(job => job.id === canceledJob!.id)).toMatchObject({ status: "canceled", canceledByUser: true });
+            expect(jobs.find(job => job.id === sent.body.jobId)?.recordMembers.map(member => member.serviceRecordCaseId).sort())
+                .toEqual([...caseIds].sort());
+            const submitted = calls().slice(callCount).map(call => [call.receiver, digest(call.message)]);
+            expect(submitted).toEqual([[phone(0), digest(prepared.content)]]);
+        }
     });
 
     it("partial carrier failure cannot repeat a previously accepted recipient", async () => {
