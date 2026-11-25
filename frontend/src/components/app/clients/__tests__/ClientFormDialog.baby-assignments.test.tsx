@@ -660,6 +660,21 @@ describe("desktop client service-record allocation", () => {
     await selectProvider(0, providers[0]);
     await selectProvider(1, providers[1]);
     next();
+    const submit = screen.getByRole("button", { name: "생성" });
+    expect(submit).toBeEnabled();
+    let finishRead: (result: { data: { enabled: boolean } }) => void = () => {};
+    const read = jest.fn(() => new Promise<{ data: { enabled: boolean } }>((resolve) => { finishRead = resolve; }));
+    readPausedCapability = read;
+    await act(async () => {
+      fireEvent.click(submit);
+      void queries.refetchQueries({ queryKey: clientKeys.babyRecordCapability(pausedBranch) });
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(submit).toBeDisabled();
+    expect(post).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+    await act(async () => finishRead({ data: { enabled: false } }));
+    await waitFor(() => expect(submit).toBeEnabled());
     click("생성");
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     const body = post.mock.calls[0][1];
@@ -669,6 +684,44 @@ describe("desktop client service-record allocation", () => {
     for (const key of ["fetalType", "babyCount", "providers", "babyAssignments"]) {
       expect(body).not.toHaveProperty(key);
     }
+  });
+
+  it.each<Surface>(["panel", "dialog"])("waits for a confirmed capability before a new voucher registration in the %s", async (surface) => {
+    selectBranch(pausedBranch);
+    let settle: (result: { data: { enabled: unknown } }) => void = () => {};
+    readPausedCapability = () => new Promise((resolve) => { settle = resolve; });
+    render(<QueryClientProvider client={queries}><FormFixture surface={surface} /></QueryClientProvider>);
+    await screen.findByText("등록 가능한 번호입니다.");
+    if (surface === "panel") next();
+    fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
+    select("바우처 유형", "A가1형");
+    if (surface === "panel") {
+      next();
+      next();
+    }
+    const submit = screen.getByRole("button", { name: "생성" });
+    const expectBlocked = () => {
+      expect(submit).toBeDisabled();
+      fireEvent.click(submit);
+      expect(post).not.toHaveBeenCalled();
+      expect(patch).not.toHaveBeenCalled();
+    };
+    expect(screen.getByRole("status", {
+      name: "이 지점의 아기별 기록지 설정 가능 여부를 확인하는 중이에요.",
+    })).toBeVisible();
+    expectBlocked();
+
+    await act(async () => settle({ data: { enabled: "true" } }));
+    expect(await screen.findByText(/아기별 기록지 설정 가능 여부를 확인하지 못했어요/)).toBeVisible();
+    expectBlocked();
+
+    readPausedCapability = async () => ({ data: { enabled: false } });
+    click("다시 확인");
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/clients", expect.objectContaining({ voucherClient: true, type: "A가1형" }));
+    expect(post.mock.calls[0][1]).not.toHaveProperty("fetalType");
   });
 
   it("does not submit an explicit enrollment after a branch switch or failed capability read", async () => {
