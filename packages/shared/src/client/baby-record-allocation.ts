@@ -139,6 +139,8 @@ type VoucherAllocationInput = {
   readonly providers?: readonly BabyRecordProviderInput[];
   /** 이 등록 건에 속한 활성 아기의 저장된 ID와 순번. 담당 요청에서 가져오지 않는다. */
   readonly babies?: readonly ExistingBaby[];
+  /** 비활성 아기를 포함해 지금까지 발급한 가장 큰 저장 순번. 저장 이력이 없는 경우에만 생략할 수 있다. */
+  readonly historicalMaxOrdinal?: number;
   readonly babyAssignments?: readonly BabyRecordAssignmentInput[];
 };
 
@@ -178,6 +180,7 @@ export type BabyRecordAllocationIssue =
   | { field: "babyCount"; code: "invalid-count" }
   | { field: "providers"; index: number; code: "disabled-slot" | "invalid-employee" | "duplicate-slot" | "duplicate-employee" }
   | { field: "babies"; index: number; code: "invalid-baby" | "duplicate-baby" | "duplicate-ordinal" }
+  | { field: "historicalMaxOrdinal"; code: "required" | "invalid-ordinal" }
   | { field: "babyAssignments"; index: number; code: "unknown-baby" | "invalid-target" | "baby-id-required" | "duplicate-ordinal" | "unavailable-slot" | "fixed-primary" };
 
 export type BabyRecordAllocation =
@@ -190,15 +193,18 @@ export type BabyRecordAllocation =
     fetalType: FetalType;
     babyCount: number;
     providerSlots: readonly BabyRecordProviderSlot[];
+    /** 저장 순번으로 조회한다. 비활성 순번은 null이다. */
     assignmentFor: (ordinal: number) => BabyRecordAssignment | null;
+    /** 출생 순서대로 정렬한 활성 아기를 1부터 babyCount까지 조회한다. */
+    assignmentAtRank: (rank: number) => BabyRecordAssignment | null;
   };
 
-function isBabyOrdinal(ordinal: number, babyCount: number): boolean {
-  return Number.isSafeInteger(ordinal) && ordinal >= 1 && ordinal <= babyCount;
+function isPositiveSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 1;
 }
 
-function canChangeProvider(fetalType: FetalType, ordinal: number): boolean {
-  return fetalType === "SEVERE_SINGLETON" || ordinal > 1;
+function canChangeProvider(fetalType: FetalType, rank: number): boolean {
+  return fetalType === "SEVERE_SINGLETON" || rank > 1;
 }
 
 /** 임시저장에도 사용할 수 있게 인력과 담당이 비어 있는 상태를 허용한다. */
@@ -275,16 +281,48 @@ export function resolveBabyRecordAllocation(input: BabyRecordAllocationInput): B
   });
   const availableSlots = providerSlots.filter(({ available }) => available).map(({ slot }) => slot);
 
+  const babies = input.babies ?? [];
+  if (babies.length > babyCount) {
+    return reject({ field: "babies", index: babyCount, code: "invalid-baby" });
+  }
+  const suppliedMaxOrdinal = input.historicalMaxOrdinal;
+  if (babies.length > 0 && suppliedMaxOrdinal === undefined) {
+    return reject({ field: "historicalMaxOrdinal", code: "required" });
+  }
+  const historicalMaxOrdinal = suppliedMaxOrdinal === undefined ? 0 : suppliedMaxOrdinal;
+  if (!Number.isSafeInteger(historicalMaxOrdinal) || historicalMaxOrdinal < 0) {
+    return reject({ field: "historicalMaxOrdinal", code: "invalid-ordinal" });
+  }
+
   const ordinalByBabyId = new Map<string, number>();
   const babyIdByOrdinal = new Map<number, string>();
-  for (const [index, { babyId, ordinal }] of (input.babies ?? []).entries()) {
-    if (typeof babyId !== "string" || !babyId.trim() || !isBabyOrdinal(ordinal, babyCount)) {
+  for (const [index, baby] of babies.entries()) {
+    if (typeof baby?.babyId !== "string" || !baby.babyId.trim() || !isPositiveSafeInteger(baby.ordinal)) {
       return reject({ field: "babies", index, code: "invalid-baby" });
+    }
+    const { babyId, ordinal } = baby;
+    if (ordinal > historicalMaxOrdinal) {
+      return reject({ field: "historicalMaxOrdinal", code: "invalid-ordinal" });
     }
     if (ordinalByBabyId.has(babyId)) return reject({ field: "babies", index, code: "duplicate-baby" });
     if (babyIdByOrdinal.has(ordinal)) return reject({ field: "babies", index, code: "duplicate-ordinal" });
     ordinalByBabyId.set(babyId, ordinal);
     babyIdByOrdinal.set(ordinal, babyId);
+  }
+
+  const newBabyCount = babyCount - babies.length;
+  if (newBabyCount > Number.MAX_SAFE_INTEGER - historicalMaxOrdinal) {
+    return reject({ field: "babyCount", code: "invalid-count" });
+  }
+  const lastOrdinal = historicalMaxOrdinal + newBabyCount;
+  // Only index persisted rows. New siblings form a contiguous range above the historical maximum.
+  const persistedOrdinals = [...babyIdByOrdinal.keys()].sort((left, right) => left - right);
+  const rankByOrdinal = new Map(persistedOrdinals.map((ordinal, index) => [ordinal, index + 1]));
+
+  function activeRankFor(ordinal: number): number | undefined {
+    if (!isPositiveSafeInteger(ordinal) || ordinal > lastOrdinal) return undefined;
+    if (ordinal <= historicalMaxOrdinal) return rankByOrdinal.get(ordinal);
+    return persistedOrdinals.length + (ordinal - historicalMaxOrdinal);
   }
 
   const explicitSlots = new Map<number, ProviderSlot>();
@@ -293,18 +331,38 @@ export function resolveBabyRecordAllocation(input: BabyRecordAllocationInput): B
     const field = "babyAssignments" as const;
     const ordinal = babyId === undefined ? assignment.ordinal : ordinalByBabyId.get(babyId);
     if (babyId !== undefined && ordinal === undefined) return reject({ field, index, code: "unknown-baby" });
-    if (ordinal === undefined || !isBabyOrdinal(ordinal, babyCount)
-      || (babyId !== undefined && assignment.ordinal !== undefined)) {
+    const rank = ordinal === undefined ? undefined : activeRankFor(ordinal);
+    if (ordinal === undefined || rank === undefined || (babyId !== undefined && assignment.ordinal !== undefined)) {
       return reject({ field, index, code: "invalid-target" });
     }
     if (babyId === undefined && babyIdByOrdinal.has(ordinal)) return reject({ field, index, code: "baby-id-required" });
     if (explicitSlots.has(ordinal)) return reject({ field, index, code: "duplicate-ordinal" });
     if (!availableSlots.includes(providerSlot)) return reject({ field, index, code: "unavailable-slot" });
-    if (!canChangeProvider(fetalType, ordinal) && providerSlot !== 0) {
+    if (!canChangeProvider(fetalType, rank) && providerSlot !== 0) {
       return reject({ field, index, code: "fixed-primary" });
     }
     explicitSlots.set(ordinal, providerSlot);
   }
+
+  const buildAssignment = (ordinal: number, rank: number): BabyRecordAssignment => {
+    const changeable = canChangeProvider(fetalType, rank);
+    const explicitSlot = explicitSlots.get(ordinal);
+    const matchingSlot = PROVIDER_SLOTS[rank - 1];
+    const defaultSlot = matchingSlot !== undefined && availableSlots.includes(matchingSlot)
+      ? matchingSlot
+      : availableSlots.includes(0) ? 0 : null;
+    const providerSlot = explicitSlot ?? defaultSlot;
+
+    return {
+      babyId: babyIdByOrdinal.get(ordinal) ?? null,
+      ordinal,
+      providerSlot,
+      employeeId: providerSlot === null ? null : providerSlots[providerSlot].employeeId,
+      source: explicitSlot !== undefined ? "explicit" : providerSlot === null ? "unassigned" : "default",
+      canChangeProvider: changeable,
+      availableProviderSlots: changeable ? [...availableSlots] : availableSlots.filter((slot) => slot === 0),
+    };
+  };
 
   return {
     status: "resolved",
@@ -314,25 +372,13 @@ export function resolveBabyRecordAllocation(input: BabyRecordAllocationInput): B
     babyCount,
     providerSlots,
     assignmentFor(ordinal) {
-      if (!isBabyOrdinal(ordinal, babyCount)) return null;
-
-      const changeable = canChangeProvider(fetalType, ordinal);
-      const explicitSlot = explicitSlots.get(ordinal);
-      const matchingSlot = PROVIDER_SLOTS[ordinal - 1];
-      const defaultSlot = matchingSlot !== undefined && availableSlots.includes(matchingSlot)
-        ? matchingSlot
-        : availableSlots.includes(0) ? 0 : null;
-      const providerSlot = explicitSlot ?? defaultSlot;
-
-      return {
-        babyId: babyIdByOrdinal.get(ordinal) ?? null,
-        ordinal,
-        providerSlot,
-        employeeId: providerSlot === null ? null : providerSlots[providerSlot].employeeId,
-        source: explicitSlot !== undefined ? "explicit" : providerSlot === null ? "unassigned" : "default",
-        canChangeProvider: changeable,
-        availableProviderSlots: changeable ? [...availableSlots] : availableSlots.filter((slot) => slot === 0),
-      };
+      const rank = activeRankFor(ordinal);
+      return rank === undefined ? null : buildAssignment(ordinal, rank);
+    },
+    assignmentAtRank(rank) {
+      if (!isPositiveSafeInteger(rank) || rank > babyCount) return null;
+      const ordinal = persistedOrdinals[rank - 1] ?? historicalMaxOrdinal + (rank - persistedOrdinals.length);
+      return buildAssignment(ordinal, rank);
     },
   };
 }

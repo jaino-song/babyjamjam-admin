@@ -6,6 +6,7 @@ import {
   resolveBabyRecordAllocation,
   type BabyRecordAllocationInput,
   type BabyRecordAssignmentInput,
+  type ExistingBaby,
   type FetalType,
   type ProviderSlot,
 } from "./baby-record-allocation";
@@ -202,6 +203,8 @@ describe("per-baby record ownership", () => {
   const primary = { slot: 0, employeeId: 101 } as const;
   const assistant = { slot: 1, employeeId: 102 } as const;
   const twins = { ...submission, code: "B통합2형", fetalType: "TWINS" } as const;
+  const dVoucher = { ...submission, code: "D라2형", fetalType: "QUADRUPLETS_PLUS" } as const;
+  const fullRoster = [primary, assistant, { slot: 2, employeeId: 103 }, { slot: 3, employeeId: 104 }] as const;
 
   it("defaults a severe singleton to primary and restores an explicit assistant selection from a draft", () => {
     const draft = {
@@ -226,7 +229,8 @@ describe("per-baby record ownership", () => {
   it("retains a saved override by stable baby ID when provider entries are reordered", () => {
     const babies = [{ babyId: "baby-2", ordinal: 2 }, { babyId: "baby-1", ordinal: 1 }];
     const result = resolve({
-      ...twins, babies, providers: [assistant, primary], babyAssignments: [{ babyId: "baby-2", providerSlot: 0 }],
+      ...twins, babies, historicalMaxOrdinal: 2, providers: [assistant, primary],
+      babyAssignments: [{ babyId: "baby-2", providerSlot: 0 }],
     });
     expect(result.assignmentFor(1)).toMatchObject({ babyId: "baby-1", employeeId: 101, canChangeProvider: false });
     expect(result.assignmentFor(2)).toMatchObject({ babyId: "baby-2", employeeId: 101, source: "explicit" });
@@ -249,11 +253,15 @@ describe("per-baby record ownership", () => {
     expect([1, 2, 3, 4, 5].map((ordinal) => result.assignmentFor(ordinal)?.providerSlot)).toEqual([0, 0, 2, 3, 0]);
   });
 
-  it("accepts any safe actual count without building a list of that size", () => {
+  it.each([0, 1])("looks up a maximal safe count lazily with a historical maximum of %i", (historicalMaxOrdinal) => {
     const result = resolve({
-      ...submission, code: "D라2형", fetalType: "QUADRUPLETS_PLUS",
-      babyCount: Number.MAX_SAFE_INTEGER, providers: [primary],
+      ...dVoucher, babyCount: Number.MAX_SAFE_INTEGER, providers: [primary], historicalMaxOrdinal,
+      babies: historicalMaxOrdinal === 0 ? [] : [{ babyId: "baby-1", ordinal: 1 }],
     });
+    expect(result.assignmentAtRank(Number.MAX_SAFE_INTEGER)).toMatchObject({
+      ordinal: Number.MAX_SAFE_INTEGER, providerSlot: 0,
+    });
+    expect(result.assignmentAtRank(Number.MAX_SAFE_INTEGER + 1)).toBeNull();
     expect(result.assignmentFor(Number.MAX_SAFE_INTEGER)).toMatchObject({ providerSlot: 0 });
     expect(result.assignmentFor(Number.MAX_SAFE_INTEGER + 1)).toBeNull();
   });
@@ -317,6 +325,7 @@ describe("per-baby record ownership", () => {
       ...twins,
       providers: [primary, assistant],
       babies: [{ babyId: "baby-1", ordinal: 1 }, { babyId: "baby-2", ordinal: 2 }],
+      historicalMaxOrdinal: 2,
       babyAssignments: [mixedTarget as unknown as BabyRecordAssignmentInput],
     })).toMatchObject({ status: "invalid", issue: { field: "babyAssignments", index: 0, code: "invalid-target" } });
   });
@@ -324,26 +333,183 @@ describe("per-baby record ownership", () => {
   it.each([
     [[{ babyId: "baby-1", ordinal: 1 }, { babyId: "baby-1", ordinal: 2 }], "duplicate-baby"],
     [[{ babyId: "baby-1", ordinal: 2 }, { babyId: "baby-2", ordinal: 2 }], "duplicate-ordinal"],
-    [[{ babyId: "baby-1", ordinal: 3 }], "invalid-baby"],
-  ] as const)("rejects conflicting or out-of-range existing identities %j", (babies, code) => {
-    expect(resolveBabyRecordAllocation({ ...twins, babies })).toMatchObject({
+  ] as const)("rejects conflicting existing identities %j", (babies, code) => {
+    expect(resolveBabyRecordAllocation({ ...twins, babies, historicalMaxOrdinal: 2 })).toMatchObject({
       status: "invalid", issue: { field: "babies", code },
     });
   });
 
   it.each(["", " \t", 42])("rejects invalid persisted baby ID %j with a valid ordinal", (babyId) => {
     expect(resolveBabyRecordAllocation({
-      ...twins, babies: [{ babyId: "baby-1", ordinal: 1 }, { babyId: babyId as string, ordinal: 2 }],
+      ...twins, historicalMaxOrdinal: 2, babies: [{ babyId: "baby-1", ordinal: 1 }, { babyId: babyId as string, ordinal: 2 }],
     })).toMatchObject({ status: "invalid", issue: { field: "babies", index: 1, code: "invalid-baby" } });
   });
 
   it("requires persisted IDs for saved babies and rejects a second override for the same ID", () => {
-    const saved = { ...twins, babies: [{ babyId: "baby-2", ordinal: 2 }], providers: [primary, assistant] } as const;
+    const saved = {
+      ...twins, babies: [{ babyId: "baby-2", ordinal: 2 }], historicalMaxOrdinal: 2, providers: [primary, assistant],
+    } as const;
     expect(resolveBabyRecordAllocation({ ...saved, babyAssignments: [{ ordinal: 2, providerSlot: 1 }] })).toMatchObject({
       status: "invalid", issue: { field: "babyAssignments", code: "baby-id-required" },
     });
     expect(resolveBabyRecordAllocation({
       ...saved, babyAssignments: [{ babyId: "baby-2", providerSlot: 0 }, { babyId: "baby-2", providerSlot: 1 }],
     })).toMatchObject({ status: "invalid", issue: { field: "babyAssignments", code: "duplicate-ordinal" } });
+  });
+
+  it("sorts twins with active ordinals 1 and 3 and assigns the assistant to the second active baby", () => {
+    const result = resolve({
+      ...twins, historicalMaxOrdinal: 3, providers: [primary, assistant],
+      babies: [{ babyId: "baby-3", ordinal: 3 }, { babyId: "baby-1", ordinal: 1 }],
+    });
+    expect(result.assignmentAtRank(1)).toMatchObject({ babyId: "baby-1", ordinal: 1, providerSlot: 0 });
+    expect(result.assignmentAtRank(2)).toEqual({
+      babyId: "baby-3", ordinal: 3, providerSlot: 1, employeeId: 102, source: "default",
+      canChangeProvider: true, availableProviderSlots: [0, 1],
+    });
+    expect(result.assignmentFor(3)).toEqual(result.assignmentAtRank(2));
+    expect(result.assignmentFor(2)).toBeNull();
+    for (const invalidRank of [0, 1.5, 3]) expect(result.assignmentAtRank(invalidRank)).toBeNull();
+  });
+
+  it("requires the historical maximum for a surviving twin at ordinal 3 and then allocates ordinal 4", () => {
+    const saved = { ...twins, babies: [{ babyId: "baby-3", ordinal: 3 }], providers: [primary, assistant] };
+    expect(resolveBabyRecordAllocation(saved)).toMatchObject({
+      status: "invalid", issue: { field: "historicalMaxOrdinal", code: "required" },
+    });
+
+    const result = resolve({ ...saved, historicalMaxOrdinal: 3, babyAssignments: [{ ordinal: 4, providerSlot: 1 }] });
+    expect(result.assignmentAtRank(1)).toMatchObject({
+      babyId: "baby-3", ordinal: 3, providerSlot: 0, canChangeProvider: false,
+    });
+    expect(result.assignmentAtRank(2)).toMatchObject({ babyId: null, ordinal: 4, providerSlot: 1, source: "explicit" });
+    expect(result.assignmentFor(1)).toBeNull();
+    expect(result.assignmentFor(2)).toBeNull();
+    expect(resolveBabyRecordAllocation({
+      ...saved, historicalMaxOrdinal: 3, babyAssignments: [{ babyId: "baby-3", providerSlot: 1 }],
+    })).toMatchObject({ status: "invalid", issue: { field: "babyAssignments", code: "fixed-primary" } });
+  });
+
+  it("uses active ranks for D② staffing and appends above numbers used by retired siblings", () => {
+    const saved = {
+      ...dVoucher, historicalMaxOrdinal: 7, providers: fullRoster,
+      babies: [
+        { babyId: "baby-5", ordinal: 5 }, { babyId: "baby-1", ordinal: 1 },
+        { babyId: "baby-4", ordinal: 4 }, { babyId: "baby-2", ordinal: 2 },
+      ],
+    };
+    const four = resolve({ ...saved, babyCount: 4 });
+    expect([1, 2, 3, 4].map((rank) => four.assignmentAtRank(rank)?.ordinal)).toEqual([1, 2, 4, 5]);
+    expect(four.assignmentFor(8)).toBeNull();
+
+    const five = resolve({ ...saved, babyCount: 5 });
+    const assignments = [1, 2, 3, 4, 5].map((rank) => five.assignmentAtRank(rank));
+    expect(assignments.map((assignment) => assignment?.ordinal)).toEqual([1, 2, 4, 5, 8]);
+    expect(assignments.map((assignment) => assignment?.providerSlot)).toEqual([0, 1, 2, 3, 0]);
+    expect(five.assignmentFor(3)).toBeNull();
+    expect(five.assignmentFor(7)).toBeNull();
+    expect(five.assignmentFor(8)).toMatchObject({ babyId: null, providerSlot: 0 });
+  });
+
+  it("hydrates an explicit assignment by ID for a gapped ordinal", () => {
+    const saved = {
+      ...twins, mode: "legacy", confirmation: "CONFIRMED", historicalMaxOrdinal: 3,
+      babies: [{ babyId: "baby-3", ordinal: 3 }, { babyId: "baby-1", ordinal: 1 }],
+      babyAssignments: [{ babyId: "baby-3", providerSlot: 0 }],
+      providers: [assistant, primary],
+    } as const;
+    const restored: typeof saved = JSON.parse(JSON.stringify(saved));
+    expect(resolve(restored).assignmentAtRank(2)).toMatchObject({
+      babyId: "baby-3", ordinal: 3, providerSlot: 0, employeeId: 101, source: "explicit",
+    });
+  });
+
+  it("compacts the ranks of all survivors after the first baby retires", () => {
+    const babies = [1, 2, 3, 4, 5].map((ordinal) => ({ babyId: `baby-${ordinal}`, ordinal }));
+    const saved = { ...dVoucher, historicalMaxOrdinal: 5, providers: fullRoster };
+    const before = resolve({ ...saved, babyCount: 5, babies });
+    const after = resolve({ ...saved, babyCount: 4, babies: babies.slice(1) });
+    for (const [index, { babyId, ordinal }] of babies.slice(1).entries()) {
+      expect(before.assignmentAtRank(index + 2)).toMatchObject({ babyId, ordinal });
+      expect(after.assignmentAtRank(index + 1)).toMatchObject({ babyId, ordinal, providerSlot: index });
+    }
+    expect(after.assignmentFor(1)).toBeNull();
+  });
+
+  it("keeps a persisted severe singleton changeable and unassigned when primary is absent", () => {
+    const saved = {
+      ...twins, fetalType: "SEVERE_SINGLETON", historicalMaxOrdinal: 5,
+      babies: [{ babyId: "baby-5", ordinal: 5 }], providers: [assistant],
+    } as const;
+    expect(resolve(saved).assignmentAtRank(1)).toEqual({
+      babyId: "baby-5", ordinal: 5, providerSlot: null, employeeId: null, source: "unassigned",
+      canChangeProvider: true, availableProviderSlots: [1],
+    });
+    expect(resolve({ ...saved, babyAssignments: [{ babyId: "baby-5", providerSlot: 1 }] })
+      .assignmentFor(5)).toMatchObject({ providerSlot: 1, source: "explicit" });
+  });
+
+  it("starts above retired history with no active rows and allocates multiple new siblings", () => {
+    const result = resolve({ ...twins, babies: [], historicalMaxOrdinal: 5, providers: [primary, assistant] });
+    expect(result.assignmentAtRank(1)).toMatchObject({ babyId: null, ordinal: 6, providerSlot: 0 });
+    expect(result.assignmentAtRank(2)).toMatchObject({ babyId: null, ordinal: 7, providerSlot: 1 });
+    expect(result.assignmentFor(5)).toBeNull();
+  });
+
+  it.each([
+    [{ babyId: "retired-baby", providerSlot: 0 }, "unknown-baby"],
+    [{ ordinal: 2, providerSlot: 0 }, "invalid-target"],
+    [{ ordinal: 7, providerSlot: 0 }, "invalid-target"],
+    [{ ordinal: 3, providerSlot: 0 }, "baby-id-required"],
+  ] as const)("rejects an override against an invalid or persisted ordinal target %j", (assignment, code) => {
+    expect(resolveBabyRecordAllocation({
+      ...twins, historicalMaxOrdinal: 5, babies: [{ babyId: "baby-3", ordinal: 3 }],
+      providers: [primary, assistant], babyAssignments: [assignment],
+    })).toMatchObject({ status: "invalid", issue: { field: "babyAssignments", index: 0, code } });
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid persisted ordinal %s", (ordinal) => {
+    expect(resolveBabyRecordAllocation({
+      ...twins, historicalMaxOrdinal: 3, babies: [{ babyId: "baby-1", ordinal }],
+    })).toMatchObject({ status: "invalid", issue: { field: "babies", index: 0, code: "invalid-baby" } });
+  });
+
+  it("rejects a null row received in persisted data", () => {
+    const babies: ExistingBaby[] = JSON.parse("[null]");
+    expect(resolveBabyRecordAllocation({ ...twins, historicalMaxOrdinal: 3, babies })).toMatchObject({
+      status: "invalid", issue: { field: "babies", index: 0, code: "invalid-baby" },
+    });
+  });
+
+  it.each([
+    ["negative", -1], ["unsafe", Number.MAX_SAFE_INTEGER + 1], ["too low", 2], ["fractional", 3.5],
+  ] as const)("rejects a %s historical maximum", (_reason, historicalMaxOrdinal) => {
+    expect(resolveBabyRecordAllocation({
+      ...twins, historicalMaxOrdinal, babies: [{ babyId: "baby-3", ordinal: 3 }],
+    })).toMatchObject({ status: "invalid", issue: { field: "historicalMaxOrdinal", code: "invalid-ordinal" } });
+  });
+
+  it("rejects a negative historical maximum even when no active rows are supplied", () => {
+    expect(resolveBabyRecordAllocation({ ...twins, babies: [], historicalMaxOrdinal: -1 })).toMatchObject({
+      status: "invalid", issue: { field: "historicalMaxOrdinal", code: "invalid-ordinal" },
+    });
+  });
+
+  it("rejects more active rows than the baby count", () => {
+    expect(resolveBabyRecordAllocation({
+      ...twins, historicalMaxOrdinal: 4,
+      babies: [{ babyId: "baby-1", ordinal: 1 }, { babyId: "baby-3", ordinal: 3 }, { babyId: "baby-4", ordinal: 4 }],
+    })).toMatchObject({ status: "invalid", issue: { field: "babies", index: 2, code: "invalid-baby" } });
+  });
+
+  it("rejects adding a baby above the safe ordinal range", () => {
+    const ordinal = Number.MAX_SAFE_INTEGER;
+    const saved = {
+      ...twins, historicalMaxOrdinal: ordinal, babies: [{ babyId: "last-baby", ordinal }],
+    };
+    expect(resolveBabyRecordAllocation(saved)).toMatchObject({
+      status: "invalid", issue: { field: "babyCount", code: "invalid-count" },
+    });
+    expect(resolve({ ...saved, fetalType: "SEVERE_SINGLETON" }).assignmentAtRank(1)).toMatchObject({ ordinal });
   });
 });
