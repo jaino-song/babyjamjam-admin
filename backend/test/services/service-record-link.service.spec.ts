@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { allowsLegacyServiceRecordLink } from "application/services/service-record-legacy-link-target";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
@@ -54,6 +55,7 @@ describe("ServiceRecordLinkService", () => {
                 findFirst: jest.fn(),
                 findMany: jest.fn().mockResolvedValue([]),
             },
+            service_record_case: { findMany: jest.fn().mockResolvedValue([]) },
             message_trigger_job: {
                 findUnique: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -162,11 +164,39 @@ describe("ServiceRecordLinkService", () => {
             id: 20,
             name: "김산모",
             serviceStatus: "waiting",
+            fetalConfirmation: null,
             bookingConfirmedAt: new Date("2026-07-01T00:00:00Z"),
             startDate: new Date("2026-07-03T00:00:00.000Z"),
             endDate: new Date("2026-07-12T00:00:00.000Z"),
         },
         ...overrides,
+    });
+
+    it.each([
+        ["selected null", { fetalConfirmation: null }, ["case-1"], true],
+        ["explicit UNCONFIRMED", { fetalConfirmation: "UNCONFIRMED" }, ["case-1"], true],
+        ["explicit undefined", { fetalConfirmation: undefined }, ["case-1"], false],
+        ["corrupt confirmation", { fetalConfirmation: "invalid" }, ["case-1"], false],
+        ["ambiguous history", { fetalConfirmation: "UNCONFIRMED" }, ["case-1", "case-2"], false],
+    ] as const)("checks legacy link eligibility for %s", async (_label, client, ids, allowed) => {
+        const prisma = createPrisma();
+        prisma.service_record_case.findMany.mockResolvedValue(ids.map(id => ({ id })));
+        const schedule = { id: 10, branchId: "branch-1", clientId: 20, primaryEmployeeId: 30, client };
+
+        await expect(allowsLegacyServiceRecordLink(
+            prisma as unknown as Prisma.TransactionClient,
+            schedule as Parameters<typeof allowsLegacyServiceRecordLink>[1],
+        )).resolves.toBe(allowed);
+    });
+
+    it("declines legacy link eligibility when the client projection is incomplete", async () => {
+        const tx = createPrisma() as unknown as Prisma.TransactionClient;
+        const schedule = { id: 10, branchId: "branch-1", clientId: 20, primaryEmployeeId: 30 };
+
+        // @ts-expect-error The Prisma projection must include the client relation.
+        await expect(allowsLegacyServiceRecordLink(tx, schedule)).resolves.toBe(false);
+        // @ts-expect-error The client relation must include the confirmation field.
+        await expect(allowsLegacyServiceRecordLink(tx, { ...schedule, client: {} })).resolves.toBe(false);
     });
 
     describe("pre-booking recovery", () => {
@@ -473,8 +503,8 @@ describe("ServiceRecordLinkService", () => {
         ["end date passed", { endDate: new Date("2026-11-01T00:00:00.000Z") }, false],
         ["terminated schedule", { terminatedAt: new Date() }, false],
         ["replaced schedule", { replaced: true }, false],
-        ["completed client", { client: { id: 20, name: "김산모", serviceStatus: "completed" } }, false],
-        ["terminated client", { client: { id: 20, name: "김산모", serviceStatus: "terminated" } }, false],
+        ["completed client", { client: { id: 20, name: "김산모", serviceStatus: "completed", fetalConfirmation: null } }, false],
+        ["terminated client", { client: { id: 20, name: "김산모", serviceStatus: "terminated", fetalConfirmation: null } }, false],
     ])("gates automatic scheduling for %s", async (_name, overrides, eligible) => {
         jest.setSystemTime(new Date("2026-11-02T06:00:00.000Z"));
         const prisma = createPrisma();
@@ -1003,7 +1033,7 @@ describe("ServiceRecordLinkService", () => {
         const completedClientSchedule = () => createSchedule({
             startDate: new Date("2026-11-03T00:00:00.000Z"),
             endDate: new Date("2026-11-14T00:00:00.000Z"),
-            client: { id: 20, name: "김산모", serviceStatus: "completed" },
+            client: { id: 20, name: "김산모", serviceStatus: "completed", fetalConfirmation: null },
         });
 
         beforeEach(() => {

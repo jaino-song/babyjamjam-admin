@@ -34,7 +34,8 @@
  *
  * `service_record` and `eformsign_doc` are modelled as empty tables: the
  * lifecycle sync issues a blind `updateMany` on both, and with no rows it matches nothing.
- * They have no `findMany`, so the editor's document-scope read keeps its "unverified" fallback.
+ * `service_record.findMany` supports header lookups during lifecycle sync. `eformsign_doc` has
+ * no `findMany`, so the editor's document-scope read keeps its "unverified" fallback.
  */
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
