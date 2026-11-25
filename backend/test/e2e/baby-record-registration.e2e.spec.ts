@@ -360,6 +360,11 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
 
     it("checks slot 2/3 activation and availability and includes both in schedule reads", async () => {
         const payload = quadruplets(employeeIds.slice(0, 4));
+        const period = { startDate: dateAt(1), endDate: dateAt(10) };
+        await create({
+            ...period, primaryEmployeeId: employeeIds[2], secondaryEmployeeId: employeeIds[3],
+            serviceStatus: "pre_booking", applyMessageAutomation: false,
+        }).expect(201);
         await db.employee.updateMany({ where: { id: { in: employeeIds.slice(2, 4) } }, data: { openToNextWork: false } });
         const unavailable = await create(payload).expect(409);
         expect(unavailable.body).toMatchObject({
@@ -368,17 +373,22 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         });
         await create({ ...payload, confirmedUnavailableEmployeeIds: [employeeIds[2]] }, "/clients/with-employee-activation").expect(409);
         const created = await create({
-            ...payload, confirmedUnavailableEmployeeIds: employeeIds.slice(2, 4),
+            ...payload, ...period, serviceStatus: "pre_booking", confirmedUnavailableEmployeeIds: employeeIds.slice(2, 4),
         }, "/clients/with-employee-activation").expect(201);
         const schedule = (await schedules(created.body.id))[0]!;
         for (const employeeId of employeeIds.slice(2, 4)) {
             const list = await http().get(`/employee-schedules/secondary-employee?secondaryEmployeeId=${employeeId}`).expect(200);
-            expect(list.body).toEqual([expect.objectContaining({ id: schedule.id, providers: payload.providers })]);
-            const overlap = await create({
-                ...twins(employeeId), startDate: dateAt(1), endDate: dateAt(10),
-            }).expect(409);
-            expect(overlap.body.code).toBe("EMPLOYEE_SCHEDULE_OVERLAP");
+            expect(list.body).toEqual(expect.arrayContaining([expect.objectContaining({
+                id: schedule.id, providers: payload.providers,
+            })]));
         }
+        const overlap = await create({
+            ...period, primaryEmployeeId: employeeIds[3], secondaryEmployeeId: employeeIds[2],
+            serviceStatus: "pre_booking", applyMessageAutomation: false,
+        }).expect(201);
+        expect(await schedules(overlap.body.id)).toEqual([expect.objectContaining({
+            primaryEmployeeId: employeeIds[3], secondaryEmployeeId: employeeIds[2],
+        })]);
         await assertNoRecordEffects(created.body.id);
     });
 
@@ -461,6 +471,30 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         return { client: body as Registration, record };
     }
 
+    it("materializes one immediate assignment notice for the successor on a configured PATCH without a name", async () => {
+        const { client } = await bookedTwin();
+        const replacement = employeeIds[2]!;
+        await db.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
+        const rule = await db.message_trigger_rule.create({
+            data: {
+                branchId, name: "QA-Immediate assignment", isActive: true, eventType: "EMPLOYEE_ASSIGNED",
+                offsetType: "IMMEDIATE", recipientType: "PRIMARY_EMPLOYEE", templateKey: "EMPLOYEE_ASSIGNED",
+            },
+        });
+        const patch = twinsEdit(client, replacement, employeeIds[1]);
+        await edit(client.id, patch).expect(200);
+        await edit(client.id, patch).expect(200);
+
+        const [, successor] = await schedules(client.id);
+        expect(await db.message_trigger_job.findMany({ where: { branchId, clientId: client.id, ruleId: rule.id } })).toEqual([
+            expect.objectContaining({
+                employeeScheduleId: successor!.id,
+                status: "pending",
+                payload: expect.objectContaining({ employeeId: replacement }),
+            }),
+        ]);
+    });
+
     it("applies the booked twin's date and staff edit in a single commit with one final record lifecycle effect", async () => {
         const { client, record } = await bookedTwin();
         const original = (await schedules(client.id))[0]!;
@@ -493,7 +527,10 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         const markers = await db.message_trigger_job.findMany({
             where: { branchId, clientId: client.id, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, employeeScheduleId: { not: null } },
         });
-        expect(markers.map((marker) => marker.employeeScheduleId)).toEqual([successor!.id]);
+        expect(markers).toEqual([expect.objectContaining({
+            employeeScheduleId: successor!.id,
+            payload: expect.objectContaining({ templateVariables: expect.objectContaining({ includePast: "true" }) }),
+        })]);
         expect(await db.message_trigger_job.count({
             where: { branchId, clientId: client.id, ruleId: SERVICE_RECORD_LINK_RULE_ID, status: "pending" },
         })).toBeLessThanOrEqual(1);
@@ -516,7 +553,10 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         })]);
         expect(await db.message_trigger_job.findMany({
             where: { branchId, clientId: client.id, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, employeeScheduleId: { not: null } },
-        })).toEqual([expect.objectContaining({ employeeScheduleId: original!.id })]);
+        })).toEqual([expect.objectContaining({
+            employeeScheduleId: original!.id,
+            payload: expect.objectContaining({ templateVariables: expect.objectContaining({ includePast: "false" }) }),
+        })]);
     });
 
     async function committedRows(clientId: number) {

@@ -1230,7 +1230,6 @@ export class ClientService {
                 endDate: incomingEndDate,
                 replaced: false,
                 excludeScheduleId: currentSchedule?.id,
-                additionalEmployeeIds: allocation?.providers.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId),
             });
             if (currentSchedule && handover) {
                 await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
@@ -1603,7 +1602,6 @@ export class ClientService {
                     startDate: initialScheduleStartDate,
                     endDate: initialScheduleEndDate,
                     replaced: false,
-                    additionalEmployeeIds: allocation?.providers.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId),
                 });
                 const created = await this.createClientUsecase.executeWithInitialSchedule(branchid, createParams, {
                     primaryEmployeeId,
@@ -2231,7 +2229,7 @@ export class ClientService {
             endDate: Date | null;
         } | null = null;
         const ordinaryMutationId = randomUUID();
-        let finalAllocationIntent = false;
+        let assignmentIntentAt: Date | undefined;
         let identicalAllocationRetry = false;
         let configuredPreBooking = false;
 
@@ -2505,8 +2503,6 @@ export class ClientService {
                     ?? [currentPrimary, currentSecondary]).filter((employeeId): employeeId is number => employeeId !== null));
                 await this.assertAllowedEmployees(branchid, primary, secondary, transaction, retainedEmployeeIds, true, employeeIds);
             }
-            const additionalEmployeeIds = (allocation?.providers ?? previousProjection?.providers)
-                ?.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId);
             const handoverDay = handoverNeeded && currentSchedule ? this.kstCalendarDay(new Date()) : null;
             const handoverPeriod = (scheduleStart: Date | undefined, contractStart: Date, contractEnd: Date) => {
                 const outgoingEndDate = handoverDay ? employeeScheduleReplacementEndDate(handoverDay, scheduleStart) : null;
@@ -2521,7 +2517,7 @@ export class ClientService {
                 if (primary === null) return;
                 await assertNoActiveEmployeeScheduleOverlap(transaction, {
                     ...scope, ...period, primaryEmployeeId: primary, secondaryEmployeeId: secondary,
-                    replaced: false, excludeScheduleId: currentSchedule?.id, additionalEmployeeIds,
+                    replaced: false, excludeScheduleId: currentSchedule?.id,
                 });
             };
             const alignPreBookingPeriod = configuredPreBooking && currentSchedule && !startDateChangeDecision
@@ -2651,10 +2647,18 @@ export class ClientService {
                     (scheduleId): scheduleId is number => scheduleId !== null && scheduleId !== finalScheduleId,
                 );
                 if (replacedScheduleId !== null) supersededScheduleIds.push(replacedScheduleId);
+                const intentAt = new Date();
                 await persistReevaluationIntents(transaction, {
-                    ...scope, scheduleIds: [finalScheduleId], supersededScheduleIds, intentAt: new Date(),
+                    ...scope, scheduleIds: createdScheduleId === null ? [finalScheduleId] : [], supersededScheduleIds, intentAt,
                 });
-                finalAllocationIntent = true;
+                if (createdScheduleId !== null) {
+                    // A fresh assignment needs the immediate notice and the record link
+                    // from the same durable intent for the committed schedule.
+                    await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+                        ...scope, scheduleId: createdScheduleId, includePast: true, intentAt,
+                    });
+                    assignmentIntentAt = intentAt;
+                }
             }
             // Service-day flags follow the ordinary lifecycle sync; existing session
             // dates and any explicitly supplied end date are not re-laid.
@@ -2717,7 +2721,7 @@ export class ClientService {
             await this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
-            if (clientNameSupplied) {
+            if (clientNameSupplied && !assignmentIntentAt) {
                 try {
                     const refreshed = await this.triggerService.syncEmployeeAssignmentRulesForClient(branchid, id);
                     if (refreshed === false) {
@@ -2729,15 +2733,23 @@ export class ClientService {
                 }
             }
         }
-        if (createdScheduleId !== null && !finalAllocationIntent && !configuredPreBooking) {
-            if (!clientNameSupplied) {
-                await this.triggerService
-                    ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
-                    ?.catch((error) => {
-                        this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
-                    });
+        if (createdScheduleId !== null && !configuredPreBooking) {
+            if (assignmentIntentAt) {
+                await this.messageAutomationIntentService.fulfillScheduleIntent({
+                    branchId: branchid, scheduleId: createdScheduleId, includePast: true, intentAt: assignmentIntentAt,
+                }).catch((error) => {
+                    this.logger.error(`Failed to fulfill assignment message intent: ${error}`);
+                });
+            } else {
+                if (!clientNameSupplied) {
+                    await this.triggerService
+                        ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
+                        ?.catch((error) => {
+                            this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
+                        });
+                }
+                if (!createdWhilePreBooking) await this.scheduleFreshRecordLink(createdScheduleId);
             }
-            if (!createdWhilePreBooking) await this.scheduleFreshRecordLink(createdScheduleId);
         }
         await this.recheckRecordLinkTransition(branchid, id, priorStatusInputs, updatedClient);
         return this.attachAllocation(branchid, updatedClient);
@@ -3040,7 +3052,6 @@ export class ClientService {
                 endDate: replacementEndDate,
                 replaced: false,
                 excludeScheduleId: currentSchedule?.id,
-                additionalEmployeeIds: allocation?.providers.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId),
             });
             const updateResult = await transaction.client.updateMany({
                 where: { id: clientId, branchId: branchid },
