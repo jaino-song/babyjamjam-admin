@@ -203,6 +203,17 @@ describe("desktop client service-record allocation", () => {
     await within(fetusSelect()).findByRole("option", { name: type.startsWith("A") ? "단태아" : /중증/ });
   }
 
+  it("renders dialog sections in the same order as the panel steps", async () => {
+    await open({ surface: "dialog" });
+
+    const headings = within(screen.getByRole("dialog")).getAllByRole("heading", {
+      name: /^(기본 정보|서비스 정보|담당 제공인력|계약 정보)$/,
+    });
+    expect(headings.map((heading) => heading.textContent)).toEqual([
+      "기본 정보", "서비스 정보", "담당 제공인력", "계약 정보",
+    ]);
+  });
+
   it.each<Surface>(["panel", "dialog"])("registers B② severe singleton with secondary ownership through the %s", async (surface) => {
     await open({ surface });
     await chooseGrade("B가2형", surface);
@@ -215,14 +226,20 @@ describe("desktop client service-record allocation", () => {
     select("아기 기록지 담당자", "1");
     expect(ownerSelect("아기 기록지")).toHaveValue("1");
     expect(screen.queryByText("둘째 기록지")).not.toBeInTheDocument();
-    if (surface === "panel") next();
-    expect(screen.queryByRole("switch", { name: "메시지 자동 전송" })).not.toBeInTheDocument();
+    if (surface === "panel") {
+      expect(screen.queryByRole("switch", { name: "메시지 자동 전송" })).not.toBeInTheDocument();
+      next();
+    }
+    const automationSwitch = screen.getByRole("switch", { name: "메시지 자동 전송" });
+    expect(automationSwitch).toBeChecked();
+    fireEvent.click(automationSwitch);
     await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
     click("생성");
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     const body = post.mock.calls[0][1];
     expect(body).toMatchObject({
       type: "B가2형", voucherIssuanceYear: 2026, fetalType: "SEVERE_SINGLETON", babyCount: 1,
+      applyMessageAutomation: false, smsAutomationEnabled: false,
       providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
       babyAssignments: [{ ordinal: 1, providerSlot: 1 }],
     });

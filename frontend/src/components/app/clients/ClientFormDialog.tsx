@@ -1217,6 +1217,10 @@ function ClientFormContent({
         }
     };
 
+    const smsAutomationField = isEditMode ? "smsAutomationEnabled" : "applyMessageAutomation";
+    const smsAutomationChecked = formData[smsAutomationField] !== false;
+    const toggleSmsAutomation = () => handleChange(smsAutomationField, !smsAutomationChecked);
+
     const allocationSnapshot = allocationSnapshotRef.current;
     const providerIds: ClientProviderIds = {
         0: formData.primaryEmployeeId,
@@ -2547,6 +2551,13 @@ function ClientFormContent({
                         onToggle={() => handleChange("breastPump", !formData.breastPump)}
                         buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                     />
+                    <FormSwitchRow
+                        data-component={`${base}_section-flags-body_field-message-automation`}
+                        title={t(locale, "clients.form.message-automation")}
+                        checked={smsAutomationChecked}
+                        onToggle={toggleSmsAutomation}
+                        buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                    />
                     <FormSwitchGroupRow
                         data-component={`${base}_field-service-days`}
                         className="lg:col-span-3"
@@ -2924,6 +2935,14 @@ function ClientFormContent({
                     onToggle={() => handleChange("breastPump", !formData.breastPump)}
                     buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                 />
+                <FormSwitchRow
+                    data-component={`${base}_content_message-automation-field`}
+                    size="control"
+                    title={t(locale, "clients.form.message-automation")}
+                    checked={smsAutomationChecked}
+                    onToggle={toggleSmsAutomation}
+                    buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                />
                 <FormSwitchGroupRow
                     data-component={`${base}_service-days-field`}
                     size="control"
@@ -2939,8 +2958,8 @@ function ClientFormContent({
 
     const dialogFormSteps = [
         <Fragment key="basic-info">{basicInfoSection}</Fragment>,
-        <Fragment key="employee">{employeeSection}</Fragment>,
         <Fragment key="voucher-info">{voucherInfoSections}</Fragment>,
+        <Fragment key="employee">{employeeSection}</Fragment>,
         <Fragment key="contract-info">{contractInfoSections}</Fragment>,
     ] as const;
     const panelFormSteps = [
