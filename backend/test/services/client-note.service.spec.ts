@@ -156,6 +156,7 @@ describe("ClientNoteService", () => {
 
             expect(transaction.client_note.findFirst).toHaveBeenCalledWith(expect.objectContaining({
                 where: {
+                    branchId: "branch-1",
                     clientId: 7,
                     kind: CLIENT_NOTE_KIND.CONTRACT_INFO_MISMATCH,
                     status: CLIENT_NOTE_STATUS.OPEN,
@@ -189,7 +190,7 @@ describe("ClientNoteService", () => {
             }));
 
             expect(transaction.client_note.update).toHaveBeenCalledWith({
-                where: { id: "note-1" },
+                where: { id: "note-1", branchId: "branch-1" },
                 data: {
                     changes: [
                         { field: "address", contractValue: "서울시 1", clientValue: "서울시 2" },
@@ -215,7 +216,7 @@ describe("ClientNoteService", () => {
 
             expect(transaction.client_note.update).toHaveBeenCalledTimes(1);
             expect(transaction.client_note.update).toHaveBeenCalledWith({
-                where: { id: "note-1" },
+                where: { id: "note-1", branchId: "branch-1" },
                 data: {
                     status: CLIENT_NOTE_STATUS.RESOLVED,
                     resolvedAt: expect.any(Date),
@@ -237,7 +238,7 @@ describe("ClientNoteService", () => {
             await service.recordContractInfoChangeInTransaction(asTransaction(transaction), params());
 
             expect(transaction.client_note.update).toHaveBeenCalledWith({
-                where: { id: "note-old" },
+                where: { id: "note-old", branchId: "branch-1" },
                 data: expect.objectContaining({
                     status: CLIENT_NOTE_STATUS.RESOLVED,
                     resolvedReason: CLIENT_NOTE_RESOLVED_REASON.CONTRACT_REPLACED,
@@ -263,7 +264,7 @@ describe("ClientNoteService", () => {
             await service.recordContractInfoChangeInTransaction(asTransaction(transaction), params());
 
             expect(transaction.client_note.update).toHaveBeenCalledWith({
-                where: { id: "note-1" },
+                where: { id: "note-1", branchId: "branch-1" },
                 data: {
                     // The unreadable "name" entry reads as no change and leaves the list.
                     changes: [{ field: "address", contractValue: "서울시 1", clientValue: "서울시 2" }],

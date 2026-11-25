@@ -17,6 +17,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
     "chat_session",
     "client",
     "client_draft",
+    "client_note",
     "consultation_inquiry",
     "document",
     "document_category",

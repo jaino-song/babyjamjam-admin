@@ -66,7 +66,7 @@ const client: Client = {
 function renderPanel(badges: ClientBadge[]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={queryClient}>
-    <ClientDetailPanel client={{ ...client, badges }} />
+    <ClientDetailPanel client={{ ...client, badges }} trailing={null} />
   </QueryClientProvider>);
 }
 

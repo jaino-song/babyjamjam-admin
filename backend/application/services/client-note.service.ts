@@ -151,6 +151,7 @@ export class ClientNoteService {
 
         const openNote = await transaction.client_note.findFirst({
             where: {
+                branchId: params.branchId,
                 clientId: params.clientId,
                 kind: CLIENT_NOTE_KIND.CONTRACT_INFO_MISMATCH,
                 status: CLIENT_NOTE_STATUS.OPEN,
@@ -161,18 +162,18 @@ export class ClientNoteService {
         const sameContract = openNote?.contractDocumentId === contract.documentId;
         if (openNote && !sameContract) {
             // The open note was about an older contract; this edit starts a new one.
-            await this.resolve(transaction, openNote.id, CLIENT_NOTE_RESOLVED_REASON.CONTRACT_REPLACED, params.actorUserId);
+            await this.resolve(transaction, params.branchId, openNote.id, CLIENT_NOTE_RESOLVED_REASON.CONTRACT_REPLACED, params.actorUserId);
         }
         const existing = openNote && sameContract ? parseStoredChanges(openNote.changes) : [];
         const changes = mergeContractInfoChanges(existing, params.before, params.after);
 
         if (openNote && sameContract) {
             if (changes.length === 0) {
-                await this.resolve(transaction, openNote.id, CLIENT_NOTE_RESOLVED_REASON.VALUES_RESTORED, params.actorUserId);
+                await this.resolve(transaction, params.branchId, openNote.id, CLIENT_NOTE_RESOLVED_REASON.VALUES_RESTORED, params.actorUserId);
                 return;
             }
             await transaction.client_note.update({
-                where: { id: openNote.id },
+                where: { id: openNote.id, branchId: params.branchId },
                 data: { changes: changes as unknown as Prisma.InputJsonValue },
             });
             return;
@@ -221,12 +222,13 @@ export class ClientNoteService {
 
     private async resolve(
         transaction: ClientNoteDelegateClient,
+        branchId: string,
         noteId: string,
         reason: string,
         actorUserId?: string | null,
     ): Promise<void> {
         await transaction.client_note.update({
-            where: { id: noteId },
+            where: { id: noteId, branchId },
             data: {
                 status: CLIENT_NOTE_STATUS.RESOLVED,
                 resolvedAt: new Date(),
