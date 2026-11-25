@@ -34,12 +34,12 @@ describe("ClientService.getServiceRecordMissing", () => {
         ]);
         const result = await service.getServiceRecordMissing(MISSING_RECORD_BRANCH_ID);
         expect(result.count).toBe(result.items.length);
-        expect(result).toEqual({ count: 5, items: [
-            { clientId: 1, clientName: "하산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 4 },
-            { clientId: 3, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
-            { clientId: 4, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
-            { clientId: 2, clientName: "나산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
-            { clientId: 5, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 2 },
+        expect(result).toEqual({ count: 5, recordCount: 5, items: [
+            { clientId: 1, clientName: "하산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 4, caseId: "case-1", rank: null, babyCount: null, legacyName: null },
+            { clientId: 3, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3, caseId: "case-3", rank: null, babyCount: null, legacyName: null },
+            { clientId: 4, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3, caseId: "case-4", rank: null, babyCount: null, legacyName: null },
+            { clientId: 2, clientName: "나산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3, caseId: "case-2", rank: null, babyCount: null, legacyName: null },
+            { clientId: 5, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 2, caseId: "case-5", rank: null, babyCount: null, legacyName: null },
         ] });
         expect(repository.findServiceRecordAlertCandidates).toHaveBeenCalledTimes(1);
         expect(repository.findServiceRecordAlertCandidates).toHaveBeenCalledWith(MISSING_RECORD_BRANCH_ID);
@@ -49,20 +49,20 @@ describe("ClientService.getServiceRecordMissing", () => {
 
     it("does not query for an empty branch id", async () => {
         const { service, repository, holidayCalendar } = createService([missingRecordCandidate()]);
-        expect(await service.getServiceRecordMissing("")).toEqual({ count: 0, items: [] });
+        expect(await service.getServiceRecordMissing("")).toEqual({ count: 0, recordCount: 0, items: [] });
         expect(repository.findServiceRecordAlertCandidates).not.toHaveBeenCalled();
         expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
     });
 
     it("returns zero for a branch without candidates", async () => {
         const { service } = createService();
-        expect(await service.getServiceRecordMissing(MISSING_RECORD_BRANCH_ID)).toEqual({ count: 0, items: [] });
+        expect(await service.getServiceRecordMissing(MISSING_RECORD_BRANCH_ID)).toEqual({ count: 0, recordCount: 0, items: [] });
     });
 
     it("evaluates eligibility using the current time", async () => {
         const { service } = createService([missingRecordCandidate()]);
         jest.setSystemTime(new Date("2026-09-08T17:59:00+09:00"));
-        expect(await service.getServiceRecordMissing(MISSING_RECORD_BRANCH_ID)).toEqual({ count: 0, items: [] });
+        expect(await service.getServiceRecordMissing(MISSING_RECORD_BRANCH_ID)).toEqual({ count: 0, recordCount: 0, items: [] });
         jest.setSystemTime(new Date("2026-09-08T18:00:00+09:00"));
         expect((await service.getServiceRecordMissing(MISSING_RECORD_BRANCH_ID)).items[0]?.unwrittenThroughSessionIndex).toBe(2);
     });

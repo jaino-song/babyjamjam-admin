@@ -1,4 +1,7 @@
 "use client";
+
+import { ServiceRecordCasePicker } from "@/components/app/service-record/ServiceRecordCasePicker";
+import { serviceRecordEditorPath } from "@/features/service-records/utils/case-selection";
 import Link from "next/link";
 
 
@@ -92,6 +95,8 @@ interface ClientServiceRecordsTabProps {
     retryingDocumentKey?: string | null;
     /** Days this client accepts service on besides plain business days; absent means none. */
     serviceDays?: ServiceDayPolicy;
+    selectedCaseId?: string;
+    onSelectCase?: (caseId: string) => void;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -165,12 +170,21 @@ function ClientServiceRecordsTabContent({
     onRetryRevisionDocument,
     retryingDocumentKey = null,
     serviceDays,
+    selectedCaseId,
+    onSelectCase,
 }: Omit<ClientServiceRecordsTabProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
     const { toast } = useToast();
     const sendLinkMutation = useSendServiceRecordLink();
     const assignments = overview?.assignments ?? [];
     const record = overview?.record ?? null;
+    const cases = overview?.cases ?? [];
+    const selectedCase = cases.find((item) => item.caseId === record?.id);
+    const showPicker = cases.length > 1 || (!record && cases.length > 0);
+    const picker = showPicker && onSelectCase ? (
+        <ServiceRecordCasePicker data-component={`${dataComponent}_case-picker`}
+            cases={cases} selectedCaseId={selectedCaseId} onSelect={onSelectCase} />
+    ) : null;
     const scheduleProjection = overview?.scheduleProjection;
     const hasAuthoritativeProjection = scheduleProjection !== undefined;
     const isServiceRecordSourceUnavailable = scheduleProjection?.blockingReasons.some(
@@ -212,6 +226,7 @@ function ClientServiceRecordsTabContent({
     });
 
     const sendLink = async (assignment: ServiceRecordAssignment): Promise<boolean> => {
+        if (selectedCase?.retired) return false;
         // The caller may hold an assignment captured before the latest refresh, so the
         // send itself checks the newest status instead of trusting the click handler.
         const latest = latestAssignmentsRef.current.find(
@@ -223,6 +238,7 @@ function ClientServiceRecordsTabContent({
             const result = await sendLinkMutation.mutateAsync({
                 scheduleId: assignment.scheduleId,
                 clientId: clientId ?? undefined,
+                ...(selectedCaseId ? { caseId: selectedCaseId } : {}),
             });
             // The outcome is decided by the job status alone: `ok` is false for
             // every non-sent job, including one the scheduler is already
@@ -315,6 +331,8 @@ function ClientServiceRecordsTabContent({
         );
     }
 
+    if (picker && !record && !selectedCaseId) return picker;
+
     const hasRevisionHistoryState = revisionHistory !== undefined
         || isRevisionHistoryLoading
         || isRevisionHistoryError;
@@ -329,6 +347,7 @@ function ClientServiceRecordsTabContent({
     return (
         <>
             <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+                {picker}
                 {isError ? (
                     <QueryErrorState
                         dataComponent={`${dataComponent}_refresh-error`}
@@ -351,7 +370,7 @@ function ClientServiceRecordsTabContent({
                                 record={record}
                                 isRefreshing={isTextRefreshing}
                                 viewHref={layout === "desktop" && clientId != null
-                                    ? `/service-record-admin/${encodeURIComponent(String(clientId))}`
+                                    ? serviceRecordEditorPath(clientId, selectedCaseId)
                                     : null}
                             />
                             {layout === "desktop" && (<ServiceRecordHeaderCard
@@ -364,6 +383,8 @@ function ClientServiceRecordsTabContent({
                                 <LinkStatusCard
                                     layout={layout}
                                     clientId={clientId}
+                                    caseId={selectedCaseId}
+                                    readOnly={selectedCase?.retired}
                                     assignment={activeAssignment}
                                     isRefreshing={isTextRefreshing}
                                     isPending={sendingSchedule?.scheduleId === activeAssignment.scheduleId
@@ -395,7 +416,8 @@ function ClientServiceRecordsTabContent({
                         {assignments.length > 1 && <AssignmentHistoryCard assignments={assignments} isRefreshing={isTextRefreshing} />}
                         <ServiceSessionsCard
                             clientId={clientId}
-                            enablePeriodMismatch
+                            caseId={selectedCaseId}
+                            enablePeriodMismatch={!selectedCase?.retired}
                             periodMismatchActionsLocked={PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES.has(record.status)}
                             startDate={record.startDate}
                             endDate={record.endDate}
@@ -1120,6 +1142,8 @@ function getRecordStatusMeta(status: string): {
 function LinkStatusCard({
     layout = "desktop",
     clientId,
+    caseId,
+    readOnly,
     assignment,
     isRefreshing,
     isPending,
@@ -1129,6 +1153,8 @@ function LinkStatusCard({
 }: {
     layout?: "desktop" | "mobile";
     clientId?: number | null;
+    caseId?: string;
+    readOnly?: boolean;
     assignment: ServiceRecordAssignment;
     isRefreshing: boolean;
     isPending: boolean;
@@ -1201,7 +1227,7 @@ function LinkStatusCard({
                         "shrink-0 duration-500 ease-out motion-reduce:transition-none",
                         layout === "mobile" ? "w-full" : !usesResendLayout && "w-[calc(118px*var(--glint-ui-scale,1))]",
                     )}
-                    disabled={isPending || isLinkSending}
+                    disabled={readOnly || isPending || isLinkSending}
                     loading={isPending}
                     loadingLabel={isResend ? "메시지 재전송 중" : "링크 발송 중"}
                     onClick={onSendLink}
@@ -1213,7 +1239,7 @@ function LinkStatusCard({
                 </Button>
                 {layout === "mobile" && clientId != null && canEditServiceRecord && (
                     <Button asChild variant="outline" className="mt-2 w-full" data-component={`${dataComponent}_actions_edit`}>
-                        <Link href={`/service-record-admin/${clientId}`}>제공기록지 수정</Link>
+                        <Link href={serviceRecordEditorPath(clientId, caseId)}>제공기록지 수정</Link>
                     </Button>
                 )}
             </div>
@@ -1237,6 +1263,7 @@ const PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES = new Set<string>([
 
 function ServiceSessionsCard({
     clientId,
+    caseId,
     enablePeriodMismatch = false,
     periodMismatchActionsLocked = false,
     startDate,
@@ -1252,6 +1279,7 @@ function ServiceSessionsCard({
     onRefresh,
 }: {
     clientId: number;
+    caseId?: string;
     enablePeriodMismatch?: boolean;
     periodMismatchActionsLocked?: boolean;
     startDate: string | null;
@@ -1323,10 +1351,11 @@ function ServiceSessionsCard({
             if (action === "keep") {
                 await keepMutation.mutateAsync({
                     clientId,
+                    ...(caseId ? { caseId } : {}),
                     sessionIndexes: unkeptSessions.map((session) => session.sessionIndex),
                 });
             } else {
-                const result = await fitMutation.mutateAsync({ clientId });
+                const result = await fitMutation.mutateAsync({ clientId, ...(caseId ? { caseId } : {}) });
                 if (result.startDate === null || result.endDate === null) return;
                 const startChanged = result.startDate !== datePartOf(startDate);
                 const endChanged = result.endDate !== datePartOf(endDate);

@@ -9,7 +9,7 @@ import { ServiceRecordMissingModal } from "./ServiceRecordMissingModal";
 interface ServiceRecordMissingStatMiniProps {
   name: string;
   density?: StatMiniDensity;
-  onSelectClient: (clientId: number) => boolean;
+  onSelectClient: (clientId: number, caseId?: string) => boolean;
 }
 
 export function ServiceRecordMissingStatMini({ name, density, onSelectClient }: ServiceRecordMissingStatMiniProps) {
@@ -25,6 +25,6 @@ export function ServiceRecordMissingStatMini({ name, density, onSelectClient }: 
       aria-label="제공기록지 미작성 고객 보기" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)} />
     <ServiceRecordMissingModal open={open} onClose={() => setOpen(false)} anchorRef={anchorRef}
       items={data.items} error={error} onRetry={() => void refetch()} data-component={`${base}-modal`}
-      onSelectClient={clientId => { if (onSelectClient(clientId)) setOpen(false); }} />
+      onSelectClient={(clientId, caseId) => { if (onSelectClient(clientId, ...(caseId ? [caseId] : []))) setOpen(false); }} />
   </>;
 }

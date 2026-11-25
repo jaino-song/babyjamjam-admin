@@ -32,6 +32,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
     const preparedLinkToken = requestBody.preparedLinkToken;
     const recipientPhone = requestBody.recipientPhone;
+    const caseId = requestBody.caseId;
     if (
         preparedLinkToken !== undefined
         && (typeof preparedLinkToken !== "string" || !PREPARED_LINK_TOKEN_PATTERN.test(preparedLinkToken))
@@ -53,6 +54,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const body = {
             ...(preparedLinkToken ? { preparedLinkToken } : {}),
             ...(recipientPhone ? { recipientPhone } : {}),
+            ...(caseId === undefined ? {} : { caseId }),
         };
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${encodeURIComponent(scheduleId)}/send-link`,

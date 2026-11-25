@@ -34,13 +34,13 @@ const day = (index: number, iso: string, overrides: Record<string, unknown> = {}
 function world(days = [day(1, "2026-11-06")]) {
     const order: string[] = [];
     const record = {
-        id: caseId, branchId, clientId, status: "IN_PROGRESS", requiredSessionCount: 5 as number | null,
+        id: caseId, branchId, clientId, babyId: null, status: "IN_PROGRESS", requiredSessionCount: 5 as number | null,
         startDate: date("2026-11-09") as Date | null, endDate: date("2026-11-13") as Date | null,
         plannedSessions: null as Prisma.JsonValue | null, currentRevisionId: null,
         currentUsableRevisionId: null, currentUsableDocumentVersion: null,
     };
     const client = {
-        id: clientId, branchId, startDate: date("2026-11-09"), endDate: date("2026-11-13"),
+        id: clientId, branchId, deletedAt: null, startDate: date("2026-11-09"), endDate: date("2026-11-13"),
         serviceStatus: "in_progress", bookingConfirmedAt: date("2026-11-01"),
         allowSaturdayService: false, allowSundayService: false, allowHolidayService: false,
     };
@@ -50,11 +50,14 @@ function world(days = [day(1, "2026-11-06")]) {
     }];
     const tokens = [{ branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null,
         expiresAt: date("2026-11-01") }];
-    const whereMatches = (where: Record<string, unknown>, row: Record<string, unknown>) =>
+    const whereMatches = (where: Record<string, unknown>, row: Record<string, unknown>): boolean =>
         Object.entries(where).every(([key, value]) => {
             if (value && typeof value === "object" && "in" in value) return (value.in as unknown[]).includes(row[key]);
             if (value && typeof value === "object" && "lt" in value) {
                 return row[key] instanceof Date && (row[key] as Date).getTime() < (value.lt as Date).getTime();
+            }
+            if (key === "client" && value && typeof value === "object") {
+                return row["clientId"] === clientId && whereMatches(value as Record<string, unknown>, client);
             }
             return row[key] === value;
         });
@@ -69,7 +72,9 @@ function world(days = [day(1, "2026-11-06")]) {
             findFirst: jest.fn(async ({ where }) => whereMatches(where, client) ? clone(client) : null),
             updateMany: jest.fn(async ({ data }) => { order.push("client"); Object.assign(client, data); return { count: 1 }; }),
         },
+        client_baby: { findMany: jest.fn().mockResolvedValue([]) },
         service_record_case: {
+            findMany: jest.fn(async ({ where }) => whereMatches(where, record) ? [clone(record)] : []),
             findFirst: jest.fn(async ({ where }) => whereMatches(where, record) ? clone(record) : null),
             findUnique: jest.fn(async () => clone(record)),
             update: jest.fn(async ({ data }) => { order.push("case"); Object.assign(record, data); return clone(record); }),
@@ -196,7 +201,8 @@ describe("ServiceRecordPeriodMismatchService", () => {
         for (const target of ["case-missing", "case-replaced", "client-missing"] as const) {
             const w = world();
             if (target === "client-missing") {
-                w.tx.client.findFirst.mockResolvedValueOnce(clone(w.client)).mockResolvedValueOnce(null);
+                w.tx.client.findFirst.mockResolvedValueOnce(clone(w.client)).mockResolvedValueOnce(clone(w.client))
+                    .mockResolvedValueOnce(null);
             } else {
                 w.tx.service_record_case.findFirst.mockResolvedValueOnce(clone(w.record))
                     .mockResolvedValueOnce(target === "case-missing" ? null : { ...clone(w.record), id: "replacement-case" });

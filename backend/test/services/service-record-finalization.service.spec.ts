@@ -78,6 +78,9 @@ function setup(options: {
     return { service, prisma: prismaWithTransaction, lifecycle, snapshot };
 }
 
+const NOT_TOMBSTONED = { OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }] };
+const NOT_RETIRED = { OR: [{ babyId: null }, { baby: { is: { active: true } } }] };
+
 describe("ServiceRecordFinalizationService", () => {
     beforeEach(() => {
         mockCaptureServiceRecordError.mockClear();
@@ -161,7 +164,7 @@ describe("ServiceRecordFinalizationService", () => {
         expect(prisma.service_record_case.findMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
             where: {
                 snapshotChunks: { none: { status: "MANUAL_REVIEW" } },
-                AND: [{ OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }] }],
+                AND: [NOT_TOMBSTONED, NOT_RETIRED],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                     {
@@ -173,6 +176,7 @@ describe("ServiceRecordFinalizationService", () => {
         }));
         expect(prisma.service_record_case.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
             where: {
+                AND: [NOT_TOMBSTONED, NOT_RETIRED],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END },
                     {
@@ -191,16 +195,15 @@ describe("ServiceRecordFinalizationService", () => {
 
     it("never selects or claims a case whose client is a tombstone", async () => {
         const { service, prisma } = setup();
-        const notTombstoned = { OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }] };
 
         await service.processDueCases();
 
         expect(prisma.service_record_case.findMany).toHaveBeenNthCalledWith(3, expect.objectContaining({
-            where: expect.objectContaining({ AND: [notTombstoned] }),
+            where: expect.objectContaining({ AND: [NOT_TOMBSTONED, NOT_RETIRED] }),
         }));
         expect(prisma.service_record_case.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: expect.objectContaining({ id: "case-1", AND: [notTombstoned] }),
+                where: expect.objectContaining({ id: "case-1", AND: [NOT_TOMBSTONED, NOT_RETIRED] }),
                 data: expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.FINALIZING }),
             }),
         );
@@ -298,6 +301,7 @@ describe("ServiceRecordFinalizationService", () => {
         expect(prisma.service_record_case.updateMany).toHaveBeenCalledWith({
             where: {
                 status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                AND: [NOT_TOMBSTONED, NOT_RETIRED],
                 finalizationStartedAt: { lte: new Date("2026-07-12T23:40:00.000Z") },
                 snapshotChunks: {
                     none: {

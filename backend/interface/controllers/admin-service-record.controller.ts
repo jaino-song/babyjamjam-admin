@@ -72,6 +72,30 @@ export class AdminServiceRecordNoQueryPipe implements PipeTransform {
     }
 }
 
+/** Selected routes accept exactly one UUID selector. Tenant authority still comes from the guard. */
+class AdminServiceRecordCaseQueryPipe implements PipeTransform {
+    transform(value: unknown): { caseId?: string } {
+        if (!value || typeof value !== "object" || Array.isArray(value)
+            || Object.keys(value).some((key) => key !== "caseId")) {
+            return new AdminServiceRecordNoQueryPipe().transform(value);
+        }
+        if (!("caseId" in value)) return {};
+        if (typeof value.caseId === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value.caseId)) {
+            return { caseId: value.caseId };
+        }
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/caseId",
+            code: "INVALID_VALUE",
+            detail: "제공기록지 선택에는 올바른 caseId만 사용할 수 있습니다.",
+            location: "query",
+        }));
+    }
+}
+
+function caseArgument(query?: { caseId?: string }): [] | [string] {
+    return query?.caseId ? [query.caseId] : [];
+}
+
 @Controller("admin/service-records")
 @UseGuards(JwtGuard, TenantGuard)
 export class AdminServiceRecordController {
@@ -120,9 +144,9 @@ export class AdminServiceRecordController {
     getClientOverview(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("clientId", ParseIntPipe) clientId: number,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        return this.adminServiceRecordService.getClientOverview(tenant.branchId ?? "", clientId);
+        return this.adminServiceRecordService.getClientOverview(tenant.branchId ?? "", clientId, ...caseArgument(query));
     }
 
     @Post("client/:clientId/period-mismatch/keep")
@@ -132,10 +156,9 @@ export class AdminServiceRecordController {
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
         @Body() body: KeepServiceRecordPeriodMismatchDto,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        void _query;
-        return this.adminServiceRecordService.keepPeriodMismatch(tenant.branchId, clientId, body.sessionIndexes);
+        return this.adminServiceRecordService.keepPeriodMismatch(tenant.branchId, clientId, body.sessionIndexes, ...caseArgument(query));
     }
 
     @Post("client/:clientId/period-mismatch/fit")
@@ -145,11 +168,10 @@ export class AdminServiceRecordController {
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
         @Body() _body: FitServiceRecordPeriodMismatchDto,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
         void _body;
-        void _query;
-        return this.adminServiceRecordService.fitPeriodMismatch(tenant.branchId, clientId);
+        return this.adminServiceRecordService.fitPeriodMismatch(tenant.branchId, clientId, ...caseArgument(query));
     }
 
     @Get("client/:clientId/editor")
@@ -157,9 +179,9 @@ export class AdminServiceRecordController {
     getClientEditor(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        return this.adminServiceRecordService.getClientEditor(tenant.branchId, clientId);
+        return this.adminServiceRecordService.getClientEditor(tenant.branchId, clientId, ...caseArgument(query));
     }
 
     @Get("clients/:clientId/revisions")
@@ -167,9 +189,9 @@ export class AdminServiceRecordController {
     getRevisionHistory(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        return this.adminServiceRecordService.getRevisionHistory(tenant.branchId, clientId);
+        return this.adminServiceRecordService.getRevisionHistory(tenant.branchId, clientId, ...caseArgument(query));
     }
 
     @Get("clients/:clientId/revisions/:revisionId/changes")
@@ -178,9 +200,9 @@ export class AdminServiceRecordController {
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
         @Param("revisionId") revisionId: string,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        return this.adminServiceRecordService.getRevisionChanges(tenant.branchId, clientId, revisionId);
+        return this.adminServiceRecordService.getRevisionChanges(tenant.branchId, clientId, revisionId, ...caseArgument(query));
     }
 
     @Get("clients/:clientId/caregiver-edits/:editId/changes")
@@ -189,9 +211,9 @@ export class AdminServiceRecordController {
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
         @Param("editId") editId: string,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        return this.adminServiceRecordService.getCaregiverEditChanges(tenant.branchId, clientId, editId);
+        return this.adminServiceRecordService.getCaregiverEditChanges(tenant.branchId, clientId, editId, ...caseArgument(query));
     }
 
     @Post("revisions/:revisionId/documents/:documentStateId/retry")
@@ -236,9 +258,9 @@ export class AdminServiceRecordController {
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
         @Body() body: CreateServiceRecordEditDraftDto,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        return this.adminServiceRecordEditService.startDraft(tenant.branchId, clientId, tenant.userId, body);
+        return this.adminServiceRecordEditService.startDraft(tenant.branchId, clientId, tenant.userId, body, ...caseArgument(query));
     }
 
     @Get("client/:clientId/draft")
@@ -246,9 +268,9 @@ export class AdminServiceRecordController {
     getDraft(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
-        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+        @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
-        return this.adminServiceRecordEditService.getDraft(tenant.branchId, clientId);
+        return this.adminServiceRecordEditService.getDraft(tenant.branchId, clientId, ...caseArgument(query));
     }
 
     @Patch("drafts/:draftId")
@@ -306,6 +328,7 @@ export class AdminServiceRecordController {
             tenant.branchId ?? "",
             scheduleId,
             body?.recipientPhone,
+            ...caseArgument(body),
         );
     }
 
@@ -321,6 +344,7 @@ export class AdminServiceRecordController {
             scheduleId,
             body?.preparedLinkToken,
             body?.recipientPhone,
+            ...caseArgument(body),
         );
     }
 

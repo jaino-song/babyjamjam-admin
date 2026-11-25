@@ -21,7 +21,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!isPositiveIntegerString(clientId)) return invalidClientIdResponse();
 
     try {
-        const response = await serverAPIClient.post(`/admin/service-records/client/${clientId}/period-mismatch/fit`, {}, {
+        const response = await serverAPIClient.post(`/admin/service-records/client/${clientId}/period-mismatch/fit${new URL(request.url).search}`, {}, {
             headers: getAuthHeaders(token),
         });
         return withNoStore(backendJsonResponse(response));

@@ -3359,27 +3359,33 @@ export class ClientService {
 
     async getServiceRecordMissing(branchId: string): Promise<{
         count: number;
+        recordCount: number;
         items: Array<{
             clientId: number;
             clientName: string;
+            caseId: string;
+            rank: number | null;
+            babyCount: number | null;
+            legacyName: string | null;
             primaryEmployeeName: string;
             unwrittenThroughSessionIndex: number;
         }>;
     }> {
-        if (!branchId) return { count: 0, items: [] };
+        if (!branchId) return { count: 0, recordCount: 0, items: [] };
 
         const [candidates, calendar] = await Promise.all([
             this.clientRepository.findServiceRecordAlertCandidates(branchId),
             this.holidayCalendar.forBranch(branchId),
         ]);
         const items = findMissingServiceRecordAlertsWithProgress(candidates, branchId, calendar, new Date())
-            .map(({ clientId, clientName, primaryEmployeeName, unwrittenThroughSessionIndex }) => ({
-                clientId, clientName, primaryEmployeeName, unwrittenThroughSessionIndex,
+            .map(({ clientId, caseId, clientName, rank, babyCount, legacyName, primaryEmployeeName, unwrittenThroughSessionIndex }) => ({
+                clientId, caseId, clientName, rank, babyCount, legacyName, primaryEmployeeName, unwrittenThroughSessionIndex,
             }))
             .sort((left, right) => right.unwrittenThroughSessionIndex - left.unwrittenThroughSessionIndex
                 || left.clientName.localeCompare(right.clientName, "ko")
-                || left.clientId - right.clientId);
-        return { count: items.length, items };
+                || left.clientId - right.clientId
+                || (left.rank ?? Infinity) - (right.rank ?? Infinity));
+        return { count: new Set(items.map(({ clientId }) => clientId)).size, recordCount: items.length, items };
     }
 
     async getStats(branchid: string): Promise<{

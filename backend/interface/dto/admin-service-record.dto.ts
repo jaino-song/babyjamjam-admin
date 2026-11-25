@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
-import { ArrayNotEmpty, ArrayUnique, IsArray, IsInt, Min, IsOptional, IsString, Matches, MaxLength } from "class-validator";
+import { ArrayNotEmpty, ArrayUnique, IsArray, IsInt, Min, IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator";
 import type {
+    AdminServiceRecordCaseSummary,
     ServiceRecordEditServiceDays,
     ServiceRecordScheduleProjection,
 } from "@babyjamjam/shared/types/service-record";
@@ -8,6 +9,10 @@ import type {
 const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
 export class PrepareAdminServiceRecordLinkDto {
+    @IsOptional()
+    @IsUUID()
+    caseId?: string;
+
     @IsOptional()
     @IsString()
     @Matches(RECIPIENT_PHONE_PATTERN, {
@@ -17,6 +22,10 @@ export class PrepareAdminServiceRecordLinkDto {
 }
 
 export class SendAdminServiceRecordLinkDto {
+    @IsOptional()
+    @IsUUID()
+    caseId?: string;
+
     @IsOptional()
     @IsString()
     @MaxLength(80)
@@ -151,6 +160,7 @@ export interface AdminServiceRecordAssignmentDto {
 }
 
 export interface AdminServiceRecordOverviewDto {
+    cases?: AdminServiceRecordCaseSummary[];
     record: AdminServiceRecordCaseDto | null;
     assignments: AdminServiceRecordAssignmentDto[];
     /** Editor-only latest confirmation for each session reported by the revision changes policy. */

@@ -287,7 +287,7 @@ export default function ClientsPage() {
     const [activeFilter, setActiveFilter] = useState<ClientListTab>("all");
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
     const [clientFormActiveStep, setClientFormActiveStep] = useState(0);
-    const [tabRequest, setTabRequest] = useState<{ clientId: number; tab: ClientDetailTabKey; nonce: number } | null>(null);
+    const [tabRequest, setTabRequest] = useState<{ clientId: number; tab: ClientDetailTabKey; nonce: number; caseId?: string } | null>(null);
     const tabRequestNonce = useRef(0);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
     const [previousClientIdParam, setPreviousClientIdParam] = useState(clientIdParam);
@@ -452,7 +452,7 @@ export default function ClientsPage() {
         setIsCreatingClient(true);
     };
 
-    const handleSelectServiceRecordMissingClient = (clientId: number): boolean => {
+    const handleSelectServiceRecordMissingClient = (clientId: number, caseId?: string): boolean => {
         if (formDialogOpen || pendingCreateDiscard !== null) return false;
         if (shouldShowClientFormPanel && isCreateFormDirty) return false;
         pendingEditReadRef.current = null;
@@ -464,7 +464,7 @@ export default function ClientsPage() {
         setUrlSelectionSuppressed(false);
         // The URL owns selection, including when it already names this client.
         setSelectedClient(null);
-        setTabRequest({ clientId, tab: "service-records", nonce: ++tabRequestNonce.current });
+        setTabRequest({ clientId, tab: "service-records", nonce: ++tabRequestNonce.current, caseId });
         router.replace(`/clients?id=${clientId}`);
         return true;
     };

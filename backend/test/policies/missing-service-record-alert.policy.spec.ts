@@ -36,6 +36,7 @@ describe("missing service record eligibility", () => {
         expect(alerts([candidate()], new Date(threshold.getTime() - 1))).toEqual([]);
         expect(alerts([candidate()])).toEqual([{
             clientId: 10, clientName: "김산모", primaryEmployeeName: "이관리", scheduleId: 55,
+            caseId: "case-1", rank: null, babyCount: null, legacyName: null,
         }]);
     });
 
@@ -78,6 +79,7 @@ describe("missing service record eligibility", () => {
         row.assignmentSessions = [{ scheduleId: 54, sessionIndex: 1, serviceDate: "2026-09-07" }];
         expect(alerts([row])).toEqual([{
             clientId: 10, clientName: "김산모", primaryEmployeeName: "이관리", scheduleId: 55,
+            caseId: "case-1", rank: null, babyCount: null, legacyName: null,
         }]);
     });
 
@@ -196,6 +198,7 @@ describe("missing service record eligibility", () => {
         });
         expect(alerts([invalid, candidate()], new Date("2099-01-05T18:00:00+09:00"))).toEqual([{
             clientId: 10, clientName: "김산모", primaryEmployeeName: "이관리", scheduleId: 55,
+            caseId: "case-1", rank: null, babyCount: null, legacyName: null,
         }]);
     });
 

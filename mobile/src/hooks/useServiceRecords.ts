@@ -13,16 +13,20 @@ import type {
 export const serviceRecordQueryKeys = {
     all: ["service-records"] as const,
     clientOverviews: () => [...serviceRecordQueryKeys.all, "client-overview"] as const,
-    clientOverview: (clientId: number | null) =>
-        [...serviceRecordQueryKeys.clientOverviews(), clientId ?? "none"] as const,
+    clientOverview: (clientId: number | null, caseId?: string) =>
+        [...serviceRecordQueryKeys.clientOverviews(), clientId ?? "none", ...(caseId ? [caseId] : [])] as const,
 };
 
 function isValidClientId(clientId: number | null): clientId is number {
     return Number.isInteger(clientId) && clientId !== null && clientId > 0;
 }
 
-export async function fetchClientServiceRecords(clientId: number): Promise<ServiceRecordOverview> {
-    const { data } = await api.get<ServiceRecordOverview>(`/admin/service-records/client/${clientId}`);
+function withCaseId(path: string, caseId?: string): string {
+    return caseId === undefined ? path : `${path}?caseId=${encodeURIComponent(caseId)}`;
+}
+
+export async function fetchClientServiceRecords(clientId: number, caseId?: string): Promise<ServiceRecordOverview> {
+    const { data } = await api.get<ServiceRecordOverview>(withCaseId(`/admin/service-records/client/${clientId}`, caseId));
     return data;
 }
 
@@ -36,15 +40,15 @@ export async function resetServiceRecordLink(scheduleId: number): Promise<ResetS
 
 export function useClientServiceRecords(
     clientId: number | null,
-    options: { enabled?: boolean } = {},
+    options: { enabled?: boolean; caseId?: string } = {},
 ) {
     return useQuery<ServiceRecordOverview>({
-        queryKey: serviceRecordQueryKeys.clientOverview(clientId),
+        queryKey: serviceRecordQueryKeys.clientOverview(clientId, options.caseId),
         queryFn: () => {
             if (!isValidClientId(clientId)) {
                 throw new Error("clientId is required");
             }
-            return fetchClientServiceRecords(clientId);
+            return fetchClientServiceRecords(clientId, options.caseId);
         },
         enabled: isValidClientId(clientId) && (options.enabled ?? true),
     });
@@ -54,10 +58,10 @@ export function useSendServiceRecordLink() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ scheduleId, preparedLinkToken }: { scheduleId: number; clientId?: number; preparedLinkToken?: string }) => {
+        mutationFn: async ({ scheduleId, preparedLinkToken, caseId }: { scheduleId: number; clientId?: number; preparedLinkToken?: string; caseId?: string }) => {
             const { data } = await api.post<SendServiceRecordLinkResponse>(
                 `/admin/service-records/schedules/${scheduleId}/send-link`,
-                preparedLinkToken ? { preparedLinkToken } : {},
+                { ...(preparedLinkToken ? { preparedLinkToken } : {}), ...(caseId ? { caseId } : {}) },
             );
             return data;
         },
@@ -77,9 +81,9 @@ export function useSendServiceRecordLink() {
 export function useKeepPeriodMismatch() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async ({ clientId, sessionIndexes }: { clientId: number; sessionIndexes: number[] }) => {
+        mutationFn: async ({ clientId, sessionIndexes, caseId }: { clientId: number; sessionIndexes: number[]; caseId?: string }) => {
             const { data } = await api.post<{ keptSessionIndexes: number[] }>(
-                `/admin/service-records/client/${clientId}/period-mismatch/keep`,
+                withCaseId(`/admin/service-records/client/${clientId}/period-mismatch/keep`, caseId),
                 { sessionIndexes },
             );
             return data;
@@ -93,9 +97,9 @@ export function useKeepPeriodMismatch() {
 export function useFitPeriodMismatch() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: async ({ clientId }: { clientId: number }) => {
+        mutationFn: async ({ clientId, caseId }: { clientId: number; caseId?: string }) => {
             const { data } = await api.post<{ startDate: string | null; endDate: string | null }>(
-                `/admin/service-records/client/${clientId}/period-mismatch/fit`,
+                withCaseId(`/admin/service-records/client/${clientId}/period-mismatch/fit`, caseId),
                 {},
             );
             return data;
