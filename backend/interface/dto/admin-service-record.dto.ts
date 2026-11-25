@@ -216,6 +216,7 @@ export interface AdminServiceRecordAssignmentDto {
 }
 
 export interface AdminServiceRecordOverviewDto {
+    legacyLinkAssignment?: { scheduleId: number; employeeId: number } | null;
     cases?: AdminServiceRecordCaseSummary[];
     record: AdminServiceRecordCaseDto | null;
     assignments: AdminServiceRecordAssignmentDto[];

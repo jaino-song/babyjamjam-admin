@@ -1,5 +1,6 @@
 "use client";
 
+import { serviceRecordResetTarget, serviceRecordResetUrl } from "@babyjamjam/shared/utils";
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CalendarCheck, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
@@ -70,7 +71,7 @@ import {
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
-import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
+import { ClientServiceRecords, type ServiceRecordLinkResetSelection } from "@/components/app/clients/client-service-records";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceRecordScheduleSheet } from "@/components/app/service-record/ServiceRecordScheduleSheet";
 import { scheduleText } from "@/components/app/service-record/service-record-schedule-messages";
@@ -813,7 +814,8 @@ export function ClientDetailContent({
     setMessageRetryTarget(null);
     setSelectedEntry(null);
   };
-  const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
+  const resetInFlight = useRef(false);
+  const [resetLinkTarget, setResetLinkTarget] = useState<{ clientId: number; selection?: ServiceRecordLinkResetSelection } | null>(null);
   const [recordScheduleSheetOpen, setRecordScheduleSheetOpen] = useState(false);
   const locale = useLocale();
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
@@ -824,24 +826,28 @@ export function ClientDetailContent({
   const [confirmBookingOpen, setConfirmBookingOpen] = useState(false);
 
   const handleResetServiceRecordLink = async () => {
+    if (!resetLinkTarget || resetLinkTarget.clientId !== client.id || resetInFlight.current) return;
+    resetInFlight.current = true;
     setIsResettingLink(true);
     try {
-      const overview = await fetchClientServiceRecords(client.id);
-      const assignments = overview.assignments ?? [];
-      const activeAssignment = assignments.find((assignment) => !assignment.replaced)
-        ?? assignments[0]
-        ?? null;
-      if (!activeAssignment) {
-        toast({
-          description: "관리사 배정이 없어 링크를 재설정할 수 없어요",
-          variant: "destructive",
-        });
+      const { selection } = resetLinkTarget;
+      const overview = await fetchClientServiceRecords(client.id, selection?.caseId);
+      const target = serviceRecordResetTarget(overview, selection?.caseId);
+      const matchesSelection = target && ("members" in target.request
+        ? selection?.scheduleId === target.scheduleId && selection.employeeId === target.request.employeeId
+        : !selection);
+      if (!target || !matchesSelection) {
+        toast({ description: "현재 배정된 제공기록지를 선택해 주세요", variant: "destructive" });
         return;
       }
 
-      const reset = await resetServiceRecordLink(activeAssignment.scheduleId);
-      setResetLinkModalOpen(false);
-      setResetServiceRecordUrl(reset.serviceRecordUrl);
+      const reset = await resetServiceRecordLink(target.scheduleId, target.request);
+      const url = serviceRecordResetUrl(reset, target.request);
+      if (!url) throw new Error("Unexpected service record reset target");
+      setResetLinkTarget(null);
+      setResetServiceRecordUrl(url);
+      if (selection?.refresh) selection.refresh();
+      else void serviceRecordsQuery.refetch();
     } catch {
       toast({
         description: "제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요",
@@ -849,6 +855,7 @@ export function ClientDetailContent({
       });
     } finally {
       setIsResettingLink(false);
+      resetInFlight.current = false;
     }
   };
 
@@ -1209,7 +1216,7 @@ export function ClientDetailContent({
               ) : null}
               {canManageBranchFeatures ? (
                 <DropdownMenuItem
-                  onClick={() => setResetLinkModalOpen(true)}
+                  onClick={() => setResetLinkTarget({ clientId: client.id })}
                   className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                   data-component={`${dataComponent}_header_menu_reset-service-record-link`}
                 >
@@ -1290,10 +1297,10 @@ export function ClientDetailContent({
       />
 
       <ApprovalTwoButtonModal
-        open={resetLinkModalOpen}
+        open={resetLinkTarget?.clientId === client.id}
         onOpenChange={(open) => {
           if (!open && !isResettingLink) {
-            setResetLinkModalOpen(open);
+            setResetLinkTarget(null);
           }
         }}
         data-component={`${dataComponent}_reset-link-approval-modal`}
@@ -1612,6 +1619,9 @@ export function ClientDetailContent({
           isError={serviceRecordsQuery.isError}
           isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
           onRefresh={() => void serviceRecordsQuery.refetch()}
+          onResetServiceRecordLink={canManageBranchFeatures
+            ? (selection) => setResetLinkTarget({ clientId: client.id, selection })
+            : undefined}
           onPeriodFitted={async () => {
             try {
               onClientUpdated(await fetchClient(client.id));

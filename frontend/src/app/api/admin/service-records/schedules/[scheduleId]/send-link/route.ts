@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { allowServiceRecordLinkRequest } from "@babyjamjam/shared/api";
+
 import { serverAPIClient } from "@/lib/api/server";
 
 import {
@@ -11,8 +13,6 @@ import {
 } from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ scheduleId: string }> };
-const PREPARED_LINK_TOKEN_PATTERN = /^efl_[A-Za-z0-9_-]{40,64}$/;
-const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
     const token = request.cookies.get("auth_token")?.value || null;
@@ -22,47 +22,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const { scheduleId } = await params;
 
-    let requestBody: Record<string, unknown>;
     try {
-        requestBody = await readJsonObjectBody(request);
-    } catch (error) {
-        const invalidJson = invalidJsonResponse(error);
-        if (invalidJson) return invalidJson;
-        return errorResponse(error, "send service record link");
-    }
-    const preparedLinkToken = requestBody.preparedLinkToken;
-    const recipientPhone = requestBody.recipientPhone;
-    const caseId = requestBody.caseId;
-    if (
-        preparedLinkToken !== undefined
-        && (typeof preparedLinkToken !== "string" || !PREPARED_LINK_TOKEN_PATTERN.test(preparedLinkToken))
-    ) {
-        return localValidationProblemResponse([
-            { pointer: "/preparedLinkToken", code: "INVALID_FORMAT", detail: "Invalid input", location: "body" },
-        ]);
-    }
-    if (
-        recipientPhone !== undefined
-        && (typeof recipientPhone !== "string" || !RECIPIENT_PHONE_PATTERN.test(recipientPhone))
-    ) {
-        return localValidationProblemResponse([
-            { pointer: "/recipientPhone", code: "INVALID_FORMAT", detail: "Invalid input", location: "body" },
-        ]);
-    }
+        const payload = allowServiceRecordLinkRequest("send", await readJsonObjectBody(request));
+        if ("pointer" in payload) {
+            return localValidationProblemResponse([
+                { pointer: payload.pointer, code: "INVALID_FORMAT", detail: "Invalid input", location: "body" },
+            ]);
+        }
 
-    try {
-        const body = {
-            ...(preparedLinkToken ? { preparedLinkToken } : {}),
-            ...(recipientPhone ? { recipientPhone } : {}),
-            ...(caseId === undefined ? {} : { caseId }),
-        };
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${encodeURIComponent(scheduleId)}/send-link`,
-            body,
+            payload.body,
             { headers: { Authorization: `Bearer ${token}` } },
         );
-        return NextResponse.json(response.data ?? {}, { status: response.status });
+        return NextResponse.json(response.data ?? {}, {
+            status: response.status,
+            headers: { "Cache-Control": "no-store" },
+        });
     } catch (error) {
-        return errorResponse(error, "send service record link");
+        return invalidJsonResponse(error) ?? errorResponse(error, "send service record link");
     }
 }

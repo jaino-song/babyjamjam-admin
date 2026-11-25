@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { allowServiceRecordLinkRequest } from "@babyjamjam/shared/api";
+
 import { serverAPIClient } from "@/lib/api/server";
-import { authRequiredResponse, errorResponse } from "@/lib/api/route-utils";
+import {
+    authRequiredResponse,
+    errorResponse,
+    invalidJsonResponse,
+    localValidationProblemResponse,
+    readJsonObjectBody,
+} from "@/lib/api/route-utils";
 
 type RouteParams = { params: Promise<{ scheduleId: string }> };
 
@@ -14,9 +22,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { scheduleId } = await params;
 
     try {
+        const payload = allowServiceRecordLinkRequest("reset", await readJsonObjectBody(request));
+        if ("pointer" in payload) {
+            return localValidationProblemResponse([
+                { pointer: payload.pointer, code: "INVALID_FORMAT", detail: "Invalid input", location: "body" },
+            ]);
+        }
+
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${encodeURIComponent(scheduleId)}/reset-link`,
-            {},
+            payload.body,
             { headers: { Authorization: `Bearer ${token}` } },
         );
         return NextResponse.json(response.data ?? {}, {
@@ -24,6 +39,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             headers: { "Cache-Control": "no-store" },
         });
     } catch (error) {
-        return errorResponse(error, "reset service record link");
+        return invalidJsonResponse(error) ?? errorResponse(error, "reset service record link");
     }
 }

@@ -1,4 +1,6 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { TextDecoder } from "node:util";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as renderComponent, screen, waitFor } from "@testing-library/react";
 
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useSystemTemplate } from "@/features/system-templates/hooks";
@@ -166,6 +168,11 @@ jest.mock("../form-components/TemplateMessageFormLayout", () => ({
     ),
 }));
 
+function render(element: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderComponent(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
+}
+
 const serviceRecordLinkTemplate = `[사회서비스 제공자 품질평가 A등급]
 안녕하세요, 인천 아이미래로 입니다 :)
 
@@ -179,6 +186,12 @@ const serviceRecordLinkTemplate = `[사회서비스 제공자 품질평가 A등�
 
 제공기록지 링크
 {{serviceRecordUrl}}`;
+
+const originalTextDecoder = globalThis.TextDecoder;
+beforeAll(() => {
+  globalThis.TextDecoder = TextDecoder as typeof globalThis.TextDecoder;
+});
+afterAll(() => { globalThis.TextDecoder = originalTextDecoder; });
 
 describe("ServiceRecordLinkMessageForm", () => {
   beforeEach(() => {
@@ -364,7 +377,7 @@ describe("ServiceRecordLinkMessageForm", () => {
     expect(screen.getByText("{{serviceRecordUrl}}")).toBeInTheDocument();
   });
 
-  it("keeps a manually overridden phone and prepares the link for that exact number", async () => {
+  it("uses the registered phone for a selected legacy record", async () => {
     jest.mocked(serviceRecordsApi.getClientOverview).mockResolvedValue({
       data: {
         assignments: [{
@@ -388,22 +401,13 @@ describe("ServiceRecordLinkMessageForm", () => {
     const employeePhoneInput = screen.getByRole("textbox", { name: /관리사님 전화번호/ });
     await waitFor(() => {
       expect(serviceRecordsApi.prepareLink).toHaveBeenCalledWith(11, {
-        recipientPhone: "01011112222",
+        recipientPhone: "01099998888",
       });
     });
 
-    expect(employeePhoneInput).not.toBeDisabled();
-    fireEvent.change(employeePhoneInput, {
-      target: { value: "01000006621" },
-    });
-
-    await waitFor(() => {
-      expect(employeePhoneInput).toHaveValue("010-0000-6621");
-      expect(serviceRecordsApi.prepareLink).toHaveBeenLastCalledWith(11, {
-        recipientPhone: "01000006621",
-      });
-    });
-    expect(useFormStore.getState().employeePhone).toBe("010-0000-6621");
+    expect(employeePhoneInput).toBeDisabled();
+    expect(employeePhoneInput).toHaveValue("010-9999-8888");
+    expect(serviceRecordsApi.prepareLink).toHaveBeenCalledTimes(1);
   });
 
   it("keeps manually entered employee and client names with a formatted phone", async () => {
@@ -442,7 +446,7 @@ describe("ServiceRecordLinkMessageForm", () => {
             {messageCard}
             <output data-testid="prepared-link-state">
               {serviceRecordLinkPreparation
-                ? `${serviceRecordLinkPreparation.preparedLinkToken}|${serviceRecordLinkPreparation.serviceStartDate}`
+                ? `${serviceRecordLinkPreparation.kind === "group" ? "" : serviceRecordLinkPreparation.preparedLinkToken}|${serviceRecordLinkPreparation.serviceStartDate}`
                 : ""}
             </output>
           </div>

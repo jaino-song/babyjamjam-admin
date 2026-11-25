@@ -440,6 +440,11 @@ export interface ServiceRecordAssignment {
     sessions: ServiceRecordSession[];
     signatureDoc: SignatureDocStatus | null;
 }
+export interface ServiceRecordLinkAssignment {
+    scheduleId: number;
+    employeeId: number;
+    assignmentVersion: number;
+}
 export interface AdminServiceRecordCaseSummary {
     caseId: string;
     babyId: string | null;
@@ -452,10 +457,15 @@ export interface AdminServiceRecordCaseSummary {
         id: number;
         name: string;
     }[];
+    linkAssignments?: ServiceRecordLinkAssignment[];
     totalSessions: number;
     submittedSessions: number;
 }
 export interface ServiceRecordOverview {
+    legacyLinkAssignment?: {
+        scheduleId: number;
+        employeeId: number;
+    } | null;
     cases?: AdminServiceRecordCaseSummary[];
     record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
@@ -473,21 +483,62 @@ export interface SendServiceRecordLinkResponse {
     status: MessageTriggerJobStatus;
     scheduledFor: string;
 }
-export interface PrepareServiceRecordLinkResponse {
+export interface LegacyResetServiceRecordLinkResponse {
+    kind?: "legacy";
     serviceRecordUrl: string;
+    expiresAt: string;
+}
+export interface LegacyPrepareServiceRecordLinkResponse extends LegacyResetServiceRecordLinkResponse {
     preparedLinkToken: string;
-    expiresAt: string;
+    previewContent?: string;
 }
-export interface ResetServiceRecordLinkResponse {
+export interface ResetServiceRecordLinkMember extends ServiceRecordLinkTarget {
+    babyId: string;
+    activeRank: number;
     serviceRecordUrl: string;
     expiresAt: string;
 }
-export interface PrepareServiceRecordLinkRequest {
+export interface PreparedServiceRecordLinkMember extends ResetServiceRecordLinkMember {
+    preparedLinkToken: string;
+}
+interface GroupServiceRecordLinkResponse<Member> {
+    kind: "group";
+    employeeId: number;
+    members: Member[];
+}
+export type PrepareServiceRecordLinkResponse = LegacyPrepareServiceRecordLinkResponse | (GroupServiceRecordLinkResponse<PreparedServiceRecordLinkMember> & {
+    householdBabyCount: number;
+    previewContent: string;
+    buttonUrl: string | null;
+});
+export type ResetServiceRecordLinkResponse = LegacyResetServiceRecordLinkResponse | GroupServiceRecordLinkResponse<ResetServiceRecordLinkMember>;
+export type PrepareServiceRecordLinkRequest = {
     caseId?: string;
     recipientPhone?: string;
+} | {
+    employeeId: number;
+    caseIds: string[];
+    recipientPhone?: string;
+};
+export interface ServiceRecordLinkTarget {
+    caseId: string;
+    assignmentVersion: number;
 }
-export interface SendServiceRecordLinkRequest {
+export type SendServiceRecordLinkRequest = {
     caseId?: string;
     preparedLinkToken?: string;
     recipientPhone?: string;
-}
+} | {
+    employeeId: number;
+    members: (ServiceRecordLinkTarget & {
+        preparedLinkToken: string;
+    })[];
+    recipientPhone?: string;
+};
+export type ResetServiceRecordLinkRequest = {
+    caseId?: string;
+} | {
+    employeeId: number;
+    members: ServiceRecordLinkTarget[];
+};
+export {};

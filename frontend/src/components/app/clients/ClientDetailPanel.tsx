@@ -88,6 +88,7 @@ import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/sta
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { eformsignApi, type EformsignLinkConfirmation, type LocalEformsignDocRecord } from "@/services/api";
+import { ServiceRecordLinkResetDialog, type ServiceRecordLinkResetSelection } from "@/components/app/clients/ServiceRecordLinkResetDialog";
 import { ContractLinkConfirmDialog } from "@/components/app/clients/ContractLinkConfirmDialog";
 import {
     clientContractDocsQueryKey,
@@ -1225,6 +1226,7 @@ function ClientDetailPanelBody({
         limit: CLIENT_UPCOMING_MESSAGE_LIMIT,
     });
 
+    const [resetLinkSelection, setResetLinkSelection] = useState<ServiceRecordLinkResetSelection | null>(null);
     const [recordSelection, setRecordSelection] = useState<{ clientId: number; caseId: string } | undefined>(
         () => tabRequest?.caseId ? { clientId: tabRequest.clientId, caseId: tabRequest.caseId } : undefined,
     );
@@ -1791,6 +1793,7 @@ function ClientDetailPanelBody({
                                     key={selectedRecordCaseId ?? clientId}
                                     overview={serviceRecordsQuery.data}
                                     selectedCaseId={selectedRecordCaseId}
+                                    onResetServiceRecordLink={setResetLinkSelection}
                                     onSelectCase={(caseId) => { if (clientId !== null) setRecordSelection({ clientId, caseId }); }}
                                     clientId={clientId}
                                     serviceDays={serviceDayPolicyOfClient(client)}
@@ -1823,6 +1826,11 @@ function ClientDetailPanelBody({
                     ]}
                 />
             </DetailPanel>
+            <ServiceRecordLinkResetDialog
+                target={resetLinkSelection ? { clientId: client.id, ...resetLinkSelection } : null}
+                onClose={() => setResetLinkSelection(null)}
+                dataComponent={`${dataComponentPrefix}_reset-service-record-link`}
+            />
             <TwoButtonModal
                 data-component={`${dataComponentPrefix}_confirm-booking-modal`}
                 open={isBookingConfirmationOpen}

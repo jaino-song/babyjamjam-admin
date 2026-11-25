@@ -267,6 +267,7 @@ describe("AdminServiceRecordService", () => {
 
         await expect(service.getClientEditor(branchId, 100)).resolves.toEqual({
             cases: [],
+            legacyLinkAssignment: null,
             serviceDays: { saturday: false, sunday: false, holiday: false },
             record: null,
             assignments: [],
@@ -281,7 +282,7 @@ describe("AdminServiceRecordService", () => {
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
             where: { id: 100, branchId, deletedAt: null },
-            select: { fetalConfirmation: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
+            select: { fetalConfirmation: true, serviceStatus: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
         });
         expect(prisma.service_record_case.findMany).toHaveBeenCalled();
         expect(prisma.employee_schedule.findMany).toHaveBeenCalled();
@@ -564,7 +565,7 @@ describe("AdminServiceRecordService", () => {
             ]);
             expect(saturday.prisma.client.findFirst).toHaveBeenCalledWith({
                 where: { id: 100, branchId, deletedAt: null },
-                select: { fetalConfirmation: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
+                select: { fetalConfirmation: true, serviceStatus: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
             });
 
             const weekdaysOnly = serviceFor({ allowSaturdayService: false, allowSundayService: false, allowHolidayService: false });
@@ -723,7 +724,7 @@ describe("AdminServiceRecordService", () => {
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
             where: { id: 404, branchId, deletedAt: null },
-            select: { fetalConfirmation: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
+            select: { fetalConfirmation: true, serviceStatus: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
         });
         expect(prisma.service_record_case.findFirst).not.toHaveBeenCalled();
         expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();

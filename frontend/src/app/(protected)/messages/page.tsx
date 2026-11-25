@@ -1591,7 +1591,7 @@ export default function MessagesPage() {
           templateId={activeTemplateId ?? selectedTemplateTitle}
           templateRef={selectedSmsTemplateRef}
           templateName={selectedTemplateTitle}
-          message={templatePreviewMessage}
+          message={serviceRecordLinkPreparation?.previewContent ?? templatePreviewMessage}
           branchId={activeBranchId}
           templateReady={templateReady}
           requiresRecipientName={requiresRecipientName}

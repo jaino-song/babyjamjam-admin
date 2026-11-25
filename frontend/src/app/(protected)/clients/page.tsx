@@ -1,6 +1,6 @@
 "use client";
 
-
+import { legacyServiceRecordLinkAssignment, serviceRecordResetUrl } from "@babyjamjam/shared/utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -513,22 +513,22 @@ export default function ClientsPage() {
 
         setIsResettingLink(true);
         try {
-            const overview = await serviceRecordsApi.getClientOverview(resetLinkTargetClientId);
-            const assignments = overview.data.assignments ?? [];
-            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
-                ?? assignments[0]
-                ?? null;
+            const { data } = await serviceRecordsApi.getClientOverview(resetLinkTargetClientId);
+            const activeAssignment = legacyServiceRecordLinkAssignment(data);
+
             if (!activeAssignment) {
                 toast({
-                    description: "관리사 배정이 없어 링크를 재설정할 수 없어요",
+                    description: "현재 배정된 제공기록지를 선택해 주세요",
                     variant: "destructive",
                 });
                 return;
             }
 
             const reset = await serviceRecordsApi.resetLink(activeAssignment.scheduleId);
+            const url = serviceRecordResetUrl(reset.data, {});
+            if (!url) throw new Error("Unexpected service record reset target");
             setResetLinkTargetClientId(null);
-            setResetServiceRecordUrl(reset.data.serviceRecordUrl);
+            setResetServiceRecordUrl(url);
         } catch {
             toast({
                 description: "제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요",

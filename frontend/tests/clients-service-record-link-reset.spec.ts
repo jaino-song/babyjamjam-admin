@@ -5,6 +5,13 @@ const SERVICE_RECORD_URL = "https://mobile.test/service-record/efl_reset";
 
 test("resets the service-record link without resending a message and shows the URL", async ({ page }) => {
     await enableE2EAuth(page);
+    await page.context().addCookies([{
+        name: "selected_branch_id", value: "e2e-branch",
+        url: process.env.BASE_URL ?? "http://localhost:3000", sameSite: "Lax",
+    }]);
+    await page.addInitScript(() => {
+        document.cookie = "selected_branch_id=e2e-branch; path=/; SameSite=Lax";
+    });
     let resetRequestCount = 0;
     let sendRequestCount = 0;
     const pageErrors: string[] = [];
@@ -99,7 +106,10 @@ test("resets the service-record link without resending a message and shows the U
                 }),
             });
         }
-        if (pathname === "/api/eformsign-docs/client") {
+        if (pathname.endsWith("/events")) {
+            return route.fulfill({ status: 200, contentType: "text/event-stream", body: ": keep-alive\n\n" });
+        }
+        if (pathname === "/api/eformsign-docs/client" || pathname === "/api/eformsign-docs/link-confirmations") {
             return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
         }
         if (pathname === "/api/admin/service-records/schedules/51/reset-link") {
@@ -142,15 +152,12 @@ test("resets the service-record link without resending a message and shows the U
       });
     });
 
-    await page.goto("/clients?id=1");
-    await expect(page.getByText("링크 테스트 고객", { exact: true }).first()).toBeVisible();
-    await page.waitForTimeout(2_000);
-    expect(pageErrors).toEqual([]);
-    expect(consoleErrors).toEqual([]);
+    await page.goto("/clients?id=1", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("링크 테스트 고객", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "고객 작업 메뉴 열기" }).click();
     await page.getByText("제공기록지 링크 재설정", { exact: true }).click();
 
-    const approval = page.locator('[data-component="desktop_clients_modals_reset-service-record-link-approval"]');
+    const approval = page.getByRole("dialog", { name: "제공기록지 링크를 재설정하시겠습니까?" });
     await expect(approval).toContainText("메시지는 발송되지 않아요.");
     await approval.getByRole("button", { name: "링크 재설정" }).click();
 
@@ -159,4 +166,6 @@ test("resets the service-record link without resending a message and shows the U
     await expect(result.getByRole("textbox", { name: "제공기록지 링크" })).toHaveValue(SERVICE_RECORD_URL);
     expect(resetRequestCount).toBe(1);
     expect(sendRequestCount).toBe(0);
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
 });
