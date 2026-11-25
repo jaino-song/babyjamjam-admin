@@ -7,7 +7,7 @@ import {
 import { E2eAligoApiStub } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 
 /** Per-receiver provider outcome scripts for message-automation cron e2e specs. */
-export type AligoScriptMode = "accept" | "reject" | "throw" | "carrierFail";
+export type AligoScriptMode = "accept" | "reject" | "transientReject" | "throw" | "carrierFail";
 
 export const SCRIPTED_ALIGO_REJECT_RESULT_CODE = -101;
 export const SCRIPTED_ALIGO_REJECT_MESSAGE = "scripted rejection";
@@ -26,6 +26,7 @@ export const SCRIPTED_ALIGO_CARRIER_FAIL_STATE = "가입자없음";
  * - "reject": provider rejection response (result_code -101, message
  *   "scripted rejection", success_cnt 0, error_cnt = receiver count, msg_id 0)
  *   — the shape classifySmsProviderOutcome classifies as "rejected".
+ * - "transientReject": a definite rejection without a permanent error code.
  * - "throw": sendSms rejects with a thrown Error (uncertain dispatch path —
  *   the delivery layer never sees a provider response).
  * - "carrierFail": accept on send, but getSmsDeliveryDetails reports
@@ -87,6 +88,9 @@ export class ScriptedAligoStub implements IAligoSmsApiPort {
         const modes = receivers.map((receiver) => this.scriptsByReceiver.get(receiver));
         if (modes.includes("throw")) {
             return Promise.reject(new Error(SCRIPTED_ALIGO_THROW_MESSAGE));
+        }
+        if (modes.includes("transientReject")) {
+            return Promise.resolve({ ...this.buildRejectionResponse(params, receivers.length), result_code: -500 });
         }
         if (modes.includes("reject")) {
             return Promise.resolve(this.buildRejectionResponse(params, receivers.length));

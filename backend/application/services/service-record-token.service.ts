@@ -198,12 +198,12 @@ export class ServiceRecordTokenService {
     }
 
     /** A link stays with its case and employee for the lifetime of the credential. */
-    async issueLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
-        return this.persistLink(params, true);
+    async issueLink(params: ServiceRecordLinkTokenParams, transaction?: Prisma.TransactionClient): Promise<{ linkToken: string }> {
+        return this.persistLink(params, true, transaction);
     }
 
-    private async persistLink(params: ServiceRecordLinkTokenParams, activate: boolean): Promise<{ linkToken: string }> {
-        return this.prismaService.$transaction(async (tx) => {
+    private async persistLink(params: ServiceRecordLinkTokenParams, activate: boolean, transaction?: Prisma.TransactionClient): Promise<{ linkToken: string }> {
+        const persist = async (tx: Prisma.TransactionClient) => {
             const current = await this.currentProvider(params, tx, { lockCase: true, throwOnFinalized: true });
             if (!current || current.phoneHash !== this.hash(this.normalizePhone(params.expectedPhone))) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
@@ -240,14 +240,16 @@ export class ServiceRecordTokenService {
                 },
             });
             return { linkToken };
-        });
+        };
+        return transaction ? persist(transaction) : this.prismaService.$transaction(persist);
     }
 
     async reuseActiveLink(
         params: ServiceRecordLinkTokenParams,
         options: { includeLocked?: boolean } = {},
+        transaction?: Prisma.TransactionClient,
     ): Promise<{ linkToken: string } | null> {
-        return this.prismaService.$transaction(async (tx) => {
+        const reuse = async (tx: Prisma.TransactionClient) => {
             const current = await this.currentProvider(params, tx, { lockCase: true });
             if (!current || current.phoneHash !== this.hash(this.normalizePhone(params.expectedPhone))) return null;
             const where = {
@@ -266,18 +268,19 @@ export class ServiceRecordTokenService {
                 data: { expiresAt: params.expiresAt },
             });
             return updated.count === 1 ? { linkToken: record.linkTokenHash } : null;
-        });
+        };
+        return transaction ? reuse(transaction) : this.prismaService.$transaction(reuse);
     }
 
     /** Prepare the exact URL shown in the composer without activating it. */
-    async prepareLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
-        return this.persistLink(params, false);
+    async prepareLink(params: ServiceRecordLinkTokenParams, transaction?: Prisma.TransactionClient): Promise<{ linkToken: string }> {
+        return this.persistLink(params, false, transaction);
     }
 
-    async activatePreparedLink(params: ServiceRecordLinkTokenParams & { linkToken: string }): Promise<boolean> {
+    async activatePreparedLink(params: ServiceRecordLinkTokenParams & { linkToken: string }, transaction?: Prisma.TransactionClient): Promise<boolean> {
         const expectedPhoneHash = this.hash(this.normalizePhone(params.expectedPhone));
 
-        return this.prismaService.$transaction(async (tx) => {
+        const activate = async (tx: Prisma.TransactionClient) => {
             const candidate = await this.findByLinkToken(params.linkToken, tx);
             if (!candidate || candidate.branchId !== params.branchId
                 || candidate.scheduleId !== params.scheduleId || candidate.employeeId !== params.employeeId) return false;
@@ -296,7 +299,8 @@ export class ServiceRecordTokenService {
                 data: { active: true, expiresAt: params.expiresAt },
             });
             return updated.count === 1;
-        });
+        };
+        return transaction ? activate(transaction) : this.prismaService.$transaction(activate);
     }
 
     async resolveLink(linkToken: string) {

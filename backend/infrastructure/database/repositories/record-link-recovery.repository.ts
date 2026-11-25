@@ -1,3 +1,4 @@
+import { isRecordLinkGroup, recordLinkPhone, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED } from "application/services/service-record-link-group-source";
 import { allowsLegacyServiceRecordLink } from "application/services/service-record-legacy-link-target";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { Prisma } from "@prisma/client";
@@ -262,7 +263,7 @@ export function matchesRecordLinkOccurrence(
 }
 
 type RecordLinkAttempt = Pick<import("domain/entities/message-trigger-job.entity").MessageTriggerJobEntity,
-    "id" | "branchId" | "clientId" | "employeeScheduleId" | "claimToken" | "dedupeKey" | "recipientPhone">;
+    "id" | "branchId" | "clientId" | "employeeScheduleId" | "claimToken" | "dedupeKey" | "recipientPhone" | "ruleId" | "templateKey" | "payload">;
 
 export async function fenceRecordLinkAttempt(
     tx: Prisma.TransactionClient,
@@ -290,6 +291,10 @@ export async function fenceRecordLinkAttempt(
         return cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
     }
     if (senderOnly) return { kind: "allow" };
+    if (isRecordLinkGroup(row) || isRecordLinkGroup(job)) {
+        const current = await resolveRecordLinkGroup(tx, job, true);
+        return current ? { kind: "allow" } : cancel(RECORD_LINK_GROUP_CHANGED);
+    }
     if (!row.employeeScheduleId || !row.clientId) return cancel(RECORD_LINK_RECOVERY_REFUSED);
     const schedule = await readRecordLinkAssignment(tx, job.branchId, row.employeeScheduleId);
     if (!recordLinkAssignmentMatches(schedule, job.branchId, row.clientId, now)) {
@@ -316,7 +321,7 @@ export async function fenceRecordLinkAttempt(
         if (!parent || !row.recoveryEpoch || job.dedupeKey !== RECORD_LINK_RECOVERY_PREFIX + row.originalJobId
             || !matchesRecordLinkOccurrence(parent.payload, schedule)
             || !matchesRecordLinkOccurrence(row.payload, schedule)
-            || job.recipientPhone !== schedule.primaryEmployee.phone
+            || recordLinkPhone(job.recipientPhone) !== recordLinkPhone(schedule.primaryEmployee.phone)
             || (await readRecordLinkEpoch(tx, job.branchId))?.getTime() !== row.recoveryEpoch.getTime()
             || !permitsRecordLinkRecovery(status)
             || await findRecordLinkTerminalSibling(tx, schedule, row.originalJobId)

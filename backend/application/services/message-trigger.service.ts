@@ -1,3 +1,4 @@
+import { isRecordLinkGroup, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED } from "./service-record-link-group-source";
 import type { message_trigger_job } from "@prisma/client";
 import { lockClientForScheduleWrite } from "application/policies/employee-schedule-invariants.policy";
 import {
@@ -4838,6 +4839,14 @@ export class MessageTriggerService {
             }
             const parentFence = await this.fenceMessageAutomationParent(job, transaction);
             if (parentFence.kind !== "allow") return parentFence;
+            if (isRecordLinkGroup(job) && !await resolveRecordLinkGroup(transaction, job, true)) {
+                const canceled = await transaction.message_trigger_job.updateMany({
+                    where: { id: job.id, branchId: job.branchId, status: "processing", claimToken: job.claimToken },
+                    data: { status: "canceled", canceledAt: new Date(), cancelReason: RECORD_LINK_GROUP_CHANGED,
+                        claimToken: null, nextAttemptAt: null, processingDeadlineAt: null },
+                });
+                return canceled.count === 1 ? { kind: "stale", reason: RECORD_LINK_GROUP_CHANGED } : { kind: "lost" };
+            }
             const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
                 job,
                 transaction,
@@ -5172,6 +5181,10 @@ export class MessageTriggerService {
     ): Promise<PreProviderSendFenceResult> {
         if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_RECORD_LINK) return { kind: "allow" };
         const stale = { kind: "stale" as const, reason: job.quietHold ? "stale_link" : SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON };
+        if (isRecordLinkGroup(job)) {
+            return await resolveRecordLinkGroup(transaction, job)
+                ? { kind: "allow" } : { kind: "stale", reason: RECORD_LINK_GROUP_CHANGED };
+        }
         const linkToken = this.readServiceRecordLinkToken(job);
         if (!linkToken || !job.branchId || job.employeeScheduleId === null) return stale;
 

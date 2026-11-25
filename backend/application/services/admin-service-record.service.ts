@@ -28,6 +28,9 @@ import {
     type IServiceRecordEditRepository,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { ServiceRecordPeriodMismatchService, hasAuthoritativeServiceRecordCount, servicePeriodSessionCount } from "./service-record-period-mismatch.service";
+import {
+    ServiceRecordLinkGroupService, type RecordLinkPrepareSelection, type RecordLinkSelection, type RecordLinkSendSelection,
+} from "./service-record-link-group.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { MessageTriggerService } from "./message-trigger.service";
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
@@ -140,6 +143,7 @@ export class AdminServiceRecordService {
         private readonly editRepository?: IServiceRecordEditRepository,
         @Optional() private readonly periodMismatchService?: ServiceRecordPeriodMismatchService,
         @Optional() private readonly finalizationService?: ServiceRecordFinalizationService,
+        @Optional() private readonly linkGroups?: ServiceRecordLinkGroupService,
     ) {}
 
     async keepPeriodMismatch(branchId: string, clientId: number, sessionIndexes: number[], caseId?: string): Promise<{ keptSessionIndexes: number[] }> {
@@ -604,7 +608,7 @@ export class AdminServiceRecordService {
         caseId?: string,
     ): Promise<AdminServiceRecordPreparedLinkDto> {
         await this.assertLinkTarget(branchId, scheduleId, caseId);
-        return this.serviceRecordLinkService.prepareLink(scheduleId, recipientPhone);
+        return { kind: "legacy", ...await this.serviceRecordLinkService.prepareLink(scheduleId, recipientPhone) };
     }
 
     async resetLink(
@@ -623,7 +627,7 @@ export class AdminServiceRecordService {
             branchId,
             scheduleId,
         });
-        return reset;
+        return { kind: "legacy", ...reset };
     }
 
     async sendLinkNow(
@@ -632,13 +636,19 @@ export class AdminServiceRecordService {
         preparedLinkToken?: string,
         recipientPhone?: string,
         caseId?: string,
+        actorUserId?: string,
     ) {
         await this.assertLinkTarget(branchId, scheduleId, caseId);
         const queued = await this.serviceRecordLinkService.sendNow(
             scheduleId,
             preparedLinkToken,
             recipientPhone,
+            ...(actorUserId ? [actorUserId] as const : [] as const),
         );
+        return this.dispatchRecordLink(branchId, queued);
+    }
+
+    private async dispatchRecordLink(branchId: string, queued: { jobId: string; scheduledFor: Date }) {
         const dispatched = await this.messageTriggerService.dispatchPendingJobNow(queued.jobId, {
             expectedBranchId: branchId,
         });
@@ -649,6 +659,29 @@ export class AdminServiceRecordService {
             status: dispatched.status,
             scheduledFor: queued.scheduledFor,
         };
+    }
+
+    async listLinkTargets(branchId: string, scheduleId: number) {
+        return this.linkGroups!.targets(branchId, scheduleId);
+    }
+
+    async prepareLinkGroup(branchId: string, scheduleId: number, input: RecordLinkPrepareSelection) {
+        return this.linkGroups!.prepare(branchId, scheduleId, input);
+    }
+
+    async sendLinkGroup(branchId: string, scheduleId: number, input: RecordLinkSendSelection, actorUserId: string) {
+        if (!actorUserId) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        const queued = await this.serviceRecordLinkService.sendGroupNow(branchId, scheduleId, input, actorUserId);
+        return this.dispatchRecordLink(branchId, queued);
+    }
+
+    async resetLinkGroup(branchId: string, scheduleId: number, input: RecordLinkSelection, actor: ServiceRecordAdminActor) {
+        if (!actor.userId) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        const result = await this.linkGroups!.reset(branchId, scheduleId, input);
+        this.securityEventService?.emit({
+            outcome: "link_reissued", actorUserId: actor.userId, branchId, scheduleId, employeeId: input.employeeId,
+        });
+        return result;
     }
 
     private async assertLinkTarget(branchId: string, scheduleId: number, caseId?: string): Promise<void> {

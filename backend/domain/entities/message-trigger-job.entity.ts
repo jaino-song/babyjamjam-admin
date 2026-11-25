@@ -42,7 +42,15 @@ export interface CaregiverSourceSnapshot {
     variables: Record<string, string>;
 }
 
+export interface RecordLinkGroupSnapshot {
+    version: 1;
+    sourceHash: string;
+    members: Array<{ caseId: string; tokenId: string }>;
+    previewHash?: string;
+}
+
 export interface MessageTriggerJobPayload {
+    recordLinkGroup?: RecordLinkGroupSnapshot;
     existingMessageLogId?: number;
     origin?: "ADMIN_DIRECT";
     caregiverSourceSnapshot?: CaregiverSourceSnapshot;

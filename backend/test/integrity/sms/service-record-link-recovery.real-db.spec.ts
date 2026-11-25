@@ -119,7 +119,7 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
 
     afterAll(async () => { if (db) await closeIntegrityPrisma(db); });
 
-    async function fixture(withRecordLifecycle = false) {
+    async function fixture() {
         const { id: branchId } = await createBranch(db.raw, tracker, { smsSenderApprovalStatus: "approved" });
         branchIds.push(branchId);
         const employee = await createEmployee(db.raw, tracker, { branchId, smsAutomationEnabled: true, openToNextWork: true });
@@ -128,7 +128,7 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         const retry = new CanceledAutomationRetrySettingsService(new CanceledAutomationRetryRepository(db.service), lock, activation);
         const trigger = wireMessageTriggerService(db, branchId, RecordingRecordLinkDelivery, new MessageSenderApprovalService(db.service));
         const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as ConstructorParameters<typeof ClientService>[11];
-        const lifecycle = withRecordLifecycle ? new ServiceRecordLifecycleService(db.service, calendar) : undefined;
+        const lifecycle = new ServiceRecordLifecycleService(db.service, calendar);
         const newLinkWorker = () => new ServiceRecordLinkService(db.service, new ServiceRecordTokenService(db.service), new ConfigService(),
             trigger.jobRepository, trigger.logRepository, new SbMessageTriggerRuleBranchOverrideRepository(db.service),
             new MessageTemplateAutomationLockService(db.service), lifecycle, lock, activation);
@@ -173,7 +173,7 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
     }
 
     it("keeps a pre-booking attachment inert with the actual record lifecycle wired", async () => {
-        const { branchId, create, toggle } = await fixture(true);
+        const { branchId, create, toggle } = await fixture();
         await toggle(true);
         const { schedule } = await create("pre_booking", true);
         expect(await db.raw.message_trigger_job.findFirst({ where: { employeeScheduleId: schedule.id } }))
@@ -291,10 +291,17 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
     });
 
     it.each([false, true])("gives a confirmed fresh assignment its first ordinary send with automation=%s and retry OFF", async apply => {
-        const { branchId, create, trigger } = await fixture();
-        const { schedule } = await create("waiting", apply);
+        const { branchId, create, trigger, employee } = await fixture();
+        const { client, schedule } = await create("waiting", apply);
         const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID } });
         expect(job).toMatchObject({ status: "pending", originalJobId: null, recoveryReason: null, scheduledFor: due });
+        const record = await db.raw.service_record_case.findFirstOrThrow({
+            where: { branchId, clientId: client.id, babyId: null }, select: { id: true },
+        });
+        expect(await db.raw.service_record_token.count({
+            where: { branchId, scheduleId: schedule.id, serviceRecordCaseId: record.id, employeeId: employee.id, active: true },
+        })).toBe(1);
+        expect(await db.raw.service_record_job_member.count({ where: { branchId, jobId: job.id } })).toBe(0);
         jest.setSystemTime(new Date(due.getTime() - 1));
         await deliver(trigger, job.id, branchId);
         expect(trigger.delivery.providerCalls).toHaveLength(0);

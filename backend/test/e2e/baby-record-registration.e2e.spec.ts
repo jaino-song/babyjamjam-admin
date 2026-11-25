@@ -432,6 +432,20 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
                 linkTimes.push(links[0]!.scheduledFor);
                 const result = await trigger.dispatchPendingJobNow(links[0]!.id, { expectedBranchId: branchId });
                 expect(result).toMatchObject({ status: "sent", cancelReason: null });
+                if (index === 0) {
+                    const members = await db.service_record_job_member.findMany({ where: { branchId, clientId, jobId: links[0]!.id } });
+                    expect(members.map(member => member.employeeId)).toEqual([employeeId, employeeId]);
+                    const message = send.mock.calls[0]![0].message;
+                    const urls = message.match(/https?:\/\/[^\s]+\/service-record\/efl_[A-Za-z0-9_-]+/g) ?? [];
+                    expect(new Set(urls).size).toBe(2);
+                    for (const url of urls) {
+                        const linkToken = new URL(url).pathname.split("/").at(-1);
+                        const { body: challenge } = await http().post("/service-record/verify").send({ linkToken, phone: staffPhone }).expect(201);
+                        expect(challenge.ok).toBe(true);
+                        const { body: context } = await http().get("/service-record/context").auth(challenge.accessToken, { type: "bearer" }).expect(200);
+                        expect(members.some(member => member.babyId === context.babyId && member.employeeId === context.employee.id)).toBe(true);
+                    }
+                }
                 expect(await householdJobs(clientId)).toEqual(canceledRoutines[index]);
             }
             expect(linkTimes[0]).toEqual(linkTimes[1]);
