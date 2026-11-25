@@ -1,13 +1,16 @@
+import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { createProblemDetails } from "@babyjamjam/shared";
 
 import { ClientServiceRecordsTab } from "../ClientServiceRecordsTab";
+import { ServiceRecordMissingStatMini } from "../ServiceRecordMissingStatMini";
 import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import type {
     ServiceRecordAssignment,
+    ServiceRecordCase,
     ServiceRecordOverview,
     ServiceRecordPlannedSession,
     ServiceRecordSession,
@@ -17,6 +20,7 @@ const mutateAsync = jest.fn();
 const toast = jest.fn();
 const mockKeepPeriod = jest.fn();
 const mockFitPeriod = jest.fn();
+const mockUseServiceRecordMissingClients = jest.fn();
 let mockPeriodPending = false;
 const mockUseGetAuthUser = jest.fn();
 const TEST_COMPONENT = "desktop_clients-detail_panel_service-records";
@@ -28,6 +32,10 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
         isPending: false,
         mutateAsync,
     }),
+}));
+
+jest.mock("@/features/clients/hooks/use-clients", () => ({
+    useServiceRecordMissingClients: () => mockUseServiceRecordMissingClients(),
 }));
 
 // Records every render's modal props so a test can call a handler captured from an
@@ -104,6 +112,14 @@ function createSession(sessionIndex: number): ServiceRecordSession {
     };
 }
 
+function createCaseRecord(id: string, sessions: ServiceRecordSession[] = []): ServiceRecordCase {
+    return {
+        id, status: "IN_PROGRESS", startDate: "2026-08-10", endDate: "2026-08-20",
+        totalSessions: 6, completedAt: null, finalizationDueAt: null, finalizedAt: null,
+        documentsCompletedAt: null, lastError: null, header: null, sessions, signatureDocs: [],
+    };
+}
+
 function createPlannedSession(
     sessionIndex: number,
     serviceDate: string,
@@ -157,6 +173,107 @@ describe("ClientServiceRecordsTab", () => {
     afterEach(() => {
         jest.useRealTimers();
         jest.restoreAllMocks();
+    });
+
+    describe("sibling case actions", () => {
+        const clientId = 100;
+        const secondCaseId = "case-second";
+        const assignment = createAssignment(1, "none");
+        const cases: NonNullable<ServiceRecordOverview["cases"]> = [
+            { caseId: "case-first", babyId: "baby-first", rank: 1 },
+            { caseId: secondCaseId, babyId: "baby-second", rank: 2 },
+        ].map((item) => ({
+            ...item,
+            babyCount: 2,
+            legacyName: null,
+            retired: false,
+            status: "IN_PROGRESS",
+            assignees: [assignment.employee],
+            totalSessions: 6,
+            submittedSessions: 0,
+        }));
+
+        function CasesTab({ sessions }: { sessions?: ServiceRecordSession[] }) {
+            const [selection, setSelection] = useState<{ clientId: number; caseId?: string }>({ clientId });
+            const selectedCase = cases.find(({ caseId }) => caseId === selection.caseId);
+
+            return <>
+                <ServiceRecordMissingStatMini name="desktop_clients_page" onSelectClient={(id, caseId) => {
+                    setSelection({ clientId: id, caseId });
+                    return true;
+                }} />
+                <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                    clientId={selection.clientId} isLoading={false} isError={false}
+                    overview={{
+                        cases,
+                        record: selectedCase ? createCaseRecord(selectedCase.caseId, sessions) : null,
+                        assignments: selectedCase ? [assignment] : [],
+                    }}
+                    selectedCaseId={selection.caseId}
+                    onSelectCase={(caseId) => setSelection({ clientId, caseId })}
+                />
+            </>;
+        }
+
+        const secondCaseButton = () => screen.getByRole("button", { name: /^둘째 ·/ });
+
+        beforeEach(() => {
+            mockUseServiceRecordMissingClients.mockReturnValue({
+                data: {
+                    count: 1,
+                    items: cases.map(({ caseId, rank, babyCount }) => ({
+                        clientId, caseId, rank, babyCount,
+                        clientName: "테스트 고객",
+                        primaryEmployeeName: assignment.employee.name,
+                        unwrittenThroughSessionIndex: 2,
+                    })),
+                },
+            });
+        });
+
+        afterEach(() => {
+            mockUseServiceRecordMissingClients.mockReset();
+        });
+
+        it.each([
+            { source: "case picker", select: () => fireEvent.click(secondCaseButton()) },
+            { source: "missing-record list", select: () => {
+                fireEvent.click(screen.getByRole("button", { name: "제공기록지 미작성 고객 보기" }));
+                const dialog = screen.getByRole("dialog", { name: "제공기록지 미작성" });
+                fireEvent.click(within(dialog).getByRole("button", { name: "테스트 고객 · 둘째 제공기록지 보기" }));
+            } },
+        ])("sends the second case link after selection from the $source", async ({ select }) => {
+            mutateAsync.mockResolvedValue({ ok: true, status: "sent" });
+            render(<CasesTab />);
+            fireEvent.click(screen.getByRole("button", { name: /^첫째 ·/ }));
+
+            select();
+            expect(secondCaseButton()).toHaveAttribute("aria-pressed", "true");
+            await act(async () => {
+                fireEvent.click(screen.getByRole("button", { name: "링크 수동 전송" }));
+            });
+
+            expect(mutateAsync.mock.calls).toEqual([[
+                { clientId, scheduleId: assignment.scheduleId, caseId: secondCaseId },
+            ]]);
+        });
+
+        it.each([
+            { action: "유지", mutate: mockKeepPeriod, result: { keptSessionIndexes: [2] }, extra: { sessionIndexes: [2] } },
+            { action: "변경", mutate: mockFitPeriod, result: { startDate: "2026-08-07", endDate: "2026-08-20" }, extra: {} },
+        ])("targets the selected second case for period mismatch action $action", async ({ action, mutate, result, extra }) => {
+            mutate.mockResolvedValue(result);
+            render(<CasesTab sessions={[{
+                ...createSession(2), serviceDate: "2026-08-07T00:00:00.000Z", locked: true,
+            }]} />);
+
+            fireEvent.click(secondCaseButton());
+            await act(async () => {
+                fireEvent.click(screen.getByRole("button", { name: action }));
+            });
+
+            expect(mutate.mock.calls).toEqual([[{ clientId, caseId: secondCaseId, ...extra }]]);
+        });
     });
 
     it.each([
@@ -1573,11 +1690,7 @@ describe("ClientServiceRecordsTab", () => {
         function overviewFor(sessions: ServiceRecordSession[]): ServiceRecordOverview {
             return {
                 assignments: [createAssignment(1, "none")],
-                record: {
-                    id: "case-1", status: "IN_PROGRESS", startDate: "2026-08-10", endDate: "2026-08-20",
-                    totalSessions: 6, completedAt: null, finalizationDueAt: null, finalizedAt: null,
-                    documentsCompletedAt: null, lastError: null, header: null, sessions, signatureDocs: [],
-                },
+                record: createCaseRecord("case-1", sessions),
             };
         }
         function session(index: number, date: string, keptAt: string | null = null): ServiceRecordSession {
