@@ -6,7 +6,9 @@ import request from "supertest";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { getJwtSecret } from "infrastructure/auth/jwt-secret";
@@ -17,6 +19,7 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantContext, TenantGuard } from "infrastructure/tenant";
 import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
 
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 import {
     assertApprovedServiceRecordEditHttpDatabaseTarget,
     createAdminServiceRecordEditHttpFixture,
@@ -93,8 +96,10 @@ describeE2E("admin service-record HTTP authorization", () => {
                 { provide: PrismaService, useValue: prisma },
                 { provide: ServiceRecordLinkService, useValue: {} },
                 { provide: MessageTriggerService, useValue: {} },
+                { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
                 AdminServiceRecordService,
                 { provide: AdminServiceRecordEditService, useValue: editService },
+                ServiceRecordCaseEventBus,
                 JwtStrategy,
                 JwtGuard,
                 TenantContext,
