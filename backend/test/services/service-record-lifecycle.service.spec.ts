@@ -580,6 +580,46 @@ describe("ServiceRecordLifecycleService", () => {
         }
     });
 
+    it.each([
+        ["waiting", "2026-09-09", 5, SERVICE_RECORD_CASE_STATUS.WAITING_FOR_ASSIGNMENT],
+        ["waiting", "2026-09-08", 4, SERVICE_RECORD_CASE_STATUS.WAITING_FOR_ASSIGNMENT],
+        ["terminated", "2026-09-08", 4, SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED],
+    ] as const)("syncs a terminated case for a %s client ending %s", async (serviceStatus, end, count, status) => {
+        const startDate = date("2026-09-03");
+        const endDate = date(end);
+        const previousEnd = date("2026-09-09");
+        const record = {
+            id: rawQueryCaseId, branchId: rawQueryBranchId, clientId: 1, babyId: null,
+            startDate, endDate: previousEnd, requiredSessionCount: 5,
+            status: SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED,
+            finalizationDueAt: getServiceRecordFinalizationDueAt(previousEnd),
+        };
+        const prisma = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1, branchId: rawQueryBranchId, startDate, endDate, serviceStatus,
+                    bookingConfirmedAt: date("2026-01-01"), employeeSchedules: [],
+                }),
+            },
+            service_record_case: {
+                findMany: jest.fn().mockResolvedValue([record]),
+                findUnique: jest.fn().mockImplementation(async () => ({ ...record, assignments: [], days: [] })),
+                update: jest.fn().mockImplementation(async ({ data }) => Object.assign(record, data)),
+            },
+            service_record_token: { updateMany: jest.fn() },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
+
+        await expect(service.ensureAllForClient(1)).resolves.toMatchObject([{
+            id: rawQueryCaseId, status, startDate, endDate, requiredSessionCount: count,
+            finalizationDueAt: getServiceRecordFinalizationDueAt(endDate),
+        }]);
+        expect(prisma.service_record_case.update).toHaveBeenLastCalledWith(expect.objectContaining({
+            where: { id: rawQueryCaseId, branchId: rawQueryBranchId },
+            data: expect.objectContaining({ version: { increment: 1 } }),
+        }));
+    });
+
     it("fills a still-null client duration from the actual service period", async () => {
         const record = { id: "case-1" };
         const prisma = {
