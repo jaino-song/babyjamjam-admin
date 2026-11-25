@@ -62,7 +62,7 @@ export class ServiceRecordStartDateChangeService {
     async applyInTransaction(
         tx: Prisma.TransactionClient,
         params: StartDateChangeParams,
-    ): Promise<{ restoreRequiredSessionCount: number | null }> {
+    ): Promise<{ restoreRequiredSessionCount: number | null; restoreByCase?: ReadonlyMap<string, number | null> }> {
         const { branchId, clientId, decision, newStartDate } = params;
         if (!newStartDate) {
             throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -70,15 +70,66 @@ export class ServiceRecordStartDateChangeService {
                 detail: "변경할 서비스 시작일을 입력해 주세요.",
             }));
         }
-        const record = await tx.service_record_case.findFirst({
-            where: { branchId, clientId },
+        const records = await tx.service_record_case.findMany({
+            where: { branchId, clientId, ...(decision.cases ? { id: { in: decision.cases.map(({ caseId }) => caseId) } } : {}) },
             select: { id: true, requiredSessionCount: true, plannedSessions: true },
+            orderBy: { id: "asc" },
         });
+        if (records.length !== (decision.cases?.length ?? 1)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        const sharedPeriods = new Map<number, CorrectedSchedulePeriod>();
+        const restoreByCase = new Map<string, number | null>();
+        let householdEnd: Date | undefined;
+        for (const record of records) {
+            const selected = decision.cases?.find(({ caseId }) => caseId === record.id);
+            const corrected = await this.applyCase(tx, { ...params, newStartDate, decision: { ...decision, ...selected } }, record);
+            restoreByCase.set(record.id, record.requiredSessionCount);
+            if (corrected.endDate && (!householdEnd || corrected.endDate > householdEnd)) householdEnd = corrected.endDate;
+            for (const period of corrected.periods) {
+                const prior = sharedPeriods.get(period.scheduleId);
+                if (!prior) {
+                    sharedPeriods.set(period.scheduleId, period);
+                } else {
+                    if (period.startDate < prior.startDate) prior.startDate = period.startDate;
+                    if (period.endDate > prior.endDate) prior.endDate = period.endDate;
+                }
+            }
+        }
+        const periods = [...sharedPeriods.values()];
+        await params.allocationSave?.beforePeriodWrite(periods);
+        if (householdEnd) {
+            await tx.client.updateMany({ where: { id: clientId, branchId }, data: { endDate: householdEnd } });
+        }
+        for (const { scheduleId, ...data } of periods) {
+            await this.agentAutomationRecordStore?.appendScheduleWriteFence(tx, {
+                branchId, clientId, mutationId: randomUUID(), scheduleIds: [scheduleId],
+            });
+            await tx.employee_schedule.updateMany({ where: { id: scheduleId, branchId, clientId }, data });
+        }
+        const scheduleIds = periods.map(({ scheduleId }) => scheduleId);
+        if (params.allocationSave) {
+            params.allocationSave.collectReevaluationSchedules(scheduleIds);
+        } else {
+            await persistReevaluationIntents(tx, { branchId, clientId, scheduleIds, intentAt: new Date() });
+        }
+        return {
+            restoreRequiredSessionCount: records.length === 1 ? records[0]!.requiredSessionCount : null,
+            ...(decision.cases ? { restoreByCase } : {}),
+        };
+    }
+
+    private async applyCase(
+        tx: Prisma.TransactionClient,
+        params: StartDateChangeParams & { newStartDate: Date },
+        record: { id: string; requiredSessionCount: number | null; plannedSessions: Prisma.JsonValue },
+    ): Promise<{ endDate: Date | null; periods: CorrectedSchedulePeriod[] }> {
+        const { branchId, clientId, decision, newStartDate } = params;
         const client = await tx.client.findFirst({
             where: { id: clientId, branchId },
             select: { allowSaturdayService: true, allowSundayService: true, allowHolidayService: true, endDate: true },
         });
-        if (!record || !client) {
+        if (!client) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         const caseWhere = { branchId, serviceRecordCaseId: record.id };
@@ -154,15 +205,6 @@ export class ServiceRecordStartDateChangeService {
             addDate(activeAssignment?.id ?? null, activeSchedule.id, dates[0]!);
             addDate(activeAssignment?.id ?? null, activeSchedule.id, dates[dates.length - 1]!);
         }
-        if (params.allocationSave) {
-            await params.allocationSave.beforePeriodWrite([...periods.values()].flatMap((period) =>
-                period.scheduleId === null ? [] : [{
-                    scheduleId: period.scheduleId,
-                    startDate: toDbDate(period.startDate),
-                    endDate: toDbDate(period.endDate),
-                }],
-            ));
-        }
         if (days.length > 0) {
             const batchId = randomUUID();
             await tx.service_record_day_archive.createMany({
@@ -209,32 +251,19 @@ export class ServiceRecordStartDateChangeService {
                 version: { increment: 1 },
             },
         });
-        if (dates.length > 0) {
-            await tx.client.updateMany({ where: { id: clientId, branchId }, data: { endDate } });
-        }
-
-        for (const period of periods.values()) {
-            if (period.scheduleId !== null) {
-                await this.agentAutomationRecordStore?.appendScheduleWriteFence(tx, {
-                    branchId, clientId, mutationId: randomUUID(), scheduleIds: [period.scheduleId],
+        for (const { assignmentId, startDate, endDate } of periods.values()) {
+            if (assignmentId) {
+                await tx.service_record_assignment.updateMany({
+                    where: { ...caseWhere, id: assignmentId },
+                    data: { startDate: toDbDate(startDate), endDate: toDbDate(endDate) },
                 });
-            }
-            const data = { startDate: toDbDate(period.startDate), endDate: toDbDate(period.endDate) };
-            if (period.assignmentId) {
-                await tx.service_record_assignment.updateMany({ where: { ...caseWhere, id: period.assignmentId }, data });
-            }
-            if (period.scheduleId !== null) {
-                // ensureForClient copies these dates back into the assignment, so update the schedule first.
-                await tx.employee_schedule.updateMany({ where: { id: period.scheduleId, branchId, clientId }, data });
             }
         }
         if (endDate) await refreshTokenExpiry(tx, branchId, record.id, endDate);
-        const scheduleIds = [...periods.values()].map((period) => period.scheduleId);
-        if (params.allocationSave) {
-            params.allocationSave.collectReevaluationSchedules(scheduleIds);
-        } else {
-            await persistReevaluationIntents(tx, { branchId, clientId, scheduleIds, intentAt: new Date() });
-        }
-        return { restoreRequiredSessionCount: total };
+        return {
+            endDate: dates.length > 0 ? endDate : null,
+            periods: [...periods.values()].flatMap(({ scheduleId, startDate, endDate }) =>
+                scheduleId === null ? [] : [{ scheduleId, startDate: toDbDate(startDate), endDate: toDbDate(endDate) }]),
+        };
     }
 }

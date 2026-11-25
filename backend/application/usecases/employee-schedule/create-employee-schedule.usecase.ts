@@ -51,16 +51,9 @@ export class CreateEmployeeScheduleUsecase {
 
             const employeeIds = [params.primaryEmployeeId, params.secondaryEmployeeId]
                 .filter((employeeId): employeeId is number => employeeId !== null);
-            const existingCase = tx.service_record_case?.findUnique
-                ? await tx.service_record_case.findUnique({
-                    where: { clientId: params.clientId },
-                    select: { id: true },
-                })
-                : null;
             await lockServiceRecordWriteSet(tx, {
                 branchId: branchid,
                 clientId: params.clientId,
-                caseId: existingCase?.id,
                 employeeIds,
             });
             // The initial client lookup is discovery only. Revalidate branch

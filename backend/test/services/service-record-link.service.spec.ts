@@ -413,7 +413,7 @@ describe("ServiceRecordLinkService", () => {
             expect(prisma.employee_schedule.findUnique).toHaveBeenCalledWith({
                 where: { id: 10 },
                 include: { primaryEmployee: true,
-                    client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
+                    client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true, fetalConfirmation: true } } },
             });
         }
         expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();

@@ -29,7 +29,7 @@
  *  - `$transaction` snapshots every table first and restores the snapshot when the callback
  *    throws, so an injected failure leaves the store exactly as it was before the transaction.
  *
- * `service_record` and `eformsign_doc` are modelled as empty tables with `updateMany` only: the
+ * `service_record` and `eformsign_doc` are modelled as empty tables: the
  * lifecycle sync issues a blind `updateMany` on both, and with no rows it matches nothing.
  * They have no `findMany`, so the editor's document-scope read keeps its "unverified" fallback.
  */
@@ -65,7 +65,7 @@ const no = (): boolean => false;
 const COLUMNS: Record<string, Record<string, () => unknown>> = {
     client: {
         id: nul, branchId: nul, name: nul, duration: nul, startDate: nul, endDate: nul, serviceStatus: nul,
-        bookingConfirmedAt: nul, birthDate: nul, eDocId: nul, deletedAt: nul,
+        bookingConfirmedAt: nul, birthDate: nul, eDocId: nul, deletedAt: nul, fetalConfirmation: nul,
         allowSaturdayService: no, allowSundayService: no, allowHolidayService: no,
     },
     employee: { id: nul, branchId: nul, name: nul, phone: nul },
@@ -75,7 +75,7 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         startDate: nul, endDate: nul, replaced: no, terminatedAt: nul,
     },
     service_record_case: {
-        id: uuid, branchId: nul, clientId: nul, version: () => 1, formVersion: () => 1, status: nul,
+        id: uuid, branchId: nul, clientId: nul, babyId: nul, version: () => 1, formVersion: () => 1, status: nul,
         completedAt: nul, finalizationDueAt: nul, finalizationStartedAt: nul, finalizedAt: nul,
         documentsCompletedAt: nul, currentRevisionId: nul, currentUsableRevisionId: nul,
         currentUsableDocumentVersion: nul, requiredSessionCount: nul, startDate: nul, endDate: nul,
@@ -111,7 +111,7 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         formVersionAtConfirm: nul, snapshotReference: nul,
     },
     service_record: { id: nul, scheduleId: nul, branchId: nul, serviceRecordCaseId: nul },
-    eformsign_doc: { id: nul, branchId: nul, employeeScheduleId: nul, documentKind: nul, serviceRecordCaseId: nul },
+    eformsign_doc: { id: nul, branchId: nul, employeeScheduleId: nul, documentKind: nul, serviceRecordCaseId: nul, revisionId: nul },
     eformsign_document_job: {
         id: uuid, branchId: nul, clientId: nul, jobType: nul, source: nul, requestKey: nul,
         payload: nul, payloadFingerprint: nul,
@@ -150,7 +150,7 @@ type Kind = "string" | "int" | "boolean" | "datetime" | "json";
 
 const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
     client: {
-        int: "id duration", string: "branchId name serviceStatus eDocId",
+        int: "id duration", string: "branchId name serviceStatus eDocId fetalConfirmation",
         datetime: "startDate endDate bookingConfirmedAt birthDate deletedAt",
         boolean: "allowSaturdayService allowSundayService allowHolidayService",
     },
@@ -161,7 +161,7 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
         datetime: "startDate endDate terminatedAt", boolean: "replaced",
     },
     service_record_case: {
-        string: "id branchId status currentRevisionId currentUsableRevisionId momName momBirth babyName babyBirth deliveryType babyWeight lastError",
+        string: "id branchId babyId status currentRevisionId currentUsableRevisionId momName momBirth babyName babyBirth deliveryType babyWeight lastError",
         int: "clientId version formVersion currentUsableDocumentVersion requiredSessionCount finalizationAttempts",
         datetime: "completedAt finalizationDueAt finalizationStartedAt finalizedAt documentsCompletedAt startDate endDate nextAttemptAt",
         json: "plannedSessions",
@@ -190,7 +190,7 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
         json: "payload beforeSnapshot plannedSessions provenance",
     },
     service_record: { string: "id branchId serviceRecordCaseId", int: "scheduleId" },
-    eformsign_doc: { int: "id employeeScheduleId", string: "branchId documentKind serviceRecordCaseId" },
+    eformsign_doc: { int: "id employeeScheduleId", string: "branchId documentKind serviceRecordCaseId revisionId" },
     eformsign_document_job: {
         string: "id branchId jobType source requestKey payloadFingerprint documentId status progressStep", int: "clientId", json: "payload",
     },
@@ -315,13 +315,13 @@ export class SequenceStore {
     readonly client: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
     readonly employee: Delegate<"findMany">;
     readonly employee_schedule: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
-    readonly service_record_case: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany" | "upsert">;
-    readonly service_record_assignment: Delegate<"findMany" | "updateMany" | "upsert">;
+    readonly service_record_case: Delegate<"findMany" | "findFirst" | "findUnique" | "create" | "update" | "updateMany" | "upsert">;
+    readonly service_record_assignment: Delegate<"findMany" | "create" | "update" | "updateMany" | "upsert">;
     readonly service_record_day: Delegate<"findMany" | "update" | "updateMany" | "create">;
     readonly service_record_token: Delegate<"updateMany">;
     readonly service_record_edit_draft: Delegate<"findMany" | "findFirst" | "create" | "updateMany">;
     readonly service_record_revision: Delegate<"findMany" | "findFirst" | "findUnique" | "create">;
-    readonly service_record: Delegate<"updateMany">;
+    readonly service_record: Delegate<"findMany" | "updateMany">;
     readonly eformsign_doc: Delegate<"updateMany">;
     readonly eformsign_document_job: Delegate<"findMany">;
 
@@ -337,9 +337,9 @@ export class SequenceStore {
             "findMany", "findFirst", "findUnique", "update", "updateMany",
         ]);
         this.service_record_case = this.delegate("service_record_case", [
-            "findMany", "findFirst", "findUnique", "update", "updateMany", "upsert",
+            "findMany", "findFirst", "findUnique", "create", "update", "updateMany", "upsert",
         ]);
-        this.service_record_assignment = this.delegate("service_record_assignment", ["findMany", "updateMany", "upsert"]);
+        this.service_record_assignment = this.delegate("service_record_assignment", ["findMany", "create", "update", "updateMany", "upsert"]);
         this.service_record_day = this.delegate("service_record_day", [
             "findMany", "update", "updateMany", "create",
         ]);
@@ -350,7 +350,7 @@ export class SequenceStore {
         this.service_record_revision = this.delegate("service_record_revision", [
             "findMany", "findFirst", "findUnique", "create",
         ]);
-        this.service_record = this.delegate("service_record", ["updateMany"]);
+        this.service_record = this.delegate("service_record", ["findMany", "updateMany"]);
         this.eformsign_doc = this.delegate("eformsign_doc", ["updateMany"]);
         this.eformsign_document_job = this.delegate("eformsign_document_job", ["findMany"]);
     }

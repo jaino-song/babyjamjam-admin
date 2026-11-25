@@ -1,3 +1,4 @@
+import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { randomUUID } from "node:crypto";
 
@@ -152,10 +153,12 @@ export class ServiceRecordLinkService {
             include: { client: true, primaryEmployee: true },
             orderBy: { id: "asc" },
         });
+        const eligible = [];
         for (const schedule of schedules) {
-            await observeRecordLinkBlock(tx, schedule, now, after);
+            if (await allowsLegacyServiceRecordLink(tx, schedule)) eligible.push(schedule);
         }
-        await recordLinkTransition(tx, branchId, clientId, after, now, allowRecovery);
+        for (const schedule of eligible) await observeRecordLinkBlock(tx, schedule, now, after);
+        await recordLinkTransition(tx, branchId, clientId, after, now, allowRecovery && eligible.length > 0);
     }
 
     async recheckClientRecovery(branchId: string, clientId: number): Promise<void> {
@@ -216,6 +219,7 @@ export class ServiceRecordLinkService {
                 ? await readRecordLinkAssignment(tx, candidate.branch_id, original.employeeScheduleId)
                 : null;
             if (!original.clientId || !recordLinkAssignmentMatches(schedule, candidate.branch_id, original.clientId, now)
+                || !await allowsLegacyServiceRecordLink(tx, schedule)
                 || !matchesRecordLinkOccurrence(original.payload, schedule)
                 || !permitsRecordLinkRecovery(recordLinkClientStatus(schedule.client, now))
                 || !(await hasApprovedRecordLinkSender(tx, candidate.branch_id))
@@ -404,7 +408,7 @@ export class ServiceRecordLinkService {
             where: { id: scheduleId },
             include: {
                 primaryEmployee: true,
-                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true, fetalConfirmation: true } },
             },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
@@ -412,6 +416,9 @@ export class ServiceRecordLinkService {
         }
 
         this.assertClientCanReceiveLink(schedule.client);
+        if (!await allowsLegacyServiceRecordLink(this.prisma, schedule)) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -452,7 +459,7 @@ export class ServiceRecordLinkService {
             where: { id: scheduleId },
             include: {
                 primaryEmployee: true,
-                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true, fetalConfirmation: true } },
             },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
@@ -460,6 +467,9 @@ export class ServiceRecordLinkService {
         }
 
         this.assertClientCanReceiveLink(schedule.client);
+        if (!await allowsLegacyServiceRecordLink(this.prisma, schedule)) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -527,7 +537,13 @@ export class ServiceRecordLinkService {
             if (record) {
                 await this.tokenService.extendExpiryForCase(record.id, expiresAt);
             } else {
-                await this.tokenService.extendExpiryForSchedule(scheduleId, expiresAt);
+                const schedule = this.lifecycleService && await this.prisma.employee_schedule.findUnique({
+                    where: { id: scheduleId },
+                    select: { client: { select: { fetalConfirmation: true } } },
+                });
+                if (!this.lifecycleService || (schedule && schedule.client.fetalConfirmation !== "CONFIRMED")) {
+                    await this.tokenService.extendExpiryForSchedule(scheduleId, expiresAt);
+                }
             }
         } catch (error) {
             this.logger.error(`Failed to extend service-record token expiry for schedule ${scheduleId}: ${error}`);
@@ -625,6 +641,15 @@ export class ServiceRecordLinkService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (options.isManualSend) this.assertClientCanReceiveLink(schedule.client);
+        if (!await allowsLegacyServiceRecordLink(this.prisma, schedule)) {
+            if (options.isManualSend) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            return {
+                scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
+                employeeId: schedule.primaryEmployeeId,
+                jobEnqueued: false,
+                jobId: null,
+            };
+        }
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(
@@ -693,6 +718,10 @@ export class ServiceRecordLinkService {
 
         try {
             const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
+            if (schedule.client.fetalConfirmation === "CONFIRMED" && !serviceRecordCase) {
+                if (options.isManualSend) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
+            }
             if (options.preparedLinkToken) {
                 if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                     throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
@@ -860,7 +889,8 @@ export class ServiceRecordLinkService {
                         || current.client.bookingConfirmedAt?.getTime() !== schedule.client.bookingConfirmedAt?.getTime()) {
                         throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                     }
-                    if (!(await this.automationActivationService!.getTriggerDispatchEnabled(schedule.branchId!, transaction))) return null;
+                    if (!await allowsLegacyServiceRecordLink(transaction, current)
+                        || !(await this.automationActivationService!.getTriggerDispatchEnabled(schedule.branchId!, transaction))) return null;
                     const override = await transaction.message_trigger_rule_branch_override.findUnique({
                         where: { branchId_ruleId: { branchId: schedule.branchId!, ruleId: SERVICE_RECORD_LINK_RULE_ID } },
                     });

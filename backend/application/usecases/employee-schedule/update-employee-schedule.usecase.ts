@@ -94,16 +94,9 @@ export class UpdateEmployeeScheduleUsecase {
             // updates lock the client/employees and validate eligibility and
             // overlap before the repository write.
             if (tx && tx.employee?.findMany) {
-                const existingCase = tx.service_record_case?.findUnique
-                    ? await tx.service_record_case.findUnique({
-                        where: { clientId: updated.clientId },
-                        select: { id: true },
-                    })
-                    : null;
                 await lockServiceRecordWriteSet(tx, {
                     branchId: branchid,
                     clientId: updated.clientId,
-                    caseId: existingCase?.id,
                     scheduleIds: [schedule.id],
                     employeeIds: [
                         schedule.primaryEmployeeId,

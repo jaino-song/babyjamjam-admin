@@ -66,7 +66,7 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
             updateMany: jest.fn(async ({ data }: { data: Partial<typeof client> }) => { Object.assign(client, data); return { count: 1 }; }),
         },
         service_record_case: {
-            findFirst: jest.fn().mockResolvedValue(record),
+            findMany: jest.fn().mockResolvedValue([record]),
             update: jest.fn(async ({ data }: { data: Partial<Omit<typeof record, "version">> & { version?: { increment: number } } }) => {
                 const { version, ...values } = data;
                 Object.assign(record, values);

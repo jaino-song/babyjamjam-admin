@@ -38,16 +38,9 @@ export class DeleteEmployeeScheduleUsecase {
                     },
                     orderBy: { id: "asc" },
                 });
-                const existingCase = tx.service_record_case?.findUnique
-                    ? await tx.service_record_case.findUnique({
-                        where: { clientId: schedule.clientId },
-                        select: { id: true, branchId: true, clientId: true },
-                    })
-                    : null;
                 await lockServiceRecordWriteSet(tx, {
                     branchId: branchid,
                     clientId: schedule.clientId,
-                    caseId: existingCase?.id,
                     expectedScheduleIds: schedules.map((row) => row.id),
                     scheduleIds: schedules.map((row) => row.id),
                     employeeIds: schedules.flatMap((row) => [
