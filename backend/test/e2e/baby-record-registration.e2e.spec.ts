@@ -247,6 +247,14 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         return { greeting: jobs[0]!, serviceInfo: jobs[1]! };
     }
 
+    async function expectImmediateGreeting(clientId: number, scheduledFor: Date) {
+        const { createdAt } = await db.client.findFirstOrThrow({
+            where: { branchId, id: clientId }, select: { createdAt: true },
+        });
+        expect(createdAt?.getTime()).toBeLessThanOrEqual(scheduledFor.getTime());
+        expect(scheduledFor.getTime()).toBeLessThanOrEqual(Date.now());
+    }
+
     it("configured prebooking keeps the household greeting and holds record links", async () => {
         const send = jest.spyOn(aligo, "sendSms");
         try {
@@ -263,11 +271,8 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             const configuredJobs = await expectPendingHouseholdRoutines(configured.id, configuredPhone, dates.startDate);
             const { body: legacy } = await create({ ...common, type: "B가2형", primaryEmployeeId: employeeIds[1], phone: legacyPhone }).expect(201);
             const legacyJobs = await expectPendingHouseholdRoutines(legacy.id, legacyPhone, dates.startDate);
-            for (const { greeting } of [configuredJobs, legacyJobs]) {
-                const client = await db.client.findUniqueOrThrow({ where: { id: greeting.clientId! }, select: { createdAt: true } });
-                expect(greeting.scheduledFor.getTime()).toBeGreaterThanOrEqual(client.createdAt!.getTime());
-                expect(greeting.scheduledFor.getTime()).toBeLessThanOrEqual(Date.now());
-            }
+            await expectImmediateGreeting(configured.id, configuredJobs.greeting.scheduledFor);
+            await expectImmediateGreeting(legacy.id, legacyJobs.greeting.scheduledFor);
             expect(configuredJobs.serviceInfo.scheduledFor).toEqual(legacyJobs.serviceInfo.scheduledFor);
             await assertNoRecordEffects(configured.id);
             expect(send).not.toHaveBeenCalled();
@@ -285,6 +290,31 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             for (const ruleId of [SERVICE_RECORD_LINK_RULE_ID, assignmentRule.id]) {
                 expect(await db.message_trigger_job.count({ where: { branchId, clientId: configured.id, ruleId, status: "pending" } })).toBe(1);
             }
+            expect(send).not.toHaveBeenCalled();
+        } finally {
+            send.mockRestore();
+        }
+    });
+
+    it("unstaffed configured prebooking schedules household routines like legacy registration", async () => {
+        const send = jest.spyOn(aligo, "sendSms");
+        try {
+            await approveSender();
+            const dates = { startDate: dateAt(10), endDate: dateAt(28) };
+            const common = { ...dates, serviceStatus: "pre_booking", applyMessageAutomation: true, smsAutomationEnabled: true };
+            const configuredPhone = "010-0000-7151";
+            const legacyPhone = "010-0000-7152";
+            const { body: legacy } = await create({ ...common, type: "B가2형", phone: legacyPhone }).expect(201);
+            const { body: configured } = await create({ ...twins(), ...common, phone: configuredPhone }).expect(201);
+            expect(configured).toMatchObject({ fetalConfirmation: "CONFIRMED", providers: [] });
+
+            const legacyJobs = await expectPendingHouseholdRoutines(legacy.id, legacyPhone, dates.startDate);
+            const configuredJobs = await expectPendingHouseholdRoutines(configured.id, configuredPhone, dates.startDate);
+            await expectImmediateGreeting(legacy.id, legacyJobs.greeting.scheduledFor);
+            await expectImmediateGreeting(configured.id, configuredJobs.greeting.scheduledFor);
+            expect(configuredJobs.serviceInfo.scheduledFor).toEqual(legacyJobs.serviceInfo.scheduledFor);
+            expect(await schedules(configured.id)).toEqual([]);
+            await assertNoRecordEffects(configured.id);
             expect(send).not.toHaveBeenCalled();
         } finally {
             send.mockRestore();
