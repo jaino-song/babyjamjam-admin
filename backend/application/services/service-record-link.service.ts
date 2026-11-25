@@ -1,3 +1,4 @@
+import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
 import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { randomUUID } from "node:crypto";
@@ -344,7 +345,9 @@ export class ServiceRecordLinkService {
                     select: { branchId: true },
                 });
                 if (schedule?.branchId) {
-                    await this.ensureSystemRule(schedule.branchId, false);
+                    if (!await this.ensureSystemRule(schedule.branchId, false, true)) {
+                        throw new BabyRecordRolloutPausedException();
+                    }
                     return await this.linkGroups.schedule(schedule.branchId, scheduleId);
                 }
             }
@@ -367,6 +370,7 @@ export class ServiceRecordLinkService {
         } catch (error) {
             // Missing/legacy no-branch schedules were a silent no-op before the refactor; keep them log-free.
             if (error instanceof NotFoundException) return false;
+            if (error instanceof BabyRecordRolloutPausedException) throw error;
             captureServiceRecordError(error, {
                 operation: "link-schedule",
                 handled: false,
@@ -412,7 +416,7 @@ export class ServiceRecordLinkService {
     }
 
     async sendGroupNow(branchId: string, scheduleId: number, selection: RecordLinkSendSelection, actorUserId: string) {
-        await this.ensureSystemRule(branchId, true);
+        await this.ensureSystemRule(branchId, true, true);
         return this.linkGroups!.send(branchId, scheduleId, selection, actorUserId);
     }
 
@@ -672,7 +676,13 @@ export class ServiceRecordLinkService {
                 jobId: null,
             };
         }
-        await this.ensureSystemRule(schedule.branchId, options.isManualSend);
+        const configured = schedule.client.fetalConfirmation === "CONFIRMED";
+        if (configured && !await isBabyRecordRolloutEnabled(this.prisma, schedule.branchId)) {
+            if (options.isManualSend) throw new BabyRecordRolloutPausedException();
+            return { scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
+                employeeId: schedule.primaryEmployeeId, jobEnqueued: false, jobId: null };
+        }
+        await this.ensureSystemRule(schedule.branchId, options.isManualSend, configured);
         const employee = schedule.primaryEmployee;
         const normalizedPhone = this.resolveRecipientPhone(employee.phone, options.recipientPhone);
         // Keep the byte-for-byte v1 automatic effect used by existing consent.
@@ -1142,7 +1152,7 @@ export class ServiceRecordLinkService {
         `);
     }
 
-    private async ensureSystemRule(branchId?: string, allowParentDisabled = true): Promise<void> {
+    private async ensureSystemRule(branchId?: string, allowParentDisabled = true, configured = false): Promise<boolean> {
         const ensure = (transaction?: Prisma.TransactionClient) => this.automationLock.runExclusive(
             SystemTemplateKey.SERVICE_RECORD_LINK,
             async (writeTransaction) => {
@@ -1201,14 +1211,18 @@ export class ServiceRecordLinkService {
             },
             transaction,
         );
-        if (branchId && !allowParentDisabled) {
-            if (!this.branchLock || !this.automationActivationService) {
+        if (branchId && (!allowParentDisabled || configured)) {
+            if (!this.branchLock || (!allowParentDisabled && !this.automationActivationService)) {
                 throw new ServiceUnavailableException("Message automation activation is not configured");
             }
-            await this.branchLock.runExclusive(branchId, (transaction) => ensure(transaction));
-            return;
+            return this.branchLock.runExclusive(branchId, async transaction => {
+                if (configured && !await isBabyRecordRolloutEnabled(transaction, branchId)) return false;
+                await ensure(transaction);
+                return true;
+            });
         }
         await ensure();
+        return true;
     }
 
     private async recordPermanentFailure(params: {

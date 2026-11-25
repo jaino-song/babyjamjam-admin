@@ -80,20 +80,21 @@ export class SmsProviderAcceptanceService {
         private readonly logRepository: IMessageLogRepository,
     ) {}
 
-    async prepare(log: MessageLogEntity): Promise<MessageLogEntity> {
+    async prepare(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
         if (log.providerAcceptanceState !== "prepared") {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const repository = this.logRepository as IMessageLogRepository & {
-            prepareProviderAttempt?: (attempt: MessageLogEntity) => Promise<MessageLogEntity>;
+            prepareProviderAttempt?: (attempt: MessageLogEntity, transaction?: Prisma.TransactionClient) => Promise<MessageLogEntity>;
         };
         if (typeof repository.prepareProviderAttempt === "function") {
-            return repository.prepareProviderAttempt(log);
+            return transaction ? repository.prepareProviderAttempt(log, transaction) : repository.prepareProviderAttempt(log);
         }
 
         // Compatibility fallback for isolated unit doubles and legacy
         // repository implementations. Production uses the transactional
         // implementation above.
+        if (transaction) throw new Error("Transactional SMS preparation is unavailable");
         return this.logRepository.save(log);
     }
 

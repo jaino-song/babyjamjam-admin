@@ -1,3 +1,4 @@
+import { requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -38,16 +39,16 @@ export class EmployeeScheduleService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
     ) {}
 
-    private async isConfiguredPreBooking(
-        tx: Prisma.TransactionClient,
-        branchId: string,
-        clientId: number,
-    ): Promise<boolean> {
-        if (!tx?.client_baby) return false;
-        const client = await tx.client.findFirst({
+    private async readClientBooking(tx: Prisma.TransactionClient, branchId: string, clientId: number) {
+        if (!tx?.client_baby) return null;
+        return tx.client.findFirst({
             where: { branchId, id: clientId },
             select: { fetalConfirmation: true, serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
         });
+    }
+
+    private async isConfiguredPreBooking(tx: Prisma.TransactionClient, branchId: string, clientId: number) {
+        const client = await this.readClientBooking(tx, branchId, clientId);
         return client?.fetalConfirmation === "CONFIRMED" && getEffectiveClientServiceStatus(
             client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt,
         ) === SERVICE_STATUS.PRE_BOOKING;
@@ -80,6 +81,9 @@ export class EmployeeScheduleService {
                 mutationId: ordinaryMutationId,
                 scheduleIds: [],
             });
+            if (!params.replaced && (await this.readClientBooking(transaction, branchid, params.clientId))?.fetalConfirmation === "CONFIRMED") {
+                await requireBabyRecordRollout(transaction, branchid);
+            }
             const created = await this.createEmployeeScheduleUsecase.execute(branchid, {
                 clientId: params.clientId,
                 primaryEmployeeId: params.primaryEmployeeId,
@@ -178,10 +182,10 @@ export class EmployeeScheduleService {
             // source fence and schedule mutation. The fence is intentionally
             // evaluated before the update so a stale task cannot race it.
             const scheduleReader = (transaction as unknown as {
-                employee_schedule?: { findFirst?: (args: unknown) => Promise<{ id: number; clientId: number } | null> };
+                employee_schedule?: { findFirst?: (args: unknown) => Promise<{ id: number; clientId: number; replaced: boolean } | null> };
             }).employee_schedule;
             const existing = scheduleReader?.findFirst
-                ? await scheduleReader.findFirst({ where: { id, branchId: branchid }, select: { id: true, clientId: true } })
+                ? await scheduleReader.findFirst({ where: { id, branchId: branchid }, select: { id: true, clientId: true, replaced: true } })
                 : null;
             if (existing) {
                 await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
@@ -190,6 +194,10 @@ export class EmployeeScheduleService {
                     mutationId: ordinaryMutationId,
                     scheduleIds: [existing.id],
                 });
+            }
+            if (existing?.replaced && params.replaced === false
+                && (await this.readClientBooking(transaction, branchid, existing.clientId))?.fetalConfirmation === "CONFIRMED") {
+                await requireBabyRecordRollout(transaction, branchid);
             }
             const updated = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
                 workAddress: params.workAddress,

@@ -1,3 +1,4 @@
+import { lockEnabledBabyRecordRollout, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -486,9 +487,11 @@ export class ServiceRecordLifecycleService {
                 orderBy: [{ version: "desc" }, { id: "asc" }],
             })
             : [];
+        const canCreateBabyArtifacts = babies.length > 0 && !unbound && !isPreBooking
+            && !!tx && await lockEnabledBabyRecordRollout(tx, branchId);
         const records: ServiceRecordCaseRecord[] = [];
         for (const target of targets) {
-            if (!target.existing && isPreBooking) continue;
+            if (!target.existing && (isPreBooking || (target.babyId !== null && !canCreateBabyArtifacts))) continue;
             const ownedSchedules = schedules.flatMap((schedule) => {
                 if (target.babyId === null) return [{ schedule, employee: schedule.primaryEmployee }];
                 const owner = owners.find((candidate) => candidate.babyId === target.babyId
@@ -498,6 +501,7 @@ export class ServiceRecordLifecycleService {
             records.push(await this.syncCase(db, tx, {
                 ...scope, ...target, client, ownedSchedules, resolveCalendar,
                 legacyArtifacts: target.babyId === null && existing.length <= 1,
+                canCreateBabyArtifacts,
             }));
         }
         return records;
@@ -515,6 +519,7 @@ export class ServiceRecordLifecycleService {
         }>;
         resolveCalendar: () => Promise<KrBusinessDayCalendar>;
         legacyArtifacts: boolean;
+        canCreateBabyArtifacts: boolean;
     }): Promise<ServiceRecordCaseRecord> {
         const { branchId, clientId, babyId, existing, client, ownedSchedules, resolveCalendar, legacyArtifacts } = params;
         if (existing && (IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
@@ -579,6 +584,7 @@ export class ServiceRecordLifecycleService {
                 endDate: schedule.endDate,
             };
             if (!assignment) {
+                if (babyId !== null && !params.canCreateBabyArtifacts) continue;
                 await db.service_record_assignment.create({ data: { ...caseScope, scheduleId: schedule.id, ...data } });
                 assignmentChanged = true;
             } else if (assignment.employeeId !== data.employeeId
@@ -608,7 +614,7 @@ export class ServiceRecordLifecycleService {
             });
             await this.linkLegacyDays(serviceRecordCaseId, schedules, db, branchId);
         }
-        if (scheduleIds.length > 0 && babyId !== null) {
+        if (scheduleIds.length > 0 && babyId !== null && params.canCreateBabyArtifacts) {
             const headers = await db.service_record.findMany({ where: caseScope, select: { scheduleId: true } });
             const missing = ownedSchedules.flatMap(({ schedule, employee }) =>
                 !headers.some(({ scheduleId }) => scheduleId === schedule.id) && (!schedule.replaced || employee)
@@ -667,6 +673,7 @@ export class ServiceRecordLifecycleService {
         if (target.babyId !== null || await tx.service_record_case.count({ where: { ...scope, babyId: baby.id } })) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
+        await requireBabyRecordRollout(tx, branchId);
         const changed = await tx.service_record_case.updateMany({
             where: { ...scope, id: target.caseId, babyId: null },
             data: { babyId: baby.id },

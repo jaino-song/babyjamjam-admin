@@ -1,5 +1,5 @@
 import { hasAllocationInput } from "application/services/client-allocation.service";
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Header, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import {
     CLIENT_LIST_TAB_VALUES,
@@ -166,6 +166,12 @@ export class ClientController {
     @Get("check-phone")
     async checkPhone(@CurrentTenant() tenant: { branchId?: string }, @Query("phone") phone?: string) {
         return { exists: await this.clientService.checkPhoneExists(tenant.branchId ?? "", phone) };
+    }
+
+    @Get("baby-record-capability")
+    @Header("Cache-Control", "private, no-store")
+    getBabyRecordCapability(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.clientService.getBabyRecordCapability(tenant.branchId ?? "");
     }
 
     @Get(":id")

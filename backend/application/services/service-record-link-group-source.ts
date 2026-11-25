@@ -35,6 +35,12 @@ export function isRecordLinkGroup(job: { dedupeKey: string; payload?: unknown; r
         || (!!job.payload && typeof job.payload === "object" && Object.prototype.hasOwnProperty.call(job.payload, "recordLinkGroup"));
 }
 
+/** Match grouped jobs before applying queue limits, including stale or malformed groups. */
+export function recordLinkGroupJobSql(alias: Prisma.Sql): Prisma.Sql {
+    return Prisma.sql`(starts_with(${alias}.dedupe_key, ${RECORD_LINK_GROUP_KEY_PREFIX})
+        OR ${alias}.recipient_employee_id IS NOT NULL OR ${alias}.payload ? 'recordLinkGroup')`;
+}
+
 export function recordLinkHash(value: string): string {
     return createHash("sha256").update(value).digest("hex");
 }
