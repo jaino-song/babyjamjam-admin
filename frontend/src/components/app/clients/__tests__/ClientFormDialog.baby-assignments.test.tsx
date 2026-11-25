@@ -451,6 +451,21 @@ describe("desktop client service-record allocation", () => {
     });
   });
 
+  it("sends one legacy PATCH containing only the changed address for a confirmed twin client", async () => {
+    const onSuccess = jest.fn();
+    await open({ client: savedTwins, onSuccess });
+    const address = "인천광역시 동구";
+    fireEvent.change(screen.getByLabelText(/^주소/), { target: { value: address } });
+    next();
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    expect(fetusSelect()).toHaveValue("TWINS");
+    next();
+    next();
+    click("저장");
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls).toStrictEqual([["/clients/523", { address }]]);
+  });
+
   it("keeps legacy B–D confirmation pending and sends only an unrelated partial edit", async () => {
     await open({ client: {
       ...savedTwins, type: "D가2형", fetalConfirmation: "UNCONFIRMED", fetalType: null,
