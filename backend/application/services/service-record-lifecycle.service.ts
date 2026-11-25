@@ -518,8 +518,7 @@ export class ServiceRecordLifecycleService {
     }): Promise<ServiceRecordCaseRecord> {
         const { branchId, clientId, babyId, existing, client, ownedSchedules, resolveCalendar, legacyArtifacts } = params;
         if (existing && (IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
-            || existing.status === SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED
-            || existing.status === SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED)) return existing;
+            || existing.status === SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED)) return existing;
 
         const sessionCount = existing
             ? existingCaseKeepsStoredCount(existing, client)
@@ -538,21 +537,28 @@ export class ServiceRecordLifecycleService {
             requiredSessionCount: sessionCount,
             finalizationDueAt: client.endDate ? getServiceRecordFinalizationDueAt(client.endDate) : null,
         };
+        const terminated = client.serviceStatus === "terminated";
         const status = this.deriveBaseStatus({
             ...period,
             duration: sessionCount,
             hasAssignment: ownedSchedules.some(({ schedule, employee }) => !schedule.replaced && !!employee),
-            terminated: client.serviceStatus === "terminated",
+            terminated,
         });
         const periodChanged = existing && (
             isoDate(existing.startDate) !== isoDate(period.startDate)
             || isoDate(existing.endDate) !== isoDate(period.endDate)
             || existing.requiredSessionCount !== period.requiredSessionCount
         );
+        const wasTerminated = existing?.status === SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED;
+        // Recompute treats termination as terminal, so persist the transition first.
+        const caseChanged = periodChanged || wasTerminated !== terminated;
         const record = !existing
             ? await db.service_record_case.create({ data: { ...period, branchId, clientId, babyId, status } })
-            : periodChanged || status === SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED
-                ? await db.service_record_case.update({ where: { id: existing.id, branchId }, data: { ...period, status } })
+            : caseChanged
+                ? await db.service_record_case.update({
+                    where: { id: existing.id, branchId },
+                    data: { ...period, status, ...(terminated ? { version: { increment: 1 } } : {}) },
+                })
                 : existing;
 
         const serviceRecordCaseId = record.id;
@@ -620,7 +626,7 @@ export class ServiceRecordLifecycleService {
         }
         const calendar = sessionCount === null ? await resolveCalendar() : undefined;
         return this.recompute(serviceRecordCaseId, tx, calendar, {
-            preserveVersion: !!existing && !periodChanged && !assignmentChanged,
+            preserveVersion: !!existing && !caseChanged && !assignmentChanged,
         });
     }
 
