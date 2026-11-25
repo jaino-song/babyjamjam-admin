@@ -157,14 +157,13 @@
         "136:10-136:33|pageLocalComponent"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1004:69-1004:97|visualTailwindInPage",
         "801:39-805:30|visualTailwindInPage",
         "863:198-863:360|visualTailwindInPage",
         "864:78-864:180|visualTailwindInPage",
         "867:78-867:174|visualTailwindInPage",
         "868:78-868:213|visualTailwindInPage",
         "870:74-870:182|visualTailwindInPage",
-        "910:79-910:166|visualTailwindInPage"
+        "990:69-990:97|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/consultations/page.tsx": {
