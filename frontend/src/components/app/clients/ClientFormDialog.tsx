@@ -3,6 +3,7 @@
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+    FETAL_TYPE_LABELS,
     findOutOfPocketPriceInfo,
     formatOutOfPocketDurationLabel,
     getUserErrorMessage,
@@ -31,15 +32,17 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientAllocationWrite, ClientFormData, UpdateClientDto } from "@/features/clients/types";
+import { useBabyRecordCapability } from "@/features/clients/hooks/use-baby-record-capability";
+import { getActiveBranchId } from "@/features/system-templates/branch-context";
 import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { buildClientUpdatePayload, hasServicePeriodChange, splitEmployeeChangeFromStartDateChange } from "./client-update-payload";
 import {
     babyField, CLIENT_PROVIDER_FIELDS, CLIENT_PROVIDER_SLOTS, MAX_CLIENT_BABY_COUNT, clientProviderLabel,
-    openClientBabyDraft, resolveClientBabyDraft,
+    getSavedClientBabyRows, openClientBabyDraft, resolveClientBabyDraft,
     type ClientBabyField, type ClientProviderField, type ClientProviderIds,
 } from "./client-baby-allocation";
-import { ClientBabyRecordOwners } from "./ClientBabyRecordOwners";
+import { ClientBabyRecordOwners, ClientBabyRetirementList, ClientSavedProviderInput } from "./ClientBabyRecordOwners";
 import { getStartDateLock } from "./start-date-lock";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -202,6 +205,14 @@ interface ClientFormErrorState {
     allocation?: ClientAllocationWrite;
     requestId?: string;
     outcome?: ProblemOutcome;
+}
+
+interface ClientFormSession {
+    open: boolean;
+    clientId: number | null;
+    branchId: string | null;
+    branchChanged: boolean;
+    explicitAllocation: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -522,6 +533,8 @@ function ClientFormContent({
     const searchParams = useSearchParams();
     const locale = useLocale();
     const isEditMode = !!client;
+    const capability = useBabyRecordCapability(open);
+    const activeBranchId = capability.branchId;
     const prefillRef = useRef(prefill);
     const appliedPrefillRef = useRef(prefill);
     useEffect(() => {
@@ -636,7 +649,13 @@ function ClientFormContent({
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
-    const formSessionRef = useRef<{ open: boolean; clientId: number | null }>({ open: false, clientId: null });
+    const formSessionRef = useRef<ClientFormSession>({
+        open: false,
+        clientId: null,
+        branchId: null,
+        branchChanged: false,
+        explicitAllocation: false,
+    });
     const formDataBaselineRef = useRef<ClientFormData>(formData);
     // Turns on the first time staff touch a price field or anything the price table is looked up by,
     // and stays on until the dialog reopens. While it is off, a price-table fill is still the form
@@ -1026,7 +1045,10 @@ function ClientFormContent({
         }
         const sessionClientId = client?.id ?? null;
         if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
-        formSessionRef.current = { open: true, clientId: sessionClientId };
+        formSessionRef.current = {
+            open: true, clientId: sessionClientId, branchId: getActiveBranchId(),
+            branchChanged: false, explicitAllocation: false,
+        };
         if (open) {
             autoEndDateOwnedRef.current = false;
             setCalendarRefreshFailed(false);
@@ -1141,6 +1163,11 @@ function ClientFormContent({
         }
     }, [clearPrefillName, client, open, prefillName, resetFieldStates]);
 
+    useEffect(() => {
+        const session = formSessionRef.current;
+        if (open && session.open && getActiveBranchId() !== session.branchId) session.branchChanged = true;
+    }, [activeBranchId, open]);
+
     // The contract candidate request can finish after the dialog has opened.
     // Apply that first late result while the create form is still untouched.
     useEffect(() => {
@@ -1242,8 +1269,14 @@ function ClientFormContent({
         historicalMaxOrdinal: allocationSnapshot?.historicalMaxOrdinal,
     });
     const allocationRules = allocationDraft.rules;
-    const providerCapacity = allocationRules?.providerCapacity ?? 2;
+    const session = formSessionRef.current;
+    const branchChanged = session.open && (session.branchChanged || getActiveBranchId() !== session.branchId);
+    const canEditAllocation = capability.status === "enabled" && !branchChanged;
     const hasSavedAllocation = allocationSnapshot?.fetalConfirmation === "CONFIRMED";
+    const savedAllocation = hasSavedAllocation ? allocationSnapshot : null;
+    const readOnlyAllocation = canEditAllocation ? null : savedAllocation;
+    const providerCapacity = canEditAllocation || readOnlyAllocation
+        ? allocationRules?.providerCapacity ?? 2 : 2;
     const hasBabyDraftChanges = JSON.stringify(babyDraft) !== JSON.stringify(babyDraftBaselineRef.current);
     const allocationWasEdited = hasBabyDraftChanges
         || formData.primaryEmployeeId !== formDataBaselineRef.current.primaryEmployeeId
@@ -1251,12 +1284,27 @@ function ClientFormContent({
         || formData.type !== formDataBaselineRef.current.type
         || formData.voucherClient !== formDataBaselineRef.current.voucherClient
         || voucherYear !== (allocationSnapshot?.voucherIssuanceYear ?? null);
-    const shouldWriteAllocation = formData.voucherClient && (isEditMode
+    const wantsAllocation = formData.voucherClient && (isEditMode
         ? hasSavedAllocation ? allocationWasEdited : hasBabyDraftChanges
         : Boolean(formData.type));
+    const shouldWriteAllocation = canEditAllocation && wantsAllocation;
+    const explicitAllocationBlocked = !canEditAllocation && session.explicitAllocation;
+    const areVoucherControlsLocked = Boolean(readOnlyAllocation) || explicitAllocationBlocked || branchChanged;
+    useEffect(() => {
+        if (open && canEditAllocation) formSessionRef.current.explicitAllocation = wantsAllocation;
+    }, [canEditAllocation, open, wantsAllocation]);
+
     const babyCopy = (key: string) => t(locale, `clients.form.baby-record.${key}`);
 
     const getAllocationProblem = (): { field: ClientFormField; text: string } | undefined => {
+        if (readOnlyAllocation) {
+            const removedOwner = readOnlyAllocation.babyAssignments?.find(({ providerSlot }) =>
+                (providerSlot === 0 || providerSlot === 1) && providerIds[providerSlot] === null
+                && readOnlyAllocation.providers?.some(({ slot }) => slot === providerSlot));
+            if (removedOwner?.providerSlot != null) {
+                return { field: CLIENT_PROVIDER_FIELDS[removedOwner.providerSlot], text: babyCopy("choose-replacement") };
+            }
+        }
         if (!shouldWriteAllocation) return;
         if (!allocationRules) return { field: "type", text: babyCopy("invalid-grade") };
         if (!allocationDraft.option) return { field: "fetalType", text: babyCopy("select-fetal-type") };
@@ -1390,7 +1438,7 @@ function ClientFormContent({
     const allocationFieldMessage = (field: ClientFormField): FieldMessageView | null =>
         serverFieldMessages[field] ?? (allocationValidated && allocationProblem?.field === field
             ? { tone: "error", text: allocationProblem.text } : null);
-    const showsRecordOwners = allocationDraft.allocation.status === "resolved"
+    const showsRecordOwners = canEditAllocation && allocationDraft.allocation.status === "resolved"
         && (allocationDraft.rows.length > 1 || allocationDraft.allocation.fetalType === "SEVERE_SINGLETON"
             || allocationDraft.rows.some((row) => row.needsReplacement));
     const summaryErrorEntries = formErrorEntries.filter(({ field }) =>
@@ -1442,10 +1490,15 @@ function ClientFormContent({
         renderSlotMessage(message, allocationErrorId(field), `${fieldBase}_error`);
 
     const renderPrenatalFields = (sectionBase: string) => {
+        if (!canEditAllocation && !readOnlyAllocation) return null;
         const fetusBase = `${sectionBase}_fetus-field`;
         const countBase = `${sectionBase}_baby-count-field`;
         const fetusMessage = allocationFieldMessage("fetalType")
             ?? (allocationDraft.minimumCount === undefined ? allocationFieldMessage("babyCount") : null);
+        const savedFetalType = readOnlyAllocation?.fetalType;
+        const fetalOptions = readOnlyAllocation
+            ? savedFetalType ? [{ value: savedFetalType, label: FETAL_TYPE_LABELS[savedFetalType] }] : []
+            : (allocationRules?.fetalTypeOptions ?? []).map(({ fetalType, label }) => ({ value: fetalType, label }));
         return (
             <>
                 <FormField data-component={fetusBase} htmlFor={`${formId}-fetalType`}
@@ -1454,15 +1507,15 @@ function ClientFormContent({
                     <FormNativeSelect
                         id={`${formId}-fetalType`}
                         data-component={`${fetusBase}_control`}
-                        disabled={!allocationRules || allocationRules.voucher.family === "A"}
-                        value={allocationDraft.option?.fetalType ?? ""}
+                        disabled={Boolean(readOnlyAllocation) || !allocationRules || allocationRules.voucher.family === "A"}
+                        value={(readOnlyAllocation ? savedFetalType : allocationDraft.option?.fetalType) ?? ""}
                         placeholder={allocationRules?.voucher.family === "A" ? undefined : babyCopy("select-fetal-type")}
-                        options={(allocationRules?.fetalTypeOptions ?? []).map(({ fetalType, label }) => ({ value: fetalType, label }))}
+                        options={fetalOptions}
                         onValueChange={changeFetalType}
                         {...allocationControlProps("fetalType", fetusMessage)}
                     />
                 </FormField>
-                {allocationDraft.minimumCount !== undefined && (
+                {(readOnlyAllocation ? readOnlyAllocation.babyCount != null : allocationDraft.minimumCount !== undefined) && (
                     <FormField data-component={countBase} htmlFor={`${formId}-babyCount`}
                         label={babyCopy("baby-count")} labelAccessory={allocationLabelAccessory("babyCount", countBase)}>
                         <FormTextInput
@@ -1471,7 +1524,8 @@ function ClientFormContent({
                             type="number"
                             min={allocationDraft.minimumCount}
                             max={MAX_CLIENT_BABY_COUNT}
-                            value={babyDraft.count}
+                            disabled={Boolean(readOnlyAllocation)}
+                            value={readOnlyAllocation ? readOnlyAllocation.babyCount ?? "" : babyDraft.count}
                             error={allocationFieldMessage("babyCount") !== null}
                             onChange={(event) => changeBabyCount(event.currentTarget.value)}
                             {...allocationControlProps("babyCount")}
@@ -1484,7 +1538,7 @@ function ClientFormContent({
 
     const renderProviderFields = (sectionBase: string) => (
         <>
-            {allocationRules && (
+            {canEditAllocation && allocationRules && (
                 <div data-component={`${sectionBase}_voucher-summary`} className="col-span-full">
                     <span className="text-sm font-semibold text-v3-text-muted">
                         {[formData.type, allocationDraft.option?.label, babyCopy("capacity").replace("{count}", String(providerCapacity))]
@@ -1498,9 +1552,10 @@ function ClientFormContent({
                 const label = clientProviderLabel(slot, locale);
                 const message = allocationFieldMessage(field);
                 const historicalEmployee = slot === 0 || slot === 1 ? historicalStaff?.[slot] : undefined;
+                const savedExtraProvider = slot >= 2 ? readOnlyAllocation?.providers?.find((provider) => provider.slot === slot) : undefined;
                 const manualTarget = !formData.voucherClient && (slot === 0 || slot === 1)
                     ? slot === 0 ? "primary" : "secondary" : null;
-                return slot < providerCapacity && !historicalEmployee ? (
+                return slot < providerCapacity && !historicalEmployee && (!readOnlyAllocation || slot < 2) ? (
                     <EmployeeAutocomplete
                         key={slot}
                         data-component={fieldBase}
@@ -1521,24 +1576,30 @@ function ClientFormContent({
                 ) : (
                     <FormField key={slot} data-component={fieldBase} htmlFor={`${formId}-${field}`}
                         label={label} labelAccessory={allocationLabelAccessory(field, fieldBase)}>
-                        <FormTextInput id={`${formId}-${field}`} data-component={`${fieldBase}_input`}
-                            disabled className="bg-muted" value={historicalEmployee?.name ?? ""}
-                            error={message !== null} {...allocationControlProps(field)} />
+                        {savedExtraProvider ? (
+                            <ClientSavedProviderInput id={`${formId}-${field}`} data-component={`${fieldBase}_input`}
+                                className="bg-muted" employeeId={savedExtraProvider.employeeId}
+                                error={message !== null} {...allocationControlProps(field)} />
+                        ) : (
+                            <FormTextInput id={`${formId}-${field}`} data-component={`${fieldBase}_input`}
+                                disabled className="bg-muted" value={historicalEmployee?.name ?? ""}
+                                error={message !== null} {...allocationControlProps(field)} />
+                        )}
                     </FormField>
                 );
             })}
-            {showsRecordOwners && (
+            {(showsRecordOwners || readOnlyAllocation?.babies?.length) ? (
                     <ClientBabyRecordOwners
                         base={`${sectionBase}_records`}
                         idPrefix={formId}
                         locale={locale}
-                        rows={allocationDraft.rows}
-                        providers={allocationDraft.providers}
+                        rows={readOnlyAllocation ? getSavedClientBabyRows(readOnlyAllocation) : allocationDraft.rows}
+                        providers={readOnlyAllocation ? readOnlyAllocation.providers ?? [] : allocationDraft.providers}
                         knownEmployees={[allocationSnapshot?.primaryEmployee, allocationSnapshot?.secondaryEmployee]}
                         messages={serverFieldMessages}
-                        onChange={changeRecordOwner}
+                        onChange={readOnlyAllocation ? undefined : changeRecordOwner}
                     />
-                )}
+                ) : null}
         </>
     );
 
@@ -1699,9 +1760,16 @@ function ClientFormContent({
     // 종료일을 계산하지 못한 채(지원하지 않는 연도)로도 저장하지 않아요. 직접 입력하거나 기간을 바꾸면 풀려요.
     const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
+    const canWriteInSession = (session: typeof formSessionRef.current, grouped = false) =>
+        session.open && session === formSessionRef.current && !session.branchChanged
+        && session.branchId === getActiveBranchId()
+        && (!session.explicitAllocation || grouped)
+        && (!grouped || capability.isEnabledNow());
+
     const handleSubmit = async (confirmedPeriod?: string) => {
         const session = formSessionRef.current;
-        if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit) return;
+        if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit
+            || !canWriteInSession(session, shouldWriteAllocation)) return;
         clearFormError();
 
         if (isLegacyNoopEdit && client) {
@@ -1737,7 +1805,11 @@ function ClientFormContent({
             return;
         }
         const allocation = shouldWriteAllocation ? allocationDraft.payload : undefined;
-        if (allocation && allocationDraft.retiringCount > 0) {
+        if (shouldWriteAllocation && !allocation) {
+            setErrorAndScroll(babyCopy("stale"));
+            return;
+        }
+        if (allocation && allocationDraft.retiringBabies.length > 0) {
             const retirementKey = JSON.stringify([formData.type, allocation.fetalType, allocation.babyCount]);
             if (confirmedBabyRetirementRef.current !== retirementKey) {
                 setPendingBabyRetirement(retirementKey);
@@ -1766,6 +1838,7 @@ function ClientFormContent({
         try {
             submissionInFlightRef.current = true;
             const fresh = await refreshForSave();
+            if (!canWriteInSession(session, Boolean(allocation))) return;
             setCalendarRefreshFailed(!fresh.ok);
             if (!fresh.ok) return;
             const freshServiceCalendar = fresh.calendar.withServiceDays({
@@ -1837,7 +1910,7 @@ function ClientFormContent({
                         .then(({ data }) => ({ ok: true as const, record: data.record }),
                             (cause: unknown) => ({ ok: getErrorResponseStatus(cause) === 404, record: null }))
                         .finally(() => { if (session === formSessionRef.current) setIsCheckingStartDate(false); });
-                    if (!session.open || session !== formSessionRef.current) return;
+                    if (!canWriteInSession(session, Boolean(allocation))) return;
                     if (!overview.ok) {
                         setErrorAndScroll(babyCopy("read-case-failed"));
                         return;
@@ -1928,6 +2001,8 @@ function ClientFormContent({
         startDateChangeMode: StartDateChangeMode,
         session: typeof formSessionRef.current,
     ) => {
+        const grouped = rememberedDto.providers !== undefined;
+        if (!canWriteInSession(session, grouped)) return;
         const { startDateDto, employeeDto } = splitEmployeeChangeFromStartDateChange(rememberedDto);
         try {
             let updatedClient = await updateClient.mutateAsync({
@@ -1936,6 +2011,7 @@ function ClientFormContent({
             });
             if (!session.open || session !== formSessionRef.current) return;
             if (employeeDto) {
+                if (!canWriteInSession(session)) return;
                 try {
                     updatedClient = await updateClient.mutateAsync({ id, dto: employeeDto });
                     if (!session.open || session !== formSessionRef.current) return;
@@ -1999,12 +2075,13 @@ function ClientFormContent({
     // message on every problem field. Only work in flight, an unknown outcome, a
     // stale edit form or a phone check that has not finished block them.
     const isAwaitingEditInit = Boolean(isEditMode && client && initializedEditClientId !== client.id);
+    const isAllocationBlockingSubmit = branchChanged || explicitAllocationBlocked;
     const isPanelActionBlocked = isSubmitting
         || isUnknownOutcome
         || isAwaitingEditInit
         || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit);
     // 달력은 마지막 단계의 저장 버튼만 막아요. 다음 단계로 가는 것은 달력과 무관해요.
-    const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit;
+    const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit || isAllocationBlockingSubmit;
     const calendarLoadNotice = isCalendarReady && !isEndDateUnsupported && !calendarRefreshFailed ? null : (
         <CalendarLoadNotice
             indicator="spinner"
@@ -2068,7 +2145,8 @@ function ClientFormContent({
                 variant="positive"
                 size="sm"
                 onClick={() => void handleSubmit()}
-                disabled={isSubmitting || isUnknownOutcome || isCalendarBlockingSubmit || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
+                disabled={isSubmitting || isUnknownOutcome || isCalendarBlockingSubmit || isAllocationBlockingSubmit
+                    || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
                 loading={isSubmitting}
                 loadingLabel={isEditMode ? "저장 중" : "등록 중"}
                 data-component={`${base}_submit`}
@@ -2314,6 +2392,7 @@ function ClientFormContent({
             >
                 <TogglePill
                     data-component={`${base}_field-voucher-client`}
+                    disabled={areVoucherControlsLocked}
                     value={formData.voucherClient}
                     onValueChange={handleVoucherClientChange}
                     leftLabel={t(locale, "clients.form.voucher-client")}
@@ -2332,6 +2411,7 @@ function ClientFormContent({
                             >
                                 <FormNativeSelect
                                     id="clients-form-voucher-year"
+                                    disabled={areVoucherControlsLocked}
                                     {...allocationControlProps("voucherIssuanceYear")}
                                     value={resolvedVoucherYear.toString()}
                                     options={voucherYearOptions}
@@ -2351,6 +2431,7 @@ function ClientFormContent({
                             >
                                 <FormNativeSelect
                                     id="clients-form-voucher-type"
+                                    disabled={areVoucherControlsLocked}
                                     {...allocationControlProps("type")}
                                     value={formData.type || ""}
                                     options={voucherTypeOptions}
@@ -2731,6 +2812,7 @@ function ClientFormContent({
             <div className={cn(PANEL_FULL_FIELD_CLASS_NAME, "flex justify-center")}>
                 <TogglePill
                     data-component={`${base}_voucher-client-field`}
+                    disabled={areVoucherControlsLocked}
                     value={formData.voucherClient}
                     onValueChange={handleVoucherClientChange}
                     leftLabel={t(locale, "clients.form.voucher-client")}
@@ -2749,6 +2831,7 @@ function ClientFormContent({
                     >
                         <FormNativeSelect
                             id="clients-form-panel-voucher-year"
+                            disabled={areVoucherControlsLocked}
                             {...allocationControlProps("voucherIssuanceYear")}
                             value={resolvedVoucherYear.toString()}
                             options={voucherYearOptions}
@@ -2768,6 +2851,7 @@ function ClientFormContent({
                     >
                         <FormNativeSelect
                             id="clients-form-panel-voucher-type"
+                            disabled={areVoucherControlsLocked}
                             {...allocationControlProps("type")}
                             value={formData.type || ""}
                             options={voucherTypeOptions}
@@ -3010,12 +3094,36 @@ function ClientFormContent({
         </Alert>
     ) : null;
 
+    const availabilityBase = `${base}_content_baby-record-availability`;
+    const availabilityMessage = branchChanged ? "branch-changed"
+        : explicitAllocationBlocked ? "draft-unavailable"
+        : capability.status === "paused" ? "enrollment-paused"
+        : activeBranchId ? "capability-unavailable" : "branch-required";
+    const availabilityNotice = (formData.voucherClient || isAllocationBlockingSubmit) && !canEditAllocation && (
+        <div data-component={availabilityBase} data-slot="baby-record-availability" className="flex flex-wrap items-center gap-2">
+            {!branchChanged && capability.status === "loading" ? (
+                <LoadingState inline size="sm" label={babyCopy("capability-loading")} data-component={`${availabilityBase}_loading`} />
+            ) : (
+                <FormHelperText data-component={`${availabilityBase}_message`} role="status">
+                    {babyCopy(availabilityMessage)}
+                </FormHelperText>
+            )}
+            {!branchChanged && activeBranchId && (capability.status === "unavailable"
+                || (capability.status === "paused" && explicitAllocationBlocked)) && (
+                <Button type="button" variant="outline" size="sm" data-component={`${availabilityBase}_retry`}
+                    onClick={() => { void capability.retry(); }}>
+                    {babyCopy("capability-retry")}
+                </Button>
+            )}
+        </div>
+    );
+
     const formContent = surface === "panel" ? (
         <SteppedWizardPanelContent
             ref={contentRef}
             dataComponent={`${base}_content`}
             stepContentClassName={PANEL_STEP_CONTENT_CLASS_NAME}
-            feedback={formError}
+            feedback={<>{formError}{availabilityNotice}</>}
         >
             {panelFormSteps[activeStep]}
         </SteppedWizardPanelContent>
@@ -3026,13 +3134,14 @@ function ClientFormContent({
             className="space-y-5"
         >
             {formError}
+            {availabilityNotice}
             {dialogFormSteps}
         </div>
     );
 
     const durationConfirmationDialog = (
         <Dialog
-            open={open && pendingDurationConfirmation !== null}
+            open={open && !isAllocationBlockingSubmit && pendingDurationConfirmation !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingDurationConfirmation(null); }}
         >
             <FormDialogShell
@@ -3072,12 +3181,13 @@ function ClientFormContent({
         </Dialog>
     );
 
-    const retirementMessage = babyCopy("retirement-message").replace("{count}", String(allocationDraft.retiringCount));
+    const retirementBase = `${base}_baby-retirement-confirmation`;
+    const retirementMessage = babyCopy("retirement-message");
     const babyRetirementDialog = (
-        <Dialog open={open && pendingBabyRetirement !== null}
+        <Dialog open={open && !isAllocationBlockingSubmit && pendingBabyRetirement !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingBabyRetirement(null); }}>
             <FormDialogShell
-                data-component={`${base}_baby-retirement-confirmation`}
+                data-component={retirementBase}
                 size="compact"
                 title={babyCopy("retirement-title")}
                 description={retirementMessage}
@@ -3097,14 +3207,18 @@ function ClientFormContent({
                         </Button>
                     </>
                 )}>
-                <p data-component={`${base}_baby-retirement-confirmation_message`}>{retirementMessage}</p>
+                <p data-component={`${retirementBase}_message`}>{retirementMessage}</p>
+                {savedAllocation && pendingBabyRetirement !== null && (
+                    <ClientBabyRetirementList base={`${retirementBase}_affected-babies`} client={savedAllocation}
+                        babies={allocationDraft.retiringBabies} locale={locale} />
+                )}
             </FormDialogShell>
         </Dialog>
     );
 
     const startDateStartedConfirmationDialog = (
         <Dialog
-            open={open && pendingStartDateChange?.step === "started"}
+            open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "started"}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
         >
             <FormDialogShell
@@ -3150,7 +3264,7 @@ function ClientFormContent({
 
     const startDateRecordsConfirmationDialog = (
         <Dialog
-            open={open && pendingStartDateChange?.step === "records"}
+            open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "records"}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
         >
             <FormDialogShell

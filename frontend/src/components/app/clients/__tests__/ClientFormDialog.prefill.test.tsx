@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 
+import { api } from "@/lib/api/client";
 import type { Client } from "@/lib/client/types";
 
 import { ClientFormDialog } from "../ClientFormDialog";
+import { render } from "./render-client-form";
 
 let mockVoucherPriceInfos = [
     {
@@ -142,6 +144,11 @@ describe("ClientFormDialog prefill", () => {
         ];
     });
 
+    afterEach(() => {
+        document.cookie = "selected_branch_id=; max-age=0; path=/";
+        jest.mocked(api.get).mockReset();
+    });
+
     it("can update a consultation customer's profile before service prices are set", async () => {
         const client = createClient({ duration: null, fullPrice: null, actualPrice: null, startDate: null, endDate: null });
         render(<ClientFormDialog open client={client} onClose={jest.fn()} />);
@@ -232,6 +239,11 @@ describe("ClientFormDialog prefill", () => {
     });
 
     it("keeps the voucher and eligible employee supplied as create-mode prefill", async () => {
+        document.cookie = "selected_branch_id=prefill-enabled-branch; path=/";
+        jest.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/clients/baby-record-capability") return { data: { enabled: true } };
+            throw new Error(`Unexpected fixture GET ${url}`);
+        });
         render(
             <ClientFormDialog
                 open

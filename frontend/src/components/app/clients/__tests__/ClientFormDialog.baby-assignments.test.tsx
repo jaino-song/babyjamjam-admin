@@ -4,6 +4,8 @@ import { useState } from "react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
 import type { Client, ClientFormData, UpdateClientDto } from "@/features/clients/types";
+import { clientKeys } from "@/features/clients/hooks/keys";
+import { getActiveBranchId } from "@/features/system-templates/branch-context";
 import { employeeQueryKeys, type Employee } from "@/hooks/useEmployees";
 import { DetailPanel } from "@/components/app/v3/DetailPanel";
 import { SteppedWizardStepper } from "@/components/app/v3/SteppedWizardStepper";
@@ -30,6 +32,8 @@ const providers = ["김봄", "박여름", "이하늘", "최가을", "한겨울"]
 }));
 const roles = ["주 제공인력", "보조 제공인력 1", "보조 제공인력 2", "보조 제공인력 3"];
 const year = 2026;
+const enabledBranch = "11111111-1111-4111-8111-111111111111";
+const pausedBranch = "22222222-2222-4222-8222-222222222222";
 const grades = ["A가1형", "B가1형", "B가2형", "C가1형", "C가2형", "D가1형", "D가2형"];
 const baby1 = { babyId: "c3a70030-e4a1-4dc0-976f-7d483fb4c4f1", ordinal: 1 };
 const baby2 = { babyId: "cd19b5cd-e4c9-4f04-81e8-ad0a065db5ad", ordinal: 3 };
@@ -111,6 +115,10 @@ function FormFixture({
 }
 
 const click = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+const selectBranch = (branchId: string) => {
+  document.cookie = `selected_branch_id=${branchId}; path=/`;
+  window.dispatchEvent(new Event("focus"));
+};
 const next = () => click("다음");
 const previous = () => click("이전");
 const select = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
@@ -144,6 +152,8 @@ function expectInactiveSlots(capacity: number) {
 describe("desktop client service-record allocation", () => {
   let queries: QueryClient;
   let currentClient: Client;
+  let readEnabledCapability: () => Promise<{ data: { enabled: boolean } }>;
+  let readPausedCapability: () => Promise<{ data: { enabled: unknown } }>;
   const get = jest.mocked(api.get);
   const post = jest.mocked(api.post);
   const patch = jest.mocked(api.patch);
@@ -159,10 +169,18 @@ describe("desktop client service-record allocation", () => {
   });
 
   beforeEach(() => {
+    selectBranch(enabledBranch);
+    readEnabledCapability = async () => ({ data: { enabled: true } });
+    readPausedCapability = async () => ({ data: { enabled: false } });
     queries = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     queries.setQueryData(employeeQueryKeys.lists(), providers);
     currentClient = savedTwins;
     get.mockReset().mockImplementation(async (url, config) => {
+      if (url === "/clients/baby-record-capability") {
+        return document.cookie.includes(`selected_branch_id=${pausedBranch}`)
+          ? readPausedCapability()
+          : readEnabledCapability();
+      }
       if (url === "/employees") return { data: providers };
       if (url === "/clients/check-phone") return { data: { exists: false } };
       if (url === "/area-templates/available-areas") return { data: [{ id: "Incheon", koreanName: "인천", name: "Incheon" }] };
@@ -185,11 +203,18 @@ describe("desktop client service-record allocation", () => {
     patch.mockReset().mockResolvedValue({ data: savedTwins });
   });
 
-  afterEach(() => queries.clear());
+  afterEach(() => {
+    queries.clear();
+    document.cookie = "selected_branch_id=; max-age=0; path=/";
+  });
 
   async function open(options: Parameters<typeof FormFixture>[0] = {}) {
     const view = render(<QueryClientProvider client={queries}><FormFixture {...options} /></QueryClientProvider>);
-    await act(async () => {});
+    await waitFor(() => expect(queries.getQueryState(clientKeys.babyRecordCapability(getActiveBranchId())))
+      .toMatchObject({ status: "success", fetchStatus: "idle" }));
+    await waitFor(() => expect(screen.queryByRole("status", {
+      name: "이 지점의 아기별 기록지 설정 가능 여부를 확인하는 중이에요.",
+    })).not.toBeInTheDocument());
     return view;
   }
 
@@ -590,5 +615,139 @@ describe("desktop client service-record allocation", () => {
     const body = post.mock.calls[0][1];
     expect(body).toMatchObject({ voucherClient: false, type: null, areaId: "Incheon", primaryEmployeeId: null });
     expect(body).not.toHaveProperty("providers");
+  });
+
+  it("preserves confirmed allocation on an unrelated edit while the branch is paused", async () => {
+    selectBranch(pausedBranch);
+    const client = { ...savedTwins, babyAssignments: [{ ...baby1, providerSlot: 0 }, { ...baby2, providerSlot: 1 }] } satisfies Client;
+    const view = await open({ client });
+    const address = "인천광역시 동구";
+    fireEvent.change(screen.getByLabelText(/^주소/), { target: { value: address } });
+    next();
+    expect(fetusSelect()).toBeDisabled();
+    expect(fetusSelect()).toHaveValue("TWINS");
+    expect(screen.getByLabelText("실제 아기 수")).toHaveValue(2);
+    next();
+    expect(screen.getByRole("heading", { name: "서비스 제공기록지 담당" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "담당 변경" })).not.toBeInTheDocument();
+    next();
+    click("저장");
+    await waitFor(() => expect(patch.mock.calls).toStrictEqual([["/clients/523", { address }]]));
+    view.unmount();
+    patch.mockClear();
+
+    await open({ client, initialStep: 2 });
+    fireEvent.click(within(screen.getByRole("combobox", { name: roles[1] }))
+      .getByRole("button", { name: "제공인력 선택 해제" }));
+    next();
+    expect(screen.getByText("담당 제공인력을 다시 선택해 주세요.")).toBeVisible();
+    expect(patch).not.toHaveBeenCalled();
+    await selectProvider(1, providers[4]);
+    next();
+    click("저장");
+    await waitFor(() => expect(patch.mock.calls).toStrictEqual([["/clients/523", { secondaryEmployeeId: providers[4].id }]]));
+  });
+
+  it("keeps legacy voucher registration usable when enrollment is off", async () => {
+    selectBranch(pausedBranch);
+    await open();
+    await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
+    next();
+    fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
+    select("바우처 유형", "A가1형");
+    expect(screen.queryByLabelText("태아 유형")).not.toBeInTheDocument();
+    next();
+    await selectProvider(0, providers[0]);
+    await selectProvider(1, providers[1]);
+    next();
+    click("생성");
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    const body = post.mock.calls[0][1];
+    expect(body).toMatchObject({
+      voucherClient: true, type: "A가1형", primaryEmployeeId: providers[0].id, secondaryEmployeeId: providers[1].id,
+    });
+    for (const key of ["fetalType", "babyCount", "providers", "babyAssignments"]) {
+      expect(body).not.toHaveProperty(key);
+    }
+  });
+
+  it("does not submit an explicit enrollment after a branch switch or failed capability read", async () => {
+    await open();
+    await chooseGrade("A가1형");
+    next();
+    await selectProvider(0, providers[0]);
+    next();
+    const submit = screen.getByRole("button", { name: "생성" });
+    expect(submit).toBeEnabled();
+
+    readEnabledCapability = async () => { throw new Error("Synthetic capability read failed"); };
+    await act(async () => {
+      await queries.refetchQueries({ queryKey: clientKeys.babyRecordCapability(enabledBranch) });
+    });
+    expect(await screen.findByText(/작성 중인 아기별 설정을 지금 저장할 수 없어요/)).toBeVisible();
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(post).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+
+    readEnabledCapability = async () => ({ data: { enabled: true } });
+    click("다시 확인");
+    await waitFor(() => expect(submit).toBeEnabled());
+    let settle: (result: { data: { enabled: string } }) => void = () => {};
+    const capability = new Promise<{ data: { enabled: string } }>((resolve) => { settle = resolve; });
+    const read = jest.fn(() => capability);
+    readPausedCapability = read;
+    await act(async () => selectBranch(pausedBranch));
+    await waitFor(() => expect(read).toHaveBeenCalled());
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(post).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+    await act(async () => {
+      settle({ data: { enabled: "true" } });
+      await capability;
+    });
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(post).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+
+    await act(async () => selectBranch(enabledBranch));
+    await waitFor(() => expect(queries.getQueryState(clientKeys.babyRecordCapability(enabledBranch)))
+      .toMatchObject({ status: "success", fetchStatus: "idle" }));
+    expect(submit).toBeDisabled();
+  });
+
+  async function openShrinkConfirmation() {
+    await open({
+      client: { ...savedTwins, babyAssignments: [{ ...baby1, providerSlot: 0 }, { ...baby2, providerSlot: 1 }] },
+      initialStep: 1,
+    });
+    select("바우처 유형", "A가1형");
+    await within(fetusSelect()).findByRole("option", { name: "단태아" });
+    next();
+    next();
+    click("저장");
+    return screen.findByRole("dialog", { name: "아기 수 변경 확인" });
+  }
+
+  it("shows the current affected baby ranks and their saved staff before reducing a household", async () => {
+    const modal = await openShrinkConfirmation();
+    const removed = within(modal).getAllByRole("listitem");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toHaveTextContent("둘째");
+    expect(removed[0]).toHaveTextContent("박여름");
+    expect(modal).not.toHaveTextContent(/첫째|셋째|김봄/);
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("canceling the retirement confirmation sends no update", async () => {
+    const modal = await openShrinkConfirmation();
+    fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
+    expect(screen.queryByRole("dialog", { name: "아기 수 변경 확인" })).not.toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+    click("저장");
+    expect(await screen.findByRole("dialog", { name: "아기 수 변경 확인" })).toBeVisible();
+    expect(patch).not.toHaveBeenCalled();
   });
 });
