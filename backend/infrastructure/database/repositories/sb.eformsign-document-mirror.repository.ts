@@ -607,20 +607,23 @@ implements IEformsignDocumentMirrorRepository {
                     FOR UPDATE
                 `);
                 if (lockedClient.length !== 1) continue;
-                const rollbackEligibleClient = await tx.client.findFirst({
-                    where: {
-                        id: clientId,
-                        eDocId: { in: purgedDocumentIds },
-                        eformsignDocs: {
-                            none: { id: { notIn: rowIds } },
-                        },
-                        employeeSchedules: { none: {} },
-                        callRecords: { none: {} },
-                        clientDrafts: { none: {} },
-                        scheduleChangeRequests: { none: {} },
-                        messageLogs: { none: {} },
-                        eformsignDocumentJobs: { none: {} },
+                const rollbackEligibleWhere: Prisma.clientWhereInput = {
+                    id: clientId,
+                    eDocId: { in: purgedDocumentIds },
+                    eformsignDocs: {
+                        none: { id: { notIn: rowIds } },
                     },
+                    employeeSchedules: { none: {} },
+                    babies: { none: {} },
+                    recordTeamSlots: { none: {} },
+                    callRecords: { none: {} },
+                    clientDrafts: { none: {} },
+                    scheduleChangeRequests: { none: {} },
+                    messageLogs: { none: {} },
+                    eformsignDocumentJobs: { none: {} },
+                };
+                const rollbackEligibleClient = await tx.client.findFirst({
+                    where: rollbackEligibleWhere,
                     select: { id: true },
                 });
                 if (!rollbackEligibleClient) continue;
@@ -653,17 +656,7 @@ implements IEformsignDocumentMirrorRepository {
                 });
                 await tx.client.deleteMany({
                     where: {
-                        id: clientId,
-                        eDocId: { in: purgedDocumentIds },
-                        eformsignDocs: {
-                            none: { id: { notIn: rowIds } },
-                        },
-                        employeeSchedules: { none: {} },
-                        callRecords: { none: {} },
-                        clientDrafts: { none: {} },
-                        scheduleChangeRequests: { none: {} },
-                        messageLogs: { none: {} },
-                        eformsignDocumentJobs: { none: {} },
+                        ...rollbackEligibleWhere,
                         messageTriggerJobs: { none: {} },
                         serviceRecordCase: { is: null },
                     },

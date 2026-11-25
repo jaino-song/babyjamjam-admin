@@ -802,6 +802,12 @@ export class SbClientRepository implements IClientRepository {
                     SELECT 1 FROM "employee_schedule"
                     WHERE "client_id" = ${id}
                     UNION ALL
+                    SELECT 1 FROM "client_baby"
+                    WHERE "branch_id" = ${branchid}::uuid AND "client_id" = ${id}
+                    UNION ALL
+                    SELECT 1 FROM "service_record_team_slot"
+                    WHERE "branch_id" = ${branchid}::uuid AND "client_id" = ${id}
+                    UNION ALL
                     SELECT 1 FROM "service_record_case"
                     WHERE "client_id" = ${id}
                     UNION ALL
