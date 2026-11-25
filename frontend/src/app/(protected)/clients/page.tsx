@@ -273,6 +273,7 @@ export default function ClientsPage() {
     const [urlSelectionSuppressed, setUrlSelectionSuppressed] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const pendingEditReadRef = useRef<object | null>(null);
     const [maternityContractClient, setMaternityContractClient] = useState<Client | null>(null);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
@@ -367,8 +368,8 @@ export default function ClientsPage() {
         && isClientFromParamError
         && clientFromParam === undefined
         && activeSelectedClient === null;
-    const panelFormClient = null;
-    const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
+    const panelFormClient = formDialogOpen ? null : editingClient;
+    const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm || panelFormClient !== null;
     const receiptClientId = activeSection === "list" && !shouldShowClientFormPanel
         ? activeSelectedClient?.id ?? null
         : null;
@@ -388,6 +389,9 @@ export default function ClientsPage() {
         endingSoonCount: summary?.serviceEnd.count ?? "—",
     };
     const clearClientSelectionSources = useCallback(() => {
+        pendingEditReadRef.current = null;
+        setEditingClient(null);
+        setFormDialogOpen(false);
         setTabRequest(null);
         createdClientSelectionRef.current = null;
         setSelectedClient(null);
@@ -451,6 +455,8 @@ export default function ClientsPage() {
     const handleSelectServiceRecordMissingClient = (clientId: number): boolean => {
         if (formDialogOpen || pendingCreateDiscard !== null) return false;
         if (shouldShowClientFormPanel && isCreateFormDirty) return false;
+        pendingEditReadRef.current = null;
+        setEditingClient(null);
         setActiveSection("list");
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
@@ -483,9 +489,19 @@ export default function ClientsPage() {
         applyClientSelection(client);
     };
 
-    const handleEdit = (client: Client) => {
-        setEditingClient(client);
-        setFormDialogOpen(true);
+    const handleEdit = async (client: Client, surface: "panel" | "dialog") => {
+        const read = {};
+        pendingEditReadRef.current = read;
+        const result = await refetchClientFromParam();
+        if (pendingEditReadRef.current !== read) return;
+        pendingEditReadRef.current = null;
+        if (!result.isSuccess || result.data.id !== client.id) {
+            toast({ variant: "destructive", description: "고객 정보를 불러오지 못했어요. 다시 시도해 주세요." });
+            return;
+        }
+        setEditingClient(result.data);
+        setFormDialogOpen(surface === "dialog");
+        setClientFormActiveStep(0);
     };
 
     const handleDeleteRequest = (id: number) => {
@@ -648,6 +664,7 @@ export default function ClientsPage() {
         const createdClient = createdClientSelectionRef.current;
         createdClientSelectionRef.current = null;
         setIsCreatingClient(false);
+        setEditingClient(null);
         setClientFormActiveStep(0);
         setIsCreateFormDirty(false);
         setPendingCreateDiscard(null);
@@ -661,6 +678,7 @@ export default function ClientsPage() {
             return;
         }
 
+        if (panelFormClient) return;
         clearClientSelectionSources();
     };
 
@@ -689,6 +707,10 @@ export default function ClientsPage() {
             return;
         }
 
+        if (panelFormClient && action.type === "close") {
+            handleClientFormPanelClose();
+            return;
+        }
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
         if (action.type === "select") {
@@ -1005,7 +1027,7 @@ export default function ClientsPage() {
                                         </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end" className="min-w-[140px]">
-                                        <DropdownMenuItem onClick={() => handleEdit(activeSelectedClient)} className="gap-2">
+                                        <DropdownMenuItem onClick={() => void handleEdit(activeSelectedClient, "panel")} className="gap-2">
                                             <Pencil className="w-4 h-4" />
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
@@ -1103,7 +1125,7 @@ export default function ClientsPage() {
                     open={detailModalOpen}
                     onClose={handleDetailModalClose}
                     client={activeSelectedClient}
-                    onEdit={handleEdit}
+                    onEdit={(client) => void handleEdit(client, "dialog")}
                     onDelete={handleDeleteRequest}
                 />
 

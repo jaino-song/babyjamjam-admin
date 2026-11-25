@@ -349,7 +349,7 @@ describe("ClientFormDialog API errors", () => {
     fireEvent.click(submitButton);
 
     expect(await screen.findByText("필수 항목이에요.")).toHaveAttribute("data-slot", "field-error-message");
-    expect(screen.queryByText("주 담당 인력: 필수 항목이에요.")).not.toBeInTheDocument();
+    expect(screen.queryByText("주 제공인력: 필수 항목이에요.")).not.toBeInTheDocument();
     expect(screen.getByText("요청 ID: req-bjj-319-employee-field")).toBeInTheDocument();
     const [primaryTrigger, secondaryTrigger] = screen.getAllByTestId("employee-autocomplete");
     expect(primaryTrigger).toHaveAttribute("aria-invalid", "true");
@@ -381,8 +381,8 @@ describe("ClientFormDialog API errors", () => {
     expect(
       await screen.findByText("선택한 제공인력이 해당 지점 소속이 아니거나 배정 가능한 상태가 아니에요."),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/주 담당 인력:/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/보조 담당 인력:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/주 제공인력:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/보조 제공인력 1:/)).not.toBeInTheDocument();
     for (const trigger of screen.getAllByTestId("employee-autocomplete")) {
       expect(trigger).not.toHaveAttribute("aria-invalid");
       expect(trigger).not.toHaveAttribute("aria-describedby");
@@ -425,7 +425,7 @@ describe("ClientFormDialog API errors", () => {
     fireEvent.click(submitButton);
 
     expect(await screen.findByText("필수 항목이에요.")).toHaveAttribute("data-slot", "field-error-message");
-    expect(screen.queryByText("주 담당 인력: 필수 항목이에요.")).not.toBeInTheDocument();
+    expect(screen.queryByText("주 제공인력: 필수 항목이에요.")).not.toBeInTheDocument();
     const [primaryTrigger] = screen.getAllByTestId("employee-autocomplete");
     expect(primaryTrigger).toHaveAttribute("aria-invalid", "true");
     expect(primaryTrigger.parentElement).toHaveTextContent("필수 항목이에요.");

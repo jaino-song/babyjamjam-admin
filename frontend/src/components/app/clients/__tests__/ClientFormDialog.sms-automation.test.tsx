@@ -100,10 +100,15 @@ describe("ClientFormDialog 메시지 자동 전송 switch in edit mode", () => {
     mockUpdateClient.mockResolvedValue(baseClient);
   });
 
-  it("shows the switch on for a client that has no stored flag and sends nothing when untouched", async () => {
-    await openForm(baseClient);
+  it.each([undefined, false, true])("reflects stored automation %s and leaves it out of an unrelated edit", async (smsAutomationEnabled) => {
+    await openForm({ ...baseClient, smsAutomationEnabled });
 
-    expect(screen.getByRole("switch", { name: "메시지 자동 전송" })).toBeChecked();
+    const automationSwitch = screen.getByRole("switch", { name: "메시지 자동 전송" });
+    if (smsAutomationEnabled === false) {
+      expect(automationSwitch).not.toBeChecked();
+    } else {
+      expect(automationSwitch).toBeChecked();
+    }
     expect(
       screen.queryByText("끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요."),
     ).not.toBeInTheDocument();

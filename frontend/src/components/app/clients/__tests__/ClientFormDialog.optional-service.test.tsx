@@ -80,7 +80,6 @@ describe("ClientFormPanel optional service information", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
 
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
-    fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
     expect(screen.queryByLabelText("바우처 유형")).not.toBeInTheDocument();
     const voucherCustomerTab = screen.getByRole("tab", { name: "바우처 고객" });
@@ -105,6 +104,9 @@ describe("ClientFormPanel optional service information", () => {
     expect(selfPayCustomerTab).toHaveClass("text-v3-text-muted");
     fireEvent.click(selfPayCustomerTab);
     expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+    expect(screen.queryByRole("switch", { name: "메시지 자동 전송" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
     expect(screen.getByLabelText("계약 상태")).toHaveValue("pre_booking");

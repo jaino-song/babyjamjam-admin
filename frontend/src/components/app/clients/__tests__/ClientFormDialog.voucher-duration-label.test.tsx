@@ -60,7 +60,7 @@ describe.each(["dialog", "panel"] as const)("ClientForm %s real duration select"
   it.each(["create", "edit"] as const)("refreshes literal labels and numeric values in %s mode", async (mode) => {
     const props = { open: true, onClose: jest.fn(), client: mode === "edit" ? savedClient : undefined };
     render(<QueryClientProvider client={queryClient}>
-      {surface === "dialog" ? <ClientFormDialog {...props} /> : <ClientFormPanel {...props} activeStep={2} />}
+      {surface === "dialog" ? <ClientFormDialog {...props} /> : <ClientFormPanel {...props} activeStep={1} />}
     </QueryClientProvider>);
     await screen.findByLabelText("서비스 기간");
     if (mode === "create") {
