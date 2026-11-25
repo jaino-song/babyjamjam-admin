@@ -137,6 +137,16 @@ describe("renderServiceRecordLinks", () => {
     });
   });
 
+  const invalidTemplates: Array<[string, Partial<RenderServiceRecordLinksInput>]> = [
+    ["a non-string template", { template: null as unknown as string }],
+    ["null variables", { variables: null as unknown as RenderServiceRecordLinksInput["variables"] }],
+    ["non-object variables", { variables: "fixture" as unknown as RenderServiceRecordLinksInput["variables"] }],
+  ];
+
+  it.each(invalidTemplates)("rejects %s as invalid_template", (_, overrides) => {
+    expect(render(overrides)).toEqual({ ok: false, reason: "invalid_template" });
+  });
+
   const invalidMembers: Array<[string, number | null, RenderServiceRecordLinksInput["members"]]> = [
     ["empty member list", 1, []],
     ["nonpositive count", 0, [first]],
@@ -154,6 +164,13 @@ describe("renderServiceRecordLinks", () => {
     ["relative URL", 1, [{ ...first, url: "/service-record/fixture" }]],
     ["non-HTTP URL", 1, [{ ...first, url: "file:///service-record/fixture" }]],
     ["malformed HTTP URL", 1, [{ ...first, url: "https:///example.test/service-record/fixture" }]],
+    ["URL with a username", 1, [{ ...first, url: first.url.replace("://", "://fixture@") }]],
+    ["URL with a password only", 1, [{ ...first, url: first.url.replace("://", "://:fixture@") }]],
+    ["URL with a malformed percent escape", 1, [{ ...first, url: `${first.url}%2G` }]],
+    ["URL with a backslash", 1, [{ ...first, url: `${first.url}\\suffix` }]],
+    ["URL with an angle bracket", 1, [{ ...first, url: `${first.url}<suffix` }]],
+    ["URL with a control character", 1, [{ ...first, url: `${first.url}\u0000suffix` }]],
+    ["URL with a zero-width space", 1, [{ ...first, url: `${first.url}\u200Bsuffix` }]],
     ["multiple URLs in one member", 1, [{ ...first, url: `${first.url}\n${second.url}` }]],
   ];
 
