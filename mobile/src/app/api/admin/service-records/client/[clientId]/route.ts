@@ -37,7 +37,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return invalidClientIdResponse();
         }
 
-        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}`, {
+        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}${new URL(request.url).search}`, {
             headers: getAuthHeaders(token),
         });
         return withNoStore(backendJsonResponse(response));

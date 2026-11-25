@@ -1,3 +1,4 @@
+import { resolveAdminServiceRecordTarget } from "application/services/admin-service-record-target";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
@@ -245,7 +246,7 @@ async function loadDocumentScope(
     branchId: string,
     record: DocumentScopeRecord,
     client: DocumentScopeClient,
-    scheduleIds: number[],
+    legacyScheduleIds: number[],
 ): Promise<ServiceRecordEditDocumentScope> {
     const fallback = unverifiedDocumentScope(record.formVersion);
     const documentDelegate = tx.eformsign_doc;
@@ -266,8 +267,8 @@ async function loadDocumentScope(
                     branchId,
                     OR: [
                         { documentKind: "service_record_snapshot", serviceRecordCaseId: record.id },
-                        ...(scheduleIds.length > 0
-                            ? [{ documentKind: "service_record_snapshot", employeeScheduleId: { in: scheduleIds } }]
+                        ...(legacyScheduleIds.length > 0
+                            ? [{ documentKind: "service_record_snapshot", serviceRecordCaseId: null, employeeScheduleId: { in: legacyScheduleIds } }]
                             : []),
                         { documentKind: "contract", clientId: client.id },
                     ],
@@ -325,9 +326,11 @@ async function loadDocumentScope(
 
     const snapshots = documents.filter((document) => (
         document.documentKind === "service_record_snapshot"
+        && (document.clientId === client.id || document.clientId === null)
         && (
             document.serviceRecordCaseId === record.id
-            || (document.employeeScheduleId !== null && scheduleIds.includes(document.employeeScheduleId))
+            || (document.serviceRecordCaseId === null && document.employeeScheduleId !== null
+                && legacyScheduleIds.includes(document.employeeScheduleId))
         )
     ));
     const snapshotChunks: ServiceRecordEditDocumentChunk[] = snapshots
@@ -2112,7 +2115,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return this.prisma.$transaction(async (tx) => {
             const draft = await this.findDraftByIdWithClient(tx, branchId, draftId);
             if (!draft) return null;
-            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId });
+            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId, writable: true });
             if (!source) return null;
             const revisionFactsSource = await loadRevisionFactsSource(tx, branchId, source, new Set(serviceRecordTemplateIds));
             return { draft, source, revisionFactsSource };
@@ -2126,14 +2129,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return this.prisma.$transaction(async (tx) => {
             const draft = await this.findDraftByIdWithClient(tx, branchId, draftId);
             if (!draft) return null;
-            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId });
+            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId, writable: true });
             return source ? { draft, source } : null;
         }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     }
 
     async loadSource(
         branchId: string,
-        target: { clientId?: number; caseId?: string },
+        target: { clientId?: number; caseId?: string; writable?: boolean },
     ): Promise<ServiceRecordEditSource | null> {
         return this.prisma.$transaction(
             (tx) => this.loadSourceWithClient(tx, branchId, target),
@@ -2144,29 +2147,31 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     private async loadSourceWithClient(
         tx: Prisma.TransactionClient,
         branchId: string,
-        target: { clientId?: number; caseId?: string },
+        target: { clientId?: number; caseId?: string; writable?: boolean },
     ): Promise<ServiceRecordEditSource | null> {
         if (target.clientId === undefined && target.caseId === undefined) return null;
-        let clientId = target.clientId;
-        if (clientId !== undefined) {
-            const ownedClient = await tx.client.findFirst({
-                where: { id: clientId, branchId },
-                select: { id: true },
-            });
-            if (!ownedClient) return null;
-        }
+        const selected = target.clientId === undefined ? null : await resolveAdminServiceRecordTarget(
+            tx,
+            { branchId, clientId: target.clientId, caseId: target.caseId },
+            target.writable ? "write" : "read",
+        );
+        const caseId = selected?.caseId ?? target.caseId;
+        if (!caseId) return null;
 
         const record = await tx.service_record_case.findFirst({
             where: {
                 branchId,
-                ...(target.caseId ? { id: target.caseId } : {}),
-                ...(clientId !== undefined ? { clientId } : {}),
+                id: caseId,
+                ...(target.clientId !== undefined ? { clientId: target.clientId } : {}),
+                client: { branchId, deletedAt: null },
+                ...(target.writable ? { OR: [{ babyId: null }, { baby: { active: true } }] } : {}),
             },
             select: {
                 id: true,
                 branch: { select: { name: true } },
                 clientId: true,
                 version: true,
+                babyId: true,
                 formVersion: true,
                 status: true,
                 completedAt: true,
@@ -2217,7 +2222,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             },
         });
         if (!record || record.clientId === null) return null;
-        clientId = record.clientId;
+        const clientId = record.clientId;
 
         const client = await tx.client.findFirst({
             where: { id: record.clientId, branchId },
@@ -2238,7 +2243,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!client) return null;
 
         const schedules = await tx.employee_schedule.findMany({
-            where: { branchId, clientId },
+            where: { branchId, clientId, primaryEmployee: { branchId } },
             orderBy: { id: "asc" },
             select: {
                 id: true,
@@ -2250,20 +2255,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 primaryEmployeeId: true,
                 secondaryEmployeeId: true,
                 primaryEmployee: { select: { name: true } },
-                serviceRecordAssignment: {
-                    select: {
-                        id: true,
-                        branchId: true,
-                        serviceRecordCaseId: true,
-                        scheduleId: true,
-                        employeeId: true,
-                        startDate: true,
-                        endDate: true,
-                        employeeNameSnapshot: true,
-                    },
-                },
             },
         });
+        const caseAssignments = await tx.service_record_assignment.findMany({
+            where: { branchId, serviceRecordCaseId: caseId, scheduleId: { in: schedules.map(({ id }) => id) } },
+        });
+        const assignmentsBySchedule = new Map(caseAssignments.map((assignment) => [assignment.scheduleId, assignment]));
 
         const rawSessions = record.days.map((day) => ({
             id: day.id,
@@ -2296,31 +2293,38 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             ambiguous: (sessionIndexCounts.get(session.sessionIndex) ?? 0) > 1,
         }));
 
-        const assignments: ServiceRecordEditSourceAssignment[] = schedules.map((schedule) => ({
-            id: schedule.serviceRecordAssignment?.id ?? null,
-            branchId: schedule.serviceRecordAssignment?.branchId ?? schedule.branchId ?? null,
-            serviceRecordCaseId: schedule.serviceRecordAssignment?.serviceRecordCaseId ?? null,
-            scheduleId: schedule.id,
-            employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
-            startDate: dateOnly(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate) ?? "",
-            endDate: dateOnly(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate) ?? "",
-            replaced: schedule.replaced,
-            employeeName: schedule.serviceRecordAssignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
-            scheduleStartDate: dateOnly(schedule.startDate) ?? "",
-            scheduleEndDate: dateOnly(schedule.endDate) ?? "",
-            scheduleTerminatedAt: instant(schedule.terminatedAt),
-            primaryEmployeeId: schedule.primaryEmployeeId,
-            secondaryEmployeeId: schedule.secondaryEmployeeId ?? null,
-            primaryEmployeeName: schedule.primaryEmployee.name,
-        }));
+        const assignments: ServiceRecordEditSourceAssignment[] = schedules.map((schedule) => {
+            const assignment = assignmentsBySchedule.get(schedule.id);
+            return {
+                id: assignment?.id ?? null,
+                branchId: assignment?.branchId ?? schedule.branchId ?? null,
+                serviceRecordCaseId: assignment?.serviceRecordCaseId ?? null,
+                scheduleId: schedule.id,
+                employeeId: assignment?.employeeId ?? schedule.primaryEmployeeId,
+                startDate: dateOnly(assignment?.startDate ?? schedule.startDate) ?? "",
+                endDate: dateOnly(assignment?.endDate ?? schedule.endDate) ?? "",
+                replaced: schedule.replaced,
+                employeeName: assignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
+                scheduleStartDate: dateOnly(schedule.startDate) ?? "",
+                scheduleEndDate: dateOnly(schedule.endDate) ?? "",
+                scheduleTerminatedAt: instant(schedule.terminatedAt),
+                primaryEmployeeId: schedule.primaryEmployeeId,
+                secondaryEmployeeId: schedule.secondaryEmployeeId ?? null,
+                primaryEmployeeName: schedule.primaryEmployee.name,
+            };
+        });
 
-        const [sourceSignatureMetadata, documentScope] = await Promise.all([
-            Promise.resolve(signatureMetadata(rawSessions)),
-            loadDocumentScope(tx, branchId, record, client, schedules.map((schedule) => schedule.id)),
-        ]);
+        const implicit = !target.caseId && selected ? selected
+            : await resolveAdminServiceRecordTarget(tx, { branchId, clientId }, "overview");
+        const sharedHousehold = implicit?.caseId !== record.id;
+        const legacy = !sharedHousehold && record.babyId === null;
+        const sourceSignatureMetadata = signatureMetadata(rawSessions);
+        const documentScope = await loadDocumentScope(tx, branchId, record, client,
+            legacy ? schedules.map(({ id }) => id) : []);
 
         return {
             caseId: record.id,
+            ...(sharedHousehold ? { sharedHousehold: true } : {}),
             caseVersion: record.version,
             formVersion: record.formVersion,
             branchName: record.branch?.name ?? null,
@@ -2380,6 +2384,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     branchId: input.branchId,
                     serviceRecordCaseId: input.serviceRecordCaseId,
                     status: "ACTIVE",
+                    serviceRecordCase: {
+                        branchId: input.branchId,
+                        AND: [
+                            { OR: [{ clientId: null }, { client: { branchId: input.branchId, deletedAt: null } }] },
+                            { OR: [{ babyId: null }, { baby: { active: true } }] },
+                        ],
+                    },
                     draftVersion: input.expectedDraftVersion,
                 },
                 data: {
@@ -2413,6 +2424,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     branchId: input.branchId,
                     serviceRecordCaseId: input.serviceRecordCaseId,
                     status: "ACTIVE",
+                    serviceRecordCase: {
+                        branchId: input.branchId,
+                        AND: [
+                            { OR: [{ clientId: null }, { client: { branchId: input.branchId, deletedAt: null } }] },
+                            { OR: [{ babyId: null }, { baby: { active: true } }] },
+                        ],
+                    },
                     draftVersion: input.expectedDraftVersion,
                 },
                 data: {
@@ -2493,14 +2511,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }
     }
 
-    async findRevisionForChanges(branchId: string, clientId: number, revisionId: string) {
+    async findRevisionForChanges(branchId: string, clientId: number, revisionId: string, caseId?: string) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         // Do not send malformed identifiers to PostgreSQL's uuid cast (or the
         // conflict-oriented write validator). All unavailable revisions are 404.
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revisionId)) return null;
         const revision = await this.prisma.service_record_revision.findFirst({
-            where: { id: revisionId, branchId, serviceRecordCase: { branchId, clientId } },
+            where: { id: revisionId, branchId, serviceRecordCase: { branchId, clientId, ...(caseId ? { id: caseId } : {}) } },
             select: {
                 id: true,
                 revisionNumber: true,
@@ -2524,7 +2542,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
      * The payload is reduced to startDate, endDate, header and sessions.
      * Sessions carry clientSignatureFingerprint instead of clientSignature.
      */
-    async listRevisionsForChanges(branchId: string, clientId: number) {
+    async listRevisionsForChanges(branchId: string, clientId: number, caseId?: string) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         const revisions = await this.prisma.$queryRaw<RevisionChangeRow[]>(Prisma.sql`
@@ -2555,6 +2573,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             WHERE r.branch_id = ${branchId}::uuid
               AND c.branch_id = ${branchId}::uuid
               AND c.client_id = ${clientId}
+              ${caseId ? Prisma.sql`AND c.id = ${caseId}::uuid` : Prisma.empty}
               AND r.before_snapshot IS NOT NULL
             ORDER BY r.revision_number ASC
         `);
@@ -2566,13 +2585,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }));
     }
 
-    async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string) {
+    async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string, caseId?: string) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         // Same 404 contract as revisions: a malformed id never reaches the uuid cast.
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(editId)) return null;
         const edit = await this.prisma.service_record_day_edit_log.findFirst({
-            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId } },
+            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId, ...(caseId ? { id: caseId } : {}) } },
             select: {
                 id: true,
                 editedAt: true,
@@ -2592,11 +2611,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     async listRevisionHistory(
         branchId: string,
         clientId: number,
+        caseId?: string,
     ): Promise<ServiceRecordRevisionHistoryResponse | null> {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         return this.prisma.$transaction(
-            (tx) => this.listRevisionHistoryWithClient(tx, branchId, clientId),
+            (tx) => this.listRevisionHistoryWithClient(tx, branchId, clientId, caseId),
             { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
         );
     }
@@ -2605,6 +2625,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         tx: Prisma.TransactionClient,
         branchId: string,
         clientId: number,
+        caseId?: string,
     ): Promise<ServiceRecordRevisionHistoryResponse | null> {
         const cases = await rawStateQuery<Array<{
             caseId: string;
@@ -2620,10 +2641,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             FROM "service_record_case"
             WHERE branch_id = ${branchId}::uuid
               AND client_id = ${clientId}
-            LIMIT 1
+              ${caseId ? Prisma.sql`AND id = ${caseId}::uuid` : Prisma.empty}
+            LIMIT 2
         `);
         const ownerCase = cases[0];
-        if (!ownerCase) return null;
+        if (!ownerCase || cases.length !== 1) return null;
 
         const revisions = await rawStateQuery<Array<{
             id: string;
@@ -3744,7 +3766,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const discoveredSource = lockedSource ?? await this.loadSourceWithClient(
             tx,
             input.branchId,
-            { caseId: discovered.serviceRecordCaseId },
+            { caseId: discovered.serviceRecordCaseId, writable: true },
         );
         if (!discoveredSource) throw new ServiceRecordEditNotFoundError();
         if (!lockedSource) await this.lockConfirmSourceTargets(tx, input.branchId, discoveredSource);
@@ -3770,7 +3792,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (draft.draftVersion !== input.expectedDraftVersion) {
             throw new ServiceRecordEditDraftConflictError();
         }
-        const source = lockedSource ?? await this.loadSourceWithClient(tx, input.branchId, { caseId: draft.serviceRecordCaseId });
+        const source = lockedSource ?? await this.loadSourceWithClient(tx, input.branchId, { caseId: draft.serviceRecordCaseId, writable: true });
         if (!source) throw new ServiceRecordEditNotFoundError();
         if (
             source.client.id !== discoveredSource.client.id
@@ -3923,7 +3945,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             });
             caseVersion = caseUpdate.version;
 
-            if (!contentOnly) {
+            if (!contentOnly && !source.sharedHousehold) {
                 await tx.client.updateMany({
                     where: { id: source.client.id, branchId: input.branchId },
                     data: {
@@ -3947,7 +3969,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         notes: session.notes,
                     },
                 });
-                if (contentOnly && written.count !== 1) throw new ServiceRecordEditConflictError();
+                if (written.count !== 1) throw new ServiceRecordEditConflictError();
             }
             for (const session of plan.newSessions) {
                 const serviceDate = dateValue(session.serviceDate);
@@ -3991,7 +4013,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         },
                     });
                 }
-                if (assignment.scheduleId !== null) {
+                if (assignment.scheduleId !== null && !source.sharedHousehold) {
                     await tx.employee_schedule.updateMany({
                         where: { id: assignment.scheduleId, branchId: input.branchId },
                         data: {
@@ -4137,7 +4159,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
         }
 
-        if (!contentOnly) {
+        if (!contentOnly && !source.sharedHousehold) {
             await this.persistReevaluationIntents(tx, input.branchId, source, plan, `${input.draftId}:${draft.draftVersion}`, now);
         }
 
@@ -4692,6 +4714,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             FROM service_record_case
             WHERE id = ${serviceRecordCaseId}::uuid
               AND branch_id = ${branchId}::uuid
+              AND NOT EXISTS (SELECT 1 FROM client
+                  WHERE client.id = service_record_case.client_id AND client.deleted_at IS NOT NULL)
+              AND (baby_id IS NULL OR EXISTS (SELECT 1 FROM client_baby
+                  WHERE client_baby.id = service_record_case.baby_id AND client_baby.active))
             FOR UPDATE
         `);
         if (rows.length !== 1) throw new ServiceRecordEditNotFoundError();

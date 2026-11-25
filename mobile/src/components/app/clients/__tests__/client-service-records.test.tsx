@@ -26,6 +26,7 @@ const TEST_VERIFIED_AT = "2026-07-16T15:10:00+09:00";
 const TEST_EXPIRY = "2026-07-30T20:00:00+09:00";
 
 jest.mock("@/hooks/useServiceRecords", () => ({
+    useClientServiceRecords: jest.fn(() => ({ data: undefined, isLoading: false, isError: false })),
     useKeepPeriodMismatch: () => ({ isPending: mockPeriodPending, mutateAsync: mockKeep }),
     useFitPeriodMismatch: () => ({ isPending: mockPeriodPending, mutateAsync: mockFit }),
     useSendServiceRecordLink: () => ({

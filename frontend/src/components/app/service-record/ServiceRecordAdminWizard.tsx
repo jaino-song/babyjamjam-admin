@@ -53,6 +53,8 @@ import {
 
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 import { AdminServiceDateSheet } from "@/components/app/ui/service-record";
+import { serviceRecordCaseLabel, serviceRecordEditorApiPath, serviceRecordEditorPath } from "@/features/service-records/utils/case-selection";
+import { ServiceRecordCasePicker } from "./ServiceRecordCasePicker";
 import { RevisionHistoryView } from "./RevisionHistoryView";
 import { describeScheduleBlockingReasons, GENERIC_BLOCKING_REASON } from "./service-record-blocking-reasons";
 import { computePendingHeaderChanges, computePendingSessionChanges } from "./pending-session-changes";
@@ -569,6 +571,7 @@ function overlayChanges(view: AdminServiceRecordView, changes: AdminServiceRecor
 
 export interface ServiceRecordAdminWizardProps {
     clientId: string;
+    selectedCaseId?: string;
     overview: AdminServiceRecordEditorOverview;
     /**
      * Only the source identity (`sourceFingerprint` / `sourceCaseVersion`) is
@@ -580,6 +583,7 @@ export interface ServiceRecordAdminWizardProps {
 
 export function ServiceRecordAdminWizard({
     clientId,
+    selectedCaseId,
     overview: initialOverview,
     initialDraftState = null,
     initialDraftErrorStatus = null,
@@ -689,7 +693,8 @@ export function ServiceRecordAdminWizard({
     const hasInvalidChangedStoolColor = hasInvalidServiceRecordStoolColor(patch.answers ?? {});
     const changed = !supplemental && (editingHeader
         ? Object.keys(headerPatch).length > 0 : Object.keys(patch).length > 1 || Boolean(dateMove));
-    const locked = busy || needsReload || Boolean(supplemental);
+    const selectedCase = overview.cases?.find((item) => item.caseId === overview.record?.id);
+    const locked = busy || needsReload || Boolean(supplemental) || selectedCase?.retired === true;
     const resetLocal = () => {
         setScreen("overview");
         setDateMove(null);
@@ -710,12 +715,12 @@ export function ServiceRecordAdminWizard({
         setScreen("day");
     };
     const refresh = async () => {
-        const before = await adminServiceRecordEditApi.getDraft(clientId);
-        const response = await fetch(`/api/admin/service-records/client/${encodeURIComponent(clientId)}/editor`, { cache: "no-store" });
+        const before = await adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
+        const response = await fetch(serviceRecordEditorApiPath(clientId, selectedCaseId), { cache: "no-store" });
         if (!response.ok) throw new Error("reload");
         const fresh = parseOverview(await response.json());
         if (!fresh) throw new Error("reload");
-        const state = await adminServiceRecordEditApi.getDraft(clientId);
+        const state = await adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
         if (!sameSource(before, state)) throw new Error("기록이 조회 중 변경되었습니다. 다시 불러와 주세요.");
         setOverview(fresh);
         setPageConfirmedSessionIndexes(new Set());
@@ -871,7 +876,7 @@ export function ServiceRecordAdminWizard({
             return;
         }
         try {
-            const state = await adminServiceRecordEditApi.getDraft(clientId);
+            const state = await adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
             if (sameSource(sourceIdentity, state) && state.sourceCaseVersion <= knownVersion.current) {
                 setPreviewOpen(false);
                 setPreview(null);
@@ -895,7 +900,7 @@ export function ServiceRecordAdminWizard({
         commitRequest.current = null;
         let prepared: { id: string; version: number } | null = null;
         try {
-            const existing = await adminServiceRecordEditApi.getDraft(clientId);
+            const existing = await adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
             if (!sameSource(sourceIdentity, existing)) {
                 setPreviewOpen(false);
                 setPreview(null);
@@ -907,7 +912,7 @@ export function ServiceRecordAdminWizard({
                 await adminServiceRecordEditApi.discardDraft(existing.draft.id, existing.draft.draftVersion);
             }
             const changes = pendingToChanges(pending);
-            let state = await adminServiceRecordEditApi.startDraft(clientId, changes);
+            let state = await adminServiceRecordEditApi.startDraft(clientId, changes, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
             if (!state.draft || state.draft.status !== "ACTIVE") {
                 setPreviewOpen(false);
                 setPreview(null);
@@ -985,7 +990,7 @@ export function ServiceRecordAdminWizard({
      */
     const catchUpOnOpen = useEffectEvent(async () => {
         try {
-            const state = await adminServiceRecordEditApi.getDraft(clientId);
+            const state = await adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
             if (caseId.current === null || state.sourceCaseVersion <= knownVersion.current) return;
             handleCaseEvent({ caseId: caseId.current, caseVersion: state.sourceCaseVersion });
         } catch { /* best effort */ }
@@ -1048,7 +1053,7 @@ export function ServiceRecordAdminWizard({
         setBusy(true);
         try {
             if (readCurrentVersion) {
-                const state = await adminServiceRecordEditApi.getDraft(clientId);
+                const state = await adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
                 if (state.draft?.status === "ACTIVE" && state.draft.id === request.draftId) {
                     await adminServiceRecordEditApi.discardDraft(state.draft.id, state.draft.draftVersion);
                 }
@@ -1144,7 +1149,7 @@ export function ServiceRecordAdminWizard({
             ) : null}
             {/* Rollback: add `ServiceRecordWizard` to the "@babyjamjam/service-record-ui" import and render <ServiceRecordWizard …> instead of <AdminServiceRecordScreen …> (same props). */}
             {historyOpen ? (
-                <RevisionHistoryView data-component={`${ADMIN_WIZARD_COMPONENT}_revision-history`} clientId={clientId} onBack={() => setHistoryOpen(false)} />
+                <RevisionHistoryView data-component={`${ADMIN_WIZARD_COMPONENT}_revision-history`} clientId={clientId} caseId={selectedCaseId} onBack={() => setHistoryOpen(false)} />
             ) : (
                 <AdminServiceRecordScreen
                     data-component={ADMIN_WIZARD_COMPONENT}
@@ -1198,7 +1203,7 @@ export function ServiceRecordAdminWizard({
                         ) : null,
                         adminConfirmAction: !hasPending ? (
                             <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_edit-actions`} data-slot="edit-actions" className="contents">
-                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} data-slot="header-edit" type="button" variant="positive-outline" disabled={busy}
+                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} data-slot="header-edit" type="button" variant="positive-outline" disabled={busy || selectedCase?.retired}
                                     className="min-w-0 flex-1 border-[hsl(214,100%,34%)]!"
                                     onClick={() => { setHeaderDraft(headerToInput(displayContext.header)); setScreen("service"); }}>
                                     기본정보 수정
@@ -1333,16 +1338,16 @@ export function ServiceRecordAdminWizard({
     );
 }
 
-type ViewerState =
-    | { kind: "loading"; clientId: string }
+type ViewerState = (
+    | { kind: "loading" }
     | {
         kind: "ready";
-        clientId: string;
         overview: AdminServiceRecordEditorOverview;
         draftState: AdminServiceRecordEditState | null;
         draftErrorStatus: number | null;
     }
-    | { kind: "error"; clientId: string; status: number };
+    | { kind: "error"; status: number }
+) & { target: string };
 
 export function parseOverview(payload: unknown): AdminServiceRecordEditorOverview | null {
     if (!isRecord(payload) || !Array.isArray(payload.assignments)) return null;
@@ -1351,10 +1356,12 @@ export function parseOverview(payload: unknown): AdminServiceRecordEditorOvervie
 
 export interface ServiceRecordAdminViewerProps {
     clientId: string;
+    caseId?: string;
 }
 
-export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerProps) {
-    const [state, setState] = useState<ViewerState>({ kind: "loading", clientId });
+export function ServiceRecordAdminViewer({ clientId, caseId: selectedCaseId }: ServiceRecordAdminViewerProps) {
+    const target = serviceRecordEditorApiPath(clientId, selectedCaseId);
+    const [state, setState] = useState<ViewerState>({ kind: "loading", target });
 
     useEffect(() => {
         const controller = new AbortController();
@@ -1362,46 +1369,50 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
 
         // Bracket the separate overview read with source identities so a
         // concurrent write cannot bind a stale screen to a fresh fingerprint.
-        const sourceBeforeLoad = adminServiceRecordEditApi.getDraft(clientId).catch(() => null);
-        void sourceBeforeLoad.then(() => fetch(`/api/admin/service-records/client/${encodeURIComponent(clientId)}/editor`, {
+        const sourceBeforeLoad = adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId])).catch(() => null);
+        void sourceBeforeLoad.then(() => fetch(target, {
             cache: "no-store",
             signal: controller.signal,
         }))
             .then(async (response) => {
                 if (!alive) return;
                 if (!response.ok) {
-                    setState({ kind: "error", clientId, status: response.status });
+                    setState({ kind: "error", target, status: response.status });
                     return;
                 }
                 const payload = await response.json().catch(() => null);
                 const overview = parseOverview(payload);
                 if (!overview) {
-                    setState({ kind: "error", clientId, status: 500 });
+                    setState({ kind: "error", target, status: 500 });
+                    return;
+                }
+                if (!overview.record && (overview.cases?.length ?? 0) > 0) {
+                    setState({ kind: "ready", target, overview, draftState: null, draftErrorStatus: null });
                     return;
                 }
                 try {
-                    const draftState = await adminServiceRecordEditApi.getDraft(clientId);
+                    const draftState = await adminServiceRecordEditApi.getDraft(clientId, ...(selectedCaseId === undefined ? [] : [selectedCaseId]));
                     const stable = sameSource(await sourceBeforeLoad, draftState);
-                    if (alive) setState({ kind: "ready", clientId, overview, draftState: stable ? draftState : null, draftErrorStatus: stable ? null : 409 });
+                    if (alive) setState({ kind: "ready", target, overview, draftState: stable ? draftState : null, draftErrorStatus: stable ? null : 409 });
                 } catch (error) {
                     if (!alive) return;
                     const status = error instanceof AdminServiceRecordEditApiError ? error.status : 500;
-                    setState({ kind: "ready", clientId, overview, draftState: null, draftErrorStatus: status });
+                    setState({ kind: "ready", target, overview, draftState: null, draftErrorStatus: status });
                 }
             })
             .catch(() => {
-                if (alive) setState({ kind: "error", clientId, status: 500 });
+                if (alive) setState({ kind: "error", target, status: 500 });
             });
 
         return () => {
             alive = false;
             controller.abort();
         };
-    }, [clientId]);
+    }, [clientId, selectedCaseId, target]);
 
-    const visibleState: ViewerState = state.clientId === clientId
+    const visibleState: ViewerState = state.target === target
         ? state
-        : { kind: "loading", clientId };
+        : { kind: "loading", target };
 
     if (visibleState.kind === "loading") {
         return (
@@ -1421,12 +1432,30 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
                     : "제공기록지를 불러오지 못했습니다.";
         return <p data-component={`desktop_service-record-admin_state-error-${visibleState.status}`} data-slot="state">{message}</p>;
     }
+    const { overview } = visibleState;
+    if (!overview.record && overview.cases?.length) {
+        return <ServiceRecordCasePicker
+            data-component="desktop_service-record-admin_case-picker"
+            cases={overview.cases}
+            linkFor={(caseId) => serviceRecordEditorPath(clientId, caseId)}
+        />;
+    }
+    const selected = overview.cases?.find((item) => item.caseId === overview.record?.id);
     return (
-        <ServiceRecordAdminWizard
-            clientId={visibleState.clientId}
-            overview={visibleState.overview}
-            initialDraftState={visibleState.draftState}
-            initialDraftErrorStatus={visibleState.draftErrorStatus}
-        />
+        <>
+            {selectedCaseId && selected ? (
+                <p data-component="desktop_service-record-admin_selected-case" data-slot="selected-case">
+                    {serviceRecordCaseLabel(selected)}
+                </p>
+            ) : null}
+            <ServiceRecordAdminWizard
+                key={target}
+                clientId={clientId}
+                selectedCaseId={selectedCaseId}
+                overview={overview}
+                initialDraftState={visibleState.draftState}
+                initialDraftErrorStatus={visibleState.draftErrorStatus}
+            />
+        </>
     );
 }

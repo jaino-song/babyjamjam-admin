@@ -1,7 +1,7 @@
 "use client";
 
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isAxiosError } from "axios";
 import dynamic from "next/dynamic";
@@ -1102,7 +1102,7 @@ function ClientMessageDetailSlide({
 export interface ClientDetailPanelProps {
     /** The currently selected client to render detail for. */
     client: Client;
-    tabRequest?: { clientId: number; tab: ClientDetailTabKey; nonce: number } | null;
+    tabRequest?: { clientId: number; tab: ClientDetailTabKey; nonce: number; caseId?: string } | null;
     /** Page-specific trailing action (e.g. edit/delete menu, or a link-only menu). */
     trailing: ReactNode;
     /** Stack basic information when embedded in a narrow detail pane. */
@@ -1225,29 +1225,38 @@ function ClientDetailPanelBody({
         limit: CLIENT_UPCOMING_MESSAGE_LIMIT,
     });
 
+    const [recordSelection, setRecordSelection] = useState<{ clientId: number; caseId: string } | undefined>(
+        () => tabRequest?.caseId ? { clientId: tabRequest.clientId, caseId: tabRequest.caseId } : undefined,
+    );
+    const selectedRecordCaseId = recordSelection?.clientId === clientId ? recordSelection?.caseId : undefined;
     const serviceRecordsQuery = useClientServiceRecords(clientId, {
         enabled: activeDetailTab === "service-records",
+        caseId: selectedRecordCaseId,
     });
     const revisionHistoryQuery = useClientServiceRecordRevisionHistory(clientId, {
-        enabled: activeDetailTab === "service-records",
+        enabled: activeDetailTab === "service-records"
+            && Boolean(serviceRecordsQuery.data?.record || !serviceRecordsQuery.data?.cases?.length),
+        caseId: selectedRecordCaseId,
     });
     const retryRevisionDocumentMutation = useRetryServiceRecordDocument();
-    const knownServiceRecordCaseId = serviceRecordsQuery.data?.record?.id
-        ?? revisionHistoryQuery.data?.caseId
-        ?? null;
+    const knownCaseList = serviceRecordsQuery.data?.cases;
+    const knownServiceRecordCaseId = serviceRecordsQuery.data?.record?.id ?? revisionHistoryQuery.data?.caseId;
 
     useEffect(() => {
         if (clientId === null) return undefined;
 
         return subscribeServiceRecordRevisionSync((event) => {
-            if (knownServiceRecordCaseId && event.caseId !== knownServiceRecordCaseId) return;
+            const known = knownCaseList?.some(({ caseId }) => caseId === event.caseId)
+                || knownServiceRecordCaseId === event.caseId;
+            if ((knownCaseList?.length || knownServiceRecordCaseId) && !known) return;
             void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
-            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId) });
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId, event.caseId) });
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId), exact: true });
             void queryClient.invalidateQueries({ queryKey: clientKeys.all });
             void queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
             void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
         });
-    }, [clientId, knownServiceRecordCaseId, queryClient]);
+    }, [clientId, knownCaseList, knownServiceRecordCaseId, queryClient]);
 
     useEffect(() => {
         if (clientId === null) return undefined;
@@ -1380,7 +1389,7 @@ function ClientDetailPanelBody({
         };
     }, []);
 
-    const clearClientMessageHistoryDetail = () => {
+    const clearClientMessageHistoryDetail = useCallback(() => {
         if (clearMessageHistorySelectionTimeoutRef.current) {
             clearTimeout(clearMessageHistorySelectionTimeoutRef.current);
             clearMessageHistorySelectionTimeoutRef.current = null;
@@ -1388,7 +1397,7 @@ function ClientDetailPanelBody({
 
         setIsMessageHistoryDetailVisible(false);
         setSelectedMessageHistoryId(null);
-    };
+    }, []);
 
     const handleSelectClientMessageHistoryRecord = (record: MessageLogRecord) => {
         if (clearMessageHistorySelectionTimeoutRef.current) {
@@ -1412,7 +1421,7 @@ function ClientDetailPanelBody({
         }, CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS);
     };
 
-    const handleDetailTabChange = (nextTab: string) => {
+    const handleDetailTabChange = useCallback((nextTab: string) => {
         const nextDetailTab = CLIENT_DETAIL_TABS.find((tab) => tab.key === nextTab)?.key;
 
         if (!nextDetailTab) return;
@@ -1422,14 +1431,15 @@ function ClientDetailPanelBody({
         if (nextDetailTab !== "messages") {
             clearClientMessageHistoryDetail();
         }
-    };
+    }, [activeDetailTab, clearClientMessageHistoryDetail]);
 
     const appliedTabRequest = useRef<number | undefined>(undefined);
     useEffect(() => {
         if (!tabRequest || tabRequest.clientId !== selectedClient.id || appliedTabRequest.current === tabRequest.nonce) return;
         appliedTabRequest.current = tabRequest.nonce;
+        setRecordSelection(tabRequest.caseId ? { clientId: tabRequest.clientId, caseId: tabRequest.caseId } : undefined);
         handleDetailTabChange(tabRequest.tab);
-    });
+    }, [tabRequest, selectedClient.id, handleDetailTabChange]);
 
     const handleConfirmBooking = async () => {
         if (bookingConfirmationInFlightRef.current || !canConfirmBooking || !hasBookingDates) return;
@@ -1778,7 +1788,10 @@ function ClientDetailPanelBody({
                                 <ClientServiceRecordsTab
                                     data-component={`${dataComponentPrefix}_service-records`}
                                     layout={layout}
+                                    key={selectedRecordCaseId ?? clientId}
                                     overview={serviceRecordsQuery.data}
+                                    selectedCaseId={selectedRecordCaseId}
+                                    onSelectCase={(caseId) => { if (clientId !== null) setRecordSelection({ clientId, caseId }); }}
                                     clientId={clientId}
                                     serviceDays={serviceDayPolicyOfClient(client)}
                                     isLoading={isQueryLoadPending(serviceRecordsQuery)}

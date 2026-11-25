@@ -517,7 +517,21 @@ export interface ServiceRecordAssignment {
     signatureDoc: SignatureDocStatus | null;
 }
 
+export interface AdminServiceRecordCaseSummary {
+    caseId: string;
+    babyId: string | null;
+    rank: number | null;
+    babyCount: number | null;
+    legacyName: string | null;
+    retired: boolean;
+    status: string;
+    assignees: { id: number; name: string }[];
+    totalSessions: number;
+    submittedSessions: number;
+}
+
 export interface ServiceRecordOverview {
+    cases?: AdminServiceRecordCaseSummary[];
     record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
     /** Editor-only latest confirmation for each session reported by the revision changes policy. */
@@ -545,10 +559,12 @@ export interface ResetServiceRecordLinkResponse {
 }
 
 export interface PrepareServiceRecordLinkRequest {
+    caseId?: string;
     recipientPhone?: string;
 }
 
 export interface SendServiceRecordLinkRequest {
+    caseId?: string;
     preparedLinkToken?: string;
     recipientPhone?: string;
 }

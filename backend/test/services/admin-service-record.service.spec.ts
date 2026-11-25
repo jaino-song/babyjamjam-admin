@@ -16,30 +16,33 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 describe("AdminServiceRecordService", () => {
-    const createPrisma = () => ({
-        $transaction: jest.fn(async (run: (tx: { $queryRaw: jest.Mock }) => Promise<unknown>) => run({
-            $queryRaw: jest.fn().mockResolvedValue([{ id: "case-1", status: "failed", version: 3 }]),
-        })),
-        client: {
-            findFirst: jest.fn(),
-        },
-        service_record_case: {
-            findFirst: jest.fn().mockResolvedValue(null),
-        },
-        employee_schedule: {
-            findMany: jest.fn(),
-            findFirst: jest.fn(),
-        },
-        message_trigger_job: {
-            findMany: jest.fn(),
-        },
-        message_log: {
-            findMany: jest.fn(),
-        },
-        eformsign_doc: {
-            findMany: jest.fn().mockResolvedValue([]),
-        },
-    });
+    const branchId = "11111111-1111-4111-8111-111111111111";
+    const caseId = "22222222-2222-4222-8222-222222222222";
+    const persistedCase = { id: caseId, babyId: null, days: [], status: "IN_PROGRESS", requiredSessionCount: 0 };
+    const createPrisma = () => {
+        const findCase = jest.fn().mockResolvedValue(null);
+        return {
+            $transaction: jest.fn(async (run: (tx: { $queryRaw: jest.Mock }) => Promise<unknown>) => run({
+                $queryRaw: jest.fn().mockResolvedValue([{ id: "case-1", status: "failed", version: 3 }]),
+            })),
+            client: { findFirst: jest.fn().mockResolvedValue({ id: 100, fetalConfirmation: null }) },
+            service_record_case: {
+                findFirst: findCase,
+                findMany: jest.fn(async () => {
+                    const row = await findCase();
+                    return row ? [{ babyId: null, _count: { days: 0 }, ...row }] : [];
+                }),
+            },
+            client_baby: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+            service_record_baby_assignment: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record_assignment: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record: { findMany: jest.fn().mockResolvedValue([]) },
+            employee_schedule: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn() },
+            message_trigger_job: { findMany: jest.fn().mockResolvedValue([]) },
+            message_log: { findMany: jest.fn().mockResolvedValue([]) },
+            eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
+        };
+    };
 
     const createLinkService = () => ({
         prepareLink: jest.fn().mockResolvedValue({
@@ -65,7 +68,7 @@ describe("AdminServiceRecordService", () => {
 
     const createSchedule = (id: number, startDate: string) => ({
         id,
-        branchId: "branch-1",
+        branchId,
         clientId: 100,
         startDate: new Date(startDate),
         endDate: new Date("2026-07-12T00:00:00.000Z"),
@@ -104,7 +107,7 @@ describe("AdminServiceRecordService", () => {
             requiredSessionCount: 5, days: [session],
         });
         const service = new AdminServiceRecordService(prisma as never, createLinkService() as never, createTriggerService() as never, createHolidayCalendarStub());
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
         expect(overview.record?.sessions[0]).toMatchObject({ sessionIndex: 1, periodMismatchKeptAt: keptAt?.toISOString() ?? null });
         expect(overview.assignments[0]?.sessions[0]).toMatchObject({ sessionIndex: 1, periodMismatchKeptAt: keptAt?.toISOString() ?? null });
     });
@@ -130,7 +133,7 @@ describe("AdminServiceRecordService", () => {
                 createLinkService() as unknown as ServiceRecordLinkService,
                 createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
             );
-            const overview = await service.getClientOverview("branch-1", 100);
+            const overview = await service.getClientOverview(branchId, 100);
             expect(overview.assignments[0]?.link.token?.state).toBe(state);
         } finally {
             jest.useRealTimers();
@@ -175,7 +178,7 @@ describe("AdminServiceRecordService", () => {
             createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
 
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
 
         expect(overview.record?.totalSessions).toBe(expected);
     });
@@ -195,7 +198,7 @@ describe("AdminServiceRecordService", () => {
             createLinkService() as unknown as ServiceRecordLinkService,
             createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
         expect(overview.assignments[0]?.totalSessions).toBe(4);
         expect(schedule.client.duration).toBe(15);
     });
@@ -244,9 +247,9 @@ describe("AdminServiceRecordService", () => {
             createTriggerService() as unknown as MessageTriggerService, holidayCalendar,
         );
 
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
 
-        expect(holidayCalendar.forBranch).toHaveBeenCalledWith("branch-1");
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId);
         expect(overview.record?.totalSessions).toBe(3);
         expect(overview.assignments[0]?.totalSessions).toBe(3);
     });
@@ -262,7 +265,9 @@ describe("AdminServiceRecordService", () => {
         prisma.service_record_case.findFirst.mockResolvedValue(null);
         prisma.employee_schedule.findMany.mockResolvedValue([]);
 
-        await expect(service.getClientEditor("branch-1", 100)).resolves.toEqual({
+        await expect(service.getClientEditor(branchId, 100)).resolves.toEqual({
+            cases: [],
+            serviceDays: { saturday: false, sunday: false, holiday: false },
             record: null,
             assignments: [],
             scheduleProjection: {
@@ -275,10 +280,10 @@ describe("AdminServiceRecordService", () => {
         });
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
-            where: { id: 100, branchId: "branch-1", deletedAt: null },
-            select: { id: true },
+            where: { id: 100, branchId, deletedAt: null },
+            select: { fetalConfirmation: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
         });
-        expect(prisma.service_record_case.findFirst).toHaveBeenCalled();
+        expect(prisma.service_record_case.findMany).toHaveBeenCalled();
         expect(prisma.employee_schedule.findMany).toHaveBeenCalled();
     });
 
@@ -299,10 +304,10 @@ describe("AdminServiceRecordService", () => {
                 prisma as never, createLinkService() as never, createTriggerService() as never,
                 createHolidayCalendarStub(), undefined, withRepository ? repository as never : undefined,
             );
-            jest.spyOn(service, "getClientOverview").mockResolvedValue({
-                record: null, assignments: [],
-                ...(withProjection ? { scheduleProjection: { entries: [], blockingReasons: [] } } : {}),
-            });
+            prisma.service_record_case.findFirst.mockResolvedValue(persistedCase);
+            if (!withProjection) jest.spyOn(
+                service as unknown as { loadScheduleProjection: () => Promise<unknown> }, "loadScheduleProjection",
+            ).mockResolvedValueOnce(undefined);
             return { service, repository, prisma };
         }
 
@@ -355,7 +360,7 @@ describe("AdminServiceRecordService", () => {
 
         it.each([true, false])("returns latest confirmations including planned-only followers (projection: %s)", async (withProjection) => {
             const { service, repository } = createEditor(revisionFixture(), withProjection);
-            const editor = await service.getClientEditor("branch-1", 100);
+            const editor = await service.getClientEditor(branchId, 100);
             expect(editor.adminEditConfirmedAtBySession).toEqual([
                 { sessionIndex: 1, confirmedAt: t1 },
                 { sessionIndex: 3, confirmedAt: t2 },
@@ -363,8 +368,7 @@ describe("AdminServiceRecordService", () => {
                 { sessionIndex: 6, confirmedAt: t3 },
             ]);
             expect(repository.listRevisionsForChanges).toHaveBeenCalledTimes(1);
-            expect(repository.listRevisionsForChanges).toHaveBeenCalledWith("branch-1", 100);
-            expect(service.getClientOverview).toHaveBeenCalledWith("branch-1", 100, { includeSignatures: true });
+            expect(repository.listRevisionsForChanges).toHaveBeenCalledWith(branchId, 100, caseId);
         });
 
         it("uses projected fingerprints to include only sessions whose signature changed", async () => {
@@ -376,19 +380,19 @@ describe("AdminServiceRecordService", () => {
                 payload: { sessions: [before[0]!, { sessionIndex: 2, clientSignatureFingerprint: serviceRecordSignatureFingerprint("data:image/png;base64,replaced") }] },
                 plannedSessions: [],
             }]);
-            expect((await service.getClientEditor("branch-1", 100)).adminEditConfirmedAtBySession).toEqual([
+            expect((await service.getClientEditor(branchId, 100)).adminEditConfirmedAtBySession).toEqual([
                 { sessionIndex: 2, confirmedAt: t1 },
             ]);
         });
 
         it("returns an empty list when there are no revisions", async () => {
             const { service } = createEditor();
-            expect((await service.getClientEditor("branch-1", 100)).adminEditConfirmedAtBySession).toEqual([]);
+            expect((await service.getClientEditor(branchId, 100)).adminEditConfirmedAtBySession).toEqual([]);
         });
 
         it("omits confirmations without throwing when the edit repository is unbound", async () => {
             const { service, repository } = createEditor([], false, false);
-            expect(await service.getClientEditor("branch-1", 100)).not.toHaveProperty("adminEditConfirmedAtBySession");
+            expect(await service.getClientEditor(branchId, 100)).not.toHaveProperty("adminEditConfirmedAtBySession");
             expect(repository.listRevisionsForChanges).not.toHaveBeenCalled();
         });
 
@@ -422,7 +426,7 @@ describe("AdminServiceRecordService", () => {
             sessions: [],
             assignments: [{
                 id: assignmentId,
-                branchId: "branch-1",
+                branchId,
                 serviceRecordCaseId: "case-1",
                 scheduleId: 55,
                 employeeId: 9,
@@ -448,7 +452,7 @@ describe("AdminServiceRecordService", () => {
             })),
             client: {
                 id: 100,
-                branchId: "branch-1",
+                branchId,
                 name: "김산모",
                 duration: 15,
                 startDate: "2026-09-01",
@@ -457,7 +461,7 @@ describe("AdminServiceRecordService", () => {
             },
         };
         prisma.client.findFirst.mockResolvedValue({ id: 100 });
-        prisma.service_record_case.findFirst.mockResolvedValue(null);
+        prisma.service_record_case.findFirst.mockResolvedValue(persistedCase);
         prisma.employee_schedule.findMany.mockResolvedValue([]);
         const editRepository = { loadSource: jest.fn().mockResolvedValue(source) };
         const service = new AdminServiceRecordService(
@@ -468,7 +472,7 @@ describe("AdminServiceRecordService", () => {
             editRepository as never,
         );
 
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
 
         expect(overview.scheduleProjection?.blockingReasons).toEqual([]);
         expect(overview.scheduleProjection?.entries.map((entry) => entry.serviceDate)).toEqual([
@@ -481,7 +485,7 @@ describe("AdminServiceRecordService", () => {
             scheduleId: 55,
             employeeId: 9,
         }));
-        expect(editRepository.loadSource).toHaveBeenCalledWith("branch-1", { clientId: 100 });
+        expect(editRepository.loadSource).toHaveBeenCalledWith(branchId, { clientId: 100, caseId });
         expect(overview).not.toHaveProperty("adminEditConfirmedAtBySession");
     });
 
@@ -501,7 +505,7 @@ describe("AdminServiceRecordService", () => {
                 sessions: [],
                 assignments: [{
                     id: assignmentId,
-                    branchId: "branch-1",
+                    branchId,
                     serviceRecordCaseId: "case-1",
                     scheduleId: 55,
                     employeeId: 9,
@@ -519,7 +523,7 @@ describe("AdminServiceRecordService", () => {
                 plannedSessions: null,
                 client: {
                     id: 100,
-                    branchId: "branch-1",
+                    branchId,
                     name: "김산모",
                     duration: 15,
                     startDate: "2026-09-04",
@@ -532,7 +536,7 @@ describe("AdminServiceRecordService", () => {
         function serviceFor(flags: Record<string, boolean | null>, withRepository = true) {
             const prisma = createPrisma();
             prisma.client.findFirst.mockResolvedValue({ id: 100, ...flags });
-            prisma.service_record_case.findFirst.mockResolvedValue(null);
+            prisma.service_record_case.findFirst.mockResolvedValue(persistedCase);
             // No schedules at all: the schedules' client include cannot carry the flags.
             prisma.employee_schedule.findMany.mockResolvedValue([]);
             const editRepository = {
@@ -551,7 +555,7 @@ describe("AdminServiceRecordService", () => {
 
         it("returns the toggles and projects the editor on the client's own calendar, even without schedules", async () => {
             const saturday = serviceFor({ allowSaturdayService: true, allowSundayService: false, allowHolidayService: false });
-            const editor = await saturday.service.getClientEditor("branch-1", 100);
+            const editor = await saturday.service.getClientEditor(branchId, 100);
             expect(editor.serviceDays).toEqual({ saturday: true, sunday: false, holiday: false });
             expect(editor.assignments).toEqual([]);
             expect(editor.scheduleProjection?.blockingReasons).toEqual([]);
@@ -559,12 +563,12 @@ describe("AdminServiceRecordService", () => {
                 "2026-09-04", "2026-09-05", "2026-09-07",
             ]);
             expect(saturday.prisma.client.findFirst).toHaveBeenCalledWith({
-                where: { id: 100, branchId: "branch-1" },
-                select: { allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
+                where: { id: 100, branchId, deletedAt: null },
+                select: { fetalConfirmation: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
             });
 
             const weekdaysOnly = serviceFor({ allowSaturdayService: false, allowSundayService: false, allowHolidayService: false });
-            const plain = await weekdaysOnly.service.getClientEditor("branch-1", 100);
+            const plain = await weekdaysOnly.service.getClientEditor(branchId, 100);
             expect(plain.serviceDays).toEqual({ saturday: false, sunday: false, holiday: false });
             expect(plain.scheduleProjection?.entries.map((entry) => entry.serviceDate)).toEqual([
                 "2026-09-04", "2026-09-07", "2026-09-08",
@@ -573,13 +577,13 @@ describe("AdminServiceRecordService", () => {
 
         it("carries the toggles on the regular overview and treats a null flag as off", async () => {
             const { service } = serviceFor({ allowSaturdayService: null, allowSundayService: true, allowHolidayService: null });
-            const overview = await service.getClientOverview("branch-1", 100);
+            const overview = await service.getClientOverview(branchId, 100);
             expect(overview.serviceDays).toEqual({ saturday: false, sunday: true, holiday: false });
         });
 
         it("keeps the toggles when the editor falls back without an edit repository", async () => {
             const { service } = serviceFor({ allowSaturdayService: true, allowSundayService: false, allowHolidayService: false }, false);
-            const editor = await service.getClientEditor("branch-1", 100);
+            const editor = await service.getClientEditor(branchId, 100);
             expect(editor.serviceDays).toEqual({ saturday: true, sunday: false, holiday: false });
             expect(editor.scheduleProjection?.blockingReasons).toEqual([
                 expect.objectContaining({ code: "EDITOR_PROJECTION_UNAVAILABLE" }),
@@ -596,7 +600,7 @@ describe("AdminServiceRecordService", () => {
                 createTriggerService() as unknown as MessageTriggerService,
                 createHolidayCalendarStub(),
             );
-            const overview = await service.getClientOverview("branch-1", 100);
+            const overview = await service.getClientOverview(branchId, 100);
             expect(overview.serviceDays).toBeUndefined();
         });
     });
@@ -665,7 +669,7 @@ describe("AdminServiceRecordService", () => {
                 plannedSessions: null,
                 client: {
                     id: 100,
-                    branchId: "branch-1",
+                    branchId,
                     name: "김산모",
                     duration: null,
                     startDate: "2028-01-03",
@@ -682,7 +686,7 @@ describe("AdminServiceRecordService", () => {
             editRepository as never,
         );
 
-        const overview = await service.getClientEditor("branch-1", 100);
+        const overview = await service.getClientEditor(branchId, 100);
 
         expect(overview.record?.totalSessions).toBe(0);
         expect(overview.record?.sessions).toHaveLength(1);
@@ -706,7 +710,7 @@ describe("AdminServiceRecordService", () => {
         );
         prisma.client.findFirst.mockResolvedValue(null);
 
-        const rejection = service.getClientEditor("branch-1", 404);
+        const rejection = service.getClientEditor(branchId, 404);
         await expect(rejection).rejects.toBeInstanceOf(NotFoundException);
         await expect(rejection).rejects.toMatchObject({
             status: 404,
@@ -718,8 +722,8 @@ describe("AdminServiceRecordService", () => {
         });
 
         expect(prisma.client.findFirst).toHaveBeenCalledWith({
-            where: { id: 404, branchId: "branch-1", deletedAt: null },
-            select: { id: true },
+            where: { id: 404, branchId, deletedAt: null },
+            select: { fetalConfirmation: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
         });
         expect(prisma.service_record_case.findFirst).not.toHaveBeenCalled();
         expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();
@@ -778,11 +782,11 @@ describe("AdminServiceRecordService", () => {
             createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
 
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
         expect(overview.record?.sessions[0]).not.toHaveProperty("clientSignature");
         expect(overview.record?.sessions[0]).not.toHaveProperty("clientSignedAt");
 
-        const editor = await service.getClientEditor("branch-1", 100);
+        const editor = await service.getClientEditor(branchId, 100);
         expect(editor.record?.sessions[0]).toEqual(expect.objectContaining({
             clientSignature: "data:image/png;base64,stored",
             clientSignedAt: session.clientSignedAt,
@@ -805,7 +809,7 @@ describe("AdminServiceRecordService", () => {
         prisma.message_trigger_job.findMany.mockResolvedValue([
             {
                 id: "job-4",
-                branchId: "branch-1",
+                branchId,
                 employeeScheduleId: 4,
                 ruleId: SERVICE_RECORD_LINK_RULE_ID,
                 status: "sent",
@@ -814,7 +818,7 @@ describe("AdminServiceRecordService", () => {
             },
             {
                 id: "job-3",
-                branchId: "branch-1",
+                branchId,
                 employeeScheduleId: 3,
                 ruleId: SERVICE_RECORD_LINK_RULE_ID,
                 status: "sent",
@@ -823,7 +827,7 @@ describe("AdminServiceRecordService", () => {
             },
             {
                 id: "job-2",
-                branchId: "branch-1",
+                branchId,
                 employeeScheduleId: 2,
                 ruleId: SERVICE_RECORD_LINK_RULE_ID,
                 status: "pending",
@@ -834,7 +838,7 @@ describe("AdminServiceRecordService", () => {
         prisma.message_log.findMany.mockResolvedValue([
             {
                 id: 400,
-                branchId: "branch-1",
+                branchId,
                 templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 triggerJobId: "job-4",
                 clientId: 100,
@@ -844,7 +848,7 @@ describe("AdminServiceRecordService", () => {
             },
             {
                 id: 300,
-                branchId: "branch-1",
+                branchId,
                 templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 triggerJobId: "job-3",
                 clientId: 100,
@@ -878,14 +882,15 @@ describe("AdminServiceRecordService", () => {
             },
         ]);
 
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
         expect(prisma.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
             include: expect.objectContaining({
                 serviceRecordTokens: {
                     where: {
-                        OR: [
-                            { active: true },
-                            { revokedAt: { not: null } },
+                        branchId,
+                        AND: [
+                            { OR: [{ serviceRecordCaseId: null }] },
+                            { OR: [{ active: true }, { revokedAt: { not: null } }] },
                         ],
                     },
                     orderBy: { createdAt: "desc" },
@@ -909,9 +914,9 @@ describe("AdminServiceRecordService", () => {
         );
         expect(prisma.eformsign_doc.findMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
-                branchId: "branch-1",
+                branchId,
                 documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
-                OR: [{ employeeScheduleId: { in: [1, 2, 3, 4] } }],
+                OR: [{ serviceRecordCaseId: null, employeeScheduleId: { in: [1, 2, 3, 4] } }],
             }),
         }));
         expect(overview.assignments.find((assignment) => assignment.scheduleId === 1)?.signatureDoc).toBeNull();
@@ -932,7 +937,7 @@ describe("AdminServiceRecordService", () => {
         const at = (iso: string) => new Date(`2026-07-0${iso}:00.000Z`);
         const job = (id: string, status: string, updatedAt: Date, extra: Record<string, unknown> = {}) => ({
             id,
-            branchId: "branch-1",
+            branchId,
             employeeScheduleId: 1,
             ruleId: SERVICE_RECORD_LINK_RULE_ID,
             status,
@@ -943,7 +948,7 @@ describe("AdminServiceRecordService", () => {
         });
         const log = (id: number, triggerJobId: string, status: string, when: Date) => ({
             id,
-            branchId: "branch-1",
+            branchId,
             templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
             triggerJobId,
             clientId: 100,
@@ -962,7 +967,7 @@ describe("AdminServiceRecordService", () => {
             // Deliberately not sorted newest-first: derivation must not depend on query order.
             prisma.message_trigger_job.findMany.mockResolvedValue(jobs);
             prisma.message_log.findMany.mockResolvedValue(logs);
-            const overview = await service.getClientOverview("branch-1", 100);
+            const overview = await service.getClientOverview(branchId, 100);
             return overview.assignments[0]!.link;
         };
 
@@ -1224,7 +1229,7 @@ describe("AdminServiceRecordService", () => {
         prisma.message_log.findMany.mockResolvedValue([
             {
                 id: 500,
-                branchId: "branch-1",
+                branchId,
                 templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
                 triggerJobId: null,
                 clientId: 100,
@@ -1235,7 +1240,7 @@ describe("AdminServiceRecordService", () => {
             },
         ]);
 
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
         const statuses = new Map(overview.assignments.map((assignment) => [
             assignment.scheduleId,
             assignment.link.status,
@@ -1261,7 +1266,7 @@ describe("AdminServiceRecordService", () => {
             Object.assign(new Error("[PrismaException] Code: P2022, Field: N/A"), { code: "P2022" }),
         );
 
-        const overview = await service.getClientOverview("branch-1", 100);
+        const overview = await service.getClientOverview(branchId, 100);
 
         expect(overview.assignments).toHaveLength(1);
         expect(overview.assignments[0]?.signatureDoc).toBeNull();
@@ -1277,7 +1282,7 @@ describe("AdminServiceRecordService", () => {
         );
         prisma.employee_schedule.findFirst.mockResolvedValue(null);
 
-        const rejection = service.sendLinkNow("branch-1", 10);
+        const rejection = service.sendLinkNow(branchId, 10);
         await expect(rejection).rejects.toBeInstanceOf(NotFoundException);
         await expect(rejection).rejects.toMatchObject({
             status: 404,
@@ -1295,13 +1300,13 @@ describe("AdminServiceRecordService", () => {
             linkService as unknown as ServiceRecordLinkService,
             createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
-        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10, clientId: 100 });
 
-        const result = await service.prepareLink("branch-1", 10, "01000006621");
+        const result = await service.prepareLink(branchId, 10, "01000006621");
 
         expect(prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
-            where: { id: 10, branchId: "branch-1" },
-            select: { id: true },
+            where: { id: 10, branchId, client: { branchId, deletedAt: null } },
+            select: { id: true, clientId: true },
         });
         expect(linkService.prepareLink).toHaveBeenCalledWith(10, "01000006621");
         expect(result.preparedLinkToken).toBe("efl_prepared");
@@ -1316,10 +1321,10 @@ describe("AdminServiceRecordService", () => {
             linkService as unknown as ServiceRecordLinkService,
             triggerService as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
-        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10, clientId: 100 });
 
         await expect(
-            service.sendLinkNow("branch-1", 10, "efl_prepared", "01000006621"),
+            service.sendLinkNow(branchId, 10, "efl_prepared", "01000006621"),
         ).resolves.toEqual({
             ok: true,
             jobId: "job-manual",
@@ -1329,7 +1334,7 @@ describe("AdminServiceRecordService", () => {
 
         expect(linkService.sendNow).toHaveBeenCalledWith(10, "efl_prepared", "01000006621");
         expect(triggerService.dispatchPendingJobNow).toHaveBeenCalledWith("job-manual", {
-            expectedBranchId: "branch-1",
+            expectedBranchId: branchId,
         });
     });
 
@@ -1342,9 +1347,9 @@ describe("AdminServiceRecordService", () => {
             linkService as unknown as ServiceRecordLinkService,
             triggerService as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
-        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10, clientId: 100 });
 
-        await expect(service.resetLink("branch-1", 10)).resolves.toEqual({
+        await expect(service.resetLink(branchId, 10)).resolves.toEqual({
             serviceRecordUrl: "https://mobile.test/service-record/efl_reset",
             expiresAt: new Date("2026-07-13T01:00:00.000Z"),
         });
@@ -1364,9 +1369,9 @@ describe("AdminServiceRecordService", () => {
             createTriggerService() as unknown as MessageTriggerService,
             createHolidayCalendarStub(), securityEventService as never,
         );
-        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
+        prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10, clientId: 100 });
 
-        const rejection = service.resetLink("branch-1", 10);
+        const rejection = service.resetLink(branchId, 10);
         await expect(rejection).rejects.toBeInstanceOf(ForbiddenException);
         await expect(rejection).rejects.toMatchObject({
             status: 403,
@@ -1378,7 +1383,7 @@ describe("AdminServiceRecordService", () => {
         });
         expect(linkService.resetLink).not.toHaveBeenCalled();
 
-        await expect(service.resetLink("branch-1", 10, {
+        await expect(service.resetLink(branchId, 10, {
             userId: "admin-1",
             globalRole: "admin",
             branchRole: "admin",
@@ -1389,7 +1394,7 @@ describe("AdminServiceRecordService", () => {
         expect(securityEventService.emit).toHaveBeenCalledWith({
             outcome: "link_reissued",
             actorUserId: "admin-1",
-            branchId: "branch-1",
+            branchId,
             scheduleId: 10,
         });
     });
@@ -1424,24 +1429,26 @@ describe("AdminServiceRecordService", () => {
         it("returns a registered not-found body when the revision case is missing", async () => {
             const prisma = createPrisma();
             prisma.client.findFirst.mockResolvedValue({ id: 100 });
+            prisma.service_record_case.findFirst.mockResolvedValue(persistedCase);
             const editRepository = { listRevisionHistory: jest.fn().mockResolvedValue(null) };
             const service = buildService(prisma, editRepository);
 
             await expectProblemBody(
-                service.getRevisionHistory("branch-1", 100),
+                service.getRevisionHistory(branchId, 100),
                 404,
                 "RESOURCE_NOT_FOUND",
             );
-            expect(editRepository.listRevisionHistory).toHaveBeenCalledWith("branch-1", 100);
+            expect(editRepository.listRevisionHistory).toHaveBeenCalledWith(branchId, 100, caseId);
         });
 
         it("returns a registered conflict body when the edit repository is not bound", async () => {
             const prisma = createPrisma();
             prisma.client.findFirst.mockResolvedValue({ id: 100 });
+            prisma.service_record_case.findFirst.mockResolvedValue(persistedCase);
             const service = buildService(prisma);
 
             await expectProblemBody(
-                service.getRevisionHistory("branch-1", 100),
+                service.getRevisionHistory(branchId, 100),
                 409,
                 "REQUEST_CONFLICT",
             );
@@ -1458,7 +1465,7 @@ describe("AdminServiceRecordService", () => {
             const service = buildService(prisma, editRepository);
 
             await expectProblemBody(
-                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "expected-generation", "admin-1"),
+                service.retryRevisionDocument(branchId, "revision-1", "state-1", "expected-generation", "admin-1"),
                 409,
                 "SERVICE_RECORD_WRITE_TARGET_CHANGED",
             );
@@ -1474,7 +1481,7 @@ describe("AdminServiceRecordService", () => {
             const service = buildService(prisma, editRepository);
 
             await expectProblemBody(
-                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "", "admin-1"),
+                service.retryRevisionDocument(branchId, "revision-1", "state-1", "", "admin-1"),
                 409,
                 "REQUEST_CONFLICT",
             );
@@ -1492,7 +1499,7 @@ describe("AdminServiceRecordService", () => {
             const service = buildService(prisma, editRepository);
 
             await expectProblemBody(
-                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "current-generation", "admin-1"),
+                service.retryRevisionDocument(branchId, "revision-1", "state-1", "current-generation", "admin-1"),
                 409,
                 "REQUEST_CONFLICT",
             );
@@ -1507,7 +1514,7 @@ describe("AdminServiceRecordService", () => {
             const service = buildService(prisma, editRepository);
 
             await expectProblemBody(
-                service.retryRevisionDocument("branch-1", "revision-1", "state-1", "expected-generation", "admin-1"),
+                service.retryRevisionDocument(branchId, "revision-1", "state-1", "expected-generation", "admin-1"),
                 404,
                 "RESOURCE_NOT_FOUND",
             );
@@ -1525,7 +1532,7 @@ describe("AdminServiceRecordService", () => {
             const service = buildService(prisma, editRepository);
 
             await expect(service.retryRevisionDocument(
-                "branch-1",
+                branchId,
                 "revision-1",
                 "state-1",
                 "current-generation",

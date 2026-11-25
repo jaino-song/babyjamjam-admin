@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     try {
         const response = await serverAPIClient.get(
-            `/admin/service-records/client/${encodeURIComponent(clientId)}`,
+            `/admin/service-records/client/${encodeURIComponent(clientId)}${new URL(request.url).search}`,
             { headers: getAuthHeaders(token) },
         );
         return NextResponse.json(response.data ?? {}, { status: response.status });

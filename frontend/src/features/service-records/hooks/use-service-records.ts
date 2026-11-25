@@ -17,15 +17,15 @@ import { serviceRecordKeys } from "./keys";
 
 export function useClientServiceRecords(
     clientId: number | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string },
 ) {
     return useQuery<ServiceRecordOverview>({
-        queryKey: serviceRecordKeys.clientOverview(clientId),
+        queryKey: serviceRecordKeys.clientOverview(clientId, options?.caseId),
         queryFn: () => {
             if (clientId === null) {
                 throw new Error("clientId is required");
             }
-            return serviceRecordsApi.getClientOverview(clientId).then((response) => response.data);
+            return serviceRecordsApi.getClientOverview(clientId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
         },
         enabled: clientId !== null && (options?.enabled ?? true),
     });
@@ -33,15 +33,15 @@ export function useClientServiceRecords(
 
 export function useClientServiceRecordRevisionHistory(
     clientId: number | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string },
 ) {
     return useQuery<ServiceRecordRevisionHistoryResponse>({
-        queryKey: serviceRecordKeys.revisionHistory(clientId),
+        queryKey: serviceRecordKeys.revisionHistory(clientId, options?.caseId),
         queryFn: () => {
             if (clientId === null) {
                 throw new Error("clientId is required");
             }
-            return serviceRecordsApi.getClientRevisionHistory(clientId).then((response) => response.data);
+            return serviceRecordsApi.getClientRevisionHistory(clientId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
         },
         enabled: clientId !== null && (options?.enabled ?? true),
         staleTime: 0,
@@ -54,15 +54,15 @@ export function useClientServiceRecordRevisionHistory(
 export function useClientServiceRecordRevisionChanges(
     clientId: number | null,
     revisionId: string | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string },
 ) {
     return useQuery<ServiceRecordRevisionChangesResponse>({
-        queryKey: serviceRecordKeys.revisionChanges(clientId, revisionId),
+        queryKey: serviceRecordKeys.revisionChanges(clientId, revisionId, options?.caseId),
         queryFn: () => {
             if (clientId === null || revisionId === null) {
                 throw new Error("clientId and revisionId are required");
             }
-            return serviceRecordsApi.getClientRevisionChanges(clientId, revisionId).then((response) => response.data);
+            return serviceRecordsApi.getClientRevisionChanges(clientId, revisionId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
         },
         enabled: clientId !== null && revisionId !== null && (options?.enabled ?? true),
     });
@@ -72,15 +72,15 @@ export function useClientServiceRecordRevisionChanges(
 export function useClientServiceRecordCaregiverEditChanges(
     clientId: number | null,
     editId: string | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string },
 ) {
     return useQuery<ServiceRecordCaregiverEditChangesResponse>({
-        queryKey: serviceRecordKeys.caregiverEditChanges(clientId, editId),
+        queryKey: serviceRecordKeys.caregiverEditChanges(clientId, editId, options?.caseId),
         queryFn: () => {
             if (clientId === null || editId === null) {
                 throw new Error("clientId and editId are required");
             }
-            return serviceRecordsApi.getClientCaregiverEditChanges(clientId, editId).then((response) => response.data);
+            return serviceRecordsApi.getClientCaregiverEditChanges(clientId, editId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
         },
         enabled: clientId !== null && editId !== null && (options?.enabled ?? true),
     });
@@ -103,8 +103,8 @@ export function useSendServiceRecordLink() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ scheduleId, preparedLinkToken }: { scheduleId: number; clientId?: number; preparedLinkToken?: string }) =>
-            serviceRecordsApi.sendLink(scheduleId, preparedLinkToken ? { preparedLinkToken } : {})
+        mutationFn: ({ scheduleId, preparedLinkToken, caseId }: { scheduleId: number; clientId?: number; preparedLinkToken?: string; caseId?: string }) =>
+            serviceRecordsApi.sendLink(scheduleId, { ...(preparedLinkToken ? { preparedLinkToken } : {}), ...(caseId ? { caseId } : {}) })
                 .then((response) => response.data),
         onSuccess: async (_, variables) => {
             if (variables.clientId !== undefined) {
@@ -122,8 +122,8 @@ export function useSendServiceRecordLink() {
 export function useKeepPeriodMismatch() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ clientId, sessionIndexes }: { clientId: number; sessionIndexes: number[] }) =>
-            serviceRecordsApi.keepPeriodMismatch(clientId, sessionIndexes).then((response) => response.data),
+        mutationFn: ({ clientId, sessionIndexes, caseId }: { clientId: number; sessionIndexes: number[]; caseId?: string }) =>
+            serviceRecordsApi.keepPeriodMismatch(clientId, sessionIndexes, ...(caseId ? [caseId] : [])).then((response) => response.data),
         onSuccess: async (_, { clientId }) => {
             await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
         },
@@ -133,8 +133,8 @@ export function useKeepPeriodMismatch() {
 export function useFitPeriodMismatch() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ clientId }: { clientId: number }) =>
-            serviceRecordsApi.fitPeriodMismatch(clientId).then((response) => response.data),
+        mutationFn: ({ clientId, caseId }: { clientId: number; caseId?: string }) =>
+            serviceRecordsApi.fitPeriodMismatch(clientId, ...(caseId ? [caseId] : [])).then((response) => response.data),
         onSuccess: async (_, { clientId }) => {
             await Promise.all([
                 queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) }),

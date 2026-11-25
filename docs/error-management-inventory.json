@@ -2053,6 +2053,14 @@
       "discovery_task_id": "1.1.01"
     },
     {
+      "path": "backend/application/services/admin-service-record-target.ts",
+      "root": "backend/application/",
+      "kind": "runtime",
+      "candidate_count": 1,
+      "review_status": "reviewed",
+      "discovery_task_id": "baby-records-3-3-case-admin"
+    },
+    {
       "path": "backend/application/services/admin-service-record.service.ts",
       "root": "backend/application/",
       "kind": "runtime",
@@ -27963,6 +27971,27 @@
       "review_task": "1.1-batch-b",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Non-catalog codes and plain strings; codes must split by business meaning, transport-free"
+    },
+    {
+      "id": "owner-fc9d7d1f172c",
+      "path": "backend/application/services/admin-service-record-target.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Selected-case misses use NotFoundException with the registered RESOURCE_NOT_FOUND problem body. Ambiguity and retired-case writes use the registered problem exception helper.",
+      "seams": [
+        {
+          "line": 19,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        }
+      ],
+      "related_tests": [
+        "backend/test/e2e/baby-case-admin.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "baby-records-3-3-case-admin",
+      "spec_mapping_status": "mapped-em-v1"
     },
     {
       "id": "owner-2697491355fe",

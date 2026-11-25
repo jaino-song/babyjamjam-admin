@@ -30,6 +30,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         return errorResponse(error, "prepare service record link");
     }
     const recipientPhone = requestBody.recipientPhone;
+    const caseId = requestBody.caseId;
     if (
         recipientPhone !== undefined
         && (typeof recipientPhone !== "string" || !RECIPIENT_PHONE_PATTERN.test(recipientPhone))
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${encodeURIComponent(scheduleId)}/prepare-link`,
-            recipientPhone ? { recipientPhone } : {},
+            { ...(recipientPhone ? { recipientPhone } : {}), ...(caseId === undefined ? {} : { caseId }) },
             { headers: { Authorization: `Bearer ${token}` } },
         );
         return NextResponse.json(response.data ?? {}, {
