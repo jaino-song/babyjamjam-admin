@@ -58,6 +58,18 @@ export interface ClientBabyRow extends BabyRecordAssignment {
     needsReplacement: boolean;
 }
 
+function orderClientBabies(babies: readonly ExistingBaby[]): ExistingBaby[] {
+    return [...babies].sort((left, right) => left.ordinal - right.ordinal);
+}
+
+export function getSavedClientBabyRows(client: Client): Pick<ClientBabyRow, "field" | "providerSlot">[] {
+    const slots = new Map(client.babyAssignments?.map(({ babyId, providerSlot }) => [babyId, providerSlot]));
+    return orderClientBabies(client.babies ?? []).map((baby) => ({
+        field: babyField(baby),
+        providerSlot: slots.get(baby.babyId) ?? null,
+    }));
+}
+
 export function getClientBabyRows(
     allocation: BabyRecordAllocation,
     owners: ClientBabyDraft["owners"],
@@ -104,13 +116,14 @@ export function resolveClientBabyDraft({
         : minimumCount !== undefined && /^\d+$/.test(draft.count) ? Number(draft.count) : undefined;
     const exceedsRequestLimit = babyCount !== undefined && babyCount > MAX_CLIENT_BABY_COUNT;
     const retained = babyCount === undefined || exceedsRequestLimit ? babies.length : Math.min(babies.length, babyCount);
+    const orderedBabies = orderClientBabies(babies);
     const providers = listClientProviders(ids, rules?.providerCapacity ?? 0);
     const allocation = resolveBabyRecordAllocation({
         ...voucher,
         fetalType: option?.fetalType,
         babyCount: exceedsRequestLimit ? undefined : babyCount,
         providers,
-        babies: [...babies].sort((left, right) => left.ordinal - right.ordinal).slice(0, retained),
+        babies: orderedBabies.slice(0, retained),
         historicalMaxOrdinal,
     });
     const rows = getClientBabyRows(allocation, draft.owners);
@@ -123,7 +136,13 @@ export function resolveClientBabyDraft({
             babyAssignments: rows.map(({ babyId, ordinal, providerSlot }) =>
                 babyId === null ? { ordinal, providerSlot } : { babyId, providerSlot }),
         } : undefined;
-    return { rules, option, minimumCount, exceedsRequestLimit, allocation, providers, rows, payload, retiringCount: babies.length - retained };
+    const retiringBabies = orderedBabies.slice(retained).map((baby, index) => ({ ...baby, rank: retained + index + 1 }));
+    return { rules, option, minimumCount, exceedsRequestLimit, allocation, providers, rows, payload, retiringBabies };
+}
+
+export function clientRecordRankLabel(rank: number, locale: Locale): string {
+    return rank <= 6 ? t(locale, `clients.form.baby-record.record-${rank}`)
+        : t(locale, "clients.form.baby-record.record-n").replace("{rank}", String(rank));
 }
 
 export function clientProviderLabel(slot: ProviderSlot, locale: Locale): string {

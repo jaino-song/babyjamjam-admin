@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { render } from "./render-client-form";
 import { api } from "@/lib/api/client";
 import { ClientFormPanel } from "../ClientFormDialog";
 
