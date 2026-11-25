@@ -5,12 +5,15 @@ import {
     ForbiddenException,
     Inject,
     Injectable,
+    InternalServerErrorException,
     Logger,
     NotFoundException,
     Optional,
 } from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { AdminAuditEventWriter } from "./admin-audit-event.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { codeOnlyProblemBody, codeOnlyProblemException } from "application/utils/problem-bodies";
 import { isInitialFinalizationWorkflowScopeForRevision } from "application/policies/service-record-initial-finalization.policy";
 import {
@@ -144,7 +147,35 @@ export class AdminServiceRecordService {
         @Optional() private readonly periodMismatchService?: ServiceRecordPeriodMismatchService,
         @Optional() private readonly finalizationService?: ServiceRecordFinalizationService,
         @Optional() private readonly linkGroups?: ServiceRecordLinkGroupService,
+        @Optional() private readonly lifecycle?: ServiceRecordLifecycleService,
+        @Optional() private readonly adminAudit?: AdminAuditEventWriter,
     ) {}
+
+    async adoptLegacyCase(
+        scope: { branchId: string; clientId: number; caseId: string; babyId: string },
+        actor: ServiceRecordAdminActor,
+    ): Promise<{ caseId: string; babyId: string }> {
+        if (!scope.branchId || !actor.userId) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        const { lifecycle, adminAudit } = this;
+        if (!lifecycle || !adminAudit) throw new InternalServerErrorException();
+
+        const calendar = await this.holidayCalendar.forBranch(scope.branchId, { fresh: true });
+        return this.prisma.$transaction(async (tx) => {
+            const result = await lifecycle.linkLegacyCaseToBaby(scope, tx, calendar);
+            await adminAudit.appendInTransaction(tx, {
+                action: "service_record.legacy_case_adopt",
+                targetType: "service_record_case",
+                targetId: result.caseId,
+                branchId: scope.branchId,
+                actor,
+                after: { clientId: scope.clientId, babyId: result.babyId },
+                outcome: "success",
+            });
+            return result;
+        });
+    }
 
     async keepPeriodMismatch(branchId: string, clientId: number, sessionIndexes: number[], caseId?: string): Promise<{ keptSessionIndexes: number[] }> {
         if (!branchId) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));

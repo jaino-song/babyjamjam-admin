@@ -382,7 +382,6 @@ describe("ServiceRecordEditRepository", () => {
                 primaryEmployeeId: 9,
                 secondaryEmployeeId: null,
                 primaryEmployee: { name: "제공자" },
-                serviceRecordAssignment: null,
             }]),
         };
         const tx = { client, service_record_case, employee_schedule, client_baby: { findMany: jest.fn().mockResolvedValue([]) }, service_record_assignment: { findMany: jest.fn().mockResolvedValue([]) } };

@@ -31,6 +31,7 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CurrentTenant, TenantGuard, VerifiedTenantPrincipal } from "infrastructure/tenant";
 import { codeOnlyProblemException, problemBody } from "application/utils/problem-bodies";
 import {
+    AdoptLegacyServiceRecordCaseDto,
     KeepServiceRecordPeriodMismatchDto,
     FitServiceRecordPeriodMismatchDto,
     PrepareAdminServiceRecordLinkDto,
@@ -148,6 +149,22 @@ export class AdminServiceRecordController {
         @Query(new AdminServiceRecordCaseQueryPipe()) query?: { caseId?: string },
     ) {
         return this.adminServiceRecordService.getClientOverview(tenant.branchId ?? "", clientId, ...caseArgument(query));
+    }
+
+    @Post("client/:clientId/cases/:caseId/adopt")
+    @HttpCode(HttpStatus.OK)
+    @UseGuards(BranchManagerGuard)
+    adoptLegacyCase(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("clientId", ParseIntPipe) clientId: number,
+        @Param("caseId", ParseUUIDPipe) caseId: string,
+        @Body() body: AdoptLegacyServiceRecordCaseDto,
+        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+    ) {
+        return this.adminServiceRecordService.adoptLegacyCase(
+            { branchId: tenant.branchId, clientId, caseId, babyId: body.babyId },
+            { userId: tenant.userId, globalRole: tenant.globalRole, branchRole: tenant.branchRole },
+        );
     }
 
     @Post("client/:clientId/period-mismatch/keep")

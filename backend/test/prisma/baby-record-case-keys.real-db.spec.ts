@@ -8,6 +8,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { resolveServiceRecordCaseTarget } from "application/services/service-record-case-target";
 
 import { assertThrowawayTarget, describeReal } from "../integrity/helpers/real-db";
+import { assertBabyRecordKeyTestTarget } from "./helpers/baby-record-key-target";
 
 const STAGE = readFileSync(resolve(__dirname, "../../prisma/scripts/stage-baby-case-keys.sql"), "utf8");
 const HISTORY = process.env["DATABASE_URL"]?.endsWith("_history") === true;
@@ -26,7 +27,7 @@ const REPLACEMENT_KEYS = {
     uq_record_day_sched_case_session: "service_record_day USING btree (schedule_id, service_record_case_id, session_index)",
     uq_record_hdr_sched_unbound: "service_record USING btree (schedule_id) WHERE (service_record_case_id IS NULL)",
     uq_record_day_sched_session_unbound: "service_record_day USING btree (schedule_id, session_index) "
-        + "WHERE ((schedule_id IS NOT NULL) AND (service_record_case_id IS NULL))",
+        + "WHERE ((service_record_case_id IS NULL) AND (schedule_id IS NOT NULL))",
     uq_record_case_unbound_client: "service_record_case USING btree (client_id) "
         + "WHERE ((baby_id IS NULL) AND (client_id IS NOT NULL))",
     idx_record_case_client: "service_record_case USING btree (client_id)",
@@ -37,7 +38,20 @@ const RETAINED_KEYS = [
     "uq_client_baby_ordinal", "uniq_service_record_day_case_session",
 ];
 const PREEXISTING_INDEX = "uq_record_day_sched_session_unbound";
-const CREATE_PREEXISTING_INDEX = `CREATE UNIQUE INDEX ${PREEXISTING_INDEX} ON public.${REPLACEMENT_KEYS[PREEXISTING_INDEX]}`;
+const LEGACY_INDEX_DEFINITIONS = Object.entries(LEGACY_KEYS).map(([name, definition]) =>
+    `CREATE UNIQUE INDEX ${name} ON public.${definition}`);
+const REPLACEMENT_INDEX_DEFINITIONS = Object.entries(REPLACEMENT_KEYS).map(([name, definition]) =>
+    `CREATE ${name === "idx_record_case_client" ? "" : "UNIQUE "}INDEX ${name} ON public.${definition}`);
+const LEGACY_PREEXISTING_DEFINITION = `CREATE UNIQUE INDEX ${PREEXISTING_INDEX} ON public.service_record_day `
+    + "USING btree (schedule_id, session_index) WHERE ((schedule_id IS NOT NULL) AND (service_record_case_id IS NULL))";
+
+function dropIndexes(names: string[]): string {
+    return `DROP INDEX IF EXISTS ${names.map((name) => `public.${name}`).join(", ")}`;
+}
+
+function withoutOids(indexes: IndexRow[]) {
+    return indexes.map(({ name, definition, usable }) => ({ name, definition, usable }));
+}
 
 function psql(sql: string, url: string) {
     return spawnSync("psql", ["-w", "-XqAt", "-v", "ON_ERROR_STOP=1", "-d", url], {
@@ -144,18 +158,40 @@ async function rejectDuplicate(tx: Tx, sql: Prisma.Sql, columns: string) {
 describeReal("baby-record case keys (real PostgreSQL)", () => {
     let db: PrismaClient;
     let url: string;
+    let original: IndexRow[];
+    let migrated: boolean;
 
     beforeAll(async () => {
+        assertBabyRecordKeyTestTarget(process.env);
         assertThrowawayTarget();
         url = process.env["DATABASE_URL"] ?? "";
-        if (!/^postgresql:\/\/[A-Za-z0-9_.-]+@127\.0\.0\.1:62295\/throwaway_baby_keys_(?:worker|verify)(?:_[A-Za-z0-9]+)*$/.test(url)) {
-            throw new Error("Refusing case-key staging outside a dedicated local verifier database");
-        }
         db = new PrismaClient({ datasourceUrl: url });
         await db.$connect();
+        original = await readIndexes(db);
+        migrated = original.some(({ name }) => name === "idx_record_case_client");
+        expectBaseline(original);
     });
 
     afterAll(async () => db?.$disconnect());
+
+    function expectBaseline(indexes: IndexRow[]) {
+        const expected = migrated ? REPLACEMENT_INDEX_DEFINITIONS : LEGACY_INDEX_DEFINITIONS;
+        for (const definition of expected) {
+            expect(indexes).toContainEqual(expect.objectContaining({ definition, usable: true }));
+        }
+        if (migrated) {
+            for (const name of Object.keys(LEGACY_KEYS)) {
+                expect(indexes.map((index) => index.name)).not.toContain(name);
+            }
+        }
+    }
+
+    function runIndexTransaction(statements: string[]) {
+        expectSqlSuccess(psql(`BEGIN;
+            SET LOCAL client_min_messages = warning;
+            ${statements.join(";\n")};
+            COMMIT;`, url));
+    }
 
     async function withFixtures(test: (tx: Tx) => Promise<void>) {
         await expect(db.$transaction(async (tx) => {
@@ -178,25 +214,50 @@ describeReal("baby-record case keys (real PostgreSQL)", () => {
         }
     }
 
-    it("rejects a duplicate global key before staging", async () => {
+    async function withLegacyIndexLayout(test: () => Promise<void>) {
+        if (!migrated) {
+            await test();
+            return;
+        }
+
+        // Only the guarded disposable database may enter this layout. Creating
+        // the old unique indexes fails atomically if any sibling rows exist.
+        runIndexTransaction([dropIndexes(Object.keys(REPLACEMENT_KEYS)), ...LEGACY_INDEX_DEFINITIONS]);
+        try {
+            await test();
+        } finally {
+            const retained = "uniq_service_record_day_case_session";
+            const header = "service_record_schedule_id_key";
+            runIndexTransaction([
+                `ALTER TABLE public.service_record DROP CONSTRAINT IF EXISTS ${header}`,
+                dropIndexes([...Object.keys(LEGACY_KEYS), ...Object.keys(REPLACEMENT_KEYS),
+                    "qa_duplicate_global_case_key", retained]),
+                ...original.filter(({ name }) => name === retained || name in REPLACEMENT_KEYS)
+                    .map(({ definition }) => definition),
+            ]);
+            expect(withoutOids(await readIndexes(db))).toEqual(withoutOids(original));
+        }
+    }
+
+    it("rejects a duplicate global key before staging", () => withLegacyIndexLayout(async () => {
         const name = "qa_duplicate_global_case_key";
         await expectStageRefusal(
             `CREATE UNIQUE INDEX ${name} ON public.${LEGACY_KEYS.service_record_case_client_id_key}`,
             `DROP INDEX public.${name}`,
             "Unexpected duplicate global key for public.service_record_case_client_id_key",
         );
-    });
+    }));
 
-    it("rejects a missing retained index before staging", async () => {
+    it("rejects a missing retained index before staging", () => withLegacyIndexLayout(async () => {
         const name = "uniq_service_record_day_case_session";
         await expectStageRefusal(
             `DROP INDEX public.${name}`,
             `CREATE UNIQUE INDEX ${name} ON public.service_record_day (service_record_case_id, case_session_index)`,
             `Missing retained index public.${name}`,
         );
-    });
+    }));
 
-    it("rejects a constraint-backed legacy index before staging", async () => {
+    it("rejects a constraint-backed legacy index before staging", () => withLegacyIndexLayout(async () => {
         const name = "service_record_schedule_id_key";
         await expectStageRefusal(
             `ALTER TABLE public.service_record ADD CONSTRAINT ${name} UNIQUE USING INDEX ${name}`,
@@ -204,18 +265,18 @@ describeReal("baby-record case keys (real PostgreSQL)", () => {
              CREATE UNIQUE INDEX ${name} ON public.${LEGACY_KEYS[name]}`,
             `Constraint depends on legacy index public.${name}`,
         );
-    });
+    }));
 
-    it.each([1, 2, 3])("rejects initial staging with only %i legacy keys", async (legacyCount) => {
+    it.each([1, 2, 3])("rejects initial staging with only %i legacy keys", (legacyCount) => withLegacyIndexLayout(async () => {
         const missingKeys = Object.entries(LEGACY_KEYS).slice(legacyCount);
         await expectStageRefusal(
             `DROP INDEX ${missingKeys.map(([name]) => `public.${name}`).join(", ")}`,
             missingKeys.map(([name, definition]) => `CREATE UNIQUE INDEX ${name} ON public.${definition}`).join(";\n"),
             "Incomplete case-key stage: expected four legacy indexes or all replacements",
         );
-    });
+    }));
 
-    it("rejects a same-name ineffective index or wrong predicate without changing existing keys", async () => {
+    it("rejects a same-name ineffective index or wrong predicate without changing existing keys", () => withLegacyIndexLayout(async () => {
         const original = await readIndexes(db);
         const malformed = [
             ["uq_record_hdr_sched_case",
@@ -238,9 +299,9 @@ describeReal("baby-record case keys (real PostgreSQL)", () => {
             }
         }
         expect(await readIndexes(db)).toEqual(original);
-    });
+    }));
 
-    it("rejects a matching replacement left invalid by an interrupted concurrent build", async () => {
+    it("rejects a matching replacement left invalid by an interrupted concurrent build", () => withLegacyIndexLayout(async () => {
         const name = "uq_record_hdr_sched_case";
         const original = await readIndexes(db);
         try {
@@ -264,7 +325,7 @@ describeReal("baby-record case keys (real PostgreSQL)", () => {
             expectSqlSuccess(psql(`SET client_min_messages = warning; DROP INDEX IF EXISTS public.${name};`, url));
         }
         expect(await readIndexes(db)).toEqual(original);
-    });
+    }));
 
     describe("staged keys", () => {
         let baseline: IndexRow[];
@@ -275,7 +336,7 @@ describeReal("baby-record case keys (real PostgreSQL)", () => {
         beforeAll(async () => {
             baseline = await readIndexes(db);
             if (HISTORY) historyBefore = historyFingerprint(url);
-            expectSqlSuccess(psql(CREATE_PREEXISTING_INDEX, url));
+            if (!migrated) expectSqlSuccess(psql(LEGACY_PREEXISTING_DEFINITION, url));
             const existing = (await readIndexes(db)).find(({ name }) => name === PREEXISTING_INDEX);
             expect(existing).toBeDefined();
             expectSqlSuccess(psql(STAGE, url));
@@ -294,21 +355,19 @@ describeReal("baby-record case keys (real PostgreSQL)", () => {
             });
         } else {
             it("fresh canonical case key baseline", () => {
-                for (const [name, definition] of Object.entries(LEGACY_KEYS)) {
-                    expect(baseline).toContainEqual(expect.objectContaining({
-                        name, usable: true, definition: `CREATE UNIQUE INDEX ${name} ON public.${definition}`,
-                    }));
-                }
+                expectBaseline(baseline);
             });
         }
 
         it("installs the scoped index shapes and keeps the compound ownership and case keys", async () => {
-            const replaced = new Set(Object.keys(LEGACY_KEYS));
+            const replaced = new Set([...Object.keys(LEGACY_KEYS), ...Object.keys(REPLACEMENT_KEYS)]);
             const retained = baseline.filter(({ name }) => !replaced.has(name));
             expect(retained.map(({ name }) => name)).toEqual(expect.arrayContaining(RETAINED_KEYS));
             const added = Object.entries(REPLACEMENT_KEYS).map(([name, definition]) => expect.objectContaining({
                 name, usable: true,
-                definition: `CREATE ${name === "idx_record_case_client" ? "" : "UNIQUE "}INDEX ${name} ON public.${definition}`,
+                definition: !migrated && name === PREEXISTING_INDEX
+                    ? LEGACY_PREEXISTING_DEFINITION
+                    : `CREATE ${name === "idx_record_case_client" ? "" : "UNIQUE "}INDEX ${name} ON public.${definition}`,
             }));
             expect(staged).toHaveLength(retained.length + added.length);
             expect(staged).toEqual(expect.arrayContaining([...retained, ...added]));

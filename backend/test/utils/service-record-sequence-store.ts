@@ -18,7 +18,7 @@
  *    that does not exist);
  *  - nested shapes are checked too, against each column's kind from prisma/schema.prisma: a `where` field
  *    takes a literal, null or supported operators over literals (`not` recursively, `in` / `notIn` over
- *    literal lists), a Json column takes no filter, and a scalar `data` value is a literal, null or
+ *    literal lists), singular relations accept nested predicates, a Json column takes no filter, and a scalar `data` value is a literal, null or
  *    `{ increment: <int> }` on an int column; any other object is what Prisma's generated types reject;
  *  - single-row operations (`findUnique`, `update`, `upsert`) require a `where` that names a modelled
  *    single-column unique key with a scalar literal value (`{ equals }` is refused, as Prisma refuses it),
@@ -28,7 +28,7 @@
  *  - scalar `where` predicates use the shared prisma-where-evaluator (SQL NULL semantics included);
  *    to-one predicates follow the modelled relation keys. List reads use direct predicates at
  *    the top level and support `is` inside boolean groups for finalization eligibility;
- *  - `take` is supported only for the two-case lookup used to detect ambiguous targets;
+ *  - `findMany` accepts a positive integer `take`;
  *  - `$transaction` snapshots every table first and restores the snapshot when the callback
  *    throws, so an injected failure leaves the store exactly as it was before the transaction.
  *
@@ -63,7 +63,6 @@ const now = (): Date => new Date();
 const uuid = (): string => randomUUID();
 const nul = (): null => null;
 const no = (): boolean => false;
-const CASE_TARGET_LIMIT = 2;
 
 /** Column defaults per table; a column missing here is "unknown" and every use of it throws. */
 const COLUMNS: Record<string, Record<string, () => unknown>> = {
@@ -136,15 +135,22 @@ const UNIQUES: Record<string, string[][]> = {
     employee: [["id"]],
     branch: [["id"]],
     employee_schedule: [["id"]],
-    service_record_case: [["id"], ["clientId"], ["babyId"]],
-    service_record_assignment: [["id"], ["scheduleId"]],
-    service_record_day: [["id"], ["scheduleId", "sessionIndex"], ["serviceRecordCaseId", "caseSessionIndex"]],
+    service_record_case: [["id"], ["babyId"], ["branchId", "clientId", "babyId"]],
+    service_record_assignment: [["id"], ["scheduleId", "serviceRecordCaseId"]],
+    service_record_day: [["id"], ["scheduleId", "serviceRecordCaseId", "sessionIndex"], ["serviceRecordCaseId", "caseSessionIndex"]],
     service_record_token: [["id"]],
     service_record_edit_draft: [["id"]],
     service_record_revision: [["id"], ["serviceRecordCaseId", "revisionNumber"]],
-    service_record: [["id"], ["scheduleId"]],
+    service_record: [["id"], ["scheduleId", "serviceRecordCaseId"]],
     eformsign_doc: [["id"]],
     eformsign_document_job: [["id"], ["requestKey"]],
+};
+
+// Partial unique indexes protect legacy rows without exposing Prisma unique selectors.
+const UNBOUND_UNIQUES: Partial<Record<string, { columns: string[]; unboundField: string }>> = {
+    service_record_case: { columns: ["clientId"], unboundField: "babyId" },
+    service_record: { columns: ["scheduleId"], unboundField: "serviceRecordCaseId" },
+    service_record_day: { columns: ["scheduleId", "sessionIndex"], unboundField: "serviceRecordCaseId" },
 };
 
 /**
@@ -242,7 +248,7 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
         client: { target: "client", many: false, local: "clientId", foreign: "id" },
         primaryEmployee: { target: "employee", many: false, local: "primaryEmployeeId", foreign: "id" },
         secondaryEmployee: { target: "employee", many: false, local: "secondaryEmployeeId", foreign: "id" },
-        serviceRecordAssignment: { target: "service_record_assignment", many: false, local: "id", foreign: "scheduleId" },
+        serviceRecordAssignments: { target: "service_record_assignment", many: true, local: "id", foreign: "scheduleId" },
     },
     service_record_case: {
         branch: { target: "branch", many: false, local: "branchId", foreign: "id" },
@@ -259,10 +265,13 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
             target: "service_record_case", many: false, local: "serviceRecordCaseId", foreign: "id", scope: ["branchId"],
         },
     },
+    service_record_revision: {
+        serviceRecordCase: { target: "service_record_case", many: false, local: "serviceRecordCaseId", foreign: "id" },
+    },
 };
 
 const ALLOWED_ARGS: Record<Method, ReadonlySet<string>> = {
-    findMany: new Set(["where", "select", "include", "orderBy"]),
+    findMany: new Set(["where", "select", "include", "orderBy", "take"]),
     findFirst: new Set(["where", "select", "include", "orderBy"]),
     findUnique: new Set(["where", "select", "include"]),
     create: new Set(["data", "select", "include"]),
@@ -462,10 +471,7 @@ export class SequenceStore {
     }
 
     private async call(table: string, method: Method, args: Row): Promise<unknown> {
-        const isCaseTargetLookup = table === "service_record_case" && method === "findMany"
-            && args["take"] === CASE_TARGET_LIMIT;
         for (const key of Object.keys(args)) {
-            if (key === "take" && isCaseTargetLookup) continue;
             if (!ALLOWED_ARGS[method].has(key)) fail(`${table}.${method}: unsupported argument "${key}"`);
         }
         // The whole request shape is checked before any row is matched or any injected failure is consumed.
@@ -478,9 +484,9 @@ export class SequenceStore {
         }
         switch (method) {
             case "findMany": {
-                const rows = this.matching(table, args);
-                const page = isCaseTargetLookup ? rows.slice(0, CASE_TARGET_LIMIT) : rows;
-                return page.map((row) => this.project(table, row, args));
+                const take = args["take"];
+                return this.matching(table, args).slice(0, typeof take === "number" ? take : undefined)
+                    .map((row) => this.project(table, row, args));
             }
             case "findFirst": {
                 const row = this.matching(table, args)[0];
@@ -514,6 +520,10 @@ export class SequenceStore {
             require("update");
         }
         this.assertWhere(table, args["where"], method !== "findMany");
+        const take = args["take"];
+        if (take !== undefined && (typeof take !== "number" || !Number.isInteger(take) || take <= 0)) {
+            fail(`${label}: take must be a positive integer`);
+        }
         if (args["orderBy"] !== undefined) this.parseOrderBy(table, args["orderBy"]);
         if (method === "create" || method === "update" || method === "updateMany") this.assertData(table, args["data"]);
         if (method === "upsert") {
@@ -673,9 +683,14 @@ export class SequenceStore {
 
     /** Throws when `row` would collide with an existing row on a modelled unique key. */
     private assertUnique(table: string, row: Row): void {
-        for (const columns of UNIQUES[table]!) {
+        const constraints: Array<{ columns: string[]; unboundField?: string }> = UNIQUES[table]!.map((columns) => ({ columns }));
+        const unbound = UNBOUND_UNIQUES[table];
+        if (unbound) constraints.push(unbound);
+        for (const { columns, unboundField } of constraints) {
+            if (unboundField && row[unboundField] !== null) continue;
             if (columns.some((column) => row[column] === null || row[column] === undefined)) continue;
             const clash = this.tables[table]!.some((existing) => existing !== row
+                && (!unboundField || existing[unboundField] === null)
                 && columns.every((column) => compareValues(existing[column], row[column]) === 0));
             if (clash) fail(`${table}: unique constraint (${columns.join(", ")}) violated`);
         }

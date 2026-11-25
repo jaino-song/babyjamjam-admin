@@ -633,13 +633,14 @@ export class ServiceRecordLifecycleService {
     async linkLegacyCaseToBaby(
         params: { branchId: string; clientId: number; caseId: string; babyId: string },
         tx?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
     ): Promise<{ caseId: string; babyId: string }> {
-        if (tx) return this.adoptLegacyCase(tx, params);
+        if (tx) return this.adoptLegacyCase(tx, params, calendar);
         const { branchId, clientId, caseId } = params;
         const target = await resolveServiceRecordCaseTarget(this.prisma, { branchId, clientId, caseId });
         if (target.kind !== "resolved") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
-        return this.prisma.$transaction((transaction) => this.adoptLegacyCase(transaction, params, calendar));
+        const resolvedCalendar = calendar ?? await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        return this.prisma.$transaction((transaction) => this.adoptLegacyCase(transaction, params, resolvedCalendar));
     }
 
     private async adoptLegacyCase(

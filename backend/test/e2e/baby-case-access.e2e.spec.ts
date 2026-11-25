@@ -27,7 +27,7 @@ import { HolidayModule } from "module/holiday.module";
 
 const origin = "postgresql://bjj_revision_test@127.0.0.1:62295/";
 const legacyTarget = origin + "throwaway_baby_access_verify_legacy";
-const allowed = new Set([origin + "throwaway_baby_access_work", origin + "throwaway_baby_access_verify", legacyTarget]);
+const allowed = new Set([origin + "throwaway_baby_access_work", origin + "throwaway_baby_access_verify", origin + "throwaway_baby_schema_verify_consumers", legacyTarget]);
 const enabled = process.env["E2E_VENDOR_STUBS"] === "1";
 const legacyKeys = process.env["DATABASE_URL"] === legacyTarget;
 const describeE2E = enabled ? describe : describe.skip;

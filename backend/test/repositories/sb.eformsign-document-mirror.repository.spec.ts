@@ -542,7 +542,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
                 messageLogs: { none: {} },
                 eformsignDocumentJobs: { none: {} },
                 messageTriggerJobs: { none: {} },
-                serviceRecordCase: { is: null },
+                serviceRecordCases: { none: {} },
             },
         });
         expect(prisma.eformsign_doc_file.deleteMany).toHaveBeenCalledWith({
