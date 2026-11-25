@@ -80,7 +80,6 @@ describe("ClientFormPanel optional service information", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
 
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
-    fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
     expect(screen.queryByLabelText("바우처 유형")).not.toBeInTheDocument();
     const voucherCustomerTab = screen.getByRole("tab", { name: "바우처 고객" });
@@ -107,12 +106,12 @@ describe("ClientFormPanel optional service information", () => {
     expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
     expect(screen.getByLabelText("계약 상태")).toHaveValue("pre_booking");
     expect(screen.getByLabelText("시작일")).toHaveValue("");
     expect(screen.queryByRole("tab", { name: "바우처 고객" })).not.toBeInTheDocument();
-    const automationSwitch = screen.getByRole("switch", { name: "메시지 자동 전송" });
-    expect(automationSwitch).toBeChecked();
-    fireEvent.click(automationSwitch);
+    expect(screen.queryByRole("switch", { name: "메시지 자동 전송" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "생성" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "생성" }));
 
@@ -127,8 +126,8 @@ describe("ClientFormPanel optional service information", () => {
         endDate: null,
         voucherClient: false,
         serviceStatus: "pre_booking",
-        applyMessageAutomation: false,
-        smsAutomationEnabled: false,
+        applyMessageAutomation: true,
+        smsAutomationEnabled: true,
       }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);

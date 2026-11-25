@@ -10,6 +10,7 @@ import {
     normalizeApiError,
     type ProblemError,
     type ProblemOutcome,
+    type ProviderSlot,
     type StartDateChangeMode,
 } from "@babyjamjam/shared";
 import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
@@ -29,9 +30,16 @@ import {
     useVoucherPriceInfos,
     useVoucherYears,
 } from "@/hooks/useVoucherData";
-import type { ClientFormData, UpdateClientDto } from "@/features/clients/types";
+import type { ClientAllocationWrite, ClientFormData, UpdateClientDto } from "@/features/clients/types";
 import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
+import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { buildClientUpdatePayload, hasServicePeriodChange, splitEmployeeChangeFromStartDateChange } from "./client-update-payload";
+import {
+    babyField, CLIENT_PROVIDER_FIELDS, CLIENT_PROVIDER_SLOTS, MAX_CLIENT_BABY_COUNT, clientProviderLabel,
+    openClientBabyDraft, resolveClientBabyDraft,
+    type ClientBabyField, type ClientProviderField, type ClientProviderIds,
+} from "./client-baby-allocation";
+import { ClientBabyRecordOwners } from "./ClientBabyRecordOwners";
 import { getStartDateLock } from "./start-date-lock";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -48,7 +56,7 @@ import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
-import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
+import { isoDateInKorea, type KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import {
     resolveElevenDigitPhoneMessage,
@@ -135,14 +143,17 @@ const PRICE_BASELINE_FREEZING_FIELDS: ReadonlySet<keyof CreateClientDto> = new S
 ]);
 export const CLIENT_FORM_STEPPER_STEPS = [
     { label: "이용자\n정보" },
-    { label: "제공인력\n정보" },
     { label: "바우처\n정보" },
+    { label: "제공인력\n정보" },
     { label: "계약\n정보" },
 ] as const;
 
+const VOUCHER_STEP = 1;
+const PROVIDER_STEP = 2;
 const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
 
-type ClientFormField = "name" | "phone" | "primaryEmployeeId" | "secondaryEmployeeId" | "serviceStatus";
+type ClientFormField = "name" | "phone" | "serviceStatus" | "type" | "voucherIssuanceYear"
+    | "fetalType" | "babyCount" | ClientProviderField | ClientBabyField;
 
 /** Text inputs that show their validation message in the label-row slot. */
 type ClientInputField =
@@ -188,6 +199,7 @@ const CLIENT_INPUT_FIELD_CONFIG: Record<ClientInputField, {
 interface ClientFormErrorState {
     message: string;
     fieldErrors: readonly ProblemError[];
+    allocation?: ClientAllocationWrite;
     requestId?: string;
     outcome?: ProblemOutcome;
 }
@@ -239,15 +251,27 @@ const isUnstructuredLegacyClientError = (
     return !isRecord(payload) || (!("type" in payload) && !("requestId" in payload));
 };
 
-const CLIENT_FORM_FIELDS: readonly ClientFormField[] = ["name", "phone", "primaryEmployeeId", "secondaryEmployeeId", "serviceStatus"];
+const CLIENT_FORM_FIELDS: readonly ClientFormField[] = [
+    "name", "phone", "serviceStatus", "type", "voucherIssuanceYear", "fetalType", "babyCount", ...CLIENT_PROVIDER_FIELDS,
+];
 const SERVICE_STATUS_SAVE_ERROR = "이 상태로는 저장할 수 없습니다. 예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
 const BOOKING_STATUS_GUIDANCE = "대기·진행·완료는 고객 상세의 [예약 확정]으로 바뀝니다.";
 
 const isClientFormField = (field: string): field is ClientFormField =>
     (CLIENT_FORM_FIELDS as readonly string[]).includes(field);
 
-const fieldForProblemError = (problemError: ProblemError): ClientFormField | undefined => {
+const fieldForProblemError = (problemError: ProblemError, submitted?: ClientAllocationWrite): ClientFormField | undefined => {
     if (problemError.location !== undefined && problemError.location !== "body") return undefined;
+    const provider = /^\/providers\/(\d+)\/(employeeId|slot)$/.exec(problemError.pointer);
+    if (provider) {
+        const row = submitted?.providers[Number(provider[1])];
+        return row && CLIENT_PROVIDER_FIELDS[row.slot];
+    }
+    const baby = /^\/babyAssignments\/(\d+)\/(providerSlot|babyId|ordinal)$/.exec(problemError.pointer);
+    if (baby) {
+        const row = submitted?.babyAssignments[Number(baby[1])];
+        return row && babyField(row);
+    }
     switch (problemError.pointer) {
         case "/serviceStatus":
             return "serviceStatus";
@@ -261,25 +285,51 @@ const fieldForProblemError = (problemError: ProblemError): ClientFormField | und
         case "/secondaryEmployeeId":
         case "/newSecondaryEmployeeId":
             return "secondaryEmployeeId";
+        case "/type":
+            return "type";
+        case "/voucherIssuanceYear":
+            return "voucherIssuanceYear";
+        case "/fetalType":
+            return "fetalType";
+        case "/babyCount":
+            return "babyCount";
         default:
             return undefined;
     }
 };
 
 /** Panel step that renders each focusable field (basic info, employee assignment, contract dates). */
-const PANEL_STEP_OF_FIELD: Record<ClientFocusField, number> = {
+const PANEL_STEP_OF_FIELD: Record<Exclude<ClientFocusField, ClientBabyField>, number> = {
     name: 0,
     birthday: 0,
     dueDate: 0,
     birthDate: 0,
     phone: 0,
     address: 0,
-    primaryEmployeeId: 1,
-    secondaryEmployeeId: 1,
+    type: VOUCHER_STEP,
+    voucherIssuanceYear: VOUCHER_STEP,
+    fetalType: VOUCHER_STEP,
+    babyCount: VOUCHER_STEP,
+    primaryEmployeeId: PROVIDER_STEP,
+    secondaryEmployeeId: PROVIDER_STEP,
+    "provider-2": PROVIDER_STEP,
+    "provider-3": PROVIDER_STEP,
     startDate: 3,
     endDate: 3,
     serviceStatus: 3,
 };
+
+function clientFieldStep(field: ClientFocusField): number {
+    return field in PANEL_STEP_OF_FIELD ? PANEL_STEP_OF_FIELD[field as keyof typeof PANEL_STEP_OF_FIELD] : PROVIDER_STEP;
+}
+
+const D_VOUCHER_TYPE_OPTIONS = [1, 2].map((subcode) => ({
+    label: `사태아 이상 또는 중증 삼태아 이상 (인력${subcode === 1 ? 2 : 4})`,
+    options: ["가", "통합", "라"].map((grade) => {
+        const code = `D${grade}${subcode}형`;
+        return { value: code, label: code };
+    }),
+}));
 
 const combineAriaDescribedBy = (...ids: Array<string | undefined>): string | undefined => {
     const value = ids.filter((id): id is string => Boolean(id)).join(" ");
@@ -513,6 +563,14 @@ function ClientFormContent({
         smsAutomationEnabled: true,
         areaId: null,
     });
+    const [babyDraft, setBabyDraft] = useState(() => openClientBabyDraft());
+    const babyDraftBaselineRef = useRef(babyDraft);
+    const allocationSnapshotRef = useRef<Client | null>(null);
+    const [allocationValidated, setAllocationValidated] = useState(false);
+    const [pendingBabyRetirement, setPendingBabyRetirement] = useState<string | null>(null);
+    const confirmedBabyRetirementRef = useRef<string | null>(null);
+    const [isCheckingStartDate, setIsCheckingStartDate] = useState(false);
+    const formId = `clients-form-${surface}`;
 
     const {
         phoneDigits,
@@ -571,6 +629,9 @@ function ClientFormContent({
     const endDateInputRef = useRef<HTMLInputElement>(null);
     const primaryEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
     const secondaryEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
+    const thirdEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
+    const fourthEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
+    const providerTriggerRefs = [primaryEmployeeTriggerRef, secondaryEmployeeTriggerRef, thirdEmployeeTriggerRef, fourthEmployeeTriggerRef] as const;
     const pendingFieldFocusRef = useRef<ClientFocusField | null>(null);
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
@@ -618,16 +679,30 @@ function ClientFormContent({
             case "endDate":
                 return endDateInputRef;
             case "primaryEmployeeId":
-                return primaryEmployeeTriggerRef;
             case "secondaryEmployeeId":
-                return secondaryEmployeeTriggerRef;
+            case "provider-2":
+            case "provider-3": {
+                const refs = {
+                    primaryEmployeeId: primaryEmployeeTriggerRef,
+                    secondaryEmployeeId: secondaryEmployeeTriggerRef,
+                    "provider-2": thirdEmployeeTriggerRef,
+                    "provider-3": fourthEmployeeTriggerRef,
+                };
+                return { current: refs[field].current ?? document.getElementById(`${formId}-${field}`) };
+            }
+            case "voucherIssuanceYear":
+                return { current: document.getElementById(surface === "panel" ? "clients-form-panel-voucher-year" : "clients-form-voucher-year") };
+            case "type":
+                return { current: document.getElementById(surface === "panel" ? "clients-form-panel-voucher-type" : "clients-form-voucher-type") };
             case "serviceStatus":
                 return { current: document.getElementById(surface === "panel" ? "clients-form-panel-contract-status" : "clients-form-contract-status") };
+            default:
+                return { current: document.getElementById(`${formId}-${field}`) };
         }
-    }, [surface]);
+    }, [formId, surface]);
 
     const focusField = useCallback((field: ClientFocusField) => {
-        const fieldStep = PANEL_STEP_OF_FIELD[field];
+        const fieldStep = clientFieldStep(field);
         if (surface === "panel" && activeStep !== fieldStep) {
             pendingFieldFocusRef.current = field;
             setActiveStep(fieldStep);
@@ -639,7 +714,7 @@ function ClientFormContent({
 
     useEffect(() => {
         const field = pendingFieldFocusRef.current;
-        if (field === null || (surface === "panel" && activeStep !== PANEL_STEP_OF_FIELD[field])) return;
+        if (field === null || (surface === "panel" && activeStep !== clientFieldStep(field))) return;
 
         pendingFieldFocusRef.current = null;
         fieldFocusTargetRef(field).current?.focus();
@@ -697,14 +772,16 @@ function ClientFormContent({
     );
 
     const voucherTypeOptions = useMemo(
-        () =>
-            Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => ({
+        () => [
+            ...Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => ({
                 label: groupName,
                 options: Object.keys(types).map((typeValue) => ({
                     value: typeValue,
                     label: typeValue,
                 })),
             })),
+            ...D_VOUCHER_TYPE_OPTIONS,
+        ],
         []
     );
 
@@ -890,6 +967,8 @@ function ClientFormContent({
         priceBaselineFrozenRef.current = true;
         const parsedYear = Number(newYear);
         setVoucherYear(Number.isNaN(parsedYear) ? null : parsedYear);
+        clearServerField("voucherIssuanceYear");
+        clearServerField("type");
         setFormData(prev => ({
             ...prev,
             duration: null, // Reset duration when year changes
@@ -906,6 +985,9 @@ function ClientFormContent({
     const handleTypeChange = (newType: string) => {
         setHasUserEditedSinceOpen(true);
         priceBaselineFrozenRef.current = true;
+        clearServerField("type");
+        clearServerField("fetalType");
+        clearServerField("babyCount");
         setFormData(prev => ({
             ...prev,
             type: newType,
@@ -923,6 +1005,7 @@ function ClientFormContent({
         setHasUserEditedSinceOpen(true);
         priceBaselineFrozenRef.current = true;
         setPricesManuallyEdited(false);
+        clearServerField("type");
         setFormData(prev => ({
             ...prev,
             voucherClient,
@@ -959,8 +1042,10 @@ function ClientFormContent({
                     birthDate: formatDateForInput(client.birthDate),
                     address: client.address || "",
                     phone: client.phone || "",
-                    primaryEmployeeId: client.primaryEmployee?.id ?? null,
-                    secondaryEmployeeId: client.secondaryEmployee?.id ?? null,
+                    primaryEmployeeId: client.providers === undefined ? client.primaryEmployee?.id ?? null
+                        : client.providers.find(({ slot }) => slot === 0)?.employeeId ?? null,
+                    secondaryEmployeeId: client.providers === undefined ? client.secondaryEmployee?.id ?? null
+                        : client.providers.find(({ slot }) => slot === 1)?.employeeId ?? null,
                     type: client.type || "",
                     duration: client.duration,
                     fullPrice: client.fullPrice || "",
@@ -1037,7 +1122,16 @@ function ClientFormContent({
                 setInitializedEditClientId(client?.id ?? null);
                 setHasUserEditedSinceOpen(false);
                 setPricesManuallyEdited(nextPricesManuallyEdited);
-                setVoucherYear(null); // Reset to default (current year, falling back to latest available)
+                setVoucherYear(client?.voucherIssuanceYear ?? null);
+                const nextBabyDraft = openClientBabyDraft(client);
+                babyDraftBaselineRef.current = nextBabyDraft;
+                allocationSnapshotRef.current = client ?? null;
+                setBabyDraft(nextBabyDraft);
+                setAllocationValidated(false);
+                setPendingBabyRetirement(null);
+                confirmedBabyRetirementRef.current = null;
+                setIsCheckingStartDate(false);
+                setEditedServerErrorFields([]);
                 setError(null);
                 resetFieldStates();
                 pendingFieldFocusRef.current = null;
@@ -1097,8 +1191,10 @@ function ClientFormContent({
     useEffect(() => {
         if (surface !== "panel" || !open || !onDirtyChange) return;
 
-        onDirtyChange(JSON.stringify(formData) !== JSON.stringify(getEffectiveBaseline()));
-    }, [formData, getEffectiveBaseline, onDirtyChange, open, surface]);
+        onDirtyChange(JSON.stringify(formData) !== JSON.stringify(getEffectiveBaseline())
+            || JSON.stringify(babyDraft) !== JSON.stringify(babyDraftBaselineRef.current)
+            || voucherYear !== (client?.voucherIssuanceYear ?? null));
+    }, [babyDraft, client?.voucherIssuanceYear, formData, getEffectiveBaseline, onDirtyChange, open, surface, voucherYear]);
 
     const isLegacyNoopEdit = Boolean(
         isEditMode
@@ -1108,13 +1204,8 @@ function ClientFormContent({
         && !hasUserEditedSinceOpen,
     );
 
-    // Create persists the switch as `applyMessageAutomation`; edit changes the stored `smsAutomationEnabled` flag.
-    const smsAutomationChecked = isEditMode
-        ? formData.smsAutomationEnabled !== false
-        : formData.applyMessageAutomation !== false;
-    const toggleSmsAutomation = () => {
-        if (isEditMode) handleChange("smsAutomationEnabled", formData.smsAutomationEnabled === false);
-        else handleChange("applyMessageAutomation", formData.applyMessageAutomation === false);
+    const clearServerField = (field: ClientFormField) => {
+        setEditedServerErrorFields((current) => (current.includes(field) ? current : [...current, field]));
     };
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
@@ -1122,8 +1213,94 @@ function ClientFormContent({
         if (PRICE_BASELINE_FREEZING_FIELDS.has(field)) priceBaselineFrozenRef.current = true;
         setFormData(prev => ({ ...prev, [field]: value }));
         if (isClientFormField(field)) {
-            setEditedServerErrorFields((current) => (current.includes(field) ? current : [...current, field]));
+            clearServerField(field);
         }
+    };
+
+    const allocationSnapshot = allocationSnapshotRef.current;
+    const providerIds: ClientProviderIds = {
+        0: formData.primaryEmployeeId,
+        1: formData.secondaryEmployeeId ?? null,
+        ...babyDraft.extraProviders,
+    };
+    const allocationDraft = resolveClientBabyDraft({
+        type: formData.voucherClient ? formData.type ?? "" : "",
+        year: resolvedVoucherYear,
+        catalogCodes: (voucherPriceInfos ?? []).flatMap((price) => price.type ? [price.type] : []),
+        draft: babyDraft,
+        ids: providerIds,
+        babies: allocationSnapshot?.babies ?? [],
+        historicalMaxOrdinal: allocationSnapshot?.historicalMaxOrdinal,
+    });
+    const allocationRules = allocationDraft.rules;
+    const providerCapacity = allocationRules?.providerCapacity ?? 2;
+    const hasSavedAllocation = allocationSnapshot?.fetalConfirmation === "CONFIRMED";
+    const hasBabyDraftChanges = JSON.stringify(babyDraft) !== JSON.stringify(babyDraftBaselineRef.current);
+    const allocationWasEdited = hasBabyDraftChanges
+        || formData.primaryEmployeeId !== formDataBaselineRef.current.primaryEmployeeId
+        || formData.secondaryEmployeeId !== formDataBaselineRef.current.secondaryEmployeeId
+        || formData.type !== formDataBaselineRef.current.type
+        || formData.voucherClient !== formDataBaselineRef.current.voucherClient
+        || voucherYear !== (allocationSnapshot?.voucherIssuanceYear ?? null);
+    const shouldWriteAllocation = formData.voucherClient && (isEditMode
+        ? hasSavedAllocation ? allocationWasEdited : hasBabyDraftChanges
+        : Boolean(formData.type));
+    const babyCopy = (key: string) => t(locale, `clients.form.baby-record.${key}`);
+
+    const getAllocationProblem = (): { field: ClientFormField; text: string } | undefined => {
+        if (!shouldWriteAllocation) return;
+        if (!allocationRules) return { field: "type", text: babyCopy("invalid-grade") };
+        if (!allocationDraft.option) return { field: "fetalType", text: babyCopy("select-fetal-type") };
+        if (allocationDraft.exceedsRequestLimit) return { field: "babyCount", text: babyCopy("count-too-large") };
+        const { allocation, minimumCount, providers, rows } = allocationDraft;
+        if (allocation.status !== "resolved") {
+            const issue = "issue" in allocation ? allocation.issue : undefined;
+            if (issue?.field === "providers") {
+                return { field: CLIENT_PROVIDER_FIELDS[providers[issue.index].slot], text: babyCopy("invalid-providers") };
+            }
+            return {
+                field: minimumCount === undefined ? "fetalType" : "babyCount",
+                text: minimumCount === undefined ? babyCopy("stale")
+                    : babyCopy("required-count").replace("{min}", String(minimumCount)),
+            };
+        }
+        const missingOwner = rows.find(({ needsReplacement }) => needsReplacement);
+        if (missingOwner) return { field: missingOwner.field, text: babyCopy("choose-replacement") };
+        if (isEditMode && !allocationSnapshot?.allocationVersion) return { field: "fetalType", text: babyCopy("stale") };
+    };
+    const allocationProblem = getAllocationProblem();
+
+    const changeFetalType = (value: string) => {
+        const option = allocationRules?.fetalTypeOptions.find(({ fetalType }) => fetalType === value);
+        if (!option) return;
+        setHasUserEditedSinceOpen(true);
+        clearServerField("fetalType");
+        clearServerField("babyCount");
+        setBabyDraft((current) => ({ ...current, fetalType: option.fetalType }));
+    };
+
+    const changeBabyCount = (value: string) => {
+        setHasUserEditedSinceOpen(true);
+        clearServerField("babyCount");
+        setBabyDraft((current) => ({ ...current, count: value }));
+    };
+
+    const changeRecordOwner = (field: ClientBabyField, slot: ProviderSlot) => {
+        setHasUserEditedSinceOpen(true);
+        clearServerField(field);
+        setBabyDraft((current) => ({ ...current, owners: { ...current.owners, [field]: slot } }));
+    };
+
+    const changeProvider = (slot: ProviderSlot, employeeId: number | null) => {
+        if (slot >= providerCapacity || (employeeId !== null &&
+            CLIENT_PROVIDER_SLOTS.some((other) => other !== slot && other < providerCapacity && providerIds[other] === employeeId))) return;
+        if (slot === 0 || slot === 1) {
+            handleChange(CLIENT_PROVIDER_FIELDS[slot], employeeId);
+            return;
+        }
+        setHasUserEditedSinceOpen(true);
+        clearServerField(CLIENT_PROVIDER_FIELDS[slot]);
+        setBabyDraft((current) => ({ ...current, extraProviders: { ...current.extraProviders, [slot]: employeeId } }));
     };
 
     const serviceDayOptions = ([
@@ -1192,7 +1369,7 @@ function ClientFormContent({
     // until the user edits the field; only unmapped ones go to the summary.
     const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
         fieldError,
-        field: fieldForProblemError(fieldError),
+        field: fieldForProblemError(fieldError, error?.allocation),
         id: `${base}_error_${index}`,
     }));
     const serverFieldMessages: Partial<Record<ClientFormField, FieldMessageView>> = {};
@@ -1201,11 +1378,17 @@ function ClientFormContent({
             serverFieldMessages[field] = { tone: "error", text: field === "serviceStatus" && isEditMode ? SERVICE_STATUS_SAVE_ERROR : fieldError.detail };
         }
     }
-    const serverEmployeeMessages = {
-        primary: serverFieldMessages.primaryEmployeeId,
-        secondary: serverFieldMessages.secondaryEmployeeId,
-    };
-    const summaryErrorEntries = formErrorEntries.filter(({ field }) => field === undefined);
+    const allocationFieldMessage = (field: ClientFormField): FieldMessageView | null =>
+        serverFieldMessages[field] ?? (allocationValidated && allocationProblem?.field === field
+            ? { tone: "error", text: allocationProblem.text } : null);
+    const showsRecordOwners = allocationDraft.allocation.status === "resolved"
+        && (allocationDraft.rows.length > 1 || allocationDraft.allocation.fetalType === "SEVERE_SINGLETON"
+            || allocationDraft.rows.some((row) => row.needsReplacement));
+    const summaryErrorEntries = formErrorEntries.filter(({ field }) =>
+        field === undefined
+        || (field.startsWith("baby-") && (!showsRecordOwners || !allocationDraft.rows.some((row) => row.field === field)))
+        || (!formData.voucherClient && (field === "type" || field === "voucherIssuanceYear" || field === "fetalType" || field === "babyCount")),
+    );
 
     const inputFieldMessages = Object.fromEntries(
         CLIENT_INPUT_FIELDS.map((field) => [
@@ -1240,6 +1423,113 @@ function ClientFormContent({
                 {message.text}
             </FieldMessageText>
         ) : null;
+
+    const allocationErrorId = (field: ClientFormField) => `${formId}-${field}-error`;
+    const allocationControlProps = (field: ClientFormField, message = allocationFieldMessage(field)) => ({
+        "aria-invalid": message ? true as const : undefined,
+        "aria-describedby": message ? allocationErrorId(field) : undefined,
+    });
+    const allocationLabelAccessory = (field: ClientFormField, fieldBase: string, message = allocationFieldMessage(field)) =>
+        renderSlotMessage(message, allocationErrorId(field), `${fieldBase}_error`);
+
+    const renderPrenatalFields = (sectionBase: string) => {
+        const fetusBase = `${sectionBase}_fetus-field`;
+        const countBase = `${sectionBase}_baby-count-field`;
+        const fetusMessage = allocationFieldMessage("fetalType")
+            ?? (allocationDraft.minimumCount === undefined ? allocationFieldMessage("babyCount") : null);
+        return (
+            <>
+                <FormField data-component={fetusBase} htmlFor={`${formId}-fetalType`}
+                    label={babyCopy("fetal-type")}
+                    labelAccessory={allocationLabelAccessory("fetalType", fetusBase, fetusMessage)}>
+                    <FormNativeSelect
+                        id={`${formId}-fetalType`}
+                        data-component={`${fetusBase}_control`}
+                        disabled={!allocationRules || allocationRules.voucher.family === "A"}
+                        value={allocationDraft.option?.fetalType ?? ""}
+                        placeholder={allocationRules?.voucher.family === "A" ? undefined : babyCopy("select-fetal-type")}
+                        options={(allocationRules?.fetalTypeOptions ?? []).map(({ fetalType, label }) => ({ value: fetalType, label }))}
+                        onValueChange={changeFetalType}
+                        {...allocationControlProps("fetalType", fetusMessage)}
+                    />
+                </FormField>
+                {allocationDraft.minimumCount !== undefined && (
+                    <FormField data-component={countBase} htmlFor={`${formId}-babyCount`}
+                        label={babyCopy("baby-count")} labelAccessory={allocationLabelAccessory("babyCount", countBase)}>
+                        <FormTextInput
+                            id={`${formId}-babyCount`}
+                            data-component={`${countBase}_input`}
+                            type="number"
+                            min={allocationDraft.minimumCount}
+                            max={MAX_CLIENT_BABY_COUNT}
+                            value={babyDraft.count}
+                            error={allocationFieldMessage("babyCount") !== null}
+                            onChange={(event) => changeBabyCount(event.currentTarget.value)}
+                            {...allocationControlProps("babyCount")}
+                        />
+                    </FormField>
+                )}
+            </>
+        );
+    };
+
+    const renderProviderFields = (sectionBase: string) => (
+        <>
+            {allocationRules && (
+                <div data-component={`${sectionBase}_voucher-summary`} className="col-span-full">
+                    <span className="text-sm font-semibold text-v3-text-muted">
+                        {[formData.type, allocationDraft.option?.label, babyCopy("capacity").replace("{count}", String(providerCapacity))]
+                            .filter(Boolean).join(" · ")}
+                    </span>
+                </div>
+            )}
+            {CLIENT_PROVIDER_SLOTS.map((slot) => {
+                const field = CLIENT_PROVIDER_FIELDS[slot];
+                const fieldBase = `${sectionBase}_provider-${slot}`;
+                const label = clientProviderLabel(slot, locale);
+                const message = allocationFieldMessage(field);
+                const manualTarget = !formData.voucherClient && (slot === 0 || slot === 1)
+                    ? slot === 0 ? "primary" : "secondary" : null;
+                return slot < providerCapacity ? (
+                    <EmployeeAutocomplete
+                        key={slot}
+                        data-component={fieldBase}
+                        refreshOnMount
+                        value={providerIds[slot]}
+                        onChange={(id) => changeProvider(slot, id)}
+                        label={label}
+                        excludeIds={CLIENT_PROVIDER_SLOTS.flatMap((other) => {
+                            const id = providerIds[other];
+                            return other !== slot && other < providerCapacity && id !== null ? [id] : [];
+                        })}
+                        allowManualEntry={manualTarget !== null}
+                        onManualEntry={manualTarget ? () => openEmployeeDialog(manualTarget) : undefined}
+                        error={message !== null}
+                        helperText={message?.text}
+                        triggerButtonRef={providerTriggerRefs[slot]}
+                    />
+                ) : (
+                    <FormField key={slot} data-component={fieldBase} htmlFor={`${formId}-${field}`}
+                        label={label} labelAccessory={allocationLabelAccessory(field, fieldBase)}>
+                        <FormTextInput id={`${formId}-${field}`} data-component={`${fieldBase}_input`}
+                            disabled className="bg-muted" value="" error={message !== null} {...allocationControlProps(field)} />
+                    </FormField>
+                );
+            })}
+            {showsRecordOwners && (
+                    <ClientBabyRecordOwners
+                        base={`${sectionBase}_records`}
+                        idPrefix={formId}
+                        locale={locale}
+                        rows={allocationDraft.rows}
+                        providers={allocationDraft.providers}
+                        knownEmployees={[allocationSnapshot?.primaryEmployee, allocationSnapshot?.secondaryEmployee]}
+                        messages={serverFieldMessages}
+                        onChange={changeRecordOwner}
+                    />
+                )}
+        </>
+    );
 
     const serviceStatusMessage = serverFieldMessages.serviceStatus ?? null;
     const serviceStatusMessageId = `clients-form-${surface}-service-status-error`;
@@ -1316,7 +1606,7 @@ function ClientFormContent({
         setTimeout(scrollToTop, 0);
     };
 
-    const setMutationError = (cause: unknown, options: { endDateGuardSent?: boolean } = {}) => {
+    const setMutationError = (cause: unknown, options: { endDateGuardSent?: boolean; allocation?: ClientAllocationWrite } = {}) => {
         const normalized = normalizeApiError(cause, {
             locale: locale === "en" ? "en-US" : "ko-KR",
             operation: "mutation",
@@ -1360,18 +1650,20 @@ function ClientFormContent({
         }
 
         const fieldErrors = normalized.problem?.errors ?? [];
+        const isStaleAllocation = normalized.status === 409 &&
+            fieldErrors.some(({ pointer }) => pointer === "/expectedAllocationVersion");
         const mappedFields = fieldErrors
-            .map((fieldError) => fieldForProblemError(fieldError))
+            .map((fieldError) => fieldForProblemError(fieldError, options.allocation))
             .filter((field): field is ClientFormField => field !== undefined);
-        if (surface === "panel" && mappedFields.length > 0) {
-            // Land on the earliest step that renders a field-linked error so
-            // the user can fix fields in order (basic info before assignment).
-            setActiveStep(Math.min(...mappedFields.map((field) => PANEL_STEP_OF_FIELD[field])));
+        if (surface === "panel") {
+            if (mappedFields.length > 0) setActiveStep(Math.min(...mappedFields.map(clientFieldStep)));
+            else if (isStaleAllocation) setActiveStep(PROVIDER_STEP);
         }
         setEditedServerErrorFields([]);
         setError({
-            message: normalized.message,
-            fieldErrors,
+            message: isStaleAllocation ? babyCopy("stale") : normalized.message,
+            fieldErrors: fieldErrors.filter(({ pointer }) => pointer !== "/expectedAllocationVersion"),
+            allocation: options.allocation,
             requestId: normalized.problem?.requestId,
             outcome: normalized.outcome,
         });
@@ -1388,7 +1680,6 @@ function ClientFormContent({
     }, [error]);
 
     const handleStepChange = (nextStep: number) => {
-        clearFormError();
         setActiveStep(nextStep);
         setTimeout(scrollToTop, 0);
     };
@@ -1428,6 +1719,19 @@ function ClientFormContent({
         if (firstProblemField) {
             focusField(firstProblemField);
             return;
+        }
+        if (allocationProblem) {
+            setAllocationValidated(true);
+            focusField(allocationProblem.field);
+            return;
+        }
+        const allocation = shouldWriteAllocation ? allocationDraft.payload : undefined;
+        if (allocation && allocationDraft.retiringCount > 0) {
+            const retirementKey = JSON.stringify([formData.type, allocation.fetalType, allocation.babyCount]);
+            if (confirmedBabyRetirementRef.current !== retirementKey) {
+                setPendingBabyRetirement(retirementKey);
+                return;
+            }
         }
         if (!isUsingOriginalPhone) {
             if (isCheckingPhoneDuplicate) {
@@ -1505,12 +1809,45 @@ function ClientFormContent({
                 // end date by itself (a delayed session extends it), so a full snapshot would roll
                 // that back. A save that touches the service period carries the end date this form
                 // was opened with, and the backend refuses it if the end date moved since.
+                const allocationVersion = allocationSnapshot?.allocationVersion;
                 const updateDto = buildClientUpdatePayload({
                     baseline: getEffectiveBaseline(),
                     current: formData,
                     allowBusinessDayMismatch: hasDurationMismatch && confirmedPeriod === periodKey,
+                    allocation: allocation && allocationVersion ? { ...allocation, expectedAllocationVersion: allocationVersion } : undefined,
                 });
                 endDateGuardSent = updateDto.expectedEndDate !== undefined;
+                if (updateDto.providers !== undefined && client.bookingConfirmedAt &&
+                    updateDto.startDate !== undefined && updateDto.startDate !== normalizeDateForDisplayState(client.startDate)) {
+                    // Read the existing case before the combined write so confirmation can be included
+                    // in its first PATCH. The PATCH still rechecks the decision under the server lock.
+                    setIsCheckingStartDate(true);
+                    const overview = await serviceRecordsApi.getClientOverview(client.id)
+                        .then(({ data }) => ({ ok: true as const, record: data.record }),
+                            (cause: unknown) => ({ ok: getErrorResponseStatus(cause) === 404, record: null }))
+                        .finally(() => { if (session === formSessionRef.current) setIsCheckingStartDate(false); });
+                    if (!session.open || session !== formSessionRef.current) return;
+                    if (!overview.ok) {
+                        setErrorAndScroll(babyCopy("read-case-failed"));
+                        return;
+                    }
+                    const { record } = overview;
+                    if (record && Array.isArray(record.sessions) && (record.startDate ?? "") !== (updateDto.startDate ?? "")) {
+                        const lock = {
+                            serviceStarted: Boolean(record.startDate && isoDateInKorea() >= record.startDate),
+                            recordedSessionCount: record.sessions.length,
+                        };
+                        if (lock.serviceStarted || lock.recordedSessionCount > 0) {
+                            setPendingStartDateChange({
+                                id: client.id,
+                                dto: updateDto,
+                                lock,
+                                step: lock.serviceStarted ? "started" : "records",
+                            });
+                            return;
+                        }
+                    }
+                }
                 let updatedClient: Client;
                 try {
                     updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
@@ -1539,8 +1876,10 @@ function ClientFormContent({
                     birthDate: normalizedBirthDate || null,
                     address: formData.address || null,
                     phone: formData.phone || null,
-                    primaryEmployeeId: formData.primaryEmployeeId,
-                    secondaryEmployeeId: formData.secondaryEmployeeId,
+                    ...(allocation ?? {
+                        primaryEmployeeId: formData.primaryEmployeeId,
+                        secondaryEmployeeId: formData.secondaryEmployeeId,
+                    }),
                     type: formData.voucherClient ? formData.type || null : null,
                     duration: formData.duration || null,
                     ...durationConfirmation,
@@ -1566,7 +1905,7 @@ function ClientFormContent({
             onClose();
             onDirtyChange?.(false);
         } catch (error: unknown) {
-            setMutationError(error, { endDateGuardSent });
+            setMutationError(error, { endDateGuardSent, allocation });
         } finally {
             submissionInFlightRef.current = false;
         }
@@ -1616,7 +1955,10 @@ function ClientFormContent({
         } catch (cause: unknown) {
             if (!session.open || session !== formSessionRef.current) return;
             setPendingStartDateChange(null);
-            setMutationError(cause, { endDateGuardSent: rememberedDto.expectedEndDate !== undefined });
+            setMutationError(cause, {
+                endDateGuardSent: rememberedDto.expectedEndDate !== undefined,
+                allocation: rememberedDto.providers !== undefined ? rememberedDto : undefined,
+            });
         }
     };
 
@@ -1631,7 +1973,7 @@ function ClientFormContent({
         }
     };
 
-    const isSubmitting = createClient.isPending || updateClient.isPending;
+    const isSubmitting = createClient.isPending || updateClient.isPending || isCheckingStartDate;
 
     const requiredFieldProgressText = `필수 항목 4개 중 ${
         [
@@ -1664,11 +2006,16 @@ function ClientFormContent({
 
     const handleNextStep = () => {
         if (!isLegacyNoopEdit) {
-            const stepFields = CLIENT_INPUT_FIELDS.filter((field) => PANEL_STEP_OF_FIELD[field] === activeStep);
+            const stepFields = CLIENT_INPUT_FIELDS.filter((field) => clientFieldStep(field) === activeStep);
             const firstProblemField = getFirstProblemField(stepFields);
             if (firstProblemField) {
                 fields.setSubmitted(true);
                 focusField(firstProblemField);
+                return;
+            }
+            if (allocationProblem && clientFieldStep(allocationProblem.field) === activeStep) {
+                setAllocationValidated(true);
+                focusField(allocationProblem.field);
                 return;
             }
         }
@@ -1682,6 +2029,7 @@ function ClientFormContent({
 
         setPendingDurationConfirmation(null);
         setPendingStartDateChange(null);
+        setPendingBabyRetirement(null);
         if (searchParams.get("openClientForm") === "1") {
             router.replace("/clients");
         }
@@ -1940,37 +2288,8 @@ function ClientFormContent({
             title={t(locale, "clients.form.section-employee")}
             description="서비스를 담당할 제공인력을 배정해 주세요."
         >
-            <FormGrid data-component={`${base}_employee-grid`}>
-                <EmployeeAutocomplete
-                    data-component={`${base}_employee-grid_primary-employee-autocomplete`}
-                    refreshOnMount
-                    value={formData.primaryEmployeeId}
-                    onChange={(id) => handleChange("primaryEmployeeId", id)}
-                    label={t(locale, "clients.form.primary-employee")}
-                    excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
-                    allowManualEntry
-                    onManualEntry={() => {
-                        openEmployeeDialog("primary");
-                    }}
-                    error={serverEmployeeMessages.primary !== undefined}
-                    helperText={serverEmployeeMessages.primary?.text}
-                    triggerButtonRef={primaryEmployeeTriggerRef}
-                />
-                <EmployeeAutocomplete
-                    data-component={`${base}_employee-grid_secondary-employee-autocomplete`}
-                    refreshOnMount
-                    value={formData.secondaryEmployeeId ?? null}
-                    onChange={(id) => handleChange("secondaryEmployeeId", id)}
-                    label={t(locale, "clients.form.secondary-employee")}
-                    excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
-                    allowManualEntry
-                    onManualEntry={() => {
-                        openEmployeeDialog("secondary");
-                    }}
-                    error={serverEmployeeMessages.secondary !== undefined}
-                    helperText={serverEmployeeMessages.secondary?.text}
-                    triggerButtonRef={secondaryEmployeeTriggerRef}
-                />
+            <FormGrid data-component={`${base}_section-employee_employee-grid`}>
+                {renderProviderFields(`${base}_section-employee_employee-grid`)}
             </FormGrid>
         </ClientDialogSection>
     );
@@ -1998,9 +2317,11 @@ function ClientFormContent({
                                 data-component={`${base}_service-grid_field-voucher-year`}
                                 htmlFor="clients-form-voucher-year"
                                 label={t(locale, "clients.form.voucher-year")}
+                                labelAccessory={allocationLabelAccessory("voucherIssuanceYear", `${base}_service-grid_field-voucher-year`)}
                             >
                                 <FormNativeSelect
                                     id="clients-form-voucher-year"
+                                    {...allocationControlProps("voucherIssuanceYear")}
                                     value={resolvedVoucherYear.toString()}
                                     options={voucherYearOptions}
                                     placeholder={t(locale, "clients.form.voucher-year")}
@@ -2015,9 +2336,11 @@ function ClientFormContent({
                                 data-component={`${base}_service-grid_field-voucher-type`}
                                 htmlFor="clients-form-voucher-type"
                                 label={t(locale, "clients.form.voucher-type")}
+                                labelAccessory={allocationLabelAccessory("type", `${base}_service-grid_field-voucher-type`)}
                             >
                                 <FormNativeSelect
                                     id="clients-form-voucher-type"
+                                    {...allocationControlProps("type")}
                                     value={formData.type || ""}
                                     options={voucherTypeOptions}
                                     placeholder={t(locale, "clients.form.voucher-type")}
@@ -2027,6 +2350,7 @@ function ClientFormContent({
                                     iconDataComponent={`${base}_service-grid_field-voucher-type_select-icon`}
                                 />
                             </FormField>
+                            {renderPrenatalFields(`${base}_service-grid`)}
                         </>
                     )}
 
@@ -2223,13 +2547,6 @@ function ClientFormContent({
                         onToggle={() => handleChange("breastPump", !formData.breastPump)}
                         buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                     />
-                    <FormSwitchRow
-                        data-component={`${base}_field-message-automation`}
-                        title={t(locale, "clients.form.message-automation")}
-                        checked={smsAutomationChecked}
-                        onToggle={toggleSmsAutomation}
-                        buttonAriaLabel={t(locale, "clients.form.message-automation")}
-                    />
                     <FormSwitchGroupRow
                         data-component={`${base}_field-service-days`}
                         className="lg:col-span-3"
@@ -2386,36 +2703,9 @@ function ClientFormContent({
     );
 
     const panelEmployeeStep = (
-        <>
-            <EmployeeAutocomplete
-                data-component={`${base}_employee-step_primary-employee-autocomplete`}
-                value={formData.primaryEmployeeId}
-                onChange={(id) => handleChange("primaryEmployeeId", id)}
-                label={t(locale, "clients.form.primary-employee")}
-                excludeIds={formData.secondaryEmployeeId != null ? [formData.secondaryEmployeeId] : []}
-                allowManualEntry
-                onManualEntry={() => {
-                    openEmployeeDialog("primary");
-                }}
-                error={serverEmployeeMessages.primary !== undefined}
-                helperText={serverEmployeeMessages.primary?.text}
-                triggerButtonRef={primaryEmployeeTriggerRef}
-            />
-            <EmployeeAutocomplete
-                data-component={`${base}_employee-step_secondary-employee-autocomplete`}
-                value={formData.secondaryEmployeeId ?? null}
-                onChange={(id) => handleChange("secondaryEmployeeId", id)}
-                label={t(locale, "clients.form.secondary-employee")}
-                excludeIds={formData.primaryEmployeeId != null ? [formData.primaryEmployeeId] : []}
-                allowManualEntry
-                onManualEntry={() => {
-                    openEmployeeDialog("secondary");
-                }}
-                error={serverEmployeeMessages.secondary !== undefined}
-                helperText={serverEmployeeMessages.secondary?.text}
-                triggerButtonRef={secondaryEmployeeTriggerRef}
-            />
-        </>
+        <div data-component={`${base}_content_providers`} className="contents">
+            {renderProviderFields(`${base}_content_providers`)}
+        </div>
     );
 
     const panelVoucherInfoStep = (
@@ -2437,9 +2727,11 @@ function ClientFormContent({
                         data-component={`${base}_voucher-year-field`}
                         htmlFor="clients-form-panel-voucher-year"
                         label={t(locale, "clients.form.voucher-year")}
+                        labelAccessory={allocationLabelAccessory("voucherIssuanceYear", `${base}_voucher-year-field`)}
                     >
                         <FormNativeSelect
                             id="clients-form-panel-voucher-year"
+                            {...allocationControlProps("voucherIssuanceYear")}
                             value={resolvedVoucherYear.toString()}
                             options={voucherYearOptions}
                             placeholder={t(locale, "clients.form.voucher-year")}
@@ -2454,9 +2746,11 @@ function ClientFormContent({
                         data-component={`${base}_voucher-type-field`}
                         htmlFor="clients-form-panel-voucher-type"
                         label={t(locale, "clients.form.voucher-type")}
+                        labelAccessory={allocationLabelAccessory("type", `${base}_voucher-type-field`)}
                     >
                         <FormNativeSelect
                             id="clients-form-panel-voucher-type"
+                            {...allocationControlProps("type")}
                             value={formData.type || ""}
                             options={voucherTypeOptions}
                             placeholder={t(locale, "clients.form.voucher-type")}
@@ -2466,6 +2760,7 @@ function ClientFormContent({
                             iconDataComponent={`${base}_voucher-type-field_select-icon`}
                         />
                     </FormField>
+                    {renderPrenatalFields(`${base}_content`)}
                 </>
             )}
 
@@ -2629,14 +2924,6 @@ function ClientFormContent({
                     onToggle={() => handleChange("breastPump", !formData.breastPump)}
                     buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                 />
-                <FormSwitchRow
-                    data-component={`${base}_message-automation-field`}
-                    size="control"
-                    title={t(locale, "clients.form.message-automation")}
-                    checked={smsAutomationChecked}
-                    onToggle={toggleSmsAutomation}
-                    buttonAriaLabel={t(locale, "clients.form.message-automation")}
-                />
                 <FormSwitchGroupRow
                     data-component={`${base}_service-days-field`}
                     size="control"
@@ -2658,8 +2945,8 @@ function ClientFormContent({
     ] as const;
     const panelFormSteps = [
         panelBasicInfoStep,
-        panelEmployeeStep,
         panelVoucherInfoStep,
+        panelEmployeeStep,
         panelContractInfoStep,
     ] as const;
 
@@ -2755,6 +3042,36 @@ function ClientFormContent({
                 <p data-component={`${base}_duration-confirmation_message`}>
                     평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?
                 </p>
+            </FormDialogShell>
+        </Dialog>
+    );
+
+    const retirementMessage = babyCopy("retirement-message").replace("{count}", String(allocationDraft.retiringCount));
+    const babyRetirementDialog = (
+        <Dialog open={open && pendingBabyRetirement !== null}
+            onOpenChange={(isOpen) => { if (!isOpen) setPendingBabyRetirement(null); }}>
+            <FormDialogShell
+                data-component={`${base}_baby-retirement-confirmation`}
+                size="compact"
+                title={babyCopy("retirement-title")}
+                description={retirementMessage}
+                footer={(
+                    <>
+                        <Button type="button" variant="outline" data-component={`${base}_baby-retirement-confirmation_cancel`}
+                            onClick={() => setPendingBabyRetirement(null)}>
+                            {t(locale, "common.cancel")}
+                        </Button>
+                        <Button type="button" data-component={`${base}_baby-retirement-confirmation_confirm`}
+                            onClick={() => {
+                                confirmedBabyRetirementRef.current = pendingBabyRetirement;
+                                setPendingBabyRetirement(null);
+                                void handleSubmit();
+                            }}>
+                            {babyCopy("confirm-retirement")}
+                        </Button>
+                    </>
+                )}>
+                <p data-component={`${base}_baby-retirement-confirmation_message`}>{retirementMessage}</p>
             </FormDialogShell>
         </Dialog>
     );
@@ -2872,6 +3189,7 @@ function ClientFormContent({
                 {panelLayout}
                 {employeeRegistrationDialog}
                 {durationConfirmationDialog}
+                {babyRetirementDialog}
                 {startDateStartedConfirmationDialog}
                 {startDateRecordsConfirmationDialog}
             </>
@@ -2897,6 +3215,7 @@ function ClientFormContent({
             </Dialog>
             {employeeRegistrationDialog}
             {durationConfirmationDialog}
+            {babyRetirementDialog}
             {startDateStartedConfirmationDialog}
             {startDateRecordsConfirmationDialog}
         </>

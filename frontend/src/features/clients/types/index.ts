@@ -32,7 +32,7 @@ export interface ClientBadge {
 
 // Client entity types
 import type { ClientActionRequired } from "@babyjamjam/shared/types/client-action-required";
-import type { StartDateChangeMode } from "@babyjamjam/shared";
+import type { ExistingBaby, FetalType, FetalTypeConfirmation, ProviderSlot, StartDateChangeMode } from "@babyjamjam/shared";
 
 export type {
     ActionRequiredReason,
@@ -79,18 +79,49 @@ export interface Client {
     actionRequired?: ClientActionRequired | null;
     /** 서비스 기록이 확정 단계라 시작일·종료일·서비스 기간을 바꿀 수 없어요. */
     serviceRecordPeriodLocked?: boolean;
+    fetalType?: FetalType | null;
+    fetalConfirmation?: FetalTypeConfirmation | null;
+    babyCount?: number | null;
+    babies?: readonly ExistingBaby[];
+    historicalMaxOrdinal?: number;
+    providers?: readonly ClientProvider[];
+    babyAssignments?: readonly (ExistingBaby & { providerSlot: ProviderSlot | null })[];
+    allocationVersion?: string;
+    voucherIssuanceYear?: number | null;
 }
 
+export interface ClientProvider {
+    slot: ProviderSlot;
+    employeeId: number;
+}
+
+export type ClientBabyAssignmentWrite = { providerSlot: ProviderSlot | null } & (
+    | { babyId: string; ordinal?: never }
+    | { ordinal: number; babyId?: never }
+);
+
+export interface ClientAllocationWrite {
+    fetalType: FetalType;
+    babyCount: number;
+    providers: ClientProvider[];
+    voucherIssuanceYear: number;
+    babyAssignments: ClientBabyAssignmentWrite[];
+}
+
+type LegacyClientProviders = {
+    providers?: never;
+    primaryEmployeeId?: number | null;
+    secondaryEmployeeId?: number | null;
+};
+
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId
-export interface CreateClientDto {
+interface CreateClientFields {
     name: string;
     birthday?: string | null;
     dueDate?: string | null;
     birthDate?: string | null;
     address?: string | null;
     phone?: string | null;
-    primaryEmployeeId: number | null;  // Employee ID (backend converts to schedule)
-    secondaryEmployeeId?: number | null; // Employee ID (backend converts to schedule)
     type?: string | null;
     duration?: number | null;
     /** Set only after the service-period confirmation for this save. */
@@ -116,10 +147,17 @@ export interface CreateClientDto {
     reuseExistingClient?: boolean;
 }
 
-export type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId" | "allowBusinessDayMismatch"> & { primaryEmployeeId: number | null };
+type AllocationProviders = ClientAllocationWrite & { primaryEmployeeId?: never; secondaryEmployeeId?: never };
+export type CreateClientDto = CreateClientFields & (
+    | (LegacyClientProviders & { primaryEmployeeId: number | null })
+    | AllocationProviders
+);
+
+export type ClientFormData = Omit<CreateClientFields, "allowBusinessDayMismatch"> &
+    Omit<LegacyClientProviders, "providers"> & { primaryEmployeeId: number | null };
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
-export interface UpdateClientDto {
+interface UpdateClientFields {
     /** Set only after an explicit start-date change confirmation for this save. */
     startDateChangeMode?: StartDateChangeMode;
     name?: string;
@@ -128,8 +166,6 @@ export interface UpdateClientDto {
     birthDate?: string | null;
     address?: string | null;
     phone?: string | null;
-    primaryEmployeeId?: number | null;  // Employee ID (backend converts to schedule)
-    secondaryEmployeeId?: number | null; // Employee ID (backend converts to schedule)
     type?: string | null;
     duration?: number | null;
     /** Set only after the service-period confirmation for this save. */
@@ -156,6 +192,11 @@ export interface UpdateClientDto {
      */
     expectedEndDate?: string | null;
 }
+
+export type UpdateClientDto = UpdateClientFields & (
+    | LegacyClientProviders
+    | (AllocationProviders & { expectedAllocationVersion: string })
+);
 
 // DTO for terminating service
 export interface TerminateServiceDto {

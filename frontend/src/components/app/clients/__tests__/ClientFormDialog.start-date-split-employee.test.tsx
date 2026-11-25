@@ -114,12 +114,12 @@ async function submitChangedStartDateAndEmployee(surface: "dialog" | "panel" = "
   const props = { open: true, client, onClose, onSuccess };
   const view = render(surface === "panel" ? <ClientFormPanel {...props} /> : <ClientFormDialog {...props} />);
   await act(async () => { await Promise.resolve(); });
-  if (surface === "panel") fireEvent.click(screen.getByRole("button", { name: "다음" }));
-  fireEvent.change(screen.getByRole("combobox", { name: "주 담당 인력" }), { target: { value: "99" } });
   if (surface === "panel") {
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
     fireEvent.click(screen.getByRole("button", { name: "다음" }));
   }
+  fireEvent.change(screen.getByRole("combobox", { name: "주 제공인력" }), { target: { value: "99" } });
+  if (surface === "panel") fireEvent.click(screen.getByRole("button", { name: "다음" }));
   await act(async () => {
     fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2026-08-27" } });
   });
@@ -278,11 +278,11 @@ describe("client start-date confirmation with an employee change", () => {
         errors: [{ pointer: "/primaryEmployeeId", code: "REQUIRED", detail: "ignored" }],
       }) } });
     const { onSuccess, onClose } = await submitChangedStartDateAndEmployee("panel");
-    expect(screen.queryByRole("combobox", { name: "주 담당 인력" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "주 제공인력" })).not.toBeInTheDocument();
     await confirmRecords();
 
     expect(await screen.findByText("다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveValue("99");
+    expect(screen.getByRole("combobox", { name: "주 제공인력" })).toHaveValue("99");
     expect(screen.queryByLabelText("시작일")).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("req-unknown-employee-field");
     expect(screen.queryByText(partialSaveMessage)).not.toBeInTheDocument();

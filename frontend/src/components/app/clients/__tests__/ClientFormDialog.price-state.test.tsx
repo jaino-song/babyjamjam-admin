@@ -89,7 +89,7 @@ describe("ClientFormPanel voucher pricing", () => {
   });
 
   it("keeps prices blank and disabled until type and duration are selected", async () => {
-    render(<ClientFormPanel open activeStep={2} onClose={jest.fn()} />);
+    render(<ClientFormPanel open activeStep={1} onClose={jest.fn()} />);
 
     await act(async () => {
       await Promise.resolve();
@@ -177,7 +177,7 @@ describe("ClientFormPanel voucher pricing", () => {
     render(
       <ClientFormPanel
         open
-        activeStep={2}
+        activeStep={1}
         client={client}
         onClose={jest.fn()}
       />,
@@ -196,7 +196,7 @@ describe("ClientFormPanel voucher pricing", () => {
   });
 
   it("shows only duration and editable total price for an out-of-pocket client", async () => {
-    render(<ClientFormPanel open activeStep={2} onClose={jest.fn()} />);
+    render(<ClientFormPanel open activeStep={1} onClose={jest.fn()} />);
 
     await act(async () => {
       await Promise.resolve();
@@ -255,7 +255,7 @@ describe("ClientFormPanel voucher pricing", () => {
     render(
       <ClientFormPanel
         open
-        activeStep={2}
+        activeStep={1}
         client={client}
         onClose={jest.fn()}
       />,

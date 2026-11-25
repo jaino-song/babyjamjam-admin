@@ -227,7 +227,7 @@ describe("ClientForm legacy no-op relink", () => {
     const { rerender } = render(
       <ClientFormPanel
         open
-        activeStep={2}
+        activeStep={1}
         client={clientWithAutoPrice}
         onClose={onClose}
       />,
@@ -273,7 +273,7 @@ describe("ClientForm legacy no-op relink", () => {
     const { rerender } = render(
       <ClientFormPanel
         open
-        activeStep={2}
+        activeStep={1}
         client={clientWithAutoPrice}
         onClose={jest.fn()}
       />,

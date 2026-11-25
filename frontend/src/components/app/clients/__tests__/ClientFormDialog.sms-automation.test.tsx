@@ -91,7 +91,7 @@ const openForm = async (client: Client) => {
   await waitFor(() => expect(screen.getByRole("button", { name: "저장" })).toBeEnabled());
 };
 
-describe("ClientFormDialog 메시지 자동 전송 switch in edit mode", () => {
+describe("ClientFormDialog preserves the stored automation policy in edit mode", () => {
   beforeEach(() => {
     HTMLElement.prototype.scrollTo = jest.fn();
     mockApiGet.mockReset();
@@ -100,45 +100,14 @@ describe("ClientFormDialog 메시지 자동 전송 switch in edit mode", () => {
     mockUpdateClient.mockResolvedValue(baseClient);
   });
 
-  it("shows the switch on for a client that has no stored flag and sends nothing when untouched", async () => {
-    await openForm(baseClient);
+  it.each([undefined, false, true])("preserves automation %s during an unrelated edit", async (smsAutomationEnabled) => {
+    await openForm({ ...baseClient, smsAutomationEnabled });
 
-    expect(screen.getByRole("switch", { name: "메시지 자동 전송" })).toBeChecked();
-    expect(
-      screen.queryByText("끄면 이 대상에게 자동 문자가 발송되지 않아요. 직접 발송은 가능해요."),
-    ).not.toBeInTheDocument();
-
+    expect(screen.queryByRole("switch", { name: "메시지 자동 전송" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/주소/), { target: { value: "인천시 연수구" } });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
     expect(mockUpdateClient.mock.calls[0][0].dto).toEqual({ address: "인천시 연수구" });
-  });
-
-  it("reflects a stored false flag and sends only smsAutomationEnabled when it is switched back on", async () => {
-    await openForm({ ...baseClient, smsAutomationEnabled: false });
-
-    const automationSwitch = screen.getByRole("switch", { name: "메시지 자동 전송" });
-    expect(automationSwitch).not.toBeChecked();
-
-    fireEvent.click(automationSwitch);
-    fireEvent.click(screen.getByRole("button", { name: "저장" }));
-
-    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
-    const { dto } = mockUpdateClient.mock.calls[0][0];
-    expect(dto).toEqual({ smsAutomationEnabled: true });
-    expect(dto).not.toHaveProperty("applyMessageAutomation");
-  });
-
-  it("sends smsAutomationEnabled false without applyMessageAutomation when switched off", async () => {
-    await openForm(baseClient);
-
-    fireEvent.click(screen.getByRole("switch", { name: "메시지 자동 전송" }));
-    fireEvent.click(screen.getByRole("button", { name: "저장" }));
-
-    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
-    const { dto } = mockUpdateClient.mock.calls[0][0];
-    expect(dto).toEqual({ smsAutomationEnabled: false });
-    expect(dto).not.toHaveProperty("applyMessageAutomation");
   });
 });
