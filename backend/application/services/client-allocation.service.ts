@@ -11,7 +11,8 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { problemBody } from "application/utils/problem-bodies";
 import { createHash } from "node:crypto";
-import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
+import { resolveServiceRecordCaseTarget, type ServiceRecordCaseTarget } from "./service-record-case-target";
+import { hasConflictingUnboundCaseHistory } from "./service-record-token.service";
 
 export interface ClientAllocationInput {
     fetalType?: FetalType;
@@ -429,8 +430,11 @@ export async function persistClientAllocation(
     if (plan.unchanged && previousScheduleId === scheduleId) return;
     if (previousScheduleId !== null) await lockCredentialCases(tx, scope);
     const previousOwners = previousScheduleId === null ? [] : await readCredentialOwners(tx, scope, previousScheduleId);
-    const previousSingleton = previousOwners.length === 1
+    const previousSingleton = previousScheduleId !== null && previousOwners.length <= 1
         ? await resolveServiceRecordCaseTarget(tx, scope) : null;
+    const firstAllocation = previousSingleton?.kind === "resolved" && previousSingleton.babyId === null
+        && previousSingleton.babyCount === null && previousOwners.length === 0
+        && !await tx.service_record_baby_assignment.findFirst({ where: scope, select: { id: true } });
     if (plan.retired.length) {
         // The database's conditional foreign key requires owners to close
         // before retiring a baby, including an owner from an older schedule.
@@ -503,8 +507,9 @@ export async function persistClientAllocation(
 
     if (previousScheduleId !== null) {
         const currentOwners = await readCredentialOwners(tx, scope, scheduleId);
-        const legacyCaseId = previousSingleton?.kind === "resolved" ? previousSingleton.caseId : null;
-        await reconcileCaseCredentials(tx, scope, previousScheduleId, scheduleId, previousOwners, currentOwners, legacyCaseId);
+        await reconcileCaseCredentials(tx, scope, previousScheduleId, scheduleId, previousOwners, currentOwners, {
+            target: previousSingleton, firstAllocation,
+        });
     }
 }
 
@@ -545,7 +550,7 @@ async function reconcileCaseCredentials(
     scheduleId: number,
     previousOwners: CredentialOwner[],
     currentOwners: CredentialOwner[],
-    legacyCaseId: string | null,
+    previous: { target: ServiceRecordCaseTarget | null; firstAllocation: boolean },
 ): Promise<void> {
     const handover = previousScheduleId !== scheduleId;
     const now = new Date();
@@ -553,18 +558,19 @@ async function reconcileCaseCredentials(
     const formerOwners = new Map(previousOwners.map((owner) => [owner.babyId, owner]));
     const nextOwners = new Map(currentOwners.map((owner) => [owner.babyId, owner]));
     const cases = await tx.service_record_case.findMany({
-        where: { ...scope, babyId: { in: [...formerOwners.keys()] } },
+        where: { ...scope, OR: [{ babyId: { in: [...formerOwners.keys()] } }, { babyId: null }] },
         select: { id: true, babyId: true, finalizedAt: true },
         orderBy: { id: "asc" },
     });
-    const singleton = legacyCaseId && await resolveServiceRecordCaseTarget(tx, scope);
+    const legacyCaseId = previous.target?.kind === "resolved" ? previous.target.caseId : null;
+    const singleton = legacyCaseId ? await resolveServiceRecordCaseTarget(tx, scope) : null;
 
     for (const record of cases) {
         if (!record.babyId) continue;
         const former = formerOwners.get(record.babyId);
         const next = nextOwners.get(record.babyId);
         const retained = former && next?.employeeId === former.employeeId && !next.employee.deletedAt;
-        const allowLegacy = record.id === legacyCaseId && singleton
+        const allowLegacy = previousOwners.length === 1 && record.id === legacyCaseId && singleton
             && singleton.kind === "resolved" && singleton.caseId === record.id;
         const caseScope = {
             ...tokenScope,
@@ -586,6 +592,40 @@ async function reconcileCaseCredentials(
         }
     }
 
+    const unbound = cases.filter(({ babyId }) => babyId === null);
+    if (unbound.length > 0) {
+        const [record] = unbound;
+        const [former] = previousOwners;
+        const [next] = currentOwners;
+        const sameUnboundCase = unbound.length === 1 && record && !record.finalizedAt
+            && previous.target?.kind === "resolved" && previous.target.babyId === null && previous.target.caseId === record.id
+            && singleton?.kind === "resolved" && singleton.caseId === record.id && singleton.babyCount === 1;
+        const sameOwner = previous.target?.kind === "resolved" && previous.target.babyCount === 1
+            && former && next && former.babyId === next.babyId && former.employeeId === next.employeeId;
+        const owner = sameUnboundCase && currentOwners.length === 1 && next && next.employee.deletedAt === null
+            && (previous.firstAllocation || sameOwner)
+            ? await readContinuingUnboundOwner(tx, scope, previousScheduleId, scheduleId, next)
+            : null;
+        const unboundScope = {
+            ...tokenScope,
+            OR: [{ serviceRecordCaseId: { in: unbound.map(({ id }) => id) } }, { serviceRecordCaseId: null }],
+        };
+        if (owner && handover) {
+            // Move the original credential row, including its challenge and verified session.
+            await tx.service_record_token.updateMany({
+                where: {
+                    ...unboundScope, employeeId: owner.employeeId, active: true,
+                    revokedAt: null, expiresAt: { gt: new Date() }, expectedPhoneHash: owner.phoneHash,
+                    employee: { branchId: scope.branchId, deletedAt: null, phone: owner.phone },
+                },
+                data: { scheduleId },
+            });
+        } else if (!owner && !handover) {
+            // Stamp the old generation even when a later allocation could restore its owner.
+            await revokeCredentials(tx, unboundScope, now);
+        }
+    }
+
     if (handover) {
         await revokeCredentials(tx, tokenScope, now);
     } else if (previousOwners.length > 0 && currentOwners.length > 1) {
@@ -593,6 +633,33 @@ async function reconcileCaseCredentials(
         // household later returns to one baby.
         await revokeCredentials(tx, { ...tokenScope, serviceRecordCaseId: null }, now);
     }
+}
+
+async function readContinuingUnboundOwner(
+    tx: Prisma.TransactionClient,
+    scope: AllocationScope,
+    previousScheduleId: number,
+    scheduleId: number,
+    { babyId, employeeId, employee: { phone } }: CredentialOwner,
+) {
+    const normalizedPhone = (phone ?? "").replace(/\D/g, "");
+    if (!normalizedPhone) return null;
+    const current = await tx.employee_schedule.findFirst({
+        where: { ...scope, replaced: false, terminatedAt: null, client: { branchId: scope.branchId, deletedAt: null } },
+        orderBy: { id: "desc" },
+        select: { id: true, primaryEmployeeId: true, client: { select: { serviceStatus: true } } },
+    });
+    if (current?.id !== scheduleId || current.primaryEmployeeId !== employeeId
+        || current.client.serviceStatus === "terminated") return null;
+    if (previousScheduleId !== scheduleId) {
+        const outgoing = await tx.employee_schedule.findFirst({
+            where: { ...scope, id: previousScheduleId, replaced: true, terminatedAt: null },
+            select: { primaryEmployeeId: true },
+        });
+        if (outgoing?.primaryEmployeeId !== employeeId) return null;
+    }
+    if (await hasConflictingUnboundCaseHistory(tx, { ...scope, scheduleId, employeeId, babyId })) return null;
+    return { employeeId, phone, phoneHash: createHash("sha256").update(normalizedPhone).digest("hex") };
 }
 
 async function endScheduleOwners(tx: Prisma.TransactionClient, scope: AllocationScope, scheduleId: number) {
