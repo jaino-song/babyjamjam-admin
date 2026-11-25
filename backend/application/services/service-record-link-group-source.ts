@@ -17,6 +17,14 @@ export const RECORD_LINK_GROUP_LOG_MARKER = "recordLinkGroupVersion";
 export const RECORD_LINK_GROUP_CHANGED = "제공기록지 링크의 담당자 또는 발송 대상이 변경되었습니다";
 export const RECORD_LINK_GROUP_KEY_PREFIX = `${SERVICE_RECORD_LINK_RULE_ID}:group:`;
 
+export const recordLinkGroupSupersededReasons = [SERVICE_RECORD_LINK_RESCHEDULED_REASON, RECORD_LINK_GROUP_CHANGED];
+export const recordLinkGroupCarrierEvidence: Prisma.message_logWhereInput = {
+    OR: [
+        { providerCallStartedAt: { not: null } }, { providerAcceptedAt: { not: null } },
+        { aligoMid: { not: null } }, { providerAcceptanceState: { not: "prepared" } },
+    ],
+};
+
 export interface RecordLinkGroupMember {
     caseId: string;
     babyId: string;
@@ -33,6 +41,18 @@ type GroupJob = Pick<MessageTriggerJobEntity, "id" | "ruleId" | "dedupeKey" | "p
 export function isRecordLinkGroup(job: { dedupeKey: string; payload?: unknown; recipientEmployeeId?: number | null }): boolean {
     return job.dedupeKey.startsWith(RECORD_LINK_GROUP_KEY_PREFIX) || job.recipientEmployeeId != null
         || (!!job.payload && typeof job.payload === "object" && Object.prototype.hasOwnProperty.call(job.payload, "recordLinkGroup"));
+}
+
+function hasTaskAuthorityMarker(payload: object): boolean {
+    return ["taskAutomationReference", "agentAutomationSeal", "agentAutomationRecord"]
+        .some(key => Object.prototype.hasOwnProperty.call(payload, key));
+}
+
+export function isAutomaticRecordLinkGroup(job: GroupJob): boolean {
+    return job.ruleId === SERVICE_RECORD_LINK_RULE_ID && job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK
+        && job.dedupeKey.startsWith(RECORD_LINK_GROUP_KEY_PREFIX) && !isServiceRecordLinkManualDedupeKey(job.dedupeKey)
+        && !job.payload.sentByUserId && job.payload.templateVariables?.["triggerType"] !== "agent_scheduled"
+        && !hasTaskAuthorityMarker(job.payload);
 }
 
 export function recordLinkHash(value: string): string {
@@ -148,15 +168,17 @@ export async function unreservedRecordLinkMembers(
                 { status: { in: ["sent", "dispatching"] } },
                 { status: { in: ["pending", "processing"] }, dedupeKey: { contains: ":manual:" } },
                 { canceledByUser: true },
-                { status: "canceled", cancelReason: { not: SERVICE_RECORD_LINK_RESCHEDULED_REASON } },
-                { logs: { some: { providerCallStartedAt: { not: null } } } },
+                { status: "canceled", cancelReason: { notIn: recordLinkGroupSupersededReasons } },
+                { logs: { some: recordLinkGroupCarrierEvidence } },
             ],
         },
-        select: { status: true, payload: true, recordMembers: { select: { serviceRecordCaseId: true, assignmentVersion: true } } },
+        select: { status: true, payload: true, canceledByUser: true,
+            logs: { where: recordLinkGroupCarrierEvidence, take: 1, select: { id: true } },
+            recordMembers: { select: { serviceRecordCaseId: true, assignmentVersion: true } } },
     });
     const covered = new Set(history.flatMap(job => {
         const keys = job.recordMembers.map(member => memberKey(member.serviceRecordCaseId, member.assignmentVersion));
-        if (job.status === "pending" || job.status === "processing") {
+        if (!job.canceledByUser && !job.logs.length && (job.status === "pending" || job.status === "processing")) {
             const selected = members.filter(member => keys.includes(memberKey(member.caseId, member.assignmentVersion)));
             const payload = job.payload as unknown as MessageTriggerJobEntity["payload"];
             if (selected.length !== keys.length || recordLinkGroupSourceHash(source, selected) !== payload.recordLinkGroup?.sourceHash) return [];
@@ -173,7 +195,7 @@ export async function resolveRecordLinkGroup(tx: Prisma.TransactionClient, job: 
         || !job.branchId || job.employeeScheduleId === null || job.clientId === null || group?.version !== 1
         || !Array.isArray(group.members) || !group.members.length
         || job.payload.templateVariables?.["triggerType"] === "agent_scheduled"
-        || ["taskAutomationReference", "agentAutomationSeal", "agentAutomationRecord"].some(key => Object.prototype.hasOwnProperty.call(job.payload, key))) return null;
+        || hasTaskAuthorityMarker(job.payload)) return null;
 
     const manual = isServiceRecordLinkManualDedupeKey(job.dedupeKey);
     if (manual && (!job.payload.sentByUserId || !group.previewHash)) return null;
@@ -189,7 +211,7 @@ export async function resolveRecordLinkGroup(tx: Prisma.TransactionClient, job: 
         select: { recipientEmployeeId: true, recipientPhone: true, recordMembers: true, payload: true },
     });
     if (!row?.recipientEmployeeId || !row.payload || typeof row.payload !== "object" || Array.isArray(row.payload)
-        || ["taskAutomationReference", "agentAutomationSeal", "agentAutomationRecord"].some(key => Object.prototype.hasOwnProperty.call(row.payload, key))
+        || hasTaskAuthorityMarker(row.payload)
         || row.recipientEmployeeId !== job.payload.employeeId || row.recipientPhone !== job.recipientPhone
         || row.recordMembers.length !== group.members.length) return null;
 

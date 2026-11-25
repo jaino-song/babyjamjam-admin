@@ -2,7 +2,7 @@ import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-targ
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { randomUUID } from "node:crypto";
 
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, type OnModuleInit, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -53,6 +53,7 @@ import { ServiceRecordLifecycleService } from "./service-record-lifecycle.servic
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "./message-automation-activation.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import {
     buildServiceRecordLinkMessage,
     DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
@@ -111,7 +112,7 @@ function readStoredCustomVariables(
  * Message trigger scheduler later dispatches it and writes retryable SMS logs.
  */
 @Injectable()
-export class ServiceRecordLinkService {
+export class ServiceRecordLinkService implements OnModuleInit {
     private readonly logger = new Logger(ServiceRecordLinkService.name);
 
     constructor(
@@ -130,7 +131,12 @@ export class ServiceRecordLinkService {
         @Optional() private readonly branchLock?: MessageAutomationBranchLockService,
         @Optional() private readonly automationActivationService?: MessageAutomationActivationService,
         @Optional() private readonly linkGroups?: ServiceRecordLinkGroupService,
+        @Optional() private readonly messageTriggers?: MessageTriggerService,
     ) {}
+
+    onModuleInit(): void {
+        if (this.linkGroups) this.messageTriggers?.registerRecordLinkGroups(this.linkGroups);
+    }
 
     /** The owning write has already acquired the automation branch lock. */
     async observeAssignmentInTransaction(tx: Prisma.TransactionClient, branchId: string, scheduleId: number): Promise<boolean> {
@@ -337,19 +343,21 @@ export class ServiceRecordLinkService {
         options: { taskAutomationReference?: AgentAutomationTaskCommitReference; rescheduleAutomatic?: boolean; branchId?: string } = {},
     ): Promise<boolean> {
         try {
+            if (options.rescheduleAutomatic && options.branchId
+                && await this.recheckRecovery({ branchId: options.branchId, scheduleId })) return true;
             if (this.linkGroups && !options.taskAutomationReference) {
                 const schedule = await this.prisma.employee_schedule.findFirst({
                     where: { id: scheduleId, ...(options.branchId ? { branchId: options.branchId } : {}), replaced: false,
                         terminatedAt: null, client: { deletedAt: null, fetalConfirmation: "CONFIRMED" } },
-                    select: { branchId: true },
+                    select: { id: true, branchId: true, clientId: true, primaryEmployeeId: true,
+                        client: { select: { fetalConfirmation: true } } },
                 });
-                if (schedule?.branchId) {
+                if (schedule?.branchId && !(options.rescheduleAutomatic
+                    && await this.hasLegacyAutomaticReservation({ ...schedule, branchId: schedule.branchId }))) {
                     await this.ensureSystemRule(schedule.branchId, false);
                     return await this.linkGroups.schedule(schedule.branchId, scheduleId);
                 }
             }
-            if (options.rescheduleAutomatic && options.branchId
-                && await this.recheckRecovery({ branchId: options.branchId, scheduleId })) return true;
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
@@ -375,6 +383,19 @@ export class ServiceRecordLinkService {
             this.logger.error(`Failed to schedule service-record link for schedule ${scheduleId}: ${error}`);
             throw error;
         }
+    }
+
+    private async hasLegacyAutomaticReservation(schedule: Parameters<typeof allowsLegacyServiceRecordLink>[1] & { branchId: string }): Promise<boolean> {
+        const { id, branchId, clientId, primaryEmployeeId } = schedule;
+        const job = await this.prisma.message_trigger_job.findFirst({
+            where: { branchId, clientId, employeeScheduleId: id, ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, recipientEmployeeId: null, canceledByUser: false,
+                status: { in: ["pending", "needs_setup"] },
+                dedupeKey: { in: [serviceRecordAutomaticJobKey(id), serviceRecordAutomaticJobKey(id, primaryEmployeeId)] },
+                payload: { path: ["employeeId"], equals: primaryEmployeeId } },
+            select: { id: true },
+        });
+        return !!job && await allowsLegacyServiceRecordLink(this.prisma, schedule);
     }
 
     /**
