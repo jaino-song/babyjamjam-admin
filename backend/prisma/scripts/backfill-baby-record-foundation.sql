@@ -1,5 +1,7 @@
 -- Operator only, before per-baby writes are enabled. Run audit before and after:
 -- psql -X -v ON_ERROR_STOP=1 --single-transaction -f backfill-baby-record-foundation.sql
+-- Phase 1 DDL alone is safe for old writers. Before backfilling data, deploy
+-- the delete-compatible version to all writers, including mirrored-document purge.
 -- Keep old and new application writers paused for the reconciliation window.
 SET LOCAL lock_timeout = '5s';
 SET LOCAL search_path = pg_catalog, public, pg_temp;

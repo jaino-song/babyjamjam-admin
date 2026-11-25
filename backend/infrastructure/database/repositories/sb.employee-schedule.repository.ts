@@ -122,6 +122,12 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
                     WHERE "id" = ${id}
                       AND "start_date" <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::date
                     UNION ALL
+                    SELECT 1 FROM "service_record_team_slot"
+                    WHERE "branch_id" = ${branchid}::uuid AND "schedule_id" = ${id}
+                    UNION ALL
+                    SELECT 1 FROM "service_record_baby_assignment"
+                    WHERE "branch_id" = ${branchid}::uuid AND "schedule_id" = ${id}
+                    UNION ALL
                     SELECT 1 FROM "service_record"
                     WHERE "schedule_id" = ${id}
                     UNION ALL
