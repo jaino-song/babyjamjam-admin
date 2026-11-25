@@ -128,8 +128,7 @@ describeReal("baby record foundation (executed on PostgreSQL)", () => {
         ].map((name) => ({ name, deleteAction: "r", updateAction: "a" })));
     });
 
-    it("backfills proven A and explicit staff, counts unresolved history, reverses and replays without changing legacy rows", () => {
-        const fixture = `
+    const legacyFixture = `
             INSERT INTO branch (name, slug) VALUES ('QA Foundation', 'baby-foundation-replay') RETURNING id AS branch_id \\gset
             INSERT INTO branch (name, slug) VALUES ('QA Other', 'baby-foundation-replay-other') RETURNING id AS other_branch_id \\gset
             INSERT INTO client (name, voucher_client, type, branch_id)
@@ -201,12 +200,15 @@ describeReal("baby record foundation (executed on PostgreSQL)", () => {
             INSERT INTO message_trigger_job (branch_id, client_id, employee_schedule_id, rule_id, recipient_type,
                 template_key, scheduled_for, dedupe_key, updated_at)
             VALUES (:'branch_id', :proven_id, :schedule_id, 'qa-legacy-rule', 'PRIMARY_EMPLOYEE',
-                'SERVICE_RECORD_LINK', now(), 'qa-legacy-rule-dedupe', now());
-        `;
+                'SERVICE_RECORD_LINK', now(), 'qa-legacy-rule-dedupe', now()) RETURNING id AS job_id \\gset
+    `;
+
+    it("backfills proven A and explicit staff, counts unresolved history, reverses and replays without changing legacy rows", () => {
         const audit = readSql(COUNTS).replace(/;$/, "");
+        const counts = `(SELECT jsonb_object_agg(metric, row_count) FROM (${audit}) counts)`;
         const snapshot = `
             SELECT jsonb_build_object(
-                'counts', (SELECT jsonb_object_agg(metric, row_count) FROM (${audit}) counts),
+                'counts', ${counts},
                 'clients', (SELECT jsonb_object_agg(name, jsonb_build_array(fetal_type, fetal_confirmation)) FROM client),
                 'links', (SELECT jsonb_object_agg(id, baby_id) FROM service_record_case),
                 'babies', (SELECT coalesce(jsonb_agg(to_jsonb(b) - 'created_at' ORDER BY id), '[]') FROM client_baby b),
@@ -235,9 +237,22 @@ describeReal("baby record foundation (executed on PostgreSQL)", () => {
         `;
         const backfill = readSql(BACKFILL);
         const reverse = readSql(REVERSAL);
+        // Apply the same backfill to the shared DB before adding the fixture, then discard those writes.
+        // Subtract its counts so legacy rows committed by other suites cannot change the fixture totals.
         const states = runSql(`
-            BEGIN;
-            ${fixture}
+            BEGIN ISOLATION LEVEL REPEATABLE READ;
+            -- Keep the control nonempty even when this suite runs first on a clean DB.
+            INSERT INTO branch (name, slug) VALUES ('QA Existing', 'baby-foundation-existing')
+            RETURNING id AS existing_branch_id \\gset
+            INSERT INTO client (name, voucher_client, type, branch_id)
+            VALUES ('QA Existing A', true, 'A라2형', :'existing_branch_id') RETURNING id AS existing_client_id \\gset
+            INSERT INTO service_record_case (client_id, branch_id, updated_at)
+            VALUES (:existing_client_id, :'existing_branch_id', now());
+            SAVEPOINT without_fixture;
+            ${backfill}
+            SELECT ${counts};
+            ROLLBACK TO SAVEPOINT without_fixture;
+            ${legacyFixture}
             ${snapshot}
             ${backfill}
             ${snapshot}
@@ -253,9 +268,13 @@ describeReal("baby record foundation (executed on PostgreSQL)", () => {
             ${snapshot}
             ROLLBACK;
         `).split("\n").map((line) => JSON.parse(line));
-        const [before, applied, firstNew, repeated, secondNew, reversed, reversedAgain, replayed] = states;
-        expect(states).toHaveLength(8);
-        expect(applied.counts).toMatchObject({
+        const [baselineCounts, before, applied, firstNew, repeated, secondNew, reversed, reversedAgain, replayed] = states;
+        expect(states).toHaveLength(9);
+        const appliedCounts: Record<string, number> = applied.counts;
+        const fixtureCounts = Object.fromEntries(
+            Object.entries(appliedCounts).map(([metric, count]) => [metric, count - baselineCounts[metric]]),
+        );
+        expect(fixtureCounts).toMatchObject({
             clients_unconfirmed: 4,
             backfilled_babies: 2,
             backfilled_team_slots: 4,
@@ -288,20 +307,56 @@ describeReal("baby record foundation (executed on PostgreSQL)", () => {
         expect(replayed).toEqual(applied);
     });
 
-    it("refuses preactivation reversal after authored data exists", () => {
+    it.each([
+        ["an authored baby exists", `
+            INSERT INTO client_baby (client_id, branch_id, ordinal) VALUES (:ambiguous_id, :'branch_id', 1);
+        `],
+        ["a backfilled assignment closes", `
+            UPDATE service_record_baby_assignment SET ended_at = effective_from, active_owner = NULL
+            WHERE client_id = :proven_id AND legacy_backfilled RETURNING id AS closed_assignment_id \\gset
+        `],
+        ["a backfilled slot retires", `
+            UPDATE service_record_team_slot SET active = false
+            WHERE client_id = :ambiguous_id AND slot = 1 AND legacy_backfilled RETURNING id AS retired_slot_id \\gset
+        `],
+        ["the fetal type changes", `
+            UPDATE client SET fetal_type = 'TWINS' WHERE id = :proven_id RETURNING id AS changed_client_id \\gset
+        `],
+        ["the fetal confirmation changes", `
+            UPDATE client SET fetal_confirmation = 'UNCONFIRMED'
+            WHERE id = :proven_id RETURNING id AS changed_client_id \\gset
+        `],
+        ["a job has a recipient and no members", `
+            UPDATE message_trigger_job SET recipient_employee_id = :primary_id
+            WHERE id = :'job_id' RETURNING id AS recipient_job_id \\gset
+        `],
+        ["a member remains after its job recipient is cleared", `
+            -- A valid member requires a recipient. Defer its FK inside this rollback-only transaction
+            -- so the recipient can be cleared and the member alone must trigger the refusal.
+            ALTER TABLE service_record_job_member ALTER CONSTRAINT fk_record_member_job DEFERRABLE INITIALLY IMMEDIATE;
+            UPDATE message_trigger_job SET recipient_employee_id = :primary_id WHERE id = :'job_id';
+            INSERT INTO service_record_job_member (
+                job_id, service_record_case_id, branch_id, client_id, schedule_id, baby_id, employee_id, assignment_version
+            )
+            SELECT :'job_id', :'case_id', branch_id, client_id, schedule_id, baby_id, employee_id, version
+            FROM service_record_baby_assignment WHERE client_id = :proven_id AND legacy_backfilled
+            RETURNING job_id AS member_job_id \\gset
+            SET CONSTRAINTS fk_record_member_job DEFERRED;
+            UPDATE message_trigger_job SET recipient_employee_id = NULL WHERE id = :'member_job_id';
+        `],
+    ])("refuses preactivation reversal when %s", (_scenario, change) => {
         const result = executeSql(`
             BEGIN;
-            INSERT INTO branch (name, slug) VALUES ('QA Authored', 'baby-foundation-authored')
-                RETURNING id AS branch_id \\gset
-            INSERT INTO client (name, voucher_client, branch_id)
-                VALUES ('QA Authored', false, :'branch_id') RETURNING id AS client_id \\gset
-            INSERT INTO client_baby (client_id, branch_id, ordinal) VALUES (:client_id, :'branch_id', 1);
+            ${legacyFixture}
+            ${readSql(BACKFILL)}
+            ${change}
+            \\set VERBOSITY verbose
             ${readSql(REVERSAL)}
             ROLLBACK;
         `);
         expect(result.error).toBeUndefined();
         expect(result.status).toBe(3);
-        expect(result.stderr).toContain("Baby record foundation reversal requires unchanged preactivation backfill data");
+        expect(result.stderr).toContain("P0001: Baby record foundation reversal requires unchanged preactivation backfill data");
     });
 
     it("rejects persisted cross-branch, cross-family, cross-schedule and wrong-recipient ownership", async () => {
