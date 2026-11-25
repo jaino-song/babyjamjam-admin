@@ -37,6 +37,7 @@ import {
     useClient,
 } from "@/features/clients/hooks/use-clients";
 import { useSendClientReceipt } from "@/features/clients/hooks/use-send-client-receipt";
+import { SendClientReceiptDialog } from "@/components/app/clients/SendClientReceiptDialog";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
@@ -71,7 +72,7 @@ import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button, ButtonLoadingContent } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
     StatsBar,
@@ -288,6 +289,17 @@ export default function ClientsPage() {
     const [tabRequest, setTabRequest] = useState<{ clientId: number; tab: ClientDetailTabKey; nonce: number } | null>(null);
     const tabRequestNonce = useRef(0);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
+    const [previousClientIdParam, setPreviousClientIdParam] = useState(clientIdParam);
+
+    // Resolve a new URL selection before committing the detail panel and its receipt action.
+    if (previousClientIdParam !== clientIdParam) {
+        setPreviousClientIdParam(clientIdParam);
+        setTabRequest(request => request?.clientId === Number(clientIdParam) ? request : null);
+        if (clientIdParam) {
+            setSelectedClient(null);
+            setUrlSelectionSuppressed(false);
+        }
+    }
 
     const [debouncedSearchQuery] = useDebounce(searchQuery.trim(), 300);
     const isSearchSettled = searchQuery.trim() === debouncedSearchQuery;
@@ -299,10 +311,8 @@ export default function ClientsPage() {
     // The stats bar describes the whole branch: searching the list must not change or reload it.
     const listSummary = useClientListSummary();
     const deleteClient = useDeleteClient();
-    const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
     const previousBranchIdRef = useRef<string | null | undefined>(undefined);
     const createdClientSelectionRef = useRef<Client | null>(null);
-    const previousClientIdParamRef = useRef(clientIdParam);
 
     const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
     const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
@@ -313,9 +323,7 @@ export default function ClientsPage() {
         isError: isClientFromParamError,
         isFetching: isClientFromParamFetching,
         refetch: refetchClientFromParam,
-    } = useClient(
-        effectiveClientIdParam ? Number(effectiveClientIdParam) : 0
-    );
+    } = useClient(selectedClient?.id ?? Number(effectiveClientIdParam ?? 0));
 
     const clients = useMemo(
         () => isSearchSettled && directory.isBranchContextReady ? directory.clients : [],
@@ -361,6 +369,14 @@ export default function ClientsPage() {
         && activeSelectedClient === null;
     const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
+    const receiptClientId = activeSection === "list" && !shouldShowClientFormPanel
+        ? activeSelectedClient?.id ?? null
+        : null;
+    const receipt = useSendClientReceipt(
+        activeBranchId,
+        receiptClientId,
+        clientFromParam?.id === receiptClientId ? clientFromParam?.copaymentReceivedDate : undefined,
+    );
 
     const isDirectoryInitialLoading = !isSearchSettled || directory.isInitialLoading;
     const isSummaryInitialLoading = listSummary.isInitialLoading;
@@ -387,18 +403,6 @@ export default function ClientsPage() {
             setUrlSelectionSuppressed(false);
         }
     }, [clientIdParam, shouldOpenClientFormFromUrl, urlSelectionSuppressed]);
-    useEffect(() => {
-        // A new ?id= (e.g. from a notification) outranks a stale row selection.
-        if (previousClientIdParamRef.current === clientIdParam) {
-            return;
-        }
-        previousClientIdParamRef.current = clientIdParam;
-        setTabRequest(request => request?.clientId === Number(clientIdParam) ? request : null);
-        if (clientIdParam) {
-            setSelectedClient(null);
-            setUrlSelectionSuppressed(false);
-        }
-    }, [clientIdParam]);
     useEffect(() => {
         const previousBranchId = previousBranchIdRef.current;
         if (previousBranchId !== undefined && previousBranchId !== null && previousBranchId !== activeBranchId) {
@@ -1017,16 +1021,11 @@ export default function ClientsPage() {
                                         )}
                                         <DropdownMenuItem
                                             data-component="desktop_clients_page_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
-                                            disabled={isSendingReceipt}
-                                            aria-busy={isSendingReceipt || undefined}
-                                            data-loading={isSendingReceipt ? "" : undefined}
-                                            onClick={() => void sendReceipt(activeSelectedClient.id)}
-                                            className={isSendingReceipt ? "relative gap-2" : "gap-2"}
+                                            onClick={receipt.open}
+                                            className="gap-2"
                                         >
-                                            <ButtonLoadingContent loading={isSendingReceipt} loadingLabel="영수증 발송 중">
-                                                <Send className="w-4 h-4" />
-                                                본인부담금 영수증 발송
-                                            </ButtonLoadingContent>
+                                            <Send className="w-4 h-4" />
+                                            본인부담금 영수증 발송
                                         </DropdownMenuItem>
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
@@ -1107,6 +1106,13 @@ export default function ClientsPage() {
                     onEdit={handleEdit}
                     onDelete={handleDeleteRequest}
                 />
+
+            {receipt.dialog ? (
+                <SendClientReceiptDialog
+                    data-component="desktop_clients_page_receipt-send-dialog"
+                    dialog={receipt.dialog}
+                />
+            ) : null}
 
             <ClientFormDialog
                 data-component="desktop_clients_page_form-dialog"

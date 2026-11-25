@@ -1,14 +1,17 @@
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Logger } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "application/services/service-record-lifecycle.service";
+import { INITIAL_TOMBSTONE_EVALUATION_PREFIX } from "application/policies/service-record-initial-finalization.policy";
 import {
     getServiceRecordFinalizationDueAt,
 } from "domain/constants/service-record-link-message";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { INITIAL_PROVIDER_SETTLE_MS } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
@@ -1361,6 +1364,9 @@ describe("ServiceRecordLifecycleService", () => {
         expect(caseLockQuery.strings.join(" ")).toContain("current_usable_revision_id");
         expect(caseLockQuery.strings.join(" ")).toContain("current_usable_document_version");
         expect(caseLockQuery.strings.join(" ")).not.toContain("form_version");
+        const snapshotLockQuery = transactionClient.$queryRaw.mock.calls[1]![0] as unknown as { text: string };
+        expect(snapshotLockQuery.text).toContain("newest_state.document_version IS DISTINCT FROM");
+        expect(snapshotLockQuery.text).toContain("newer_initial.created_at");
         expect(transactionClient.service_record_case.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: expect.objectContaining({
@@ -2745,6 +2751,242 @@ describe("ServiceRecordLifecycleService client service days", () => {
         expect(prisma.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ requiredSessionCount: expected }),
         }));
+    });
+});
+
+describe("INITIAL chunk terminal outcome", () => {
+    const revisionId = "44444444-4444-4444-8444-444444444444";
+    function setup(options: {
+        status?: string; step?: string; error?: string | null; documentStatus?: string;
+        voidedAt?: Date | null; unlinked?: boolean; cas?: number; scope?: unknown; siblingTombstone?: boolean; superseded?: boolean;
+        tombstoneSettled?: boolean;
+    } = {}) {
+        const state = {
+            id: "state-1", generation: "generation-1", version: 2,
+            workflowScope: options.scope ?? { generationKind: "INITIAL_FINALIZATION", requestKey: `service-record-initial-finalization:${revisionId}` },
+            status: options.status ?? "processing", step: options.step ?? "documents_created", lastErrorCode: options.error ?? null,
+        };
+        const tx = {
+            $queryRaw: jest.fn<Promise<unknown[]>, [Prisma.Sql]>()
+                .mockResolvedValueOnce([{ caseId: rawQueryCaseId, revisionId, snapshotVersion: 3 }])
+                .mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 4, currentRevisionId: revisionId }])
+                .mockResolvedValueOnce(options.superseded ? [] : [state])
+                .mockResolvedValueOnce([
+                    { documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 2 },
+                    { documentId: options.unlinked ? null : "sibling", chunkIndex: 2, chunkCount: 2 },
+                ])
+                .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: options.documentStatus ?? "049", voidedAt: options.voidedAt ?? null,
+                    tombstoneEvaluated: false, tombstoneSettled: options.tombstoneSettled ?? true },
+                    ...(options.siblingTombstone ? [{ documentId: "sibling", statusType: "049", voidedAt: null,
+                        tombstoneEvaluated: false, tombstoneSettled: options.tombstoneSettled ?? true }] : [])]),
+            $executeRaw: jest.fn().mockImplementation(async (query: { strings: string[]; values: unknown[] }) => {
+                if (options.cas === 0) return 0;
+                if (query.strings.join("").includes("UPDATE service_record_revision_document_state")) {
+                    state.status = "failed";
+                    state.lastErrorCode = query.values[0] as string;
+                }
+                return 1;
+            }),
+        };
+        const prisma = { $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)) };
+        return { tx, prisma, state, service: new ServiceRecordLifecycleService(prisma as never, createHolidayCalendarStub()) };
+    }
+    const evaluate = (f: ReturnType<typeof setup>, deletedStatusBeforePurge?: string) => f.service.evaluateInitialSnapshotTerminalOutcome({
+        branchId: rawQueryBranchId, documentId: rawQueryDocumentId,
+        deletedDocuments: deletedStatusBeforePurge === undefined ? undefined : [{ documentId: rawQueryDocumentId, statusType: deletedStatusBeforePurge }],
+    });
+    const codes = (f: ReturnType<typeof setup>) => f.tx.$executeRaw.mock.calls.flatMap(([query]) =>
+        query.values.includes(INITIAL_TOMBSTONE_EVALUATION_PREFIX) ? [] : [query.values[0]]);
+
+    it("leaves a superseded INITIAL version untouched", async () => {
+        const f = setup({ superseded: true });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        const query = f.tx.$queryRaw.mock.calls[2]![0] as unknown as { text: string };
+        expect(query.text).toContain("newer_initial.created_at");
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it("fails an in-progress chunk after purge using captured status and clears case readiness", async () => {
+        const f = setup();
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+        expect(codes(f)).toEqual(["SERVICE_RECORD_REVISION_DOCUMENT_REJECTED", "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED"]);
+        const sql = f.tx.$executeRaw.mock.calls[1]![0].strings.join("");
+        expect(sql).toContain("status = 'FINALIZATION_FAILED'");
+        expect(sql).toContain("next_attempt_at = NULL");
+        expect(sql).toContain("current_usable_revision_id = NULL");
+        const documentSql = f.tx.$queryRaw.mock.calls[4]![0].strings.join("");
+        expect(documentSql).toContain("chunk.revision_id = ");
+        expect(documentSql).toContain("doc.branch_id = chunk.branch_id");
+        expect(documentSql).toContain("doc.revision_id = chunk.revision_id");
+        expect(documentSql).toContain("doc.revision_id IS NULL AND lower(btrim(doc.status_type");
+        expect(f.tx.$executeRaw.mock.calls[2]![0].values).toContain(INITIAL_TOMBSTONE_EVALUATION_PREFIX);
+    });
+    it.each(["dispatch_authorized", "creating"])("defers a purged in-progress chunk while the state step is %s", async step => {
+        const f = setup({ step });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it("keeps a fully completed state completed even when a completed chunk is deleted", async () => {
+        const f = setup({ status: "completed", step: "completed" });
+        await expect(evaluate(f, "003")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it.each(["processing", "manual_review", "failed"])("prioritizes captured completed deletion over %s, including missing chunks and absence proof", async status => {
+        const f = setup({ status, error: status === "failed" ? "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH" : "JOB_CANCELLED_AFTER_DISPATCH", unlinked: true });
+        await expect(evaluate(f, "003")).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED");
+    });
+    it("keeps completed-deletion evidence when another in-progress sibling is deleted", async () => {
+        const f = setup({ status: "failed", error: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it("fails a post-dispatch cancellation only when every chunk is linked", async () => {
+        const f = setup({ status: "manual_review", error: "JOB_CANCELLED_AFTER_DISPATCH" });
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_REVISION_DOCUMENT_REJECTED");
+    });
+    it.each([{ unlinked: true, error: "JOB_CANCELLED_AFTER_DISPATCH" }, { error: "OTHER" }])("leaves unresolved manual review for U4 %#", async options => {
+        const f = setup({ status: "manual_review", ...options });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it("heals an uncaptured tombstone conservatively", async () => {
+        const f = setup();
+        await expect(evaluate(f)).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN");
+    });
+    it.each([
+        { statusBeforePurge: "003", expectedCode: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" },
+        { statusBeforePurge: undefined, expectedCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" },
+        { statusBeforePurge: "070", expectedCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+    ])("evaluates a deferred purge of a failed INITIAL with vendor status $statusBeforePurge", async ({ statusBeforePurge, expectedCode }) => {
+        const originalCode = "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";
+        const f = setup({ status: "failed", error: originalCode, documentStatus: " Doc_Delete " });
+        await expect(evaluate(f, statusBeforePurge)).resolves.toBe(true);
+        expect(f.state.lastErrorCode).toBe(expectedCode);
+        if (expectedCode === originalCode) {
+            expect(f.tx.$executeRaw).toHaveBeenCalledTimes(1);
+            expect(f.tx.$executeRaw.mock.calls[0]![0].values).toContain(INITIAL_TOMBSTONE_EVALUATION_PREFIX);
+        }
+    });
+    it.each(["049", "999"])("records unknown deletion without marking the tombstone evaluated for captured status %s", async statusBeforePurge => {
+        const f = setup({ status: "failed", step: "failed", error: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+        const expectedCode = "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN";
+
+        await expect(evaluate(f, statusBeforePurge)).resolves.toBe(true);
+
+        expect(f.state.lastErrorCode).toBe(expectedCode);
+        expect(codes(f)).toEqual([expectedCode, expectedCode]);
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(2);
+    });
+    it("does not mark an unknown deleted sibling ready when a rejection is evaluated first", async () => {
+        const f = setup({ documentStatus: "031", siblingTombstone: true });
+        await expect(evaluate(f)).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN");
+    });
+    it.each(["070", "003"])("uses all captured batch deletion statuses when the sibling was %s", async statusType => {
+        const f = setup({ siblingTombstone: true });
+        await expect(f.service.evaluateInitialSnapshotTerminalOutcome({ branchId: rawQueryBranchId, documentId: rawQueryDocumentId,
+            deletedDocuments: [{ documentId: rawQueryDocumentId, statusType: "070" }, { documentId: "sibling", statusType }],
+        })).resolves.toBe(true);
+        expect(codes(f)[0]).toBe(statusType === "003" ? "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED");
+    });
+    it.each([
+        { documentStatus: "031", expected: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+        { documentStatus: " DOC_REJECT_OUTSIDER ", expected: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+        { documentStatus: "31", expected: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+        { documentStatus: "070", voidedAt: new Date(), expected: "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED" },
+    ])("evaluates provider rejection/void independently of purge intent %#", async ({ expected, ...options }) => {
+        const f = setup(options);
+        await expect(evaluate(f)).resolves.toBe(true);
+        expect(codes(f)[0]).toBe(expected);
+    });
+    it("ignores live or completed provider documents and non-INITIAL scopes", async () => {
+        for (const options of [{ documentStatus: "070" }, { documentStatus: "003" }, { scope: { generationKind: "REVISION_SNAPSHOT" } }]) {
+            const f = setup(options);
+            await expect(evaluate(f)).resolves.toBe(false);
+            expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        }
+    });
+    it("does not rewrite a failed state when evaluated again", async () => {
+        const f = setup();
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+        f.tx.$queryRaw.mockResolvedValueOnce([{ caseId: rawQueryCaseId, revisionId, snapshotVersion: 3 }])
+            .mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 5, currentRevisionId: revisionId }])
+            .mockResolvedValueOnce([f.state])
+            .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 1 }])
+            .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: "049", voidedAt: null, tombstoneEvaluated: true }]);
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(3);
+    });
+    it("throws on CAS loss and locks case, state, chunk then document", async () => {
+        const f = setup({ cas: 0 });
+        await expect(evaluate(f, "070")).rejects.toBeInstanceOf(ConflictException);
+        const locks = f.tx.$queryRaw.mock.calls.map(([q]) => (q as { strings: string[] }).strings.join(" "));
+        expect(locks[0]).not.toContain("FOR UPDATE");
+        expect(locks[1]).toContain("FROM service_record_case");
+        expect(locks[2]).toContain("FROM service_record_revision_document_state");
+        expect(locks[3]).toContain("FROM service_record_snapshot_chunk");
+        expect(locks[4]).toContain("FOR UPDATE OF doc");
+    });
+    it("sweeps terminal/tombstoned INITIAL candidates without inventing pre-delete status and respects its lease", async () => {
+        const prisma = { $queryRaw: jest.fn().mockResolvedValue([
+            { branchId: rawQueryBranchId, documentId: "old-tombstone" },
+            { branchId: rawQueryBranchId, documentId: "other-terminal" },
+        ]) };
+        const service = new ServiceRecordLifecycleService(prisma as never, createHolidayCalendarStub());
+        const evaluate = jest.spyOn(service, "evaluateInitialSnapshotTerminalOutcome").mockResolvedValue(true);
+        const shouldContinue = jest.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+        await expect(service.healInitialSnapshotTerminalOutcomes({ branchId: rawQueryBranchId, shouldContinue })).resolves.toBe(1);
+        expect(evaluate.mock.calls).toEqual([[{ branchId: rawQueryBranchId, documentId: "old-tombstone", fromSweep: true }]]);
+        const query = prisma.$queryRaw.mock.calls[0]![0] as { strings: string[]; values: unknown[] };
+        expect(query.strings.join("?")).toContain("doc.updated_date <= now() - (?::int * interval '1 millisecond')");
+        expect(query.values).toContain(INITIAL_PROVIDER_SETTLE_MS);
+        expect(query.strings.join(" ")).toContain("state.status IN ('processing', 'manual_review')");
+        expect(query.strings.join(" ")).toContain("state.status = 'failed' AND state.last_error_code IN");
+        expect(query.strings.join(" ")).toContain("chunk.last_error = ");
+        expect(query.values).toContain(INITIAL_TOMBSTONE_EVALUATION_PREFIX);
+        expect(query.values).toEqual(expect.arrayContaining(["049", "49", "doc_delete", "doc_reject_outsider"]));
+        expect(query.strings.join(" ")).toContain("owner.current_revision_id = chunk.revision_id");
+    });
+    it.each([
+        { status: "processing", settled: false, expectedHealed: false },
+        { status: "processing", settled: true, expectedHealed: true },
+        { status: "failed", settled: false, expectedHealed: false },
+        { status: "failed", settled: true, expectedHealed: true },
+    ])("rechecks a tombstone discovered by the sweep with $status and settled=$settled", async ({ status, settled, expectedHealed }) => {
+        const f = setup({
+            status, tombstoneSettled: settled,
+            error: status === "failed" ? "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" : undefined,
+        });
+        const healed = await f.service.evaluateInitialSnapshotTerminalOutcome({
+            branchId: rawQueryBranchId, documentId: rawQueryDocumentId, fromSweep: true,
+        });
+
+        const [query] = f.tx.$queryRaw.mock.calls[4]!;
+        expect(query.sql).toMatch(/doc\.updated_date <= now\(\) - \(\?::int \* interval '1 millisecond'\)\s+AS "tombstoneSettled"/);
+        expect(query.values).toContain(INITIAL_PROVIDER_SETTLE_MS);
+        expect(healed).toBe(expectedHealed);
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(expectedHealed ? 2 : 0);
+    });
+    it("evaluates a just-deleted INITIAL tombstone immediately after the controller commits", async () => {
+        const f = setup({ tombstoneSettled: false });
+
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+
+        const [query] = f.tx.$queryRaw.mock.calls[4]!;
+        expect(query.sql).toMatch(/\btrue\s+AS "tombstoneSettled"/);
+        expect(query.sql).not.toMatch(/doc\.updated_date\s*<=\s*now\(\)/);
+        expect(query.values).not.toContain(INITIAL_PROVIDER_SETTLE_MS);
+        expect(f.state.lastErrorCode).toBe("SERVICE_RECORD_REVISION_DOCUMENT_REJECTED");
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(3);
+    });
+    it("defers a terminal sibling while a young tombstone awaits the post-commit evaluator", async () => {
+        const f = setup({ documentStatus: "031", siblingTombstone: true, tombstoneSettled: false });
+        await expect(f.service.evaluateInitialSnapshotTerminalOutcome({
+            branchId: rawQueryBranchId, documentId: rawQueryDocumentId, fromSweep: true,
+        })).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
     });
 });
 

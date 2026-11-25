@@ -7,8 +7,10 @@ import type {
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionDocumentState as SharedServiceRecordRevisionDocumentState,
-    ServiceRecordRevisionHistoryResponse,
+    ServiceRecordRevisionDocumentSummary as SharedRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryResponse as SharedRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
+import type { InitialNoProviderDocumentProjection } from "domain/constants/service-record-initial-no-provider-document";
 import type { Prisma } from "@prisma/client";
 import type { HolidayCalendarReadData } from "./holiday-calendar.repository.interface";
 
@@ -27,6 +29,16 @@ export type ServiceRecordEditJsonObject = {
 
 /** Storage-facing state is shared with adapter workers without importing Prisma. */
 export type ServiceRecordRevisionDocumentState = SharedServiceRecordRevisionDocumentState;
+
+export interface ServiceRecordRevisionDocumentSummary extends SharedRevisionDocumentSummary {
+    noProviderDocumentConfirmable?: InitialNoProviderDocumentProjection;
+}
+
+export interface ServiceRecordRevisionHistoryResponse extends SharedRevisionHistoryResponse {
+    revisions: Array<Omit<SharedRevisionHistoryResponse["revisions"][number], "documents"> & {
+        documents: ServiceRecordRevisionDocumentSummary[];
+    }>;
+}
 
 /** Immutable source rows captured for a draft in one repeatable-read snapshot. */
 export interface ServiceRecordEditSourceDay {
@@ -603,6 +615,7 @@ export interface IServiceRecordEditRepository {
     /** Append an immutable revision, allocating the next case-local number under a row lock. */
     appendRevision(input: AppendServiceRecordRevisionInput): Promise<ServiceRecordRevision>;
     /** Read branch/client-scoped revision history and safe operation summaries. */
+    /** Includes the advisory regeneration blocker for the current INITIAL generation. */
     listRevisionHistory(branchId: string, clientId: number): Promise<ServiceRecordRevisionHistoryResponse | null>;
     /** Read immutable content only inside the owning branch and client. */
     findRevisionForChanges(branchId: string, clientId: number, revisionId: string): Promise<
@@ -645,6 +658,7 @@ export interface IServiceRecordEditRepository {
         branchId: string,
         revisionId: string,
         stateId: string,
+        context?: ServiceRecordEditTransactionContext,
     ): Promise<ServiceRecordRevisionDocumentState | null>;
     /** Create a generation-bound operation state. The unique operation/generation constraints are authoritative. */
     createRevisionDocumentState(
@@ -687,6 +701,7 @@ export interface IServiceRecordEditRepository {
     recordInitialFinalizationDocumentsCreatedInTransaction(
         context: ServiceRecordEditTransactionContext,
         input: PromoteServiceRecordRevisionSnapshotInput,
+        precondition?: "cancelled_after_dispatch",
     ): Promise<boolean>;
     /** Promote a complete chunk/document set and advance usable pointers atomically. */
     promoteServiceRecordRevisionSnapshot(

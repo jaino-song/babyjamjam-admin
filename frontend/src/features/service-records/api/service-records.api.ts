@@ -1,3 +1,4 @@
+import { INITIAL_CONFIRM_CLIENT_CONFIG, type InitialDocumentTarget } from "@/lib/eformsign/initial-document-recovery-contract";
 import { api } from "@/lib/api/client";
 import {
     normalizeKeepPeriodMismatch,
@@ -181,6 +182,13 @@ export const serviceRecordsApi = {
             ...response,
             data: normalizeServiceRecordRevisionDocumentSummary(response.data),
         } as typeof response & { data: ServiceRecordRevisionDocumentSummary })),
+    confirmInitialNoProviderDocument: async ({ revisionId, documentStateId, expectedGeneration }: InitialDocumentTarget): Promise<void> => {
+        await api.post(
+            `/admin/service-records/revisions/${encodeURIComponent(revisionId)}/documents/${encodeURIComponent(documentStateId)}/confirm-no-provider-document`,
+            { expectedGeneration },
+            INITIAL_CONFIRM_CLIENT_CONFIG,
+        );
+    },
     keepPeriodMismatch: (clientId: number, sessionIndexes: number[]) =>
         api.post<unknown>(`/admin/service-records/client/${clientId}/period-mismatch/keep`, { sessionIndexes })
             .then((response) => ({ ...response, data: normalizeKeepPeriodMismatch(response.data) })),

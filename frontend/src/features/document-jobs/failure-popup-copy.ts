@@ -1,8 +1,9 @@
+import { INITIAL_DOCUMENT_STATE_CODES } from "@/lib/eformsign/initial-document-recovery-contract";
 import type { EformsignDocumentJobResponse } from "@/services/api";
 import type { EformsignDocumentJobFailureReasonCode, EformsignDocumentJobRecoveryKind } from "@/services/eformsign";
 
 import { documentJobPipelineStep } from "./progress-step";
-import { SERVICE_RECORD_RECOVERY_COPY, serviceRecordMayExist } from "./service-record-recovery-copy";
+import { initialRegenerationBlockedCopy, SERVICE_RECORD_RECOVERY_COPY, serviceRecordMayExist } from "./service-record-recovery-copy";
 
 export interface FailurePopupCopy {
   title: string;
@@ -141,10 +142,32 @@ const SERVICE_RECORD_STAGE_COPY: Record<FailureStage, string> = {
   "전송 결과 확인": "제공기록지 전송 결과를 확인하지 못했어요.",
 };
 
+export function initialDocumentStateLabel(code: unknown): string | null {
+  switch (code) {
+    case INITIAL_DOCUMENT_STATE_CODES.noProviderDocument:
+      return "이폼사인에 보낸 문서가 없음을 확인했어요.";
+    case INITIAL_DOCUMENT_STATE_CODES.partialDispatch:
+      return "일부 문서만 이폼사인에 전송됐어요.";
+    case INITIAL_DOCUMENT_STATE_CODES.completedDocumentDeleted:
+      return "완료된 문서가 삭제됐어요.";
+    case INITIAL_DOCUMENT_STATE_CODES.deletedStatusUnknown:
+      return "삭제된 문서의 완료 여부를 확인할 수 없어요.";
+    default:
+      return null;
+  }
+}
+
 function describeServiceRecordFailure(job: Pick<FailureDetailJob, "failureReasonCode" | "retryable" | "cancellable" | "progressStep" | "progressDetail">): JobFailureDetailCopy {
   const mayExist = serviceRecordMayExist(job);
   const canCancel = job.cancellable === true;
   const code = job.failureReasonCode;
+  const initialLabel = initialDocumentStateLabel(code);
+  if (initialLabel) {
+    return {
+      reason: initialLabel,
+      nextAction: initialRegenerationBlockedCopy(code) ?? "전자문서 작업 목록에서 재생성 가능 여부를 확인해 주세요.",
+    };
+  }
   const stage = code && Object.prototype.hasOwnProperty.call(CODE_STAGE, code) ? CODE_STAGE[code] : null;
   let reason = stage ? SERVICE_RECORD_STAGE_COPY[stage] : "제공기록지를 생성하지 못했어요.";
   if (mayExist || code === "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED") {
@@ -216,7 +239,10 @@ export function describeJobFailureDetail(job: FailureDetailJob): JobFailureDetai
     };
   }
   if (job.status !== "failed" && job.status !== "requires_attention") return null;
-  if (job.documentKind === "service_record") return describeServiceRecordFailure(job);
+  if (job.documentKind === "service_record") return describeServiceRecordFailure({
+    ...job,
+    failureReasonCode: initialDocumentStateLabel(job.lastErrorCode) ? job.lastErrorCode : job.failureReasonCode,
+  });
   const code = job.failureReasonCode;
   const reason = describeFailureReason(job);
   const actionKind = isRecoverableJob(job) ? job.recoveryKind ?? undefined : undefined;

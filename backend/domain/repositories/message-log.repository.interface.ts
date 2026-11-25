@@ -1,3 +1,4 @@
+import type { OccurrenceAdmission } from "domain/entities/message-occurrence";
 import type { MessageQuietHold, MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { CarrierResultState, MessageLogEntity } from "domain/entities/message-log.entity";
 import type { Prisma } from "@prisma/client";
@@ -85,7 +86,7 @@ export interface IMessageLogRepository {
      */
     prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity>;
     /** Atomically claim the prepared row immediately before crossing the network. */
-    claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null>;
+    claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | Exclude<OccurrenceAdmission, "admitted"> | null>;
     /** Conditionally apply one operator reconciliation to an uncertain attempt. */
     reconcileProviderAttempt(
         log: MessageLogEntity,

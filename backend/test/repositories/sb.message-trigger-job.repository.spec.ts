@@ -30,6 +30,7 @@ import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { describeReal, assertThrowawayTarget, createIntegrityPrisma, closeIntegrityPrisma, IntegrityPrisma } from "../integrity/helpers/real-db";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { RECORD_LINK_RECOVERY_REFUSED } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { SbMessageTriggerJobRepository, serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
@@ -44,8 +45,9 @@ describe("serviceRecordScheduleBlockerSql", () => {
             canceledByUser: Prisma.sql`blocker.canceled_by_user`,
         });
         expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(1);
-        expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_PRE_BOOKING_REASON)).toHaveLength(1);
+        expect(sql.values).not.toContain(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
         for (const reason of [
+            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
             "Service record access revoked",
             "Service record link reset without resend",
             "Service record link schedule ended or replaced",
@@ -228,6 +230,83 @@ describe("SbMessageTriggerJobRepository", () => {
     const createRow = (overrides: Partial<MockMessageTriggerJobRow> = {}): MockMessageTriggerJobRow => ({
         ...baseRow(),
         ...overrides,
+    });
+
+    describe("service-record link dispatch fence", () => {
+        const due = new Date("2026-07-09T03:00:00.000Z");
+        const epoch = new Date("2026-07-01T00:00:00.000Z");
+        const serviceStart = new Date("2026-07-10T00:00:00.000Z");
+        const serviceEnd = new Date("2026-07-19T00:00:00.000Z");
+        const createFenceFixture = (successor: boolean) => {
+            const payload = { ...baseRow().payload, scheduleId: 10, employeeId: 30, scheduleIncarnationId: "assignment-1" };
+            const row = createRow({ ruleId: SERVICE_RECORD_LINK_RULE_ID, templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, employeeScheduleId: payload.scheduleId,
+                dedupeKey: successor ? "record-retry:original" : `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`,
+                payload, scheduledFor: due, status: successor ? "processing" : "pending", claimToken: successor ? "claim-1" : null });
+            const job = MessageTriggerJobEntity.reconstitute(row.id, row.branchId, row.ruleId, successor ? "processing" : "pending",
+                row.scheduledFor, null, null, null, row.clientId, row.employeeScheduleId, MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                row.recipientPhone, MessageTriggerTemplateKey.SERVICE_RECORD_LINK, row.dedupeKey, payload,
+                row.createdAt, row.updatedAt, row.attempts, row.nextAttemptAt, row.claimToken);
+            const schedule = { id: payload.scheduleId, incarnationId: payload.scheduleIncarnationId, branchId: row.branchId,
+                clientId: row.clientId, primaryEmployeeId: payload.employeeId, replaced: false, terminatedAt: null,
+                startDate: serviceStart, endDate: serviceEnd,
+                client: { branchId: row.branchId, deletedAt: null, serviceStatus: successor ? "waiting" : "pre_booking",
+                    startDate: serviceStart, endDate: serviceEnd, bookingConfirmedAt: successor ? epoch : null },
+                primaryEmployee: { branchId: row.branchId, deletedAt: null, phone: row.recipientPhone } };
+            const tx = {
+                $queryRaw: jest.fn().mockResolvedValue([{ approved: true }]),
+                employee_schedule: { findFirst: jest.fn().mockResolvedValue(schedule) },
+                message_log: { findFirst: jest.fn().mockResolvedValue(null) },
+                message_trigger_rule_branch_override: { findUnique: jest.fn() },
+                message_trigger_job: {
+                    findFirst: jest.fn().mockResolvedValue(null).mockResolvedValueOnce({ ...row,
+                        originalJobId: successor ? "original" : null, recoveryEpoch: successor ? epoch : null }),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+            };
+            if (successor) tx.message_trigger_job.findFirst.mockResolvedValueOnce({ scheduledFor: due, payload });
+            const repo = new SbMessageTriggerJobRepository({} as PrismaService);
+            return { repo, tx, job, row, schedule };
+        };
+
+        it.each([
+            ["the same enabled epoch", new Date(epoch), "waiting", true],
+            ["OFF", null, "waiting", false],
+            ["a new epoch after OFF → ON", new Date(epoch.getTime() + 1), "waiting", false],
+            ["a terminated customer", epoch, "terminated", false],
+        ])("fences a claimed successor immediately before provider dispatch with %s", async (_label, currentEpoch, status, allow) => {
+            const { repo, tx, job, row, schedule } = createFenceFixture(true);
+            schedule.client.serviceStatus = status;
+            tx.message_trigger_rule_branch_override.findUnique.mockResolvedValue({ canceledRetryEnabledAt: currentEpoch, isActive: true });
+
+            expect(await repo.fenceServiceRecordLinkAttempt(tx as never, job, due, "processing")).toEqual(allow
+                ? { kind: "allow" } : { kind: "stale", reason: RECORD_LINK_RECOVERY_REFUSED });
+
+            if (allow) {
+                expect(tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            } else {
+                expect(tx.message_trigger_job.updateMany).toHaveBeenCalledWith({
+                    where: expect.objectContaining({ id: job.id, branchId: row.branchId, status: "processing", claimToken: row.claimToken }),
+                    data: expect.objectContaining({ status: "canceled", canceledAt: due, cancelReason: RECORD_LINK_RECOVERY_REFUSED, claimToken: null }),
+                });
+            }
+        });
+
+        it.each([epoch, null])("snapshots recovery epoch %s at the original due attempt", async currentEpoch => {
+            const { repo, tx, job, row } = createFenceFixture(false);
+            tx.message_trigger_rule_branch_override.findUnique.mockResolvedValue({ canceledRetryEnabledAt: currentEpoch, isActive: true });
+
+            expect(await repo.fenceServiceRecordLinkAttempt(tx as never, job, due, "pending"))
+                .toEqual({ kind: "stale", reason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON });
+
+            expect(tx.message_trigger_job.updateMany).toHaveBeenCalledWith({
+                where: expect.objectContaining({ id: job.id, branchId: row.branchId, status: "pending", scheduledFor: { lte: due } }),
+                data: expect.objectContaining({ status: "canceled", canceledAt: due, cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                    recoveryReason: "record_link_pre_booking", recoveryEpoch: currentEpoch, firstBlockedAt: due, recoveryState: "awaiting_transition" }),
+            });
+            const [{ data }] = tx.message_trigger_job.updateMany.mock.calls[0]!;
+            expect(data).not.toHaveProperty("scheduledFor");
+        });
     });
 
     it("reads outstanding immutable date intents in the caller transaction without filtering leased retry times", async () => {
@@ -1441,45 +1520,75 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(getSqlText(queryRaw.mock.calls[1][0])).toContain('INSERT INTO "message_trigger_job"');
     });
 
-    it("preserves an existing intent-generated job while narrowly reactivating approval cancellation", async () => {
+    it.each([false, true])("keeps approval-canceled jobs inert on both upsert branches (preserveExisting=%s)", async (preserveExisting) => {
         const job = createJob();
-        const expectedUpdatedAt = new Date("2026-07-09T00:00:00.123Z");
-        const existingPending = createRow({
-            id: "existing-job",
-            dedupeKey: job.dedupeKey,
-            status: "pending",
+        const generation = new Date("2026-07-09T00:00:00.123Z");
+        const existing = createRow({ status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, canceledAt: now });
+        messageTriggerJobModel.findUnique.mockResolvedValue(existing);
+        queryRaw.mockImplementation(async (sql: Prisma.Sql) => {
+            if (sql.text.includes('FROM "message_trigger_rule"')) {
+                return [{ id: job.ruleId, branch_id: job.branchId, jobs_stale: false, updated_at: generation }];
+            }
+            if (preserveExisting) {
+                expect(sql.text).toContain('ON CONFLICT ("dedupe_key") DO NOTHING');
+            } else {
+                // The negative predicate must admit unrelated or NULL reasons.
+                const fence = sql.text.match(/AND NOT \("message_trigger_job"\."status" = 'canceled' AND "message_trigger_job"\."cancel_reason" IS NOT DISTINCT FROM \$(\d+)\)/);
+                expect(sql.values[Number(fence?.[1]) - 1]).toBe(existing.cancelReason);
+            }
+            return [];
         });
-        queryRaw
-            .mockResolvedValueOnce([{
-                id: "rule-1",
-                branch_id: "branch-1",
-                jobs_stale: false,
-                updated_at: expectedUpdatedAt,
-            }])
-            .mockResolvedValueOnce([]);
-        messageTriggerJobModel.findUnique.mockResolvedValue(existingPending);
 
-        const result = await repository.upsertPendingForRuleGeneration(
-            job,
-            expectedUpdatedAt,
-            false,
-            true,
-        );
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const result = await repository.upsertPendingForRuleGeneration(job, generation, false, preserveExisting);
+            expect(result).toMatchObject({ id: existing.id, status: "canceled", cancelReason: existing.cancelReason, canceledAt: now });
+        }
+        expect(queryRaw).toHaveBeenCalledTimes(4);
+    });
 
-        expect(result?.id).toBe("existing-job");
-        expect(result?.status).toBe("pending");
-        const conflictQuery = queryRaw.mock.calls[1][0] as {
-            strings?: readonly string[];
-            values?: readonly unknown[];
-        };
-        const sqlText = getSqlText(conflictQuery).replace(/\s+/g, " ");
-        expect(sqlText).toContain('ON CONFLICT ("dedupe_key") DO UPDATE SET');
-        expect(sqlText).toContain(
-            'AND "message_trigger_job"."status" = \'canceled\' '
-            + 'AND "message_trigger_job"."canceled_by_user" = false '
-            + 'AND "message_trigger_job"."cancel_reason" =',
-        );
-        expect(conflictQuery.values).toContain(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+    it.each([null, "Client data changed"])("leaves %s cancellation recoverable in the replacement upsert", async (cancelReason) => {
+        const row = createRow({ status: "canceled", cancelReason });
+        queryRaw.mockImplementation(async (sql: Prisma.Sql) => {
+            const fence = sql.text.match(/"cancel_reason" IS NOT DISTINCT FROM \$(\d+)/);
+            if (fence && row.cancelReason === sql.values[Number(fence[1]) - 1]) return [];
+            row.status = "pending";
+            row.cancelReason = null;
+            return [];
+        });
+        messageTriggerJobModel.findUnique.mockResolvedValue(row);
+        await expect(repository.upsertPending(createJob())).resolves.toMatchObject({ status: "pending", cancelReason: null });
+    });
+
+    it.each(["original key", "task retry", "legacy assignment"])("finds a terminal predecessor by %s before inserting a different key", async (mode) => {
+        const job = createJob();
+        const source = `${job.ruleId}:client:${job.clientId}:${job.recipientType}:`;
+        const oldKey = `${source}${job.scheduledFor.toISOString()}`;
+        job.dedupeKey = `${source}2026-07-09T02:00:00.000Z`;
+        const commitDigest = "a".repeat(64);
+        let expected: Prisma.message_trigger_jobWhereInput;
+        if (mode === "legacy assignment") {
+            job.employeeScheduleId = 10;
+            job.payload.employeeId = 30;
+            job.dedupeKey = `${job.ruleId}:schedule:10:employee:30:${job.recipientType}`;
+            expected = { dedupeKey: { startsWith: source }, payload: { path: ["employeeId"], equals: 30 } };
+        } else if (mode === "task retry") {
+            job.payload.taskAutomationReference = { version: 1, actionId: "QA-action", taskId: "QA-task", taskRevision: 1,
+                authorities: [], coverages: [], commitDigest };
+            expected = { payload: { path: ["taskAutomationReference", "commitDigest"], equals: commitDigest } };
+        } else {
+            job.payload.catchUp = { originalScheduledFor: job.scheduledFor.toISOString(), batchId: "QA-batch", sequence: 1,
+                intervalMinutes: 3, predecessorDedupeKey: null };
+            expected = { dedupeKey: oldKey, payload: { path: ["catchUp", "originalScheduledFor"], equals: Prisma.AnyNull } };
+        }
+        const old = createRow({ status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, dedupeKey: oldKey });
+        messageTriggerJobModel.findFirst.mockImplementation(async ({ where }: { where: Prisma.message_trigger_jobWhereInput }) => {
+            expect(where).toMatchObject({ branchId: job.branchId, ruleId: job.ruleId, clientId: job.clientId, recipientType: job.recipientType,
+                employeeScheduleId: job.employeeScheduleId, dedupeKey: { not: job.dedupeKey }, status: "canceled", cancelReason: old.cancelReason });
+            expect(where.OR).toContainEqual(expected);
+            return old;
+        });
+        await expect(repository.upsertPending(job)).resolves.toMatchObject({ status: "canceled", cancelReason: old.cancelReason, dedupeKey: oldKey });
+        expect(queryRaw).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -2323,7 +2432,10 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 }
                 const statuses = /status IN \(([^)]*)\)/.exec(text)![1]!
                     .split(",").map((status) => status.trim().replace(/'/g, ""));
-                const matches = (row: FakeRow) => statuses.includes(row.status) && predicates.every((predicate) => (
+                const terminalKey = /dedupe_key = \$(\d+) AND \(status = 'canceled' AND cancel_reason IS NOT DISTINCT FROM \$(\d+)\)/.exec(text);
+                const matches = (row: FakeRow) => (statuses.includes(row.status)
+                    || (terminalKey && row.status === "canceled" && row.dedupeKey === values[Number(terminalKey[1]) - 1]
+                        && row.cancelReason === values[Number(terminalKey[2]) - 1])) && predicates.every((predicate) => (
                     ((predicate.column === "rule_id" ? row.ruleId : row.scheduleId) === predicate.value) === (predicate.op === "=")
                 ));
                 const reason = values.find((value) => typeof value === "string" && !this.rows.has(value) && value.includes(" ")) as string;
@@ -2362,7 +2474,10 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 const statuses = /status IN \(([^)]*)\)/.exec(text)![1]!
                     .split(",").map((status) => status.trim().replace(/'/g, ""));
                 const columnOf = (row: FakeRow, column: string) => (column === "rule_id" ? row.ruleId : row.scheduleId);
-                const matches = (row: FakeRow) => statuses.includes(row.status) && predicates.every((predicate) => (
+                const terminalKey = /dedupe_key = \$(\d+) AND \(status = 'canceled' AND cancel_reason IS NOT DISTINCT FROM \$(\d+)\)/.exec(text);
+                const matches = (row: FakeRow) => (statuses.includes(row.status)
+                    || (terminalKey && row.status === "canceled" && row.dedupeKey === values[Number(terminalKey[1]) - 1]
+                        && row.cancelReason === values[Number(terminalKey[2]) - 1])) && predicates.every((predicate) => (
                     (columnOf(row, predicate.column) === predicate.value) === (predicate.op === "=")
                 ));
                 const locked: FakeRow[] = [];
@@ -2481,6 +2596,18 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         expect(database.rows.size).toBe(1);
         expect(original.status).toBe(status);
         expect(original.cancelReason).toBeNull();
+    });
+
+    it("protects a permission-canceled replacement key and leaves pending siblings untouched", async () => {
+        const job = manualJob("a");
+        database.seed("canceled", { dedupeKey: job.dedupeKey, cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON });
+        database.seed("pending");
+        const before = structuredClone([...database.rows]);
+        const afterReplace = jest.fn();
+
+        await expect(repository.replacePendingJobsUnlessInFlight(job, CANCEL_REASON, {}, afterReplace)).resolves.toEqual({ kind: "protected" });
+        expect([...database.rows]).toEqual(before);
+        expect(afterReplace).not.toHaveBeenCalled();
     });
 
     it("also refuses when the in-flight job sits next to a pending one, leaving the pending one untouched", async () => {
@@ -3442,9 +3569,7 @@ describe("automatic service-record date replacement", () => {
                         && (["pending", "processing", "dispatching", "sent", "needs_setup"].includes(String(row["status"]))
                             || (row["status"] === "failed" && row["cancel_reason"] !== SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON)
                             || (row["status"] === "canceled" && (row["canceled_by_user"] === true || row["cancel_reason"] === null
-                                || ![SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
-                                    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
-                                    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON].includes(String(row["cancel_reason"]))))));
+                                || !sql.values.slice(-4).includes(row["cancel_reason"])))));
                 }
                 if (sql.text.includes('SELECT id, status, canceled_by_user')) return rows.filter((row) => sqlMatches(row, sql));
                 if (sql.text.includes('INSERT INTO "message_trigger_job"')) {
@@ -3746,8 +3871,6 @@ describe("automatic service-record date replacement", () => {
         SERVICE_RECORD_LINK_RESCHEDULED_REASON,
         SERVICE_RECORD_LINK_ENDED_REASON,
         SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
-        SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
-        MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     ])("reactivates a system cancellation (%s) even when its time and source are unchanged", async (cancelReason) => {
         const f = fixture(); const row = f.rows()[0]!;
         Object.assign(row, { status: "canceled", cancel_reason: cancelReason,
@@ -3765,16 +3888,28 @@ describe("automatic service-record date replacement", () => {
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(current);
     });
 
+    it.each([MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON])(
+        "keeps an automatic link canceled for %s through repeated date reschedules", async cancelReason => {
+        const f = fixture();
+        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        for (let attempt = 0; attempt < 2; attempt++) {
+            expect((await f.run()).kind).toBe("protected");
+        }
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+        expect(f.statements.some((sql) => sql.text.includes('INSERT INTO "message_trigger_job"'))).toBe(false);
+    });
+
     it.each([
         { status: "pending" }, { status: "needs_setup" }, { status: "processing" }, { status: "dispatching" }, { status: "sent" },
         { status: "failed", cancel_reason: null },
         { status: "canceled", cancel_reason: null },
         { status: "canceled", cancel_reason: "Service record access revoked" },
+        { status: "canceled", cancel_reason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON },
         { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON, canceled_by_user: true },
     ])("does not reclaim a system-canceled automatic link when the schedule has a manual blocker %j", async (blocker) => {
         for (const cancelReason of [SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
-            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
-            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON]) {
+            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON]) {
             const f = fixture();
             Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
             Object.assign(f.rows()[1]!, blocker);

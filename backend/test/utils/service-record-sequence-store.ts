@@ -112,6 +112,11 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
     },
     service_record: { id: nul, scheduleId: nul, branchId: nul, serviceRecordCaseId: nul },
     eformsign_doc: { id: nul, branchId: nul, employeeScheduleId: nul, documentKind: nul, serviceRecordCaseId: nul },
+    eformsign_document_job: {
+        id: uuid, branchId: nul, clientId: nul, jobType: nul, source: nul, requestKey: nul,
+        payload: nul, payloadFingerprint: nul,
+        documentId: nul, status: nul, progressStep: nul,
+    },
 };
 
 /**
@@ -133,6 +138,7 @@ const UNIQUES: Record<string, string[][]> = {
     service_record_revision: [["id"], ["serviceRecordCaseId", "revisionNumber"]],
     service_record: [["id"], ["scheduleId"]],
     eformsign_doc: [["id"]],
+    eformsign_document_job: [["id"], ["requestKey"]],
 };
 
 /**
@@ -185,6 +191,9 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
     },
     service_record: { string: "id branchId serviceRecordCaseId", int: "scheduleId" },
     eformsign_doc: { int: "id employeeScheduleId", string: "branchId documentKind serviceRecordCaseId" },
+    eformsign_document_job: {
+        string: "id branchId jobType source requestKey payloadFingerprint documentId status progressStep", int: "clientId", json: "payload",
+    },
 };
 
 const KINDS: Record<string, Record<string, Kind>> = {};
@@ -314,6 +323,7 @@ export class SequenceStore {
     readonly service_record_revision: Delegate<"findMany" | "findFirst" | "findUnique" | "create">;
     readonly service_record: Delegate<"updateMany">;
     readonly eformsign_doc: Delegate<"updateMany">;
+    readonly eformsign_document_job: Delegate<"findMany">;
 
     constructor(options: SequenceStoreOptions = {}) {
         for (const table of Object.keys(COLUMNS)) this.tables[table] = [];
@@ -342,6 +352,7 @@ export class SequenceStore {
         ]);
         this.service_record = this.delegate("service_record", ["updateMany"]);
         this.eformsign_doc = this.delegate("eformsign_doc", ["updateMany"]);
+        this.eformsign_document_job = this.delegate("eformsign_document_job", ["findMany"]);
     }
 
     // ------------------------------------------------------------------ test-facing API
@@ -507,10 +518,18 @@ export class SequenceStore {
     /**
      * One field's filter, the way Prisma's generated types accept it: a literal of the column's kind, null, or an
      * object of supported operators over literals (literal lists for in / notIn). `not` takes a literal, null or a
-     * nested operator object, checked by these same rules. A Json column has no modelled filter at all.
+     * nested operator object, checked by these same rules. JSON supports scalar path equality.
      */
     private assertFilter(label: string, kind: Kind, value: unknown): void {
-        if (kind === "json") fail(`${label}: a Json column has no modelled filter`);
+        if (kind === "json") {
+            if (label !== "eformsign_document_job.payload") fail(`${label}: a Json column has no modelled filter`);
+            if (!isPlainObject(value) || Object.keys(value).length !== 2 || !Array.isArray(value["path"])
+                || !value["path"].every((part) => typeof part === "string") || !("equals" in value)
+                || !["string", "number", "boolean"].includes(typeof value["equals"])) {
+                fail(`${label}: unsupported JSON filter`);
+            }
+            return;
+        }
         if (value === null || isLiteral(kind, value)) return;
         if (!isPlainObject(value)) fail(`${label}: unsupported filter value`);
         for (const [operator, operand] of Object.entries(value)) {

@@ -110,6 +110,7 @@ import { ServiceRecordLinkService } from "./service-record-link.service";
 import { IMMUTABLE_FINALIZATION_STATUSES, ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { ServiceRecordStartDateChangeService } from "./service-record-start-date-change.service";
 import { SystemSettingService } from "./system-setting.service";
+import { permitsRecordLinkRecovery, recordLinkClientStatus, type RecordLinkStatusInputs } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import {
     manualScheduleConflict,
@@ -193,6 +194,7 @@ export interface ClientWithEmployees {
     fullPrice: string | null;
     grant: string | null;
     actualPrice: string | null;
+    readonly copaymentReceivedDate: string | null;
     startDate: Date | null;
     endDate: Date | null;
     careCenter: boolean | null;
@@ -1129,7 +1131,7 @@ export class ClientService {
     }): Promise<{ createdScheduleId: number | null; replacedScheduleId: number | null }> {
         const intentAt = new Date();
         const ordinaryMutationId = randomUUID();
-        const newSchedule = await this.prismaService.$transaction(async (transaction) => {
+        const newSchedule = await this.withRecordLinkWrite(branchid, async (transaction) => {
             // The common policy rereads every historical schedule after the
             // client lock and locks the complete employee union (including the
             // requested providers) before any case or schedule write. This
@@ -1239,6 +1241,7 @@ export class ClientService {
                     replaced: false,
                 },
             });
+            await this.serviceRecordLinkService?.observeAssignmentInTransaction?.(transaction, branchid, newSchedule.id);
             if (params.applyMessageAutomation) {
                 await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                     branchId: branchid,
@@ -1423,6 +1426,9 @@ export class ClientService {
                     );
                 }
                 if (assignment.createdScheduleId !== null) {
+                    if (!applyMessageAutomation) {
+                        await this.scheduleFreshRecordLink(assignment.createdScheduleId);
+                    }
                     if (applyMessageAutomation) {
                         await this.messageAutomationIntentService.fulfillScheduleIntent({
                             branchId: branchid,
@@ -1491,7 +1497,7 @@ export class ClientService {
         let createdScheduleId: number | null = null;
         const automationIntentAt = new Date();
         if (primaryEmployeeId !== null) {
-            const result = await this.prismaService.$transaction(async (transaction) => {
+            const result = await this.withRecordLinkWrite(branchid, async (transaction) => {
                 const prelockedAuthorityOwnerIds = createParams.eDocId === null ? []
                     : await discoverAuthorityClientIds(transaction, branchid, [createParams.eDocId]);
                 if (prelockedAuthorityOwnerIds.length) await assertAuthorityPointerWrite(transaction, {
@@ -1579,6 +1585,7 @@ export class ClientService {
                     startDate: initialScheduleStartDate,
                     endDate: initialScheduleEndDate,
                 }, transaction, calendar, prelockedAuthorityOwnerIds);
+                await this.serviceRecordLinkService?.observeAssignmentInTransaction?.(transaction, branchid, created.scheduleId);
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -1653,16 +1660,8 @@ export class ClientService {
                 this.logger.error(`Failed to fulfill assignment message intent: ${error}`);
             });
         }
-        // A booking confirmed at creation gets the same service-record link
-        // SMS that [예약 확정] schedules, whatever the automation choice.
-        if (confirmBookingOnCreate) {
-            await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
-                branchid,
-                client.id,
-                { serviceStatus: SERVICE_STATUS.PRE_BOOKING, startDate: client.startDate, endDate: client.endDate, bookingConfirmedAt: null },
-                client,
-                applyMessageAutomation ? createdScheduleId : null,
-            );
+        if (createdScheduleId !== null && !applyMessageAutomation && confirmBookingOnCreate) {
+            await this.scheduleFreshRecordLink(createdScheduleId);
         }
 
         return client;
@@ -1854,6 +1853,7 @@ export class ClientService {
                     fullPrice: client.fullPrice,
                     grant: client.grant,
                     actualPrice: client.actualPrice,
+                    copaymentReceivedDate: client.copaymentReceivedDate,
                     startDate: client.startDate,
                     endDate: client.endDate,
                     careCenter: client.careCenter,
@@ -1927,6 +1927,9 @@ export class ClientService {
                     );
                     if (result === "updated") {
                         this.logger.debug(`Updated client ${id} service status to ${newStatus}`);
+                        await this.triggerService?.wakeReceiptRecovery?.(branchid, id).catch(() => {
+                            this.logger.warn(`Receipt recovery wake will be retried for client ${id}`);
+                        });
                     } else {
                         this.logger.debug(`Skipped stale client ${id} service status update`);
                     }
@@ -2171,6 +2174,7 @@ export class ClientService {
         const clientNameSupplied = params.name !== undefined;
 
         let createdScheduleId: number | null = null;
+        let createdWhilePreBooking = false;
         let replacedScheduleId: number | null = null;
         // Status inputs of the locked row the write is based on, kept to tell
         // after commit whether this save took the client out of 예약 전.
@@ -2473,6 +2477,8 @@ export class ClientService {
                         },
                     });
                     createdScheduleId = schedule.id;
+                    createdWhilePreBooking = await this.serviceRecordLinkService
+                        ?.observeAssignmentInTransaction?.(transaction, branchid, schedule.id) ?? false;
                 }
             }
 
@@ -2564,6 +2570,7 @@ export class ClientService {
                     });
                 }
             }
+            await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, id, priorStatusInputs);
         };
 
         if (this.messageAutomationBranchLockService) {
@@ -2607,19 +2614,9 @@ export class ClientService {
                         this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
                     });
             }
-            await this.serviceRecordLinkService
-                ?.scheduleForServiceStart(createdScheduleId)
-                ?.catch((error) => {
-                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
-                });
+            if (!createdWhilePreBooking) await this.scheduleFreshRecordLink(createdScheduleId);
         }
-        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
-            branchid,
-            id,
-            priorStatusInputs,
-            updatedClient,
-            createdScheduleId,
-        );
+        await this.recheckRecordLinkTransition(branchid, id, priorStatusInputs, updatedClient);
         return updatedClient;
     }
 
@@ -2646,58 +2643,27 @@ export class ClientService {
         }
     }
 
-    /**
-     * A provider assigned while the client was 예약 전 never got the service-record
-     * link SMS (the gates skip a pre-booking client). When a save takes the client
-     * out of 예약 전, schedule the link for every active schedule the save did not
-     * already schedule. `scheduleForServiceStart` owns the timing (the day before
-     * service start at 12:00 KST, or immediately when that has passed), the
-     * dedupe and the completed/terminated/expired refusals. A failure here never
-     * fails the save.
-     */
-    private async scheduleServiceRecordLinksAfterLeavingPreBooking(
-        branchId: string,
-        clientId: number,
-        before: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null; bookingConfirmedAt: Date | null } | null,
-        after: { serviceStatus?: string | null; startDate?: Date | null; endDate?: Date | null; bookingConfirmedAt: Date | null },
-        alreadyScheduledScheduleId: number | null,
-    ): Promise<void> {
-        if (!before || !this.serviceRecordLinkService) return;
-        const wasPreBooking = getEffectiveClientServiceStatus(
-            before.serviceStatus,
-            before.startDate,
-            before.endDate,
-            before.bookingConfirmedAt,
-        ) === SERVICE_STATUS.PRE_BOOKING;
-        if (!wasPreBooking) return;
-        const isPreBooking = getEffectiveClientServiceStatus(
-            after.serviceStatus ?? null,
-            after.startDate ?? null,
-            after.endDate ?? null,
-            after.bookingConfirmedAt,
-        ) === SERVICE_STATUS.PRE_BOOKING;
-        if (isPreBooking) return;
+    private withRecordLinkWrite<T>(branchId: string, work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+        return this.messageAutomationBranchLockService
+            ? this.messageAutomationBranchLockService.runExclusive(branchId, work)
+            : this.prismaService.$transaction(work);
+    }
 
-        try {
-            const activeSchedules = await this.prismaService.employee_schedule.findMany({
-                where: { branchId, clientId, replaced: false, terminatedAt: null },
-                select: { id: true },
-                orderBy: { id: "asc" },
-            });
-            const scheduleIds = [...new Set(activeSchedules.map(({ id }) => id))]
-                .filter((scheduleId) => scheduleId !== alreadyScheduledScheduleId)
-                .sort((left, right) => left - right);
-            for (const scheduleId of scheduleIds) {
-                await this.serviceRecordLinkService.scheduleForServiceStart(scheduleId).catch((error) => {
-                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
-                });
-            }
-        } catch (error) {
-            this.logger.error(
-                `Failed to schedule service-record link SMS after client ${clientId} left pre-booking: ` +
-                `${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
+    private async scheduleFreshRecordLink(scheduleId: number): Promise<void> {
+        await this.serviceRecordLinkService?.scheduleForServiceStart(scheduleId).catch((error) => {
+            this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
+        });
+    }
+
+    private async recheckRecordLinkTransition(
+        branchId: string, clientId: number, before: RecordLinkStatusInputs | null, after: RecordLinkStatusInputs,
+    ): Promise<void> {
+        const now = new Date();
+        if (!before || recordLinkClientStatus(before, now) !== SERVICE_STATUS.PRE_BOOKING
+            || !permitsRecordLinkRecovery(recordLinkClientStatus(after, now))) return;
+        await this.serviceRecordLinkService?.recheckClientRecovery?.(branchId, clientId).catch((error) => {
+            this.logger.error(`Failed to recheck service-record link recovery for client ${clientId}: ${error}`);
+        });
     }
 
     /**
@@ -2733,7 +2699,7 @@ export class ClientService {
         // it, so the locked client row does not wait on a second pooled
         // connection.
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
-        const updatedClient = await this.prismaService.$transaction(async (transaction) => {
+        const updatedClient = await this.withRecordLinkWrite(branchid, async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
                     where: { clientId },
@@ -2776,10 +2742,13 @@ export class ClientService {
                 clientId,
                 endDate: terminationEndDate,
             }, transaction);
+            const before = this.serviceRecordLinkService?.recordClientTransitionInTransaction
+                ? await this.clientRepository.findByIdForUpdate(branchid, clientId, transaction) : null;
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: SERVICE_STATUS.TERMINATED,
                 endDate: terminationEndDate,
             }, transaction, calendar);
+            if (before) await this.serviceRecordLinkService?.recordClientTransitionInTransaction(transaction, branchid, clientId, before);
             await transaction.employee_schedule.updateMany({
                 where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },
                 data: { terminatedAt: terminationAt },
@@ -2848,7 +2817,7 @@ export class ClientService {
         // so it is resolved before the owning transaction takes a connection.
         const calendar = await this.serviceRecordLifecycleService
             ?.resolveCalendarBeforeTransaction(clientId);
-        const replacementSchedule = await this.prismaService.$transaction(async (transaction) => {
+        const replacementSchedule = await this.withRecordLinkWrite(branchid, async (transaction) => {
             // Lock the full historical schedule/employee union before any
             // case or schedule write. The requested providers are part of the
             // same deterministic employee lock set.
@@ -3016,7 +2985,7 @@ export class ClientService {
         // SAVED computation: loaded before the transaction opens (see
         // terminateService).
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
-        const { updatedClient, priorStatusInputs } = await this.prismaService.$transaction(async (transaction) => {
+        const { updatedClient, priorStatusInputs } = await this.withRecordLinkWrite(branchid, async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
                     where: { clientId },
@@ -3070,6 +3039,7 @@ export class ClientService {
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: computedStatus,
             }, transaction, calendar);
+            await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);
             await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
             return {
                 updatedClient: updated,
@@ -3081,15 +3051,7 @@ export class ClientService {
                 },
             };
         });
-        // 예약확정 상태는 여기서 바뀌지 않으므로 예약 전 이탈 여부를 확인하는
-        // 공통 후처리는 교체 완료만으로 제공인력 링크 SMS를 예약하지 않는다.
-        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
-            branchid,
-            clientId,
-            priorStatusInputs,
-            updatedClient,
-            null,
-        );
+        await this.recheckRecordLinkTransition(branchid, clientId, priorStatusInputs, updatedClient);
         return updatedClient;
     }
 
@@ -3119,7 +3081,7 @@ export class ClientService {
                 location: "path",
             }));
         };
-        const priorStatusInputs = await this.prismaService.$transaction(async (transaction) => {
+        const priorStatusInputs = await this.withRecordLinkWrite(branchid, async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
                     where: { clientId },
@@ -3186,6 +3148,7 @@ export class ClientService {
             if (updateResult.count === 0) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
+            await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);
             await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
             return {
                 serviceStatus: lockedClient.serviceStatus ?? null,
@@ -3205,13 +3168,7 @@ export class ClientService {
         await this.triggerService?.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
             this.logger.error(`Failed to sync client trigger rules: ${error}`);
         });
-        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
-            branchid,
-            clientId,
-            priorStatusInputs,
-            updatedClient,
-            null,
-        );
+        await this.recheckRecordLinkTransition(branchid, clientId, priorStatusInputs, updatedClient);
         return updatedClient;
     }
 

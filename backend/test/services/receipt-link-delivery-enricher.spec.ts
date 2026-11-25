@@ -31,6 +31,18 @@ function makeJob(dedupeKey: string, receiptUrl?: string, branchId: string | null
 }
 
 describe("ReceiptLinkDeliveryEnricher", () => {
+    it("fails closed through both receipt paths when a standalone discriminator has no request column", async () => {
+        const issue = { issue: jest.fn(), assertDocumentSyncReady: jest.fn() };
+        const preparation = { resolve: jest.fn().mockRejectedValue(new ReceiptLinkSkipError("no_contract_document")) };
+        const enricher = new ReceiptLinkDeliveryEnricher(new SmsTriggerPayloadEnricherRegistry(), issue as never,
+            undefined, undefined, undefined, preparation as never);
+        const job = makeJob("system:service_end_notice:client:7:manual:11111111-1111-4111-8111-111111111111").withPayloadOverride({ standaloneReceipt: undefined });
+        await expect(enricher.enrich(job)).rejects.toBeInstanceOf(ReceiptLinkSkipError);
+        await expect(enricher.validateStagedSnapshot(job)).rejects.toMatchObject({ reason: "receipt_link_unusable" });
+        expect(issue.issue).not.toHaveBeenCalled();
+        expect(issue.assertDocumentSyncReady).not.toHaveBeenCalled();
+    });
+
     it("skips service-end notice when the contract is voided", async () => {
         const issueService = { issue: jest.fn().mockRejectedValue(new ReceiptLinkSkipError("contract_voided")) };
         const enricher = new ReceiptLinkDeliveryEnricher(new SmsTriggerPayloadEnricherRegistry(), issueService as never);
@@ -151,6 +163,23 @@ describe("ReceiptLinkDeliveryEnricher", () => {
             clientId: 7,
         });
         expect(tokenService.getStatus).toHaveBeenCalledWith("efr_live", expect.any(Date));
+    });
+
+    it("rejects standalone links in contract staging before checking any document or object", async () => {
+        const issueService = { assertDocumentSyncReady: jest.fn() };
+        const tokenService = {
+            getStatus: jest.fn().mockResolvedValue({ ok: true, kind: "standalone", eformsignDocId: null }),
+        };
+        const storage = { createSignedUrl: jest.fn() };
+        const enricher = new ReceiptLinkDeliveryEnricher(
+            new SmsTriggerPayloadEnricherRegistry(), issueService as never, tokenService as never, storage as never,
+        );
+
+        await expect(enricher.validateStagedSnapshot(makeJob(
+            "agent-sms-retry:action-1", "https://m.admin.example/receipt/efr_live",
+        ))).rejects.toThrow();
+        expect(issueService.assertDocumentSyncReady).not.toHaveBeenCalled();
+        expect(storage.createSignedUrl).not.toHaveBeenCalled();
     });
 
     it("pins an explicitly selected contract document during staged delivery", async () => {

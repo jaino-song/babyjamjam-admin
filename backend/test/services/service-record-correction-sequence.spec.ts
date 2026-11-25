@@ -1256,6 +1256,41 @@ describe("service-record correction sequences (real services over one persisted 
     });
 
     describe("the store refuses what it does not model (a silent no-op can never pass a test)", () => {
+        it("a stored INITIAL job freezes a complete persisted correction source on the next claim", async () => {
+            const store = await goldenIncidentFinalStore();
+            writeMissingDays(store);
+            const first = await finalizationClaim(store);
+            expect(first.jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+            const input = first.jobService.enqueueInTransaction.mock.calls[0]![1] as Row;
+            store.insert("eformsign_document_job", {
+                id: "frozen-job", branchId: input["branchId"], clientId: input["clientId"],
+                jobType: input["jobType"], source: input["source"], requestKey: input["requestKey"],
+                payload: input["payload"], payloadFingerprint: input["payloadFingerprint"],
+            });
+            const second = await finalizationClaim(store);
+            expect(second.result).toEqual({ claimed: false, attempts: 0, blockedGeneration: true });
+            expect(second.jobService.enqueueInTransaction).not.toHaveBeenCalled();
+            expect(second.jobService.findByRequestKeyInTransaction).not.toHaveBeenCalled();
+        });
+
+        it("filters stored INITIAL jobs by owner, operation and both JSON paths", async () => {
+            const job = { id: "matching", branchId: BRANCH_ID, clientId: CLIENT_ID,
+                jobType: "create_document", source: "auto_finalize", requestKey: "matching",
+                payload: { revisionId: "revision", generationKind: "INITIAL_FINALIZATION" } };
+            const store = new SequenceStore({ tables: { eformsign_document_job: [job,
+                ...[
+                    { branchId: "other" }, { clientId: CLIENT_ID + 1 }, { jobType: "finalize_document" },
+                    { source: "staff" }, { payload: { revisionId: "other", generationKind: "INITIAL_FINALIZATION" } },
+                    { payload: { revisionId: "revision", generationKind: "CORRECTION" } }, { payload: {} },
+                ].map((change, index) => ({ ...job, ...change, id: `other-${index}`, requestKey: `other-${index}` })),
+            ] } });
+            const query = { where: { branchId: BRANCH_ID, clientId: CLIENT_ID, jobType: "create_document", source: "auto_finalize",
+                AND: [{ payload: { path: ["revisionId"], equals: "revision" } },
+                    { payload: { path: ["generationKind"], equals: "INITIAL_FINALIZATION" } }] } };
+            expect(await store.eformsign_document_job.findMany(query)).toEqual([expect.objectContaining({ id: "matching" })]);
+            expect(await store.clone().eformsign_document_job.findMany(query)).toEqual(await store.eformsign_document_job.findMany(query));
+        });
+
         it.each(["update", "updateMany"] as const)("models periodMismatchKeptAt as a nullable datetime through %s and reads", async (method) => {
             const store = new SequenceStore();
             const id = "period-mismatch-day";
@@ -1276,7 +1311,8 @@ describe("service-record correction sequences (real services over one persisted 
             const store = seedGoldenIncident();
             const surface = store as unknown as Record<string, Record<string, unknown> | undefined>;
             expect(surface["message_trigger_rule"]).toBeUndefined();
-            expect(surface["eformsign_document_job"]).toBeUndefined();
+            expect(typeof surface["eformsign_document_job"]?.["findMany"]).toBe("function");
+            expect(surface["eformsign_document_job"]?.["updateMany"]).toBeUndefined();
             expect(surface["$queryRaw"]).toBeUndefined();
             expect(surface["$executeRaw"]).toBeUndefined();
             // Present, but only with the methods the services actually call: no findMany, so document scope stays unverified.

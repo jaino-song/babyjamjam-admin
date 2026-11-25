@@ -133,5 +133,21 @@ describe("POST /eformsign-docs/dispatch-headless (additive envelope)", () => {
 
         expect(response.status).toBe(201);
         expect(response.body).toEqual({ ok: true, documentId: "doc-1", durationMs: 30 });
+        expect(dispatchHeadlessUsecase.execute.mock.calls[0]?.[1]).not.toHaveProperty("saveCopaymentReceivedDate");
+    });
+
+    it("enables the fresh-claim date write only when contract data supplies a date", async () => {
+        dispatchHeadlessUsecase.execute.mockResolvedValue({ ok: true, documentId: "doc-1", durationMs: 30 });
+        const dated = { ...contractData, paymentYear: "26", paymentMonth: "11", paymentDay: "21", copaymentReceivedDate: "2026-11-21" };
+        const response = await request(app.getHttpServer())
+            .post("/eformsign-docs/dispatch-headless")
+            .send({ clientId: 7, contractData: dated });
+
+        expect(response.status).toBe(201);
+        expect(dispatchHeadlessUsecase.execute).toHaveBeenCalledWith(
+            "branch-a",
+            expect.objectContaining({ clientId: 7, contractData: dated, saveCopaymentReceivedDate: true }),
+            expect.objectContaining({ userId: "user-a" }),
+        );
     });
 });

@@ -24,7 +24,7 @@ import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherP
 import { clientQueryKeys, useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
-import { eformsignApi } from "@/services/api";
+import { eformsignApi, type ContractDataDto } from "@/services/api";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import type { Client } from "@/lib/client/types";
 
@@ -107,25 +107,6 @@ import {
 } from "./field-messages";
 import { readHeadlessOutcome } from "../contract-operation-guard";
 import styles from "./page.module.css";
-
-interface ContractDataDto {
-  customerName: string;
-  customerContact: string;
-  customerDOB: string;
-  customerAddress: string;
-  caretaker1Name: string;
-  caretaker1Contact: string;
-  type: string;
-  days: string;
-  area: string;
-  contractDuration: string;
-  startYear: string; startMonth: string; startDay: string; startDate: string;
-  endYear: string; endMonth: string; endDay: string; endDate: string;
-  paymentYear: string; paymentMonth: string; paymentDay: string;
-  fullPrice: string;
-  grant: string;
-  actualPrice: string;
-}
 
 const WIZARD_STEPS = [
   { title: "이용자 정보", desc: "기존 고객을 검색하거나 정보를 입력해주세요." },
@@ -262,7 +243,7 @@ export default function ContractCreationPage() {
     showEmployee2, employee2Id, employee2Name, employee2Phone,
     voucherType, voucherDuration, voucherYear,
     fullPrice, grant, actualPrice,
-    startDate, endDate, paymentDate, isContractReissue,
+    startDate, endDate, paymentDate, historicalPaymentDate, isContractReissue,
     preservePrefilledPrices,
     setClientId, setIsManualEntry, setName, setPhone, setBirthday, setAddress, setDueDate, setArea,
     setIsEmployeeManualEntry, setEmployeeSelection,
@@ -270,6 +251,7 @@ export default function ContractCreationPage() {
     setVoucherType, setVoucherDuration, setVoucherYear,
     setFullPrice, setGrant, setActualPrice,
     setStartDate, setEndDate, setPaymentDate,
+    resetAll,
     setPreservePrefilledPrices,
     supersede, clearSupersede,
   } = useFormStore();
@@ -387,6 +369,7 @@ export default function ContractCreationPage() {
   const [endDateInput, setEndDateInput] = useState("");
   const [paymentDateInput, setPaymentDateInput] = useState("");
   const paymentDateInputTouchedRef = useRef(false);
+  const savedPaymentDate = allClients?.find((client) => client.id === clientId)?.copaymentReceivedDate;
   const isContractInfoStep = activeStep === WIZARD_STEPS.length - 1;
   const normalizedPaymentDate = normalizeIsoDate(paymentDate);
   const fallbackPaymentDate = normalizedPaymentDate || defaultPaymentDate;
@@ -415,7 +398,9 @@ export default function ContractCreationPage() {
 
     if (hasAppliedPaymentStepDefaultRef.current) return;
     hasAppliedPaymentStepDefaultRef.current = true;
-    if (!normalizedPaymentDate && defaultPaymentDate) setPaymentDate(defaultPaymentDate);
+    if (!paymentDateInputTouchedRef.current && !normalizedPaymentDate && defaultPaymentDate) {
+      setPaymentDate(defaultPaymentDate);
+    }
   }, [defaultPaymentDate, isContractInfoStep, normalizedPaymentDate, setPaymentDate]);
   // 저장소에는 예전 6자리(YYMMDD) 값이 들어올 수 있어 toIsoDate로 읽어요. 직접 입력한 값은 항상 YYYY-MM-DD예요.
   useEffect(() => { setStartDateInput(toIsoDate(startDate)); }, [startDate]);
@@ -426,6 +411,11 @@ export default function ContractCreationPage() {
     if (paymentDateInputTouchedRef.current) return;
     setPaymentDateInput(toIsoDate(paymentDate));
   }, [paymentDate]);
+  useEffect(() => {
+    if (paymentDateInputTouchedRef.current || !savedPaymentDate || historicalPaymentDate) return;
+    setPaymentDate(savedPaymentDate);
+    setPaymentDateInput(savedPaymentDate);
+  }, [clientId, historicalPaymentDate, savedPaymentDate, setPaymentDate]);
   // 이전 방문에서 남은 계약서 유형은 비워요. 고객이 정해져 있으면 아래 effect가 저장된 유형을 다시 골라줘요.
   useEffect(() => {
     setArea("");
@@ -738,8 +728,17 @@ export default function ContractCreationPage() {
     setRegisteredBaseline(loadedClientBaselineRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 고객이 바뀌거나 목록이 도착했을 때만 저장값을 만들어요.
   }, [allClients, clientId]);
+  const resetPaymentDate = (nextPaymentDate: string) => {
+    paymentDateInputTouchedRef.current = false;
+    setPaymentDate(nextPaymentDate);
+    setPaymentDateInput(nextPaymentDate);
+  };
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
-    const selectedPaymentDate = selectedClientId === clientId ? defaultPaymentDate : todayIsoDate();
+    if (selectedClientId !== clientId) {
+      resetPaymentDate(client?.copaymentReceivedDate || todayIsoDate());
+    } else if (!paymentDateInputTouchedRef.current && !historicalPaymentDate) {
+      resetPaymentDate(client?.copaymentReceivedDate || defaultPaymentDate);
+    }
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
@@ -770,7 +769,6 @@ export default function ContractCreationPage() {
       if (client.startDate) {
         const startNorm = normalizeIsoDate(client.startDate);
         setStartDate(startNorm);
-        setPaymentDate(selectedPaymentDate);
       }
       if (client.endDate) {
         setEndDate(normalizeIsoDate(client.endDate));
@@ -804,7 +802,7 @@ export default function ContractCreationPage() {
       setName(""); setPhone(""); setBirthday(""); setAddress(""); setDueDate("");
       setVoucherType(""); setVoucherDuration("");
       setFullPrice(""); setGrant(""); setActualPrice("");
-      setStartDate(""); setEndDate(""); setPaymentDate(selectedPaymentDate);
+      setStartDate(""); setEndDate("");
       setArea("");
       setEmployeeSelection(null, "", "");
       setEmployee2Selection(null, "", "");
@@ -825,6 +823,7 @@ export default function ContractCreationPage() {
     const hasSelectedClientSnapshot = clientId !== null && selectedClientRef.current !== null;
     const willClearSelectedClient = hasSelectedClientSnapshot && !matchesSelectedClient;
     if (willClearSelectedClient) {
+      resetPaymentDate(todayIsoDate());
       setClientId(null);
       setLoadedClientBaseline(null);
       selectedClientRef.current = null;
@@ -840,6 +839,7 @@ export default function ContractCreationPage() {
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
+    if (clientId !== null) resetPaymentDate(todayIsoDate());
     setClientId(null);
     setLoadedClientBaseline(null);
     selectedClientRef.current = null;
@@ -1099,7 +1099,7 @@ export default function ContractCreationPage() {
       return false;
     }
     const documentOption: EformsignDocumentOption = await eformsignApi.generateDocument(
-      contractData as unknown as Parameters<typeof eformsignApi.generateDocument>[0],
+      contractData,
       finalClientId,
     );
     if (!isRecord(documentOption) || !isRecord(documentOption.mode)) {
@@ -1379,7 +1379,6 @@ export default function ContractCreationPage() {
       // 2. Build contract data for the server-mediated dispatch operation.
       const start = dayjs(effectiveStartDate);
       const end = dayjs(effectiveEndDate);
-      const payment = dayjs(effectivePaymentDate);
       const contractData: ContractDataDto = {
         customerName: name,
         customerContact: phone,
@@ -1393,7 +1392,10 @@ export default function ContractCreationPage() {
         contractDuration: `${start.format("YYYY-MM-DD")} ~ ${end.format("YYYY-MM-DD")}`,
         startYear: start.format("YY"), startMonth: start.format("MM"), startDay: start.format("DD"), startDate: effectiveStartDate,
         endYear: end.format("YY"), endMonth: end.format("MM"), endDay: end.format("DD"), endDate: effectiveEndDate,
-        paymentYear: payment.format("YY"), paymentMonth: payment.format("MM"), paymentDay: payment.format("DD"),
+        paymentYear: effectivePaymentDate.slice(2, 4),
+        paymentMonth: effectivePaymentDate.slice(5, 7),
+        paymentDay: effectivePaymentDate.slice(8, 10),
+        copaymentReceivedDate: effectivePaymentDate,
         fullPrice, grant, actualPrice,
       };
 
@@ -1440,7 +1442,7 @@ export default function ContractCreationPage() {
         });
 
         const headless: unknown = await eformsignApi.dispatchHeadless(
-          contractData as unknown as Parameters<typeof eformsignApi.dispatchHeadless>[0],
+          contractData,
           finalClientId,
           progressId,
         );
@@ -1600,6 +1602,7 @@ export default function ContractCreationPage() {
       } finally {
         progressSource?.close();
         progressSourceRef.current = null;
+        void queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
       }
     } catch (error: unknown) {
       setIsProgressModalOpen(false);
@@ -1612,7 +1615,10 @@ export default function ContractCreationPage() {
     }
   };
 
-  const goBack = () => router.push("/contracts");
+  const goBack = () => {
+    if (!submissionInFlightRef.current) resetAll();
+    router.push("/contracts");
+  };
   const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
   const activeStepMeta = WIZARD_STEPS[activeStep];
   const isFirstStep = activeStep === 0;

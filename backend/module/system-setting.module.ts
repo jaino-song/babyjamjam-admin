@@ -20,12 +20,16 @@ import { MessageAutomationBranchLockService } from "application/services/message
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MESSAGE_AUTOMATION_DATABASE } from "domain/repositories/message-automation-database.repository.interface";
+import { CANCELED_AUTOMATION_RETRY_REPOSITORY } from "domain/repositories/canceled-automation-retry.repository.interface";
+import { CanceledAutomationRetrySettingsService } from "application/services/canceled-automation-retry-settings.service";
+import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
+import { CanceledAutomationRetrySettingsController } from "interface/controllers/canceled-automation-retry-settings.controller";
 
 import { EformsignWebhookEventModule } from "./eformsign-webhook-event.module";
 
 @Module({
     imports: [DatabaseModule, EformsignWebhookEventModule],
-    controllers: [SystemSettingController, PublicSettingsController],
+    controllers: [SystemSettingController, PublicSettingsController, CanceledAutomationRetrySettingsController],
     providers: [
         { provide: MESSAGE_TRIGGER_RULE_REPOSITORY, useClass: SbMessageTriggerRuleRepository },
         { provide: MESSAGE_TRIGGER_JOB_REPOSITORY, useClass: SbMessageTriggerJobRepository },
@@ -41,8 +45,11 @@ import { EformsignWebhookEventModule } from "./eformsign-webhook-event.module";
         { provide: MESSAGE_AUTOMATION_DATABASE, useExisting: PrismaService },
         MessageAutomationBranchLockService,
         MessageAutomationActivationService,
+        { provide: CANCELED_AUTOMATION_RETRY_REPOSITORY, useClass: CanceledAutomationRetryRepository },
+        CanceledAutomationRetrySettingsService,
     ],
     exports: [
+        CanceledAutomationRetrySettingsService,
         MESSAGE_AUTOMATION_DATABASE,
         GetSettingUsecase,
         UpdateSettingUsecase,

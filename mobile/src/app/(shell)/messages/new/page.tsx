@@ -75,6 +75,8 @@ import {
 import { useLocale } from "@/providers/LocaleProvider";
 import type {
   MessageDeliverySmsDuplicateCheckResponse,
+  MessageDeliverySmsTemplateRef,
+  SendMessageDeliverySmsRequest,
   SendMessageDeliverySmsResponse,
   SendMessageDeliverySmsSentResponse,
   SendMessageDeliverySmsQueueResponse,
@@ -101,6 +103,7 @@ interface RecipientChip {
 
 interface TemplateOption {
   id: string;
+  templateRef?: MessageDeliverySmsTemplateRef;
   name: string;
   body: string;
   variables: TemplateInputVariable[];
@@ -197,9 +200,9 @@ const CUSTOM_TEMPLATE_OPTION: TemplateOption = {
 };
 
 type SmsSubmission = {
-  payload: Record<string, unknown>;
+  requests: SendMessageDeliverySmsRequest[];
+  accepted: Map<string, SendResponse>;
   fingerprint: string;
-  idempotencyKey: string;
   branchId: string;
 };
 
@@ -207,17 +210,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isAmbiguousOutcome(normalized: NormalizedApiError): boolean {
+  return normalized.outcome === "UNKNOWN"
+    || normalized.outcome === "PARTIALLY_APPLIED"
+    || normalized.recovery?.action === "CHECK_STATUS";
+}
+
 function hasExplicitAmbiguousOutcome(error: unknown, normalized: NormalizedApiError): boolean {
-  if (
-    normalized.verified
-    && (
-      normalized.outcome === "UNKNOWN"
-      || normalized.outcome === "PARTIALLY_APPLIED"
-      || normalized.recovery?.action === "CHECK_STATUS"
-    )
-  ) {
-    return true;
-  }
+  if (normalized.verified && isAmbiguousOutcome(normalized)) return true;
 
   if (!isRecord(error) || !isRecord(error.response) || !isRecord(error.response.data)) {
     return false;
@@ -227,6 +227,11 @@ function hasExplicitAmbiguousOutcome(error: unknown, normalized: NormalizedApiEr
   return data.outcome === "UNKNOWN"
     || data.outcome === "PARTIALLY_APPLIED"
     || (isRecord(data.recovery) && data.recovery.action === "CHECK_STATUS");
+}
+
+function needsDuplicateRecheck(error: unknown, normalized: NormalizedApiError): boolean {
+  return isRecord(error) && isRecord(error.response) && error.response.status === 409
+    && !hasExplicitAmbiguousOutcome(error, normalized);
 }
 
 function isReceiptLinkPreflightFailure(
@@ -384,11 +389,23 @@ function isDuplicateCheck(value: unknown): value is MessageDeliverySmsDuplicateC
 
 function smsOutcomeMessage(response: SendResponse): string {
   if (!("outcome" in response)) return "메시지 발송 요청이 접수되었습니다.";
+  return smsQueueOutcomeMessage(response.items);
+}
+
+function smsQueueOutcomeMessage(items: SendMessageDeliverySmsQueueResponse["items"]): string {
   const labels = { queued: "대기", deferred: "보류", canceled: "취소" };
   const counts = (["queued", "deferred", "canceled"] as const).map(
-    (status) => `${labels[status]} ${response.items.filter((item) => item.status === status).length}건`,
+    (status) => `${labels[status]} ${items.filter((item) => item.status === status).length}건`,
   ).join(" · ");
-  return `${counts}. ${response.items.map((item) => `${item.recipientPhone}: ${labels[item.status]} (${item.scheduledAt})${item.reason ? ` — ${item.reason}` : ""}`).join(" / ")}`;
+  return `${counts}. ${items.map((item) => `${item.recipientPhone}: ${labels[item.status]} (${item.scheduledAt})${item.reason ? ` — ${item.reason}` : ""}`).join(" / ")}`;
+}
+
+function smsBatchOutcomeMessage(responses: Iterable<SendResponse>): string {
+  const results = [...responses];
+  const queued = results.flatMap(response => "outcome" in response ? response.items : []);
+  if (!queued.length) return `${results.length}건의 발송 요청이 접수되었습니다.`;
+  const accepted = results.filter(response => !("outcome" in response)).length;
+  return `${accepted ? `접수 ${accepted}건 · ` : ""}${smsQueueOutcomeMessage(queued)}`;
 }
 
 function stablePayloadFingerprint(payload: Record<string, unknown>): string {
@@ -930,6 +947,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [sendError, setSendError] = useState<NormalizedApiError | null>(null);
   const [sendRetryFingerprint, setSendRetryFingerprint] = useState<string | null>(null);
+  const [batchReplayFingerprint, setBatchReplayFingerprint] = useState<string | null>(null);
   const [sendOutcomeLocked, setSendOutcomeLocked] = useState(false);
 
   const seededClientIdsRef = useRef<Set<number>>(new Set());
@@ -939,9 +957,10 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const [isDuplicateChecking, setIsDuplicateChecking] = useState(false);
   const [duplicateConfirmation, setDuplicateConfirmation] = useState<{
     submission: SmsSubmission;
-    check: MessageDeliverySmsDuplicateCheckResponse;
+    checks: Array<{ key: string; check: MessageDeliverySmsDuplicateCheckResponse }>;
   } | null>(null);
   const submissionRef = useRef<SmsSubmission | null>(null);
+  const recipientRequestKeys = useRef(new Map<string, { signature: string; key: string }>());
   useEffect(() => {
     if (!initialClient) return;
     if (seededClientIdsRef.current.has(initialClient.id)) return;
@@ -1202,7 +1221,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       : null;
     const userOptions = (userTemplates ?? []).map((template) => ({
 
-      id: template.id,
+      id: `user:${template.id}`,
+      templateRef: { kind: "branch" as const, id: template.id },
       name: template.name,
       body: renderTemplateWithValues(
         template.content,
@@ -1233,13 +1253,16 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return {
         ...(supported ?? { id: template.templateKey, body: template.content, variables: [], disabled: true }),
         name: template.name,
+        templateRef: { kind: "system" as const, key: template.templateKey },
         group: template.group,
         groupLabel: template.groupLabel,
       };
     });
     return [
       ...serverOptions,
-      ...supportedOptions.filter((option) => !serverOptions.some((server) => server.id === option.id)),
+      ...supportedOptions.filter((option) => !serverOptions.some((server) => server.id === option.id)).map(option => ({
+        ...option, templateRef: { kind: "system" as const, key: option.id as SystemTemplateKey },
+      })),
       ...userOptions,
       CUSTOM_TEMPLATE_OPTION,
     ];
@@ -1259,7 +1282,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   ]);
   const templateSelectorSections = useMemo(() => {
     const serverKeys = new Set(systemTemplatesQuery.data?.map((template) => template.templateKey));
-    const userKeys = new Set(userTemplates?.map((template) => template.id));
+    const userKeys = new Set(userTemplates?.map((template) => `user:${template.id}`));
     return templateOptions
       .filter((option) => serverKeys.has(option.id as SystemTemplateKey) || userKeys.has(option.id) || option.id === CUSTOM_TEMPLATE_ID)
       .reduce<{ id: string; label?: string; options: TemplateOption[] }[]>((sections, option) => {
@@ -1271,7 +1294,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       }, []);
   }, [systemTemplatesQuery.data, templateOptions, userTemplates]);
   const selectedTemplate = useMemo(
-    () => templateOptions.find((template) => template.id === selectedTemplateId) ?? CUSTOM_TEMPLATE_OPTION,
+    () => templateOptions.find((template) => template.id === selectedTemplateId)
+      ?? templateOptions.find(template => template.templateRef?.kind === "branch" && template.templateRef.id === selectedTemplateId)
+      ?? CUSTOM_TEMPLATE_OPTION,
     [selectedTemplateId, templateOptions],
   );
   const selectedSystemTemplateQuery = {
@@ -1289,7 +1314,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     },
   }[selectedTemplateId];
   const isUnsupportedTemplate = selectedTemplateId !== CUSTOM_TEMPLATE_ID && (
-    (!selectedSystemTemplateQuery && !templateOptions.some((option) => option.id === selectedTemplateId)) || Boolean(selectedTemplate.disabled)
+    (!selectedSystemTemplateQuery && selectedTemplate === CUSTOM_TEMPLATE_OPTION) || Boolean(selectedTemplate.disabled)
   );
   const templateReadinessError = isUnsupportedTemplate
     ? "이 템플릿은 직접 발송할 수 없습니다."
@@ -1437,29 +1462,39 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     templateReadinessError,
   ]);
 
-  const sendPayload = useMemo<Record<string, unknown>>(() => {
+  const sendPayloads = useMemo<SendMessageDeliverySmsRequest[]>(() => {
     const message = body.trim();
-    const payload: Record<string, unknown> = {
+    const base: SendMessageDeliverySmsRequest = {
       receiver: receiverPayload,
       message,
       triggerType: "immediate",
       msgType: "AUTO",
+      ...(shouldSendAsLms(message) ? { title: getLmsTitle(selectedTemplate) } : {}),
     };
-    if (payloadClientId !== null) payload.clientId = payloadClientId;
-    if (shouldSendAsLms(message)) payload.title = getLmsTitle(selectedTemplate);
-    if (payloadRecipientName.trim()) payload.recipientName = payloadRecipientName.trim();
-    return payload;
-  }, [body, payloadClientId, payloadRecipientName, receiverPayload, selectedTemplate]);
+    if (!selectedTemplate.templateRef) {
+      return [{
+        ...base,
+        ...(payloadClientId !== null ? { clientId: payloadClientId } : {}),
+        ...(payloadRecipientName.trim() ? { recipientName: payloadRecipientName.trim() } : {}),
+      }];
+    }
+    return recipients.map(recipient => ({
+      ...base,
+      templateRef: selectedTemplate.templateRef,
+      receiver: recipient.phone,
+      ...(recipient.clientId !== null ? { clientId: recipient.clientId } : {}),
+      ...(recipient.name.trim() ? { recipientName: recipient.name.trim() } : {}),
+    }));
+  }, [body, payloadClientId, payloadRecipientName, receiverPayload, recipients, selectedTemplate]);
   const sendPayloadFingerprint = useMemo(
-    () => stablePayloadFingerprint({ ...sendPayload, branchId, authUserId: authUser?.id, templateId: selectedTemplateId }),
-    [sendPayload, branchId, authUser?.id, selectedTemplateId],
+    () => stablePayloadFingerprint({ requests: sendPayloads, branchId, authUserId: authUser?.id, templateId: selectedTemplateId }),
+    [sendPayloads, branchId, authUser?.id, selectedTemplateId],
   );
 
   const currentDraftRef = useRef(sendPayloadFingerprint);
   currentDraftRef.current = sendPayloadFingerprint;
   useEffect(() => {
     setDuplicateConfirmation(null);
-    if (submissionRef.current?.fingerprint !== sendPayloadFingerprint) submissionRef.current = null;
   }, [sendPayloadFingerprint]);
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
@@ -1631,27 +1666,43 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       }
 
       const submission = capturedSubmission;
-      const res = await api.post<unknown>("/message-deliveries/sms", submission.payload, {
-        params: { expectedBranchId: submission.branchId },
-      });
-
-      const data = res.data;
-      if (!isAcceptedSmsSendResponse(data, submission.payload.receiver)
-        || ("outcome" in data && data.request.idempotencyKey !== submission.idempotencyKey)) {
-        throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
-      }
-      return data;
+      const results = await Promise.allSettled(submission.requests.map(async payload => {
+        const key = payload.idempotencyKey!;
+        const accepted = submission.accepted.get(key);
+        if (accepted) return accepted;
+        const { data } = await api.post<unknown>("/message-deliveries/sms", payload, {
+          params: { expectedBranchId: submission.branchId },
+        });
+        if (!isAcceptedSmsSendResponse(data, payload.receiver)
+          || ("outcome" in data && data.request.idempotencyKey !== key)) {
+          throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
+        }
+        submission.accepted.set(key, data);
+        return data;
+      }));
+      const failure = results.find(result => {
+        if (result.status !== "rejected") return false;
+        const normalized = normalizeApiError(result.reason, { operation: "mutation", locale: "ko-KR" });
+        return isAmbiguousOutcome(normalized) && !needsDuplicateRecheck(result.reason, normalized);
+      }) ?? results.find(result => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+      const first = results[0];
+      if (first?.status !== "fulfilled") throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
+      return first.value;
     },
     onSuccess: (data, submission) => {
       void invalidateMessageViews(queryClient);
       setErrorMessage(null);
       setSendError(null);
       setSendRetryFingerprint(null);
+      setBatchReplayFingerprint(null);
       setSendOutcomeLocked(false);
       setSuccessMessage(
         submission === null
           ? "서비스 종료 안내 발송 요청이 접수되었습니다."
-          : smsOutcomeMessage(data),
+          : submission.requests.length > 1
+            ? smsBatchOutcomeMessage(submission.accepted.values())
+            : smsOutcomeMessage(data),
       );
       if (submission && currentDraftRef.current !== submission.fingerprint) return;
       setReceiver("");
@@ -1660,18 +1711,24 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setTemplateVariableValues({});
       setBodyOverride(null);
       submissionRef.current = null;
+      recipientRequestKeys.current.clear();
       setReceiptLinkPreparation(null);
     },
     onError: async (err, submission) => {
-      if (submission && isRecord(err) && isRecord(err.response) && err.response.status === 409
-        && !hasExplicitAmbiguousOutcome(err, normalizeApiError(err, { operation: "mutation", locale: "ko-KR" }))) {
+      const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });
+      const canReplayBatch = submission !== null && submission.requests.length > 1;
+      const recheckDuplicates = submission !== null && needsDuplicateRecheck(err, normalized);
+      const isAmbiguous = isAmbiguousOutcome(normalized);
+      if (canReplayBatch && (submission.accepted.size > 0 || (isAmbiguous && !recheckDuplicates))) {
+        setBatchReplayFingerprint(submission.fingerprint);
+      }
+      if (recheckDuplicates) {
         setDuplicateConfirmation(null);
         if (currentDraftRef.current === submission.fingerprint) {
           await checkDuplicates(submission, true);
         }
         return;
       }
-      const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });
       setSuccessMessage(null);
       setErrorMessage(null);
       setSendError(
@@ -1680,13 +1737,10 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
           : normalized,
       );
 
-      const isAmbiguous = normalized.outcome === "UNKNOWN"
-        || normalized.outcome === "PARTIALLY_APPLIED"
-        || normalized.recovery?.action === "CHECK_STATUS";
       const canRetryReceiptLink = submission === null
         && isReceiptLinkPreflightFailure(err, normalized);
-      setSendOutcomeLocked(submission === null ? !canRetryReceiptLink : isAmbiguous);
-      setSendRetryFingerprint(submission === null || normalized.outcome === "NOT_APPLIED" ? null : submission.fingerprint);
+      setSendOutcomeLocked(submission === null ? !canRetryReceiptLink : isAmbiguous && !canReplayBatch);
+      setSendRetryFingerprint(submission === null || canReplayBatch || normalized.outcome === "NOT_APPLIED" ? null : submission.fingerprint);
     },
     onSettled: () => {
       inFlightRef.current = false;
@@ -1697,15 +1751,18 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     setIsDuplicateChecking(true);
     let mutationStarted = false;
     try {
-      const response = await api.post<unknown>("/message-deliveries/sms/duplicate-check", submission.payload, {
-        params: { expectedBranchId: submission.branchId },
-      });
-      if (!isDuplicateCheck(response.data)) throw new Error("중복 발송 확인 응답을 확인할 수 없습니다.");
+      const checks = await Promise.all(submission.requests.filter(payload => !submission.accepted.has(payload.idempotencyKey!)).map(async payload => {
+        const response = await api.post<unknown>("/message-deliveries/sms/duplicate-check", payload, {
+          params: { expectedBranchId: submission.branchId },
+        });
+        if (!isDuplicateCheck(response.data)) throw new Error("중복 발송 확인 응답을 확인할 수 없습니다.");
+        return { key: payload.idempotencyKey!, check: response.data };
+      }));
       if (currentDraftRef.current !== submission.fingerprint) return;
       setSendError(null);
       setSendRetryFingerprint(null);
-      if (requireConfirmation || response.data.matchIds.length > 0) {
-        setDuplicateConfirmation({ submission, check: response.data });
+      if (requireConfirmation || checks.some(({ check }) => check.matchIds.length > 0)) {
+        setDuplicateConfirmation({ submission, checks });
       } else {
         inFlightRef.current = true;
         mutationStarted = true;
@@ -1998,7 +2055,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return;
     }
 
-    if (inFlightRef.current || sendMutation.isPending || sendOutcomeLocked) {
+    if (inFlightRef.current || sendMutation.isPending || sendOutcomeLocked
+      || (batchReplayFingerprint !== null && batchReplayFingerprint !== sendPayloadFingerprint)) {
 
       return;
     }
@@ -2028,23 +2086,33 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return;
     }
     const previousSubmission = submissionRef.current;
-    const idempotencyKey = previousSubmission?.fingerprint === sendPayloadFingerprint
-      ? previousSubmission.idempotencyKey
-      : createIdempotencyKey();
-    submissionRef.current = {
-      payload: {
-        ...sendPayload,
-        idempotencyKey,
-      },
-      fingerprint: sendPayloadFingerprint,
-      idempotencyKey,
-      branchId,
-    };
+    if (previousSubmission?.fingerprint !== sendPayloadFingerprint) {
+      submissionRef.current = {
+        requests: sendPayloads.map(payload => {
+          const recipient = payload.templateRef
+            ? JSON.stringify([branchId, payload.clientId, normalizeKoreanPhoneDigits(payload.receiver)])
+            : "freeform";
+          const signature = stablePayloadFingerprint({ ...payload, branchId, authUserId: authUser?.id, templateId: selectedTemplateId });
+          const current = recipientRequestKeys.current.get(recipient);
+          const key = current?.signature === signature ? current.key : createIdempotencyKey();
+          recipientRequestKeys.current.set(recipient, { signature, key });
+          return { ...payload, idempotencyKey: key };
+        }),
+        accepted: new Map(),
+        fingerprint: sendPayloadFingerprint,
+        branchId,
+      };
+    }
+
     setErrorMessage(null);
     setSuccessMessage(null);
     inFlightRef.current = true;
-    void checkDuplicates(submissionRef.current);
+    void checkDuplicates(submissionRef.current!);
   };
+
+  const latestDuplicateAt = duplicateConfirmation?.checks
+    .flatMap(({ check }) => check.latestSentAt ?? [])
+    .sort().at(-1);
 
   const visibleErrorMessage = (errorMessage ? getUserErrorMessage(errorMessage) : null)
     ?? (showValidationIssues && validationIssue && !issueHasSlot ? validationIssue.message : null);
@@ -2057,6 +2125,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     isSenderApprovalLoading ||
     needsSenderApproval ||
     sendOutcomeLocked ||
+    (batchReplayFingerprint !== null && batchReplayFingerprint !== sendPayloadFingerprint) ||
     (!isServiceEndNoticeSelected && sendRetryFingerprint === sendPayloadFingerprint);
 
   return (
@@ -2071,21 +2140,21 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         open={Boolean(duplicateConfirmation && duplicateConfirmation.submission.fingerprint === sendPayloadFingerprint)}
         onOpenChange={(open) => { if (!open) setDuplicateConfirmation(null); }}
         title="중복 발송을 확인해 주세요"
-        description={duplicateConfirmation?.check.latestSentAt
-          ? `동일한 메시지 ${duplicateConfirmation.check.matchIds.length}건이 확인되었습니다. 최근 발송: ${duplicateConfirmation.check.latestSentAt}. 다시 요청하시겠어요?`
+        description={duplicateConfirmation?.checks.some(({ check }) => check.matchIds.length)
+          ? `동일한 메시지 ${duplicateConfirmation.checks.reduce((total, { check }) => total + check.matchIds.length, 0)}건이 확인되었습니다.${latestDuplicateAt ? ` 최근 발송: ${latestDuplicateAt}.` : ""} 다시 요청하시겠어요?`
           : "최신 중복 확인 결과로 다시 발송을 요청하시겠어요?"}
         isDescriptionVisuallyHidden={false}
         approvalLabel="확인 후 발송"
         onApprove={() => {
           const confirmation = duplicateConfirmation;
           if (!confirmation || confirmation.submission.fingerprint !== currentDraftRef.current || inFlightRef.current) return;
-          const { checkedAt, matchIds, payloadHash } = confirmation.check;
+          const decisions = new Map(confirmation.checks.map(({ key, check: { checkedAt, matchIds, payloadHash } }) =>
+            [key, { confirmed: true as const, checkedAt, matchIds, payloadHash }]));
           const submission = {
             ...confirmation.submission,
-            payload: {
-              ...confirmation.submission.payload,
-              duplicateDecision: { confirmed: true, checkedAt, matchIds, payloadHash },
-            },
+            requests: confirmation.submission.requests.map(payload => ({
+              ...payload, duplicateDecision: decisions.get(payload.idempotencyKey!),
+            })),
           };
           submissionRef.current = submission;
           setDuplicateConfirmation(null);

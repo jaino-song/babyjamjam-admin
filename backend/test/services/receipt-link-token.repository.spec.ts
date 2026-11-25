@@ -10,6 +10,7 @@ const mockedRunSystemScope = runSystemScope as jest.Mock;
 
 const BASE_ROW = {
     id: "tok-1",
+    kind: "contract",
     eformsignDocId: 1,
     branchId: "11111111-1111-1111-1111-111111111111",
     clientId: 7,
@@ -123,7 +124,7 @@ describe("SbReceiptLinkTokenRepository", () => {
         expect(mockedRunSystemScope).not.toHaveBeenCalled();
         expect(checkWriteArgs("upsert", prisma.receipt_link_token.upsert.mock.calls[0]?.[0], "11111111-1111-1111-1111-111111111111")).toBeNull();
         expect(prisma.receipt_link_token.updateMany).toHaveBeenCalledWith({
-            where: { clientId: 7, branchId: "11111111-1111-1111-1111-111111111111" },
+            where: { kind: "contract", clientId: 7, branchId: "11111111-1111-1111-1111-111111111111" },
             data: { expiresAt: expect.any(Date), expectedBirthdayHash: "h2" },
         });
     });
@@ -276,8 +277,11 @@ describe("SbReceiptLinkTokenRepository", () => {
             return;
         }
         expect(result).toEqual({ disposition: "promoted", tokenIds, stateVersion: 2 });
+        const tokenSql = prisma.__tx.$queryRaw.mock.calls[7]?.[0];
+        expect(tokenSql.strings.join("")).toContain("AND kind =");
+        expect(tokenSql.values).toContain("contract");
         expect(prisma.__tx.receipt_link_token.updateMany).toHaveBeenCalledWith({
-            where: expect.objectContaining({ id: { in: tokenIds }, active: true }),
+            where: expect.objectContaining({ id: { in: tokenIds }, kind: "contract", active: true }),
             data: { storagePath: "receipts/new.png", contentSha256: "b".repeat(64), byteSize: 9 },
         });
         const updateData = prisma.__tx.receipt_link_token.updateMany.mock.calls[0]?.[0]?.data as Record<string, unknown>;
@@ -416,7 +420,7 @@ describe("SbReceiptLinkTokenRepository", () => {
         // must not re-derive it from the client's endDate.
         expect(row).toMatchObject({ active: true, accessTokenHash: null, verifiedAt: null, failedAttempts: 3,
             expiresAt: storedExpiry });
-        expect(prisma.receipt_link_token.update).toHaveBeenCalledWith({ where: { id: "tok-1" }, data: {
+        expect(prisma.receipt_link_token.update).toHaveBeenCalledWith({ where: { id: "tok-1", kind: "contract" }, data: {
             active: true, revokedAt: null, accessTokenHash: null, verifiedAt: null,
         } });
     });
@@ -487,7 +491,7 @@ describe("SbReceiptLinkTokenRepository", () => {
             expiresAt: new Date("2026-09-01T00:00:00Z"),
             client: { name: "김산모", endDate: new Date("2026-09-10T00:00:00Z") } }]);
         expect(await repository.findExpired(cutoff)).toEqual([{ id: BASE_ROW.id,
-            storagePath: BASE_ROW.storagePath, eformsignDocId: BASE_ROW.eformsignDocId }]);
+            storagePath: BASE_ROW.storagePath }]);
         expect(prisma.receipt_link_token.update).not.toHaveBeenCalled();
     });
 
@@ -545,7 +549,7 @@ describe("SbReceiptLinkTokenRepository", () => {
         expect(mockedRunSystemScope).not.toHaveBeenCalled();
         expect(prisma.receipt_link_token.findFirst).toHaveBeenCalledWith(
             expect.objectContaining({
-                where: { jobId: "job-9", active: true },
+                where: { jobId: "job-9", active: true, kind: "contract" },
                 orderBy: { createdAt: "desc" },
             }),
         );

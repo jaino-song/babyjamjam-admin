@@ -127,6 +127,34 @@ describe("staff INITIAL recovery", () => {
         expect(f.tx.$executeRaw).not.toHaveBeenCalled();
         expect(f.state).toEqual(before);
     });
+    it.each(["generation", "revisionId"])("keeps a job with changed state %s in requiresAttention without recovery actions", async field => {
+        const f = setup({ progressStep: "sent" }, { status: "processing", [field]: jobId });
+        const beforeJob = structuredClone(f.job), beforeState = structuredClone(f.state);
+        let attentionQuery: Prisma.Sql | undefined;
+        const query = jest.fn(async (sql: Prisma.Sql) => {
+            if (sql.text.includes("AS cancellable") && !sql.text.includes("false AS cancellable")) {
+                attentionQuery = sql;
+                return [{ ...f.raw(), cancellable: false, retryable: false }];
+            }
+            return [];
+        });
+        const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
+
+        const list = await repo.listForBranch(branchId, new Date(0));
+
+        expect(list.requiresAttention.find(job => job.id === jobId)).toMatchObject({ retryable: false, cancellable: false });
+        // The historical exclusion must prove the state's original identity before
+        // checking its owner/newest generation. A moved state is still reportable.
+        const historicalExclusion = attentionQuery!.text.split("AND NOT ").at(-1)!;
+        expect(historicalExclusion).toContain("to_jsonb(s.revision_id::text) = j.payload->'revisionId'");
+        expect(historicalExclusion).toContain("to_jsonb(s.service_record_case_id::text) = j.payload->'context'->'serviceRecordCaseId'");
+        expect(historicalExclusion).toContain("to_jsonb(s.generation) = j.payload->'generation'");
+        expect(await f.repo.cancel(input)).toMatchObject({ kind: "not_cancellable" });
+        expect(await f.repo.retry(input)).toEqual({ kind: "not_retryable" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.job).toEqual(beforeJob);
+        expect(f.state).toEqual(beforeState);
+    });
     it.each(["pending", "capability_unverified"])("history and admin retry refuse a cancelled %s generation", async status => {
         const f = setup({}, { status });
         expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
@@ -193,19 +221,19 @@ describe("staff INITIAL recovery", () => {
         const f = setup();
         const context = { ...f.job.payload.context, ...(variant === "invalid" ? { formVersion: 0 }
             : variant === "branch" ? { branchId: jobId } : { clientId: 8 }) };
-        const query = jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+        const query = jest.fn().mockResolvedValue([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ ...f.raw(), payload: { ...f.job.payload, context }, cancellable: true, retryable: true }])
             .mockResolvedValueOnce([]);
         const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
         expect((await repo.listForBranch(branchId, new Date(0))).requiresAttention[0])
             .toMatchObject({ retryable: false, cancellable: false });
-        expect(query).toHaveBeenCalledTimes(5);
+        expect(query).toHaveBeenCalledTimes(7);
         expect(f.prisma.$transaction).not.toHaveBeenCalled();
     });
     it("summary counts only context-valid actionable INITIAL rows and merges contract ids in time order", async () => {
         const f = setup();
         const initial = { ...f.raw(), completed_at: new Date("2026-01-02"), created_at: new Date("2026-01-01") };
-        const query = jest.fn().mockResolvedValueOnce([{ active_count: 0, attention_count: 4, failed_count: 1, unresolved_count: 1 }])
+        const query = jest.fn().mockResolvedValue([]).mockResolvedValueOnce([{ active_count: 0, attention_count: 4, failed_count: 1, unresolved_count: 1 }])
             .mockResolvedValueOnce([{ id: "contract", completed_at: new Date("2026-01-01"), created_at: new Date("2026-01-01") }])
             .mockResolvedValueOnce([initial, { ...initial, id: "invalid", payload: { ...f.job.payload,
                 context: { ...f.job.payload.context, formVersion: 0 } } }]);

@@ -12,7 +12,6 @@ import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
-    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
     SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
@@ -22,6 +21,7 @@ import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
     getServiceRecordServiceEndedAt,
+    serviceRecordAutomaticJobKey,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerEventType,
@@ -30,7 +30,6 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
@@ -57,6 +56,29 @@ import {
 } from "./service-record-link-automation-effect-recipe";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
+import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
+import {
+    findRecordLinkTerminalSibling,
+    hasApprovedRecordLinkSender,
+    hasRecordLinkAcceptance,
+    lockRecordLinkSchedule,
+    matchesRecordLinkOccurrence,
+    observePreBookingRecordLinkAssignment,
+    observeRecordLinkBlock,
+    permitsRecordLinkRecovery,
+    readRecordLinkAssignment,
+    readRecordLinkEpoch,
+    recordLinkAssignmentMatches,
+    recordLinkClientStatus,
+    recordLinkTransition,
+    RECORD_LINK_RECOVERY_PREFIX,
+    RECORD_LINK_RECOVERY_REASON,
+    type RecordLinkStatusInputs,
+} from "infrastructure/database/repositories/record-link-recovery.repository";
+
+const RECOVERY_BATCH_SIZE = 100;
+const RECOVERY_BACKOFF_MS = 5 * 60_000;
+type RecoveryCandidate = { id: string; branch_id: string };
 
 const AUTOMATIC_SCHEDULING_LEASE_MINUTES = 10;
 const AUTOMATIC_SCHEDULING_RETRY_DELAY_MS = AUTOMATIC_SCHEDULING_LEASE_MINUTES * 60 * 1000;
@@ -106,17 +128,210 @@ export class ServiceRecordLinkService {
         @Optional() private readonly automationActivationService?: MessageAutomationActivationService,
     ) {}
 
+    /** The owning write has already acquired the automation branch lock. */
+    async observeAssignmentInTransaction(tx: Prisma.TransactionClient, branchId: string, scheduleId: number): Promise<boolean> {
+        return observePreBookingRecordLinkAssignment(tx, branchId, scheduleId);
+    }
+
+    /** Persist the actual exit alongside the client write so crash recovery never guesses it. */
+    async recordClientTransitionInTransaction(
+        tx: Prisma.TransactionClient, branchId: string, clientId: number, before: RecordLinkStatusInputs,
+        allowRecovery = true,
+    ): Promise<void> {
+        const now = new Date();
+        if (recordLinkClientStatus(before, now) !== SERVICE_STATUS.PRE_BOOKING) return;
+        const client = await tx.client.findFirst({
+            where: { id: clientId, branchId, deletedAt: null },
+            select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+        });
+        if (!client) return;
+        const after = recordLinkClientStatus(client, now);
+        if (after === SERVICE_STATUS.PRE_BOOKING) return;
+        const schedules = await tx.employee_schedule.findMany({
+            where: { branchId, clientId, replaced: false, terminatedAt: null },
+            include: { client: true, primaryEmployee: true },
+            orderBy: { id: "asc" },
+        });
+        for (const schedule of schedules) {
+            await observeRecordLinkBlock(tx, schedule, now, after);
+        }
+        await recordLinkTransition(tx, branchId, clientId, after, now, allowRecovery);
+    }
+
+    async recheckClientRecovery(branchId: string, clientId: number): Promise<void> {
+        await this.recheckRecovery({ branchId, clientId });
+    }
+
+    async sweepRecovery(now = new Date()): Promise<number> {
+        return this.recheckRecovery({}, now);
+    }
+
+    private async recheckRecovery(scope: { branchId?: string; clientId?: number; scheduleId?: number }, now = new Date()): Promise<number> {
+        const refresh = scope.scheduleId !== undefined;
+        const candidates = await this.prisma.$queryRaw<RecoveryCandidate[]>(Prisma.sql`
+            SELECT id, branch_id FROM message_trigger_job
+            WHERE recovery_reason = ${RECORD_LINK_RECOVERY_REASON}
+              AND recovery_state = 'eligible' AND recovery_epoch IS NOT NULL
+              AND branch_id IS NOT NULL
+              ${refresh ? Prisma.empty : Prisma.sql`AND next_check_at <= ${now}`}
+              ${scope.branchId ? Prisma.sql`AND branch_id = ${scope.branchId}::uuid` : Prisma.empty}
+              ${scope.clientId !== undefined ? Prisma.sql`AND client_id = ${scope.clientId}` : Prisma.empty}
+              ${scope.scheduleId !== undefined ? Prisma.sql`AND employee_schedule_id = ${scope.scheduleId}` : Prisma.empty}
+            ORDER BY next_check_at, id LIMIT ${RECOVERY_BATCH_SIZE}
+        `);
+        let admitted = 0;
+        for (const candidate of candidates) {
+            try {
+                if (await this.recoverCandidate(candidate, now, refresh)) {
+                    admitted++;
+                    continue;
+                }
+            } catch (error) {
+                captureServiceRecordError(error, { operation: "link-schedule", handled: true });
+            }
+            // A candidate still due after a transient preparation error should
+            // move behind other candidates on the next bounded sweep.
+            await this.branchLock!.runExclusive(candidate.branch_id, tx => tx.message_trigger_job.updateMany({
+                where: { id: candidate.id, branchId: candidate.branch_id, recoveryState: "eligible", nextCheckAt: { lte: now } },
+                data: { nextCheckAt: new Date(now.getTime() + RECOVERY_BACKOFF_MS) },
+            }));
+        }
+        return admitted;
+    }
+
+    private async recoverCandidate(candidate: RecoveryCandidate, now: Date, refresh: boolean): Promise<boolean> {
+        if (!this.branchLock || !this.automationActivationService) throw new ServiceUnavailableException("Message automation activation is not configured");
+        const read = async (tx: Prisma.TransactionClient) => {
+            const original = await tx.message_trigger_job.findFirst({
+                where: { id: candidate.id, branchId: candidate.branch_id, recoveryState: "eligible",
+                    recoveryReason: RECORD_LINK_RECOVERY_REASON, status: "canceled", canceledByUser: false,
+                    ...(refresh ? {} : { nextCheckAt: { lte: now } }) },
+            });
+            if (!original?.recoveryEpoch) return null;
+            const terminal = () => tx.message_trigger_job.update({
+                where: { id: original.id, branchId: candidate.branch_id },
+                data: { recoveryState: "ineligible_terminal", nextCheckAt: null },
+            });
+            const schedule = original.employeeScheduleId
+                ? await readRecordLinkAssignment(tx, candidate.branch_id, original.employeeScheduleId)
+                : null;
+            if (!original.clientId || !recordLinkAssignmentMatches(schedule, candidate.branch_id, original.clientId, now)
+                || !matchesRecordLinkOccurrence(original.payload, schedule)
+                || !permitsRecordLinkRecovery(recordLinkClientStatus(schedule.client, now))
+                || !(await hasApprovedRecordLinkSender(tx, candidate.branch_id))
+                || (await readRecordLinkEpoch(tx, candidate.branch_id))?.getTime() !== original.recoveryEpoch.getTime()) {
+                await terminal();
+                return null;
+            }
+            const rule = await tx.message_trigger_rule.findUnique({
+                where: { id: SERVICE_RECORD_LINK_RULE_ID, deletedAt: null, branchId: null, isActive: true },
+                select: { id: true },
+            });
+            if (!rule || !(await this.automationActivationService!.getTriggerDispatchEnabled(candidate.branch_id, tx))) {
+                await terminal();
+                return null;
+            }
+            if (await findRecordLinkTerminalSibling(tx, schedule, original.id) || await hasRecordLinkAcceptance(tx, schedule)) {
+                await terminal();
+                return null;
+            }
+            const other = await tx.message_trigger_job.findFirst({
+                where: { branchId: candidate.branch_id, employeeScheduleId: schedule.id, templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                    id: { not: original.id }, OR: [
+                        { status: { in: ["pending", "processing", "dispatching", "sent", "needs_setup", "failed"] } },
+                        { canceledByUser: true },
+                    ] },
+                select: { status: true, canceledByUser: true },
+            });
+            if (other?.canceledByUser || other?.status === "sent" || other?.status === "failed") {
+                await terminal();
+                return null;
+            }
+            const due = new Date(Math.max(original.scheduledFor.getTime(), getServiceRecordLinkScheduledFor(schedule.startDate).getTime()));
+            if (due > now || other) {
+                await tx.message_trigger_job.update({
+                    where: { id: original.id, branchId: candidate.branch_id },
+                    data: { nextCheckAt: due > now ? due : new Date(now.getTime() + RECOVERY_BACKOFF_MS) },
+                });
+                return null;
+            }
+            return { original, schedule };
+        };
+
+        // Link and case preparation use their own transaction boundaries.
+        // Re-read all eligibility and assignment fields at the actual insert.
+        const eligible = await this.branchLock.runExclusive(candidate.branch_id, read);
+        if (!eligible) return false;
+        const { jobEnqueued } = await this.issueServiceRecordLinkJob(eligible.schedule.id, {
+            scheduledFor: now,
+            isManualSend: false,
+            recordMissingPhoneFailure: false,
+            branchId: candidate.branch_id,
+            recovery: async (tx, pendingJob, linkToken) => {
+                await lockServiceRecordWriteSet(tx, { branchId: candidate.branch_id, clientId: eligible.schedule.clientId });
+                await lockRecordLinkSchedule(tx, eligible.schedule.id);
+                const current = await read(tx);
+                if (!current || current.schedule.incarnationId !== eligible.schedule.incarnationId
+                    || current.schedule.primaryEmployee.phone !== pendingJob.recipientPhone
+                    || current.schedule.client.name !== pendingJob.payload.clientName
+                    || current.schedule.primaryEmployee.name !== pendingJob.payload.employeeName
+                    || this.formatDate(current.schedule.startDate) !== pendingJob.payload.templateVariables["serviceStartDate"]
+                    || this.formatDate(current.schedule.endDate) !== pendingJob.payload.templateVariables["serviceEndDate"]) return false;
+
+                const token = await tx.service_record_token.findFirst({
+                    where: { branchId: candidate.branch_id, scheduleId: current.schedule.id,
+                        employeeId: current.schedule.primaryEmployeeId, linkTokenHash: linkToken,
+                        active: true, revokedAt: null, lockedAt: null, expiresAt: { gt: now } },
+                    select: { id: true },
+                });
+                if (!token) return false;
+                const { original, schedule } = current;
+                if (await this.jobRepository.hasAcceptedOccurrence(pendingJob, tx)) {
+                    await tx.message_trigger_job.update({
+                        where: { id: original.id, branchId: candidate.branch_id },
+                        data: { recoveryState: "ineligible_terminal", nextCheckAt: null },
+                    });
+                    return false;
+                }
+                await tx.message_trigger_job.create({ data: {
+                    branchId: candidate.branch_id,
+                    ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                    clientId: schedule.clientId,
+                    employeeScheduleId: schedule.id,
+                    scheduledFor: new Date(Math.max(Date.now(), now.getTime(), original.scheduledFor.getTime(),
+                        getServiceRecordLinkScheduledFor(schedule.startDate).getTime())),
+                    recipientType: pendingJob.recipientType,
+                    recipientPhone: pendingJob.recipientPhone,
+                    templateKey: pendingJob.templateKey,
+                    dedupeKey: RECORD_LINK_RECOVERY_PREFIX + original.id,
+                    payload: pendingJob.payload as unknown as Prisma.InputJsonValue,
+                    originalJobId: original.id,
+                    recoveryReason: RECORD_LINK_RECOVERY_REASON,
+                    recoveryEpoch: original.recoveryEpoch,
+                } });
+                await tx.message_trigger_job.update({
+                    where: { id: original.id, branchId: candidate.branch_id },
+                    data: { recoveryState: "admitted", nextCheckAt: null },
+                });
+                return true;
+            },
+        });
+        return jobEnqueued;
+    }
+
     /** Backward-compatible wrapper: now schedules the SMS instead of sending immediately. */
     async issueAndSend(scheduleId: number): Promise<void> {
         await this.scheduleForServiceStart(scheduleId);
     }
 
-    /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
+    /** Ensure the assignment link exists and reserve its normal service-start message slot. */
     async scheduleForServiceStart(
         scheduleId: number,
         options: { taskAutomationReference?: AgentAutomationTaskCommitReference; rescheduleAutomatic?: boolean; branchId?: string } = {},
     ): Promise<boolean> {
         try {
+            if (options.rescheduleAutomatic && options.branchId
+                && await this.recheckRecovery({ branchId: options.branchId, scheduleId })) return true;
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
@@ -389,6 +604,7 @@ export class ServiceRecordLinkService {
             taskAutomationReference?: AgentAutomationTaskCommitReference;
             rescheduleAutomatic?: boolean;
             branchId?: string;
+            recovery?: (transaction: Prisma.TransactionClient, pendingJob: MessageTriggerJobEntity, linkToken: string) => Promise<boolean>;
         },
     ): Promise<{
         scheduledFor: Date;
@@ -404,7 +620,10 @@ export class ServiceRecordLinkService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
-        if (options.rescheduleAutomatic && options.branchId !== schedule.branchId) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if ((options.rescheduleAutomatic || options.recovery || options.branchId !== undefined)
+            && options.branchId !== schedule.branchId) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
         if (options.isManualSend) this.assertClientCanReceiveLink(schedule.client);
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
@@ -414,10 +633,19 @@ export class ServiceRecordLinkService {
         );
 
         const scheduledFor = options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate);
-        const automaticDedupeKey = this.buildDedupeKey(scheduleId, false);
+        const originalKey = serviceRecordAutomaticJobKey(scheduleId);
+        const original = !options.isManualSend
+            ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: originalKey, branchId: schedule.branchId } }) : null;
+        const originalEmployeeId = (original?.payload as { employeeId?: unknown } | null)?.employeeId;
+        const replacedRecipient = original?.clientId === schedule.clientId && original.employeeScheduleId === scheduleId
+            && typeof originalEmployeeId === "number" && Number.isSafeInteger(originalEmployeeId) && originalEmployeeId !== employee.id;
+        const automaticDedupeKey = replacedRecipient ? serviceRecordAutomaticJobKey(scheduleId, employee.id) : originalKey;
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
-        const automaticReplacement = options.rescheduleAutomatic
-            ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: automaticDedupeKey, branchId: schedule.branchId } }) : null;
+        const automaticReplacement = !options.recovery && options.rescheduleAutomatic
+            ? replacedRecipient
+                ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: automaticDedupeKey, branchId: schedule.branchId } })
+                : original
+            : null;
         if (automaticReplacement && (automaticReplacement.branchId !== schedule.branchId
             || automaticReplacement.employeeScheduleId !== scheduleId || automaticReplacement.clientId !== schedule.clientId)) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
@@ -438,7 +666,7 @@ export class ServiceRecordLinkService {
             ) {
                 return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
             }
-            if (!automaticReplacement) {
+            if (!options.recovery && !automaticReplacement) {
                 automaticSchedulingClaim = await this.claimAutomaticScheduling({
                     branchId: schedule.branchId,
                     scheduleId,
@@ -574,10 +802,11 @@ export class ServiceRecordLinkService {
                 recipientPhone: resolvedRecipientPhone,
                 templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
                 dedupeKey: options.isManualSend
-                    ? this.buildDedupeKey(scheduleId, true)
+                    ? `${originalKey}:manual:${randomUUID()}`
                     : automaticDedupeKey,
                 payload: {
                     clientId: schedule.clientId,
+                    ...(options.recovery ? { scheduleId, scheduleIncarnationId: schedule.incarnationId } : {}),
                     clientName,
                     employeeId: employee.id,
                     employeeName: employee.name,
@@ -610,7 +839,11 @@ export class ServiceRecordLinkService {
                 linkGuard,
             );
             let persistedJob: MessageTriggerJobEntity | null;
-            if (automaticReplacement) {
+            if (options.recovery) {
+                const admitted = await this.branchLock!.runExclusive(schedule.branchId,
+                    (transaction) => options.recovery!(transaction, pendingJob, linkToken));
+                persistedJob = admitted ? pendingJob : null;
+            } else if (automaticReplacement) {
                 if (!this.branchLock || !this.automationActivationService) throw new ServiceUnavailableException("Message automation activation is not configured");
                 persistedJob = await this.branchLock.runExclusive(schedule.branchId, async (transaction) => {
                     await lockServiceRecordWriteSet(transaction, { branchId: schedule.branchId!, clientId: schedule.clientId });
@@ -790,11 +1023,14 @@ export class ServiceRecordLinkService {
                 SELECT 1
                 FROM "message_trigger_job" AS blocker
                 WHERE blocker."employee_schedule_id" = ${params.scheduleId}
+                  AND blocker.branch_id = ${params.branchId}::uuid
                   AND blocker."rule_id" = ${SERVICE_RECORD_LINK_RULE_ID}
                   AND ${serviceRecordScheduleBlockerSql({
                       status: Prisma.sql`blocker."status"`,
                       cancelReason: Prisma.sql`blocker."cancel_reason"`,
                       canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                      payload: Prisma.sql`blocker.payload`,
+                      employeeId: params.employeeId,
                   })}
             )
             ON CONFLICT ("dedupe_key") DO UPDATE SET
@@ -821,9 +1057,7 @@ export class ServiceRecordLinkService {
                 AND "message_trigger_job"."cancel_reason" IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
                     ${SERVICE_RECORD_LINK_ENDED_REASON},
-                    ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
-                    ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON},
-                    ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
+                    ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON}
                 )
             )
             RETURNING id, updated_at::text AS claim_version;
@@ -973,13 +1207,6 @@ export class ServiceRecordLinkService {
 
     private formatDate(date: Date): string {
         return date.toISOString().slice(0, 10);
-    }
-
-    private buildDedupeKey(scheduleId: number, isManualSend: boolean): string {
-        const assignmentKey = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${scheduleId}:primary`;
-        if (!isManualSend) return assignmentKey;
-
-        return `${assignmentKey}:manual:${randomUUID()}`;
     }
 
     private normalizePhone(phone: string): string {

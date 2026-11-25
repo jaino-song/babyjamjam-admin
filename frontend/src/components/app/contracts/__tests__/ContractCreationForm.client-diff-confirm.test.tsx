@@ -21,7 +21,7 @@ const mockEnqueueMutateAsync = jest.fn();
 const JOB_CONTRACT_DATA_FIELDS = [
   "customerName", "customerContact", "customerDOB", "customerAddress", "caretaker1Name", "caretaker1Contact",
   "type", "days", "area", "contractDuration", "startYear", "startMonth", "startDay", "startDate",
-  "endYear", "endMonth", "endDay", "endDate", "paymentYear", "paymentMonth", "paymentDay",
+  "endYear", "endMonth", "endDay", "endDate", "paymentYear", "paymentMonth", "paymentDay", "copaymentReceivedDate",
   "fullPrice", "grant", "actualPrice", "issuerPhone",
 ];
 const mockDispatchHeadless = jest.fn();

@@ -99,6 +99,13 @@ describe("AgentAutomationDeliveryGateService.permitsDirectManualJob ownership ga
             where: { id: jobId, branchId, claimToken, status: "processing" },
         });
     });
+
+    it("consumes preparation for the finite manual path without automatic authority", async () => {
+        const job = buildManualSendJob();
+        const { gate } = buildGate(job);
+        await expect(gate.consumePreparation(job)).resolves.toBe(true);
+    });
+
 });
 
 /**

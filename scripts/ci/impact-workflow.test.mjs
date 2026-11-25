@@ -18,10 +18,11 @@ function withStateIntegrityRealDatabaseStep(steps) {
   assert.equal(steps.filter(step => step.name === name).length, 1);
   return steps.map(step => step.name !== name ? step : {
     ...step,
+    name: 'Real-database specs (holiday calendar, review, and receipts)',
     run: "psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'\n" +
       'pnpm --filter ./backend exec prisma migrate deploy\n' +
       'pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/\n',
-    env: {...step.env, STATE_INTEGRITY_REAL_DB: '1'},
+    env: {...step.env, STATE_INTEGRITY_REAL_DB: '1', STANDALONE_RECEIPT_REAL_DB: '1'},
   });
 }
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];

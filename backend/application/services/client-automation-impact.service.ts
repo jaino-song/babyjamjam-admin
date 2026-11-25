@@ -260,8 +260,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                 // a grandfathered member of the same operation family.
                 if (oldRecipe) {
                     const described = await describeClientMessageEffect({ branchId, subject, rule,
-                        client: before, change: "refresh", policy, now, delivery: transaction
-                            ? { resolveCanonicalDeliverySnapshot: (job) => this.delivery.resolveCanonicalDeliverySnapshot(job, transaction) } : this.delivery });
+                        client: before, change: "refresh", policy, now, delivery: this.delivery, transaction });
                     if (described.status === "effect") grandfatheredEffects.push(described.effect);
                 }
                 continue;
@@ -286,8 +285,8 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
             const recipe = eligible ? newRecipe! : oldRecipe;
             if (!recipe) { noteUnavailable("source-unavailable"); complete = false; continue; }
             const described = await describeClientMessageEffect({ branchId, subject, rule,
-                client: eligible ? after : before!, change, policy, now, delivery: transaction
-                    ? { resolveCanonicalDeliverySnapshot: (job) => this.delivery.resolveCanonicalDeliverySnapshot(job, transaction) } : this.delivery });
+                client: eligible ? after : before!, change, policy, now, delivery: this.delivery, transaction });
+            if (described.status === "none" && change !== "cancel") continue;
             let effect: AgentAutomationEffect;
             if (described.status === "effect") effect = described.effect;
             else {

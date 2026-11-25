@@ -7,6 +7,8 @@ import { EformsignDocStaleUpdateError } from "domain/repositories/eformsign-doc.
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { EformsignApiError } from "infrastructure/api/eformsign-api.error";
 import { normalizeEformsignDocumentResponse } from "infrastructure/api/eformsign-response.normalizer";
+import { Logger } from "@nestjs/common";
+import * as serviceRecordSentry from "infrastructure/observability/service-record-sentry";
 
 const TEST_PRINCIPAL = { branchId: "__system__:backfill-test", source: "worker" as const };
 const createBoundary = () => ({
@@ -51,6 +53,98 @@ describe("BackfillEformsignDocsUsecase", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+        jest.restoreAllMocks();
+    });
+
+    it.each(["__system__:reconciliation", "branch-1"])("heals retained INITIAL tombstones after the sweep with scope %s", async branchId => {
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        };
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: jest.fn().mockResolvedValue(1) };
+        const recovery = { reconcile: jest.fn().mockResolvedValue(1) };
+        const shouldContinue = jest.fn().mockReturnValue(true);
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never, recovery as never);
+        await expect(usecase.execute({ shouldContinue }, { branchId, source: "worker" })).resolves.toMatchObject({ failed: 0 });
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledWith({
+            branchId: branchId.startsWith("__system__:") ? undefined : branchId, shouldContinue,
+        });
+        expect(recovery.reconcile).toHaveBeenCalledWith({
+            branchId: branchId.startsWith("__system__:") ? undefined : branchId, shouldContinue,
+        });
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes.mock.invocationCallOrder[0]!).toBeLessThan(recovery.reconcile.mock.invocationCallOrder[0]!);
+        expect(client.getRejectedDocumentsPage.mock.invocationCallOrder[0]!).toBeLessThan(lifecycle.healInitialSnapshotTerminalOutcomes.mock.invocationCallOrder[0]!);
+    });
+
+    it.each([false, true])("runs the local heal after a failed vendor scan and preserves scan failure (heal fails: %s)", async healFails => {
+        const scanError = new Error("vendor unavailable");
+        const healError = new Error("sensitive local failure");
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockRejectedValue(scanError),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        };
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: healFails
+            ? jest.fn().mockRejectedValue(healError) : jest.fn().mockResolvedValue(1) };
+        const capture = jest.spyOn(serviceRecordSentry, "captureServiceRecordError").mockReturnValue(undefined);
+        const log = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const onProgress = jest.fn();
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never);
+
+        await expect(usecase.execute({ onProgress }, TEST_PRINCIPAL)).rejects.toMatchObject({
+            message: "Eformsign document backfill failed for types=01",
+            summary: { byDocumentType: { "01": { status: "failed" }, "03": { status: "completed" }, "04": { status: "completed" } } },
+        });
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledTimes(1);
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledWith({ branchId: undefined, shouldContinue: undefined });
+        expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "failed" }));
+        if (healFails) {
+            expect(capture).toHaveBeenCalledWith(healError, { operation: "auto-finalize", handled: true });
+            expect(log).toHaveBeenCalledWith({ message: "INITIAL snapshot sweep heal failed", branchId: undefined });
+        }
+    });
+
+    it("keeps the scan failure cause when the lease expires during the heal", async () => {
+        const scanError = new Error("vendor unavailable");
+        let leaseHeld = true;
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockRejectedValue(scanError),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn(async () => {
+                return { documents: [], total_rows: 0 };
+            }),
+        };
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: jest.fn(async () => { leaseHeld = false; }) };
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never);
+        const error = await usecase.execute({ shouldContinue: () => leaseHeld }, TEST_PRINCIPAL).catch((caught: unknown) => caught);
+        expect(error).toMatchObject({ message: "Eformsign document backfill failed for types=01",
+            cause: [expect.objectContaining({ cause: scanError })] });
+    });
+
+    it("preserves a successful sweep when the local heal and error capture fail", async () => {
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        };
+        const healError = new Error("sensitive local failure");
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: jest.fn().mockRejectedValue(healError) };
+        const capture = jest.spyOn(serviceRecordSentry, "captureServiceRecordError").mockImplementation(() => { throw new Error("reporting unavailable"); });
+        const log = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const onProgress = jest.fn();
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never);
+
+        await expect(usecase.execute({ onProgress }, { branchId: "branch-1", source: "worker" })).resolves.toMatchObject({
+            failed: 0, byDocumentType: { "01": { status: "completed" }, "03": { status: "completed" }, "04": { status: "completed" } },
+        });
+        expect(capture).toHaveBeenCalledWith(healError, { operation: "auto-finalize", handled: true });
+        expect(log).toHaveBeenCalledWith({ message: "INITIAL snapshot sweep heal failed", branchId: "branch-1" });
+        expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "completed" }));
     });
 
     it("purges a requested document only after the post-scan verification confirms vendor 404", async () => {
@@ -82,6 +176,101 @@ describe("BackfillEformsignDocsUsecase", () => {
         await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({ failed: 0 }));
         expect(mirrorService.purgeDocuments).toHaveBeenCalledWith(["missing-doc"]);
         expect(mirrorService.markDocumentsDeleted).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { vendorStatus: "003", absentAt: null, captured: "003", cancelSucceeded: false },
+        { vendorStatus: "060", absentAt: null, captured: "060", cancelSucceeded: true },
+        { vendorStatus: "060", absentAt: "detail", captured: undefined, cancelSucceeded: false },
+        { vendorStatus: "060", absentAt: "cancel", captured: undefined, cancelSucceeded: false },
+    ])("evaluates deferred INITIAL purge after commit ($vendorStatus, absent at $absentAt)", async ({
+        vendorStatus, absentAt, captured, cancelSucceeded,
+    }) => {
+        const documentId = "pending-chunk";
+        const missing = new EformsignApiError("missing", 404);
+        const emptyPage = jest.fn().mockResolvedValue({ documents: [], total_rows: 0 });
+        const client = {
+            getInProgressDocumentsPage: emptyPage, getCompletedDocumentsPage: emptyPage, getRejectedDocumentsPage: emptyPage,
+            getDocument: absentAt === "detail" ? jest.fn().mockRejectedValue(missing)
+                : jest.fn().mockResolvedValue(createRemoteDocument(documentId, vendorStatus)),
+        };
+        let purged = false;
+        const mirror = {
+            findActiveDocumentIds: jest.fn().mockResolvedValue([]),
+            findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue([documentId]),
+            syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
+            requestPermanentPurge: jest.fn().mockResolvedValue([{ documentId, generation: new Date() }]),
+            purgeDocuments: jest.fn(async () => { purged = true; }),
+            findTerminalDocumentIds: jest.fn().mockResolvedValue([]),
+        };
+        const lifecycle = {
+            findSnapshotChunkBranchForDocument: jest.fn(async () => {
+                expect(purged).toBe(false);
+                return "chunk-branch";
+            }),
+            evaluateInitialSnapshotTerminalOutcome: jest.fn(async () => { expect(purged).toBe(true); }),
+            healInitialSnapshotTerminalOutcomes: jest.fn(),
+        };
+        const eformsign = { cancelDocuments: absentAt === "cancel" ? jest.fn().mockRejectedValue(missing)
+            : jest.fn().mockResolvedValue({ result: cancelSucceeded ? { success_result: [documentId] }
+                : { fail_result: [{ document_id: documentId, code: "4000031" }] } }) };
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, mirror as never, eformsign as never, lifecycle as never);
+
+        await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toMatchObject({ failed: 0 });
+        expect(lifecycle.findSnapshotChunkBranchForDocument).toHaveBeenCalledWith(documentId);
+        expect(mirror.purgeDocuments).toHaveBeenCalledTimes(1);
+        expect(lifecycle.evaluateInitialSnapshotTerminalOutcome).toHaveBeenCalledWith({
+            documentId, branchId: "chunk-branch",
+            deletedDocuments: captured === undefined ? undefined : [{ documentId, statusType: captured }],
+        });
+    });
+
+    it.each([false, true])("reports INITIAL evaluation failures and continues deferred purges (capture throws: %s)", async captureThrows => {
+        const evaluationError = new Error("sensitive evaluator failure");
+        const capture = jest.spyOn(serviceRecordSentry, "captureServiceRecordError").mockImplementation(() => {
+            if (captureThrows) throw new Error("reporting unavailable");
+            return undefined;
+        });
+        const documentIds = ["first-chunk", "second-chunk"];
+        const emptyPage = jest.fn().mockResolvedValue({ documents: [], total_rows: 0 });
+        const client = {
+            getInProgressDocumentsPage: emptyPage,
+            getCompletedDocumentsPage: emptyPage,
+            getRejectedDocumentsPage: emptyPage,
+            getDocument: jest.fn().mockRejectedValue(new EformsignApiError("missing", 404)),
+        };
+        const events: string[] = [];
+        const mirror = {
+            findActiveDocumentIds: jest.fn().mockResolvedValue([]),
+            findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue(documentIds),
+            purgeDocuments: jest.fn(async ([documentId]: string[]) => {
+                await Promise.resolve();
+                events.push(`purged:${documentId}`);
+            }),
+        };
+        const lifecycle = {
+            findSnapshotChunkBranchForDocument: jest.fn().mockResolvedValue("chunk-branch"),
+            evaluateInitialSnapshotTerminalOutcome: jest.fn(async ({ documentId }: { documentId: string }) => {
+                events.push(`evaluated:${documentId}`);
+                if (documentId === "first-chunk") throw evaluationError;
+            }),
+            healInitialSnapshotTerminalOutcomes: jest.fn(),
+        };
+        const log = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, mirror as never, undefined, lifecycle as never);
+
+        await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toMatchObject({ failed: 0 });
+        expect(events).toEqual([
+            "purged:first-chunk", "evaluated:first-chunk", "purged:second-chunk", "evaluated:second-chunk",
+        ]);
+        expect(capture.mock.calls).toEqual([[evaluationError, { operation: "auto-finalize", handled: true }]]);
+        expect(log.mock.calls).toEqual([[{
+            message: "INITIAL snapshot post-purge evaluation failed",
+            documentId: "first-chunk",
+        }]]);
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledTimes(1);
     });
 
     it("keeps an ordinary vendor-absent document as a recoverable tombstone", async () => {

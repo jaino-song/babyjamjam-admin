@@ -1,3 +1,6 @@
+import { lockClientForScheduleWrite } from "application/policies/employee-schedule-invariants.policy";
+import { RECEIPT_RECOVERY_PREFIX } from "domain/constants/receipt-job-recovery";
+import { hasApprovedReceiptSender } from "./message-sender-approval.service";
 import {
     BadRequestException,
     ConflictException,
@@ -357,6 +360,13 @@ export class MessageAutomationActivationService {
             if (candidate.status === "canceled") return { allowed: false, applies: true };
             if (!this.isAutomaticJob(candidate.templateKey, candidate.ruleId, candidate.dedupeKey)) {
                 return { allowed: true, applies: false };
+            }
+
+            // A recovered receipt must re-prove its own document generation
+            // even on a definite transport retry. Match its source lock order.
+            if (candidate.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)) {
+                await hasApprovedReceiptSender(transaction, branchId);
+                if (candidate.clientId !== null) await lockClientForScheduleWrite(transaction, branchId, candidate.clientId);
             }
 
             // A global rule can be edited from another branch. Lock that rule

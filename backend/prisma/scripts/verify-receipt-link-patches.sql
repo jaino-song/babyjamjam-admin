@@ -1,8 +1,7 @@
--- Guard for 20260904000000_add_receipt_link_token and
--- 20260904000100_contract_auto_finalize_grace_days_7.
+-- Guard for the receipt-link token and contract auto-finalize grace-days patches.
 --
 -- Asserts that the receipt_link_token table exists with its unique hash
--- indexes, its three foreign keys and its two CHECK constraints, and that no
+-- indexes, foreign keys, and CHECK constraints, and that no
 -- branch auto-finalize setting written before 2026-09-04 00:00 KST still
 -- carries a graceDays other than 7 (rows the patch rewrote carry a newer
 -- updated_at; rows with operator edits made after 2026-09-04 00:00 KST are
@@ -15,10 +14,82 @@ DECLARE
     _stale bigint;
     _malformed bigint;
     _row record;
+    _expected_kind_check text;
 BEGIN
     IF to_regclass('public.receipt_link_token') IS NULL THEN
         RAISE EXCEPTION 'receipt_link_token table is missing';
     END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        JOIN pg_attrdef ON adrelid = attrelid AND adnum = attnum
+        WHERE attrelid = 'public.receipt_link_token'::regclass
+          AND attname = 'kind' AND NOT attisdropped AND attnotnull
+          AND atttypid = 'text'::regtype
+          AND pg_get_expr(adbin, adrelid) = '''contract''::text'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'public.receipt_link_token'::regclass
+          AND attname = 'frozen_client_name' AND NOT attisdropped AND NOT attnotnull
+          AND atttypid = 'text'::regtype
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'public.receipt_link_token'::regclass
+          AND attname = 'eformsign_doc_id' AND NOT attisdropped AND NOT attnotnull
+          AND atttypid = 'integer'::regtype
+    ) THEN
+        RAISE EXCEPTION 'receipt_link_token standalone columns are missing or invalid';
+    END IF;
+
+    -- Let this server deparse the approved expression so equivalent parser output
+    -- stays stable across PostgreSQL versions.
+    CREATE TEMP TABLE expected_receipt_link_kind (
+        kind text,
+        eformsign_doc_id integer,
+        frozen_client_name text,
+        CONSTRAINT expected_receipt_link_kind_check CHECK (
+            (kind = 'contract' AND eformsign_doc_id IS NOT NULL)
+            OR (kind = 'standalone' AND eformsign_doc_id IS NULL
+                AND frozen_client_name IS NOT NULL AND frozen_client_name ~ '[^[:space:]]')
+        )
+    ) ON COMMIT DROP;
+    SELECT pg_get_constraintdef(oid) INTO STRICT _expected_kind_check
+    FROM pg_constraint
+    WHERE conrelid = 'pg_temp.expected_receipt_link_kind'::regclass
+      AND conname = 'expected_receipt_link_kind_check';
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'receipt_link_token_kind_check'
+          AND conrelid = 'public.receipt_link_token'::regclass
+          AND contype = 'c' AND convalidated AND NOT connoinherit
+          AND pg_get_constraintdef(oid) = _expected_kind_check
+    ) THEN
+        RAISE EXCEPTION 'receipt_link_token kind constraint does not match the approved definition';
+    END IF;
+
+    FOR _row IN
+        SELECT * FROM (VALUES
+            ('public.message_trigger_job', 'uq_message_trigger_job_standalone_request',
+             ARRAY['branch_id', 'standalone_request_id']::text[], '(standalone_request_id IS NOT NULL)'),
+            ('public.receipt_link_token', 'uq_receipt_link_token_standalone_job',
+             ARRAY['job_id']::text[], '(kind = ''standalone''::text)')
+        ) AS expected(table_name, index_name, key_names, predicate)
+    LOOP
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            JOIN pg_am am ON am.oid = c.relam
+            WHERE i.indrelid = _row.table_name::regclass AND c.relname = _row.index_name
+              AND am.amname = 'btree' AND i.indisunique AND i.indisvalid AND i.indisready AND i.indimmediate
+              AND i.indnatts = cardinality(_row.key_names) AND i.indnkeyatts = i.indnatts
+              AND ARRAY(SELECT pg_get_indexdef(i.indexrelid, key_no, false)
+                        FROM generate_series(1, i.indnkeyatts) AS key_no) = _row.key_names
+              AND pg_get_expr(i.indpred, i.indrelid) = _row.predicate
+        ) THEN
+            RAISE EXCEPTION 'standalone receipt index % does not match the approved definition', _row.index_name;
+        END IF;
+    END LOOP;
 
     FOREACH _missing IN ARRAY ARRAY[
         'receipt_link_token_link_token_hash_key',

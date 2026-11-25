@@ -5,6 +5,7 @@ export interface SendAligoSmsDto {
     senderPhone?: string;
     receiver: string;
     message: string;
+    confidential?: boolean;
     recipientName?: string;
     title?: string;
     msgType?: AligoSmsMessageType | "AUTO";

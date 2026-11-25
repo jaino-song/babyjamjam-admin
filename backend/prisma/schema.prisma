@@ -254,6 +254,7 @@ model client {
   fullPrice              String?                   @map("full_price")
   grant                  String?
   actualPrice            String?                   @map("actual_price")
+  copaymentReceivedDate  DateTime?                 @map("copayment_received_date") @db.Date
   startDate              DateTime?                 @map("start_date") @db.Date
   endDate                DateTime?                 @map("end_date") @db.Date
   careCenter             Boolean?                  @map("care_center")
@@ -727,6 +728,8 @@ model branch {
   holidayChangeEvents           holiday_change_event[]
   endDateReviewItems            end_date_review_item[]
 
+  messageOccurrenceClaims message_occurrence_claim[]
+
   @@index([isActive], map: "idx_branch_is_active")
   @@index([adminId], map: "idx_branch_admin")
   @@index([region], map: "idx_branch_region")
@@ -1155,6 +1158,10 @@ model message_log {
   client         client?              @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   triggerJob     message_trigger_job? @relation(fields: [triggerJobId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
+  occurrenceClaimsHeld     message_occurrence_claim[] @relation("OccurrenceHolder")
+  occurrenceClaimsAccepted message_occurrence_claim[] @relation("OccurrenceAcceptance")
+  occurrenceManualAttempts message_occurrence_manual_attempt[]
+
   @@index([branchId], map: "idx_message_log_branch")
   @@index([triggerJobId], map: "idx_message_log_trigger_job_id")
   @@index([status], map: "idx_message_log_status")
@@ -1163,6 +1170,47 @@ model message_log {
   @@index([createdAt], map: "idx_message_log_created_at")
   @@index([nextRetryAt], map: "idx_message_log_next_retry_at")
   @@index([providerAcceptanceState, nextRetryAt], map: "idx_message_log_provider_acceptance_state_retry")
+}
+
+model message_occurrence_claim {
+  branchId       String @map("branch_id") @db.Uuid
+  occurrenceKey  String @map("occurrence_key") @db.Char(64)
+  templateKey    String @map("template_key")
+  eventType      String? @map("event_type")
+  lifecycleId    Int @map("lifecycle_id")
+  recipientKind  String @map("recipient_kind")
+  recipientId    Int @map("recipient_id")
+  slot           String?
+  state          String @default("released")
+  holderLogId    Int? @map("holder_log_id")
+  acceptedVia    String? @map("accepted_via")
+  acceptedLogId  Int? @map("accepted_log_id")
+  proofSource    String? @map("proof_source")
+  epoch          Int @default(0)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  branch         branch @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  holder         message_log? @relation("OccurrenceHolder", fields: [holderLogId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  acceptance     message_log? @relation("OccurrenceAcceptance", fields: [acceptedLogId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  manualAttempts message_occurrence_manual_attempt[]
+
+  @@id([branchId, occurrenceKey])
+  @@index([holderLogId], map: "message_occurrence_claim_holder_idx")
+  @@index([acceptedLogId], map: "message_occurrence_claim_accepted_idx")
+}
+
+model message_occurrence_manual_attempt {
+  branchId      String @map("branch_id") @db.Uuid
+  occurrenceKey String @map("occurrence_key") @db.Char(64)
+  logId         Int @map("log_id")
+  state         String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  claim         message_occurrence_claim @relation(fields: [branchId, occurrenceKey], references: [branchId, occurrenceKey], onDelete: Restrict, onUpdate: NoAction)
+  log           message_log @relation(fields: [logId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@id([branchId, occurrenceKey, logId])
+  @@index([logId], map: "message_occurrence_manual_attempt_log_idx")
 }
 
 /// Database note: partial unique index `uniq_message_trigger_rule_default` on
@@ -1202,6 +1250,8 @@ model message_trigger_rule {
   targetClientStatus String           @default("all") @map("target_client_status") @db.VarChar(20)
   /// 실패 시 재전송 (규칙 메시지-04): false면 일시 실패를 자동으로 다시 보내지 않는다.
   retryOnFailure Boolean              @default(true) @map("retry_on_failure")
+  canceledRetryEnabledAt DateTime?    @map("canceled_retry_enabled_at") @db.Timestamptz(3)
+  canceledRetryLastEnabledAt DateTime? @map("canceled_retry_last_enabled_at") @db.Timestamptz(3)
   createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch        branch?               @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1221,6 +1271,8 @@ model message_trigger_rule_branch_override {
   branchId  String   @map("branch_id") @db.Uuid
   ruleId    String   @map("rule_id")
   isActive  Boolean  @map("is_active")
+  canceledRetryEnabledAt DateTime? @map("canceled_retry_enabled_at") @db.Timestamptz(3)
+  canceledRetryLastEnabledAt DateTime? @map("canceled_retry_last_enabled_at") @db.Timestamptz(3)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch    branch               @relation(fields: [branchId], references: [id], onDelete: Cascade)
@@ -1244,6 +1296,17 @@ model message_trigger_job {
   canceledAt         DateTime?            @map("canceled_at") @db.Timestamptz(6)
   cancelReason       String?              @map("cancel_reason")
   canceledByUser     Boolean              @default(false) @map("canceled_by_user") // Distinguishes a user-pressed cancel from an internal re-sync cancel; the re-sync upsert must not resurrect the former.
+  recoveryReason     String?              @map("recovery_reason")
+  recoveryEpoch      DateTime?            @map("recovery_epoch") @db.Timestamptz(3)
+  firstBlockedAt     DateTime?            @map("first_blocked_at") @db.Timestamptz(3)
+  recoveryState      String?              @map("recovery_state")
+  recoveryTransitionStatus String?       @map("recovery_transition_status")
+  nextCheckAt        DateTime?            @map("next_check_at") @db.Timestamptz(6)
+  /// Branch-scoped replay key. Its partial unique index is defined in SQL.
+  standaloneRequestId String?             @map("standalone_request_id") @db.Uuid
+  /// Durable proof that a token was issued. Intentionally survives token cleanup.
+  standaloneIssuedTokenId String?         @map("standalone_issued_token_id") @db.Uuid
+  originalJobId      String?              @unique(map: "uq_message_trigger_job_original_job_id") @map("original_job_id")
   clientId           Int?                 @map("client_id")
   employeeScheduleId Int?                 @map("employee_schedule_id")
   recipientType      String               @map("recipient_type")
@@ -1257,6 +1320,8 @@ model message_trigger_job {
   rule               message_trigger_rule @relation(fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   client             client?              @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   employeeSchedule   employee_schedule?   @relation(fields: [employeeScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  originalJob        message_trigger_job? @relation("CanceledJobRecovery", fields: [originalJobId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recoveryJob        message_trigger_job? @relation("CanceledJobRecovery")
   logs               message_log[]
 
   @@index([branchId], map: "idx_message_trigger_job_branch")
@@ -1716,7 +1781,9 @@ model receipt_link_token {
   id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   branchId             String        @map("branch_id") @db.Uuid
   clientId             Int?          @map("client_id")
-  eformsignDocId       Int           @map("eformsign_doc_id")
+  eformsignDocId       Int?          @map("eformsign_doc_id")
+  kind                 String        @default("contract")
+  frozenClientName     String?       @map("frozen_client_name")
   jobId                String?       @map("job_id")
   linkTokenHash        String        @unique @map("link_token_hash")
   accessTokenHash      String?       @unique @map("access_token_hash")
@@ -1735,7 +1802,7 @@ model receipt_link_token {
   createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   branch               branch        @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   client               client?       @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  eformsignDoc         eformsign_doc @relation(fields: [eformsignDocId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  eformsignDoc         eformsign_doc? @relation(fields: [eformsignDocId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([eformsignDocId, active], map: "idx_receipt_link_token_doc_active")
   @@index([jobId], map: "idx_receipt_link_token_job")

@@ -85,10 +85,14 @@ export class MessageAutomationIntentService {
             includePast: boolean;
             intentAt: Date;
             replaceExisting?: boolean;
+            freshAssignment?: boolean;
             taskOrigin?: boolean;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<void> {
+        if (params.freshAssignment) {
+            await this.serviceRecordLinkService.observeAssignmentInTransaction(transaction, params.branchId, params.scheduleId);
+        }
         await persistScheduleMessageAutomationIntent(transaction, params);
     }
 

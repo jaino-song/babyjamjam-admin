@@ -1,3 +1,4 @@
+import { RECEIPT_RECOVERY_PREFIX, isReceiptRecoveryReason, readReceiptObservation, receiptRuleSlot } from "domain/constants/receipt-job-recovery";
 import { MessageTriggerRecipientResolverService, describeCaregiverMessageEffect } from "./message-trigger-recipient-resolver.service";
 import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
 import { Injectable, Optional } from "@nestjs/common";
@@ -176,7 +177,10 @@ export class AgentAutomationJobAuthorityService {
         // schedule. Neither is rebuilt from the dispatch wall clock.
         const source = agentAutomationSourcePayload(job.payload, job.templateKey);
         const catchUp = source["catchUp"] === undefined ? undefined : catchUpSchema.parse(source["catchUp"]);
-        const recipeTime = new Date(catchUp?.originalScheduledFor ?? job.scheduledFor);
+        const recovered = job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)
+            ? await this.readReceiptRecoveryBinding(transaction, job, rule) : undefined;
+        if (recovered === null) return null;
+        const recipeTime = new Date(recovered?.originalDue ?? catchUp?.originalScheduledFor ?? job.scheduledFor);
         const concrete = buildClientMessageRecipe(rule, client, recipeTime);
         if (!concrete) return null;
         if (catchUp) {
@@ -197,6 +201,10 @@ export class AgentAutomationJobAuthorityService {
             concrete.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${client.id}`, job.scheduledFor, rule.recipientType);
             concrete.payload = { ...concrete.payload, catchUp };
         }
+        if (recovered) {
+            concrete.scheduledFor = new Date(Math.max(recovered.originalDue.getTime(), recovered.admittedAt.getTime(), concrete.scheduledFor.getTime()));
+            concrete.dedupeKey = RECEIPT_RECOVERY_PREFIX + recovered.parentId;
+        }
         if (taskReference) {
             concrete.payload = { ...concrete.payload, taskAutomationReference: taskReference };
         }
@@ -204,7 +212,7 @@ export class AgentAutomationJobAuthorityService {
             || job.recipientPhone !== concrete.recipientPhone || agentBindingHash(source) !== agentBindingHash(concrete.payload)) return null;
         const sender = this.sender.read();
         const described = await describeClientMessageEffect({ branchId: input.scope.branchId, subject: input.subject,
-            rule, client, change: input.change, now: new Date(), policy: {
+            rule, client, change: input.change, now: recovered?.originalDue ?? new Date(), policy: {
                 dispatchEnabled: settings.dispatchEnabled, senderApproved: settings.senderApproved,
                 senderIdentityDigest: sender.availability === "available" ? sender.identityDigest : null,
                 senderApprovedAt: settings.senderApprovedAt?.toISOString() ?? null,
@@ -246,6 +254,26 @@ export class AgentAutomationJobAuthorityService {
                 return current;
             } } });
         return described.status === "effect" ? described.effect : null;
+    }
+
+    private async readReceiptRecoveryBinding(transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity,
+        rule: { id: string; groupId: string | null; eventType: string }) {
+        const child = await transaction.message_trigger_job.findFirst({
+            where: { id: job.id, branchId: job.branchId, clientId: job.clientId, ruleId: job.ruleId,
+                recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE },
+            include: { originalJob: true },
+        });
+        const parent = child?.originalJob;
+        const proof = parent && readReceiptObservation(parent.payload);
+        if (!child || !parent || parent.originalJobId !== null || parent.status !== "canceled" || parent.canceledByUser
+            || parent.recoveryState !== "admitted" || !isReceiptRecoveryReason(parent.recoveryReason)
+            || child.recoveryReason !== parent.recoveryReason || !child.recoveryEpoch || !parent.recoveryEpoch
+            || child.recoveryEpoch.getTime() !== parent.recoveryEpoch.getTime()
+            || parent.branchId !== child.branchId || parent.clientId !== child.clientId || parent.ruleId !== child.ruleId
+            || parent.recipientType !== child.recipientType || parent.templateKey !== child.templateKey
+            || job.dedupeKey !== RECEIPT_RECOVERY_PREFIX + parent.id || proof?.event !== rule.eventType
+            || proof.slot !== receiptRuleSlot(rule)) return null;
+        return { parentId: parent.id, originalDue: parent.scheduledFor, admittedAt: child.createdAt };
     }
 
     /**

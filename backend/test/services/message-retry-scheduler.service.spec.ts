@@ -73,7 +73,7 @@ describe("MessageRetrySchedulerService", () => {
 
         await scheduler.retryFailedMessages();
 
-        expect(smsRetryService.retry).toHaveBeenCalledWith(smsLog, "automatic");
+        expect(smsRetryService.retry).toHaveBeenCalledWith(smsLog, "automatic", expect.any(Function));
         expect(alimtalkLog.status).toBe("failed");
         expect(alimtalkLog.nextRetryAt).toBeNull();
         expect(logRepository.update).toHaveBeenCalledWith(alimtalkLog);
@@ -128,8 +128,27 @@ describe("MessageRetrySchedulerService", () => {
 
         await scheduler.retryFailedMessages();
 
-        expect(smsRetryService.retry).toHaveBeenCalledWith(providerRejectedLog, "automatic");
+        expect(smsRetryService.retry).toHaveBeenCalledWith(providerRejectedLog, "automatic", expect.any(Function));
         expect(logRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("passes a live lease predicate to an SMS retry already in progress", async () => {
+        const log = createLog("aligo_sms", "provider-rejected");
+        const lease = createSchedulerLeaseMock();
+        const holdsLease = jest.spyOn(lease, "holdsLease").mockReturnValue(true);
+        logRepository.findPendingRetriesSystemScope.mockResolvedValue([log]);
+        const observedLease: boolean[] = [];
+        smsRetryService.retry.mockImplementation(async (_log, _invocation, leaseHeld: () => boolean) => {
+            observedLease.push(leaseHeld());
+            holdsLease.mockReturnValue(false);
+            observedLease.push(leaseHeld());
+        });
+        const guarded = new MessageRetrySchedulerService(logRepository as never, smsRetryService as never, lease, systemSettingService as never);
+
+        await guarded.retryFailedMessages();
+
+        expect(observedLease).toEqual([true, false]);
+        expect(smsRetryService.retry).toHaveBeenCalledTimes(1);
     });
 
     it("does not resend a manually rejected explicit retry even if it is selected", async () => {
@@ -228,6 +247,6 @@ describe("MessageRetrySchedulerService", () => {
         await scheduler.retryFailedMessages();
 
         expect(smsRetryService.retry).toHaveBeenCalledTimes(1);
-        expect(smsRetryService.retry).toHaveBeenCalledWith(firstLog, "automatic");
+        expect(smsRetryService.retry).toHaveBeenCalledWith(firstLog, "automatic", expect.any(Function));
     });
 });

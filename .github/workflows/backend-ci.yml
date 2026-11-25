@@ -218,7 +218,7 @@ jobs:
       # specs under backend/test/integrity/ skip themselves unless STATE_INTEGRITY_REAL_DB=1 and
       # run against the same throwaway database. A separate database keeps
       # the `postgres` one clean for the drift guard above.
-      - name: Real-database specs (holiday calendar and review)
+      - name: Real-database specs (holiday calendar, review, and receipts)
         run: |
           psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'
           pnpm --filter ./backend exec prisma migrate deploy
@@ -228,6 +228,7 @@ jobs:
           DATABASE_URL: postgresql://postgres@localhost:5432/throwaway_ci
           DIRECT_URL: postgresql://postgres@localhost:5432/throwaway_ci
           HOLIDAY_REVIEW_REAL_DB: '1'
+          STANDALONE_RECEIPT_REAL_DB: '1'
           STATE_INTEGRITY_REAL_DB: '1'
 
   verify:

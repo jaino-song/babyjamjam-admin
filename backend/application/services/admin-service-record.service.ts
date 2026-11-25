@@ -1,3 +1,4 @@
+import { ServiceRecordFinalizationService } from "./service-record-finalization.service";
 import {
     ConflictException,
     ForbiddenException,
@@ -9,8 +10,8 @@ import {
 } from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import { codeOnlyProblemBody, codeOnlyProblemException } from "application/utils/problem-bodies";
+import { isInitialFinalizationWorkflowScopeForRevision } from "application/policies/service-record-initial-finalization.policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
@@ -134,6 +135,7 @@ export class AdminServiceRecordService {
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly editRepository?: IServiceRecordEditRepository,
         @Optional() private readonly periodMismatchService?: ServiceRecordPeriodMismatchService,
+        @Optional() private readonly finalizationService?: ServiceRecordFinalizationService,
     ) {}
 
     async keepPeriodMismatch(branchId: string, clientId: number, sessionIndexes: number[]): Promise<{ keptSessionIndexes: number[] }> {
@@ -377,9 +379,16 @@ export class AdminServiceRecordService {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         if (state.operation === "record_snapshot"
-            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(normalizedRevisionId))) {
-            // INITIAL은 관리자 revision 재시도의 staff job scope가 없어 재발급할 수 없어요.
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, normalizedRevisionId)) {
+            if (!this.finalizationService) {
+                throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+            }
+            const regenerated = await this.finalizationService.regenerateInitialFinalization(branchId, {
+                revisionId: normalizedRevisionId, documentStateId: normalizedDocumentStateId,
+                expectedGeneration: normalizedGeneration,
+            });
+            return { ...normalizeRevisionDocumentSummaryResult(regenerated.state), canRetry: false };
+
         }
 
         void actorUserId;
@@ -1008,6 +1017,14 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         "lastErrorCode",
         "last_error_code",
     ]));
+    const regenerationBlockedReason = normalizeReasonCode(readField(row, ["regenerationBlockedReason", "regeneration_blocked_reason"]));
+    const projection = asObject(row["noProviderDocumentConfirmable"]);
+    const revisionId = readStringField(projection ?? {}, ["revisionId"]);
+    const suffix = readStringField(projection ?? {}, ["suffix"]);
+    const ordinals = projection?.["unlinkedChunkOrdinals"];
+    const noProviderDocumentConfirmable = projection?.["stateId"] === id && projection["generation"] === generation
+        && revisionId && suffix && Array.isArray(ordinals) && ordinals.every((ordinal): ordinal is string => typeof ordinal === "string")
+        ? { stateId: id, generation, revisionId, suffix, unlinkedChunkOrdinals: ordinals } : undefined;
     return {
         id,
         operation,
@@ -1016,6 +1033,8 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         documentVersion: readPositiveIntegerField(row, ["documentVersion", "document_version"]),
         canRetry: directCanRetry === true,
         reasonCode,
+        ...(regenerationBlockedReason ? { regenerationBlockedReason } : {}),
+        ...(noProviderDocumentConfirmable ? { noProviderDocumentConfirmable } : {}),
     };
 }
 

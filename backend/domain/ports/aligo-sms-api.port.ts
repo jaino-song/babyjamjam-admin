@@ -8,6 +8,7 @@ export interface AligoSmsResponse {
 }
 
 export interface AligoSendSmsParams {
+    confidential?: boolean;
     sender?: string;
     receiver: string;
     message: string;

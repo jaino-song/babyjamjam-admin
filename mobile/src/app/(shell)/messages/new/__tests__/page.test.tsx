@@ -16,6 +16,7 @@ const mockPush = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplate = jest.fn();
 const mockUseSystemTemplates = jest.fn();
+const mockUseBranchTemplates = jest.fn();
 const mockGetMessageSenderApproval = jest.fn();
 const mockUseBankAccountInfos = jest.fn();
 const mockUseVoucherPriceInfos = jest.fn();
@@ -95,7 +96,7 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
 }));
 
 jest.mock("@/hooks/use-message-templates", () => ({
-  useMessageTemplates: () => ({ data: [] }),
+  useMessageTemplates: () => ({ data: mockUseBranchTemplates() }),
 }));
 
 jest.mock("@/features/system-templates/hooks", () => ({
@@ -246,6 +247,7 @@ function smsProblem(code: SmsProblemCode, outcome: "NOT_APPLIED" | "FAILED" | "P
 describe("NewMessagePage", () => {
   beforeEach(() => {
     mockBranchId = "branch-a";
+    mockUseBranchTemplates.mockReturnValue([]);
     mockDuplicateCheck.mockReset();
     mockDuplicateCheck.mockResolvedValue({ data: {
       checkedAt: "2026-11-06T00:00:00.000Z", matchIds: [], latestSentAt: null, payloadHash: "hash-current",
@@ -402,6 +404,86 @@ describe("NewMessagePage", () => {
     mockSearchParams = new URLSearchParams();
   });
 
+  it.each([
+    ["GREETING", { kind: "system", key: "GREETING" }],
+    ["user:branch-greeting", { kind: "branch", id: "branch-greeting" }],
+    ["__custom__", undefined],
+  ] as const)("preserves the selected reference for identical message text (%s)", async (templateId, templateRef) => {
+    const body = "안녕하세요, 인천 아이미래로 입니다 :)";
+    mockUseBranchTemplates.mockReturnValue([{ id: "branch-greeting", name: "인사 메시지", content: body }]);
+    mockSearchParams = new URLSearchParams({ template: templateId });
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: body } });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+    await waitFor(() => expect(mockApiPost).toHaveBeenCalledTimes(1));
+    const payload = mockApiPost.mock.calls[0]?.[1];
+    expect(payload.message).toBe(body);
+    expect(payload.templateRef).toEqual(templateRef);
+    expect(mockDuplicateCheck.mock.calls[0]?.[1]).toEqual(payload);
+  });
+
+  it("splits template checks and sends and reuses the second recipient's key after an unknown result", async () => {
+    const phones = ["010-1234-5678", "010-9999-0000", "010-9999-0011"];
+    mockApiPost.mockResolvedValueOnce(validSmsResponse(phones[0]))
+      .mockRejectedValueOnce(smsProblem("MESSAGE_SEND_UNCONFIRMED", "UNKNOWN"))
+      .mockResolvedValueOnce(validSmsResponse(phones[2]))
+      .mockResolvedValueOnce(validSmsResponse(phones[1]));
+    renderPage();
+    await addManualRecipient(phones.join(","));
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    fireEvent.click(sendButton);
+    await waitFor(() => {
+      expect(mockApiPost).toHaveBeenCalledTimes(3);
+      expect(sendButton).toBeEnabled();
+    });
+    const original = mockApiPost.mock.calls.map(([, payload]) => payload);
+    expect(original).toEqual(phones.map(receiver => expect.objectContaining({
+      receiver, templateRef: { kind: "system", key: "GREETING" }, idempotencyKey: expect.any(String),
+    })));
+    expect(new Set(original.map(payload => payload.idempotencyKey)).size).toBe(3);
+    expect(mockDuplicateCheck.mock.calls.map(([, payload]) => payload)).toEqual(original);
+    fireEvent.click(sendButton);
+    await waitFor(() => expect(mockApiPost).toHaveBeenCalledTimes(4));
+    expect(mockApiPost.mock.calls[3]?.[1]).toEqual(original[1]);
+    expect(mockDuplicateCheck.mock.calls[3]?.[1]).toEqual(original[1]);
+    expect(await screen.findByText("3건의 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["MESSAGE_SEND_UNCONFIRMED", "UNKNOWN"],
+    ["MESSAGE_SEND_PARTIAL", "PARTIALLY_APPLIED"],
+  ] as const)("locks edits after %s and retries only unconfirmed recipients", async (code, outcome) => {
+    const phones = ["010-1234-5678", "010-9999-0000", "010-9999-0011"];
+    mockApiPost.mockResolvedValueOnce(validSmsResponse(phones[0]))
+      .mockRejectedValueOnce(smsProblem(code, outcome))
+      .mockRejectedValueOnce(smsProblem("MESSAGE_SEND_NOT_STARTED", "NOT_APPLIED"))
+      .mockResolvedValueOnce(validSmsResponse(phones[1]))
+      .mockResolvedValueOnce(validSmsResponse(phones[2]));
+    renderPage();
+    await addManualRecipient(phones.join(","));
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    const body = screen.getByLabelText<HTMLTextAreaElement>("메시지 본문");
+    const originalBody = body.value;
+    fireEvent.click(sendButton);
+    await waitFor(() => {
+      expect(mockApiPost).toHaveBeenCalledTimes(3);
+      expect(sendButton).toBeEnabled();
+    });
+    const original = mockApiPost.mock.calls.map(([, payload]) => payload);
+    fireEvent.change(body, { target: { value: "다시 작성한 메시지" } });
+    expect(sendButton).toBeDisabled();
+    fireEvent.submit(body.closest("form")!);
+    expect(mockApiPost).toHaveBeenCalledTimes(3);
+    expect(mockDuplicateCheck).toHaveBeenCalledTimes(3);
+    fireEvent.change(body, { target: { value: originalBody } });
+    expect(sendButton).toBeEnabled();
+    fireEvent.click(sendButton);
+    expect(await screen.findByText("3건의 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    expect(mockApiPost.mock.calls.slice(3).map(([, payload]) => payload)).toEqual(original.slice(1));
+    expect(mockDuplicateCheck.mock.calls.slice(3).map(([, payload]) => payload)).toEqual(original.slice(1));
+  });
+
   it("cancels server-confirmed duplicates without posting a send", async () => {
     mockDuplicateCheck.mockResolvedValue({ data: {
       checkedAt: "2026-11-06T00:00:00.000Z", matchIds: [91],
@@ -523,6 +605,11 @@ describe("NewMessagePage", () => {
           recipientPhone: phones[index], status, scheduledAt: "2026-11-07T00:00:00.000Z", reason: status === "queued" ? null : "QUIET_HOURS" })) } });
     });
     renderPage();
+    if (outcome === "mixed") {
+      await openTemplateSelect();
+      fireEvent.click(screen.getByRole("option", { name: "직접 작성" }));
+      fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 예약" } });
+    }
     await addManualRecipient(outcome === "mixed" ? "010-1234-5678,010-1111-2222,010-3333-4444" : "010-1234-5678");
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
     const summary = await screen.findByText(/대기 \d건 · 보류 \d건 · 취소 \d건/);
@@ -745,6 +832,8 @@ describe("NewMessagePage", () => {
     );
 
     renderPage();
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "직접 작성" }));
     await addManualRecipient("010-1234-5678,010-9999-0000");
     fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 카운터 검증" } });
     const sendButton = screen.getByRole("button", { name: "즉시 발송" });
@@ -763,6 +852,8 @@ describe("NewMessagePage", () => {
     );
 
     renderPage();
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "직접 작성" }));
     await addManualRecipient("010-1234-5678,010-9999-0000");
     fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "응답 수신자 검증" } });
     const sendButton = screen.getByRole("button", { name: "즉시 발송" });
@@ -781,6 +872,8 @@ describe("NewMessagePage", () => {
     );
 
     renderPage();
+    await openTemplateSelect();
+    fireEvent.click(screen.getByRole("option", { name: "직접 작성" }));
     await addManualRecipient("010-1234-5678,010-9999-0000");
     fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "다중 수신자 정상 발송" } });
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));

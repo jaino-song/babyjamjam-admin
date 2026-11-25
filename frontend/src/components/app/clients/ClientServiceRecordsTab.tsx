@@ -31,6 +31,20 @@ import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
+import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
+import { InitialDocumentRecoveryDialog } from "@/features/document-jobs/InitialDocumentRecoveryDialog";
+import { initialDocumentStateLabel } from "@/features/document-jobs/failure-popup-copy";
+import {
+    INITIAL_DOCUMENT_RECOVERY_COPY,
+    isInitialRegenerationState,
+    strictestInitialRegenerationBlockedCopy,
+} from "@/features/document-jobs/service-record-recovery-copy";
+import { useActiveBranchId } from "@/features/system-templates/branch-context";
+import {
+    matchesInitialDocument,
+    type InitialDocumentAction,
+    type InitialRegenerationProjection,
+} from "@/lib/eformsign/initial-document-recovery-contract";
 import {
     SERVICE_RECORD_FORM_LAYOUT,
     SERVICE_RECORD_LAYOUT_ANSWER_KEYS,
@@ -793,7 +807,7 @@ const REVISION_DOCUMENT_REASON_LABELS: Record<string, string> = {
 
 function getRevisionDocumentReasonLabel(reasonCode: string | null): string | null {
     if (!reasonCode) return null;
-    return REVISION_DOCUMENT_REASON_LABELS[reasonCode] ?? null;
+    return initialDocumentStateLabel(reasonCode) ?? REVISION_DOCUMENT_REASON_LABELS[reasonCode] ?? null;
 }
 
 function RevisionHistoryCard({
@@ -821,6 +835,8 @@ function RevisionHistoryCard({
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("revision-history");
     const { toast } = useToast();
+    const { summary } = useDocumentJobs();
+    const branchId = useActiveBranchId();
 
     if (isLoading) {
         return (
@@ -866,6 +882,7 @@ function RevisionHistoryCard({
     }
 
     const revisions = history?.revisions ?? [];
+    const listComponent = `${dataComponent}_body_list`;
     return (
         <InfoCard
             data-component={dataComponent}
@@ -913,11 +930,11 @@ function RevisionHistoryCard({
                     확정된 수정본이 없습니다.
                 </div>
             ) : (
-                <div data-component={`${dataComponent}_list`} className="space-y-[calc(10px*var(--glint-ui-scale,1))]">
-                    {revisions.map((revision) => (
+                <div data-component={listComponent} className="space-y-[calc(10px*var(--glint-ui-scale,1))]">
+                    {revisions.map((revision, revisionIndex) => (
                         <div
                             key={revision.id}
-                            data-component={`${dataComponent}_revision`}
+                            data-component={`${listComponent}_revision-${revisionIndex + 1}`}
                             className="rounded-[calc(12px*var(--glint-ui-scale,1))] border border-v3-border bg-white/50 p-[calc(12px*var(--glint-ui-scale,1))]"
                         >
                             <div className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
@@ -934,12 +951,22 @@ function RevisionHistoryCard({
                                     연결된 문서 작업이 없습니다.
                                 </div>
                             ) : (
-                                <div className="mt-[calc(8px*var(--glint-ui-scale,1))] space-y-[calc(8px*var(--glint-ui-scale,1))]">
-                                    {revision.documents.map((document) => (
+                                <div
+                                    className="mt-[calc(8px*var(--glint-ui-scale,1))] space-y-[calc(8px*var(--glint-ui-scale,1))]"
+                                    data-component={`${listComponent}_revision-${revisionIndex + 1}_documents`}
+                                    data-slot="revision-documents"
+                                >
+                                    {revision.documents.map((document, documentIndex) => (
                                         <RevisionDocumentRow
                                             key={document.id}
                                             revisionId={revision.id}
                                             document={document}
+                                            branchId={branchId}
+                                            isHistoryCurrent={!isError}
+                                            data-component={`${listComponent}_revision-${revisionIndex + 1}_documents_document-${documentIndex + 1}`}
+                                            regeneration={summary?.initialRegenerations?.find(projection => matchesInitialDocument(projection, {
+                                                stateId: document.id, revisionId: revision.id, generation: document.generation,
+                                            }))}
                                             onRetry={onRetry}
                                             retryingDocumentKey={retryingDocumentKey}
                                             onRetryError={() => {
@@ -966,9 +993,17 @@ function RevisionDocumentRow({
     onRetry,
     retryingDocumentKey,
     onRetryError,
+    branchId,
+    isHistoryCurrent,
+    regeneration,
+    "data-component": base,
 }: {
     revisionId: string;
     document: ServiceRecordRevisionDocumentSummary;
+    branchId: string | null;
+    isHistoryCurrent: boolean;
+    regeneration?: InitialRegenerationProjection;
+    "data-component": string;
     onRetry?: (
         revisionId: string,
         documentStateId: string,
@@ -977,21 +1012,47 @@ function RevisionDocumentRow({
     retryingDocumentKey?: string | null;
     onRetryError: () => void;
 }) {
+    const [action, setAction] = useState<{ request: InitialDocumentAction; branchId: string | null } | null>(null);
+    const [isActionOpen, setActionOpen] = useState(false);
+    const trigger = useRef<HTMLButtonElement>(null);
+    const row = useRef<HTMLDivElement>(null);
     const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
     const reasonLabel = getRevisionDocumentReasonLabel(document.reasonCode);
+    const target = { stateId: document.id, revisionId, generation: document.generation };
+    const readiness = strictestInitialRegenerationBlockedCopy(
+        document.regenerationBlockedReason, regeneration?.reasonCode, document.reasonCode,
+    );
     const documentKey = `${revisionId}:${document.id}`;
     const isRetrying = retryingDocumentKey === documentKey;
-    const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);
+    const retryable = document.canRetry && !readiness && document.generation !== "unknown" && Boolean(onRetry);
+    const initial = document.operation === "record_snapshot"
+        && (regeneration !== undefined || isInitialRegenerationState(document.reasonCode));
+    const projection = document.noProviderDocumentConfirmable;
+    const confirmation = projection && matchesInitialDocument(projection, target) ? projection : undefined;
+    const isActionOffered = action && isHistoryCurrent && matchesInitialDocument(action.request.target, target)
+        && (action.request.kind === "regenerate" ? retryable && initial : Boolean(confirmation));
 
-    const handleRetry = () => {
+    const openAction = (request: InitialDocumentAction, button: HTMLButtonElement) => {
+        trigger.current = button;
+        setAction({ request, branchId });
+        setActionOpen(true);
+    };
+    const handleRetry = (button: HTMLButtonElement) => {
         if (!onRetry || !retryable || isRetrying) return;
+        if (initial) {
+            openAction({ kind: "regenerate", target }, button);
+            return;
+        }
         void onRetry(revisionId, document.id, document.generation).catch(onRetryError);
     };
 
     return (
         <div
-            data-component={`${useClientServiceRecordsDataComponent("revision-history")}_document`}
-            className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))] first:border-t-0 first:pt-0"
+            ref={row}
+            tabIndex={-1}
+            data-component={base}
+            data-slot="revision-document-row"
+            className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))] first:border-t-0 first:pt-0"
         >
             <div className="min-w-0 flex-1">
                 <div className="truncate text-[calc(11.8px*var(--glint-ui-scale,1))] font-medium text-v3-dark">
@@ -1003,6 +1064,11 @@ function RevisionDocumentRow({
                         {reasonLabel}
                     </div>
                 )}
+                {readiness && (
+                    <p data-component={`${base}_readiness`} data-slot="initial-document-readiness" className="mt-0.5 text-xs text-v3-text-muted">
+                        {readiness}
+                    </p>
+                )}
             </div>
             <StatusPill variant={statusMeta.variant}>{statusMeta.label}</StatusPill>
             {retryable && (
@@ -1010,14 +1076,35 @@ function RevisionDocumentRow({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={handleRetry}
-                    disabled={isRetrying}
+                    data-component={`${base}_${initial ? "regenerate" : "retry"}`}
+                    data-slot="revision-document-retry"
+                    onClick={event => handleRetry(event.currentTarget)}
+                    disabled={isRetrying || (initial && !isHistoryCurrent)}
                     loading={isRetrying}
                     loadingLabel="재시도 중"
                 >
-                    다시 시도
+                    {initial ? INITIAL_DOCUMENT_RECOVERY_COPY.regenerateLabel : "다시 시도"}
                 </Button>
             )}
+            {confirmation && <Button type="button" variant="outline" size="sm"
+                data-component={`${base}_confirm-no-provider-document`} data-slot="initial-document-confirm"
+                disabled={!isHistoryCurrent}
+                onClick={event => openAction({ kind: "confirm-no-provider-document", target: confirmation }, event.currentTarget)}
+            >{INITIAL_DOCUMENT_RECOVERY_COPY.confirmLabel}</Button>}
+            {action && action.branchId === branchId && <InitialDocumentRecoveryDialog
+                action={action.request}
+                audience="admin"
+                branchId={action.branchId}
+                open={isActionOpen}
+                isOffered={Boolean(isActionOffered)}
+                data-component={`${base}_initial-document-action`}
+                onClose={() => setActionOpen(false)}
+                onCloseAutoFocus={event => {
+                    event.preventDefault();
+                    (trigger.current?.isConnected ? trigger.current : row.current)?.focus({ preventScroll: true });
+                    setAction(null);
+                }}
+            />}
         </div>
     );
 }

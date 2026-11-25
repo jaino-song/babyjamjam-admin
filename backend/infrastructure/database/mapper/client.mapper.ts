@@ -10,6 +10,7 @@ type ClientRow = {
     fullPrice: string | null;
     grant: string | null;
     actualPrice: string | null;
+    copaymentReceivedDate?: Date | null;
     startDate: Date | null;
     endDate: Date | null;
     careCenter: boolean | null;
@@ -64,6 +65,7 @@ export class ClientMapper {
             row.allowSaturdayService ?? false,
             row.allowSundayService ?? false,
             row.allowHolidayService ?? false,
+            row.copaymentReceivedDate?.toISOString().slice(0, 10) ?? null,
         );
     }
 

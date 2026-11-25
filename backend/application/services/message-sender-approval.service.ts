@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
     BadRequestException,
     ForbiddenException,
@@ -26,6 +26,15 @@ const MESSAGE_SENDER_APPROVAL_REQUEST_ROLES = new Set([
     "manager",
     "user",
 ]);
+
+/** Keep sender approval stable through the receipt's provider admission transaction. */
+export async function hasApprovedReceiptSender(tx: Prisma.TransactionClient, branchId: string): Promise<boolean> {
+    const [row] = await tx.$queryRaw<Array<{ approved: boolean }>>(Prisma.sql`
+        SELECT sms_sender_approval_status = 'approved' AS approved
+        FROM branch WHERE id = ${branchId}::uuid FOR SHARE
+    `);
+    return row?.approved === true;
+}
 
 @Injectable()
 export class MessageSenderApprovalService {
