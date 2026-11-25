@@ -1,3 +1,5 @@
+import { isRecordLinkGroup, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED, RECORD_LINK_GROUP_LOG_MARKER } from "./service-record-link-group-source";
+import { hasApprovedRecordLinkSender } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { RECEIPT_RECOVERY_PREFIX } from "domain/constants/receipt-job-recovery";
 import { MessageTriggerService } from "./message-trigger.service";
 import { SmsTriggerDeliverySkipError } from "./sms-trigger-payload-enricher.registry";
@@ -456,10 +458,32 @@ export class SmsRetryService {
         return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation, retryDelayMs, standaloneSnapshot);
     }
 
+    private async permitsRecordLinkGroupRetry(source: MessageLogEntity, tx: Prisma.TransactionClient): Promise<boolean> {
+        const marked = Object.prototype.hasOwnProperty.call(source.variables, RECORD_LINK_GROUP_LOG_MARKER);
+        if (source.templateKey !== SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY || !source.triggerJobId || !source.branchId) return !marked;
+        const row = await tx.message_trigger_job.findUnique({
+            where: { id: source.triggerJobId, branchId: source.branchId },
+        });
+        if (!row || !isRecordLinkGroup(row)) return !marked;
+        const job = await this.jobRepository?.findByIdInBranch(source.branchId, row.id, tx);
+        if (!job || job.status === "canceled" || !this.smsTriggerDeliveryService
+            || !await resolveRecordLinkGroup(tx, job, true) || !await hasApprovedRecordLinkSender(tx, source.branchId)) return false;
+        const canonical = await this.smsTriggerDeliveryService.resolveCanonicalDeliverySnapshot(job, tx);
+        return source.receiver === canonical.receiver && source.messageBody === canonical.message;
+    }
+
     private async admitRetry(source: MessageLogEntity, retry: MessageLogEntity, transaction: Prisma.TransactionClient | undefined,
         invocation: MessageRetryInvocation, leaseHeld?: () => boolean, standaloneSnapshot?: Readonly<SmsTriggerDeliverySnapshot>): Promise<MessageLogEntity | null> {
         return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, retry.branchId, retry.receiver,
             async (decision, tx, revision) => {
+                if (!tx && Object.prototype.hasOwnProperty.call(source.variables, RECORD_LINK_GROUP_LOG_MARKER)) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+                if (tx && !await this.permitsRecordLinkGroupRetry(source, tx)) {
+                    retry.markRetrySuperseded(RECORD_LINK_GROUP_CHANGED);
+                    await this.logRepository.update(retry, tx);
+                    return null;
+                }
                 if (decision.action === "DEFER") {
                     if (!tx || !revision) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                     const storedSource = await this.logRepository.findByIdInBranch(source.branchId!, source.id, tx);
@@ -651,6 +675,11 @@ export class SmsRetryService {
                         await this.logRepository.transitionQuietRetry(current, decision.action === "DEFER"
                             ? { ...currentHold, releaseAt: new Date(Math.max(currentHold.releaseAt.getTime(), decision.reevaluateAt.getTime())) } : currentHold,
                             decision.action === "CANCEL", finalTx);
+                        return null;
+                    }
+                    if (!await this.permitsRecordLinkGroupRetry(finalSource, finalTx)) {
+                        finalCurrent.markRetrySuperseded(RECORD_LINK_GROUP_CHANGED);
+                        await this.logRepository.update(finalCurrent, finalTx);
                         return null;
                     }
                     if (leaseHeld && !leaseHeld()) return null;
@@ -937,8 +966,10 @@ export class SmsRetryService {
         const scheduledDate = isScheduledInFuture ? schedule.scheduledDate : undefined;
         const scheduledTime = isScheduledInFuture ? schedule.scheduledTime : undefined;
 
-        const confidential = Boolean(authorizedSnapshot?.standaloneLink);
-        if (Object.prototype.hasOwnProperty.call(providerAttempt.variables, STANDALONE_RECEIPT_LOG_REFERENCE) && !confidential) {
+        const standalone = Boolean(authorizedSnapshot?.standaloneLink);
+        const recordGroup = Object.prototype.hasOwnProperty.call(providerAttempt.variables, RECORD_LINK_GROUP_LOG_MARKER);
+        const confidential = standalone || recordGroup;
+        if (Object.prototype.hasOwnProperty.call(providerAttempt.variables, STANDALONE_RECEIPT_LOG_REFERENCE) && !standalone) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         try {
@@ -962,7 +993,8 @@ export class SmsRetryService {
                 result,
                 countSmsRecipients(authorizedSnapshot?.receiver ?? providerAttempt.receiver),
             );
-            const providerMessage = confidential ? "Standalone receipt delivery rejected" : this.providerResponseMessage(result);
+            const providerMessage = standalone ? "Standalone receipt delivery rejected"
+                : recordGroup ? "제공기록지 링크 문자 발송이 거절되었습니다" : this.providerResponseMessage(result);
             if (providerOutcome === "rejected") {
                 this.markSmsRetryRejected(providerAttempt, providerMessage, invocation, retryDelayMs);
                 // 수동 재시도의 주차 정책은 변경하지 않는다.
@@ -1039,11 +1071,13 @@ export class SmsRetryService {
                 );
             }
             await this.logRepository.update(providerAttempt);
-            this.logger.log(confidential ? `[Retry] Standalone receipt log ${providerAttempt.id} accepted`
+            this.logger.log(confidential ? `[Retry] SMS log ${providerAttempt.id} accepted`
                 : `[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${providerAttempt.receiver}`);
             return providerAttempt;
         } catch (error) {
-            const errorMessage = confidential ? "Standalone receipt delivery outcome unavailable" : error instanceof Error ? error.message : String(error);
+            const errorMessage = standalone ? "Standalone receipt delivery outcome unavailable"
+                : recordGroup ? "제공기록지 링크 문자 발송 결과를 확인할 수 없습니다"
+                : error instanceof Error ? error.message : String(error);
             this.markSmsRetryUncertain(providerAttempt, errorMessage);
             await this.logRepository.update(providerAttempt);
             await this.fenceSourceLogAfterUnidentifiableOutcome(

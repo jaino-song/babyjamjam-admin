@@ -15,6 +15,7 @@ import { AdminServiceRecordEditService } from "application/services/admin-servic
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
+import { ServiceRecordLinkGroupService } from "application/services/service-record-link-group.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
 import { ServiceRecordEditAgentCapabilitiesProvider } from "application/usecases/service-record/service-record-edit-agent-capabilities.provider";
@@ -47,6 +48,7 @@ import { HolidayModule } from "./holiday.module";
         ServiceRecordEntryService,
         ServiceRecordTokenService,
         ServiceRecordLinkService,
+        ServiceRecordLinkGroupService,
         ServiceRecordLifecycleService,
         ServiceRecordFinalizationSchedulerService,
         ServiceRecordLinkReconciliationService,

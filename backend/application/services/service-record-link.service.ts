@@ -46,6 +46,8 @@ import {
     MESSAGE_TRIGGER_RULE_BRANCH_OVERRIDE_REPOSITORY,
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
+import { ServiceRecordLinkGroupService, type RecordLinkSendSelection } from "./service-record-link-group.service";
+import { recordLinkPhone } from "./service-record-link-group-source";
 import { ServiceRecordTokenService } from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
@@ -127,6 +129,7 @@ export class ServiceRecordLinkService {
         @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
         @Optional() private readonly branchLock?: MessageAutomationBranchLockService,
         @Optional() private readonly automationActivationService?: MessageAutomationActivationService,
+        @Optional() private readonly linkGroups?: ServiceRecordLinkGroupService,
     ) {}
 
     /** The owning write has already acquired the automation branch lock. */
@@ -276,7 +279,7 @@ export class ServiceRecordLinkService {
                 await lockRecordLinkSchedule(tx, eligible.schedule.id);
                 const current = await read(tx);
                 if (!current || current.schedule.incarnationId !== eligible.schedule.incarnationId
-                    || current.schedule.primaryEmployee.phone !== pendingJob.recipientPhone
+                    || this.normalizePhone(current.schedule.primaryEmployee.phone) !== this.normalizePhone(pendingJob.recipientPhone ?? "")
                     || current.schedule.client.name !== pendingJob.payload.clientName
                     || current.schedule.primaryEmployee.name !== pendingJob.payload.employeeName
                     || this.formatDate(current.schedule.startDate) !== pendingJob.payload.templateVariables["serviceStartDate"]
@@ -334,6 +337,17 @@ export class ServiceRecordLinkService {
         options: { taskAutomationReference?: AgentAutomationTaskCommitReference; rescheduleAutomatic?: boolean; branchId?: string } = {},
     ): Promise<boolean> {
         try {
+            if (this.linkGroups && !options.taskAutomationReference) {
+                const schedule = await this.prisma.employee_schedule.findFirst({
+                    where: { id: scheduleId, ...(options.branchId ? { branchId: options.branchId } : {}), replaced: false,
+                        terminatedAt: null, client: { deletedAt: null, fetalConfirmation: "CONFIRMED" } },
+                    select: { branchId: true },
+                });
+                if (schedule?.branchId) {
+                    await this.ensureSystemRule(schedule.branchId, false);
+                    return await this.linkGroups.schedule(schedule.branchId, scheduleId);
+                }
+            }
             if (options.rescheduleAutomatic && options.branchId
                 && await this.recheckRecovery({ branchId: options.branchId, scheduleId })) return true;
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
@@ -371,6 +385,7 @@ export class ServiceRecordLinkService {
         scheduleId: number,
         preparedLinkToken?: string,
         recipientPhone?: string,
+        actorUserId?: string,
     ): Promise<{ scheduledFor: Date; jobId: string }> {
         const scheduledFor = new Date();
         const result = await this.issueServiceRecordLinkJob(scheduleId, {
@@ -380,6 +395,7 @@ export class ServiceRecordLinkService {
             preparedLinkToken,
             isManualSend: true,
             recipientPhone,
+            actorUserId,
         });
         if (!result.jobId) {
             throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -393,6 +409,11 @@ export class ServiceRecordLinkService {
             `Service record link SMS manually scheduled for provider ${result.employeeId} schedule ${scheduleId} at ${result.scheduledFor.toISOString()}`
         );
         return { scheduledFor: result.scheduledFor, jobId: result.jobId };
+    }
+
+    async sendGroupNow(branchId: string, scheduleId: number, selection: RecordLinkSendSelection, actorUserId: string) {
+        await this.ensureSystemRule(branchId, true);
+        return this.linkGroups!.send(branchId, scheduleId, selection, actorUserId);
     }
 
     /**
@@ -617,6 +638,7 @@ export class ServiceRecordLinkService {
             preparedLinkToken?: string;
             isManualSend: boolean;
             recipientPhone?: string;
+            actorUserId?: string;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
             rescheduleAutomatic?: boolean;
             branchId?: string;
@@ -652,10 +674,9 @@ export class ServiceRecordLinkService {
         }
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
-        const resolvedRecipientPhone = this.resolveRecipientPhone(
-            employee.phone,
-            options.recipientPhone,
-        );
+        const normalizedPhone = this.resolveRecipientPhone(employee.phone, options.recipientPhone);
+        // Keep the byte-for-byte v1 automatic effect used by existing consent.
+        const resolvedRecipientPhone = normalizedPhone && !options.isManualSend ? employee.phone : normalizedPhone;
 
         const scheduledFor = options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate);
         const originalKey = serviceRecordAutomaticJobKey(scheduleId);
@@ -841,6 +862,7 @@ export class ServiceRecordLinkService {
                     employeeName: employee.name,
                     memberId: `employee:${employee.id}`,
                     recipientName: employee.name,
+                    ...(options.actorUserId ? { sentByUserId: options.actorUserId } : {}),
                     recipientPhone: resolvedRecipientPhone,
                     buttonUrl: url,
                     messageBody: message,
@@ -1244,13 +1266,18 @@ export class ServiceRecordLinkService {
     }
 
     private resolveRecipientPhone(employeePhone: string, recipientPhone?: string): string | null {
-        const candidate = recipientPhone?.trim() || employeePhone;
-        const normalized = this.normalizePhone(candidate);
-        if (!/^01[016789]\d{7,8}$/.test(normalized)) {
-            return null;
+        const normalized = recordLinkPhone(employeePhone);
+        if (!normalized) return null;
+        const requestedPhone = recordLinkPhone(recipientPhone);
+        if (recipientPhone !== undefined && !requestedPhone) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/recipientPhone", code: "INVALID_VALUE", detail: "수신 전화번호 형식이 올바르지 않습니다.", location: "body",
+            }));
         }
-
-        return recipientPhone ? normalized : employeePhone;
+        if (requestedPhone && requestedPhone !== normalized) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        return normalized;
     }
 
     private buildServiceRecordUrl(linkToken: string): string {

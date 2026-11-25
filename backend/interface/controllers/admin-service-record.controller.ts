@@ -34,6 +34,7 @@ import {
     KeepServiceRecordPeriodMismatchDto,
     FitServiceRecordPeriodMismatchDto,
     PrepareAdminServiceRecordLinkDto,
+    ResetAdminServiceRecordLinkDto,
     SendAdminServiceRecordLinkDto,
 } from "interface/dto/admin-service-record.dto";
 import {
@@ -317,6 +318,15 @@ export class AdminServiceRecordController {
         return this.adminServiceRecordEditService.confirmDraft(tenant.branchId, draftId, tenant.userId, body);
     }
 
+    @Get("schedules/:scheduleId/link-targets")
+    listLinkTargets(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("scheduleId", ParseIntPipe) scheduleId: number,
+        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+    ) {
+        return this.adminServiceRecordService.listLinkTargets(tenant.branchId, scheduleId);
+    }
+
     @Post("schedules/:scheduleId/prepare-link")
     prepareLink(
         @CurrentTenant() tenant: { branchId?: string },
@@ -324,27 +334,34 @@ export class AdminServiceRecordController {
         @Body() body: PrepareAdminServiceRecordLinkDto,
         @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
     ) {
-        return this.adminServiceRecordService.prepareLink(
-            tenant.branchId ?? "",
-            scheduleId,
-            body?.recipientPhone,
-            ...caseArgument(body),
-        );
+        if (body?.employeeId !== undefined || body?.caseIds !== undefined) {
+            if (!body.employeeId || !body.caseIds?.length || body.caseId !== undefined) this.invalidLinkSelection();
+            return this.adminServiceRecordService.prepareLinkGroup(tenant.branchId ?? "", scheduleId, {
+                employeeId: body.employeeId, caseIds: body.caseIds.map(id => id.toLowerCase()), recipientPhone: body.recipientPhone,
+            });
+        }
+        return this.adminServiceRecordService.prepareLink(tenant.branchId ?? "", scheduleId, body?.recipientPhone, ...caseArgument(body));
     }
 
     @Post("schedules/:scheduleId/send-link")
     async sendLinkNow(
-        @CurrentTenant() tenant: { branchId?: string },
+        @CurrentTenant() tenant: { branchId?: string; userId?: string },
         @Param("scheduleId", ParseIntPipe) scheduleId: number,
         @Body() body: SendAdminServiceRecordLinkDto,
         @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
     ) {
+        if (body?.employeeId !== undefined || body?.members !== undefined) {
+            if (!body.employeeId || !body.members?.length || body.caseId !== undefined || body.preparedLinkToken !== undefined) {
+                this.invalidLinkSelection();
+            }
+            return this.adminServiceRecordService.sendLinkGroup(tenant.branchId ?? "", scheduleId, {
+                employeeId: body.employeeId, members: body.members.map(member => ({ ...member, caseId: member.caseId.toLowerCase() })),
+                recipientPhone: body.recipientPhone,
+            }, tenant.userId ?? "");
+        }
         return this.adminServiceRecordService.sendLinkNow(
-            tenant.branchId ?? "",
-            scheduleId,
-            body?.preparedLinkToken,
-            body?.recipientPhone,
-            ...caseArgument(body),
+            tenant.branchId ?? "", scheduleId, body?.preparedLinkToken, body?.recipientPhone,
+            ...(tenant.userId ? [body?.caseId, tenant.userId] as const : caseArgument(body)),
         );
     }
 
@@ -353,6 +370,7 @@ export class AdminServiceRecordController {
     resetLink(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("scheduleId", ParseIntPipe) scheduleId: number,
+        @Body() body?: ResetAdminServiceRecordLinkDto,
         @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
     ) {
         const actor: ServiceRecordAdminActor = {
@@ -360,6 +378,19 @@ export class AdminServiceRecordController {
             globalRole: tenant.globalRole,
             branchRole: tenant.branchRole,
         };
+        if (body?.employeeId !== undefined || body?.members !== undefined) {
+            if (!body.employeeId || !body.members?.length) this.invalidLinkSelection();
+            return this.adminServiceRecordService.resetLinkGroup(tenant.branchId, scheduleId, {
+                employeeId: body.employeeId, members: body.members.map(member => ({ ...member, caseId: member.caseId.toLowerCase() })),
+            }, actor);
+        }
         return this.adminServiceRecordService.resetLink(tenant.branchId, scheduleId, actor);
+    }
+
+    private invalidLinkSelection(): never {
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/employeeId", code: "INVALID_VALUE", location: "body",
+            detail: "담당자와 제공기록지 대상은 함께 지정해야 합니다.",
+        }));
     }
 }

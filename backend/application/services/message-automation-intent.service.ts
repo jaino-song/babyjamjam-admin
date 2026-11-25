@@ -181,6 +181,10 @@ export class MessageAutomationIntentService {
                     params.scheduleId,
                     { taskAutomationReference: params.taskAutomationReference },
                 );
+            } else if (params.taskOrigin) {
+                // Unsealed task lineage cannot turn into a branch automation send.
+                await this.releaseIntent(claim);
+                return false;
             } else if (params.refreshServiceRecordLink) {
                 await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId, {
                     rescheduleAutomatic: true, branchId: params.branchId,

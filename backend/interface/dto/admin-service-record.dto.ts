@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
-import { ArrayNotEmpty, ArrayUnique, IsArray, IsInt, Min, IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator";
+import { Type } from "class-transformer";
+import { ArrayMaxSize, ArrayNotEmpty, ArrayUnique, IsArray, IsInt, Min, IsString, IsUUID, Matches, Max, ValidateIf, ValidateNested } from "class-validator";
 import type {
     AdminServiceRecordCaseSummary,
     ServiceRecordEditServiceDays,
@@ -8,47 +9,97 @@ import type {
 
 const RECIPIENT_PHONE_PATTERN = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
-export class PrepareAdminServiceRecordLinkDto {
-    @IsOptional()
+const MAX_LINK_MEMBERS = 32;
+const LINK_TOKEN = /^efl_[A-Za-z0-9_-]{40,64}$/;
+
+class ScopedAdminRecordLinkDto {
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsInt()
+    @Min(1)
+    @Max(32767)
+    employeeId?: number;
+}
+
+class AdminRecordLinkMemberDto {
+    @IsUUID()
+    caseId!: string;
+
+    @IsInt()
+    @Min(1)
+    @Max(2147483647)
+    assignmentVersion!: number;
+}
+
+class AdminPreparedRecordLinkMemberDto extends AdminRecordLinkMemberDto {
+    @IsString()
+    @Matches(LINK_TOKEN)
+    preparedLinkToken!: string;
+}
+
+export class PrepareAdminServiceRecordLinkDto extends ScopedAdminRecordLinkDto {
+    @ValidateIf((_object, value) => value !== undefined)
     @IsUUID()
     caseId?: string;
 
-    @IsOptional()
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsArray()
+    @ArrayNotEmpty()
+    @ArrayMaxSize(MAX_LINK_MEMBERS)
+    @ArrayUnique((value: unknown) => typeof value === "string" ? value.toLowerCase() : value)
+    @IsUUID(undefined, { each: true })
+    caseIds?: string[];
+
+    @ValidateIf((_object, value) => value !== undefined)
     @IsString()
-    @Matches(RECIPIENT_PHONE_PATTERN, {
-        message: "수신 전화번호 형식이 올바르지 않습니다.",
-    })
+    @Matches(RECIPIENT_PHONE_PATTERN)
     recipientPhone?: string;
 }
 
-export class SendAdminServiceRecordLinkDto {
-    @IsOptional()
+export class SendAdminServiceRecordLinkDto extends ScopedAdminRecordLinkDto {
+    @ValidateIf((_object, value) => value !== undefined)
     @IsUUID()
     caseId?: string;
 
-    @IsOptional()
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsArray()
+    @ArrayNotEmpty()
+    @ArrayMaxSize(MAX_LINK_MEMBERS)
+    @ArrayUnique((value: AdminPreparedRecordLinkMemberDto | null) => typeof value?.caseId === "string" ? value.caseId.toLowerCase() : value)
+    @ValidateNested({ each: true })
+    @Type(() => AdminPreparedRecordLinkMemberDto)
+    members?: AdminPreparedRecordLinkMemberDto[];
+
+    @ValidateIf((_object, value) => value !== undefined)
     @IsString()
-    @MaxLength(80)
-    @Matches(/^efl_[A-Za-z0-9_-]{40,64}$/, {
-        message: "준비된 제공기록지 링크 형식이 올바르지 않습니다.",
-    })
+    @Matches(LINK_TOKEN)
     preparedLinkToken?: string;
 
-    @IsOptional()
+    @ValidateIf((_object, value) => value !== undefined)
     @IsString()
-    @Matches(RECIPIENT_PHONE_PATTERN, {
-        message: "수신 전화번호 형식이 올바르지 않습니다.",
-    })
+    @Matches(RECIPIENT_PHONE_PATTERN)
     recipientPhone?: string;
+}
+
+export class ResetAdminServiceRecordLinkDto extends ScopedAdminRecordLinkDto {
+    @ValidateIf((_object, value) => value !== undefined)
+    @IsArray()
+    @ArrayNotEmpty()
+    @ArrayMaxSize(MAX_LINK_MEMBERS)
+    @ArrayUnique((value: AdminRecordLinkMemberDto | null) => typeof value?.caseId === "string" ? value.caseId.toLowerCase() : value)
+    @ValidateNested({ each: true })
+    @Type(() => AdminRecordLinkMemberDto)
+    members?: AdminRecordLinkMemberDto[];
 }
 
 export interface AdminServiceRecordPreparedLinkDto {
+    kind: "legacy";
     serviceRecordUrl: string;
     preparedLinkToken: string;
     expiresAt: Date;
 }
 
 export interface AdminServiceRecordResetLinkDto {
+    kind: "legacy";
     serviceRecordUrl: string;
     expiresAt: Date;
 }
