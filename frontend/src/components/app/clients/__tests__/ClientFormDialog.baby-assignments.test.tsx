@@ -483,6 +483,80 @@ describe("desktop client service-record allocation", () => {
     expect(patch.mock.calls).toStrictEqual([["/clients/523", { address }]]);
   });
 
+  it("terminated household retains historical staff without sending an allocation edit", async () => {
+    const primaryEmployee = { id: 31, name: "과거 주 제공인력" };
+    const secondaryEmployee = { id: 32, name: "과거 보조 제공인력" };
+    const babies = [baby1, baby2,
+      { babyId: "9c97b596-1e5e-43f8-88ff-657b46bddb33", ordinal: 4 },
+      { babyId: "c97cd694-2203-4aa8-86e8-dee52dd40666", ordinal: 5 },
+    ];
+    const address = "인천광역시 동구";
+    await open({ client: {
+      ...savedTwins, type: "D가2형", serviceStatus: "terminated", fetalType: "QUADRUPLETS_PLUS",
+      babyCount: babies.length, babies, historicalMaxOrdinal: 5, primaryEmployee, secondaryEmployee, providers: [],
+      babyAssignments: babies.map((baby) => ({ ...baby, providerSlot: null })),
+    } });
+
+    fireEvent.change(screen.getByLabelText(/^주소/), { target: { value: address } });
+    next();
+    await within(fetusSelect()).findByRole("option", { name: "사태아 이상" });
+    next();
+    expect(screen.getByRole("textbox", { name: roles[0] })).toHaveValue(primaryEmployee.name);
+    expect(screen.getByRole("textbox", { name: roles[1] })).toHaveValue(secondaryEmployee.name);
+    for (const label of roles.slice(2)) {
+      const field = screen.getByRole("combobox", { name: label });
+      expect(within(field).queryByRole("button", { name: "제공인력 선택 해제" })).not.toBeInTheDocument();
+    }
+    const owners = screen.getByRole("heading", { name: "서비스 제공기록지 담당" }).closest("section")!;
+    expect(within(owners).getAllByText("미배정")).toHaveLength(babies.length);
+    expect(within(owners).queryByRole("button", { name: "담당 변경" })).not.toBeInTheDocument();
+    next();
+    click("저장");
+
+    await waitFor(() => expect(patch.mock.calls).toStrictEqual([["/clients/523", { address }]]));
+  });
+
+  it("active empty staff projection does not resurrect a historical employee", async () => {
+    const address = "인천광역시 동구";
+    await open({ surface: "dialog", client: {
+      ...savedTwins, providers: [],
+      babyAssignments: [{ ...baby1, providerSlot: null }, { ...baby2, providerSlot: null }],
+    } });
+
+    for (const [slot, employee] of providers.slice(0, 2).entries()) {
+      const field = screen.getByRole("combobox", { name: roles[slot] });
+      expect(field).not.toHaveTextContent(employee.name);
+      expect(within(field).queryByRole("button", { name: "제공인력 선택 해제" })).not.toBeInTheDocument();
+    }
+    fireEvent.change(screen.getByLabelText(/^주소/), { target: { value: address } });
+    click("저장");
+
+    await waitFor(() => expect(patch.mock.calls).toStrictEqual([["/clients/523", { address }]]));
+  });
+
+  it("displays a historical secondary employee without enabling a disabled slot", async () => {
+    await open({ surface: "dialog", client: {
+      ...savedTwins, type: "B가1형", serviceStatus: "terminated", providers: [], babyAssignments: [],
+    } });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+
+    const secondary = screen.getByRole("textbox", { name: roles[1] });
+    expect(secondary).toBeDisabled();
+    expect(secondary).toHaveValue(providers[1].name);
+    for (const label of roles.slice(2)) {
+      expect(screen.getByRole("textbox", { name: label })).toHaveValue("");
+    }
+  });
+
+  it("uses the explicit provider projection for a terminated customer when it has current staff", async () => {
+    await open({ surface: "dialog", client: {
+      ...savedTwins, serviceStatus: "terminated", providers: [{ slot: 0, employeeId: providers[4].id }],
+    } });
+
+    expect(await screen.findByRole("combobox", { name: roles[0] })).toHaveTextContent(providers[4].name);
+    expect(screen.getByRole("combobox", { name: roles[1] })).not.toHaveTextContent(providers[1].name);
+  });
+
   it("keeps legacy B–D confirmation pending and sends only an unrelated partial edit", async () => {
     await open({ client: {
       ...savedTwins, type: "D가2형", fetalConfirmation: "UNCONFIRMED", fetalType: null,
@@ -493,6 +567,8 @@ describe("desktop client service-record allocation", () => {
     await within(fetusSelect()).findByRole("option", { name: "사태아 이상" });
     expect(fetusSelect()).toHaveValue("");
     next();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: roles[0] })).toHaveTextContent(providers[0].name));
+    expect(screen.getByRole("combobox", { name: roles[1] })).toHaveTextContent(providers[1].name);
     expect(screen.queryByRole("heading", { name: "서비스 제공기록지 담당" })).not.toBeInTheDocument();
     next();
     click("저장");

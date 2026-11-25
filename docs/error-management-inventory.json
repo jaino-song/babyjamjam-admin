@@ -76498,6 +76498,59 @@
       "review_task": null,
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "The compatibility exception covers the pre-service BRANCH_CONTEXT_CHANGED 409 only. The fence refusal uses the local code/message body."
+    },
+    {
+      "id": "owner-e50973508566",
+      "path": "backend/application/services/client-allocation.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "The intake pattern matches the NestJS import and two throws. invalid wraps catalog VALIDATION_FAILED (400) in problemBody for registration and edit input refusals. allocationConflict wraps catalog REQUEST_CONFLICT (409) in problemBody for stale or incompatible allocation changes, including retirement of a baby with an authored record.",
+      "seams": [
+        {
+          "line": 10,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 147,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 153,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "baby-records-2-1-error-inventory",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-04",
+        "EM-VAL-03",
+        "EM-STATE-01"
+      ],
+      "public_codes": [
+        "VALIDATION_FAILED",
+        "REQUEST_CONFLICT"
+      ],
+      "outcome_evidence": "Both helpers set NOT_APPLIED through problemBody. The registration HTTP tests assert 400 VALIDATION_FAILED with body pointers and no client created for invalid input. They also assert 409 with /expectedAllocationVersion for a divergent stale edit, /babyCount for authored-baby retirement, and /newPrimaryEmployeeId for a legacy replacement collision that leaves the original schedule in place.",
+      "consumer_paths": [
+        "backend/application/services/client.service.ts (ClientService.create and its syncEmployeeAssignment helper, ClientService.update, ClientService.requestReplacement)",
+        "backend/application/usecases/employee-schedule/create-employee-schedule.usecase.ts (CreateEmployeeScheduleUsecase.execute)",
+        "backend/application/usecases/employee-schedule/update-employee-schedule.usecase.ts (UpdateEmployeeScheduleUsecase.execute)"
+      ],
+      "test_evidence": [
+        "backend/test/e2e/baby-record-registration.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Both throws use registered Problem Details codes with matching HTTP statuses, fixed field detail and request-body JSON Pointers."
     }
   ]
 }
