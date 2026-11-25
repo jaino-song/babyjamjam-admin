@@ -13,7 +13,8 @@ const timeoutMs = 5 * 60 * 1000;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 const driveView = ['--drive-skip-gdocs=false', '--drive-export-formats=url'];
 
-async function run(bin, lockFd, timeout, command, options, operands, consume, inclusive = false) {
+async function run(bin, lockFd, timeout, command, options, operands, consume, inclusive = false, signal) {
+    signal?.throwIfAborted();
     const stdio = ['ignore', 'pipe', 'pipe'];
     if (lockFd !== undefined) stdio.push(lockFd);
     const child = spawn(bin, [
@@ -27,7 +28,9 @@ async function run(bin, lockFd, timeout, command, options, operands, consume, in
         child.once('error', () => resolve(null));
         child.once('close', (code) => resolve(code));
     });
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
+    const stop = () => child.kill('SIGKILL');
+    const timer = setTimeout(stop, timeout);
+    signal?.addEventListener('abort', stop, { once: true });
     try {
         const result = await consume(child.stdout).catch((error) => {
             child.kill('SIGKILL');
@@ -39,6 +42,7 @@ async function run(bin, lockFd, timeout, command, options, operands, consume, in
     } finally {
         await exit;
         clearTimeout(timer);
+        signal?.removeEventListener('abort', stop);
     }
 }
 
@@ -131,7 +135,7 @@ function parseList(text, { recursive, selected, drive, legacy }) {
     return names;
 }
 
-export function remoteTransport(settings, lockFd, legacyTimeout, deadline) {
+export function remoteTransport(settings, lockFd, legacyTimeout, deadline, signal) {
     const { rcloneRemote: target, rcloneBin: bin = 'rclone' } = settings;
     if (target === undefined || target === null) return null;
     const match = typeof target === 'string' && /^([a-zA-Z0-9_][a-zA-Z0-9_. -]*:)(.*)$/u.exec(target);
@@ -148,7 +152,7 @@ export function remoteTransport(settings, lockFd, legacyTimeout, deadline) {
         const configured = legacyTimeout ?? timeoutMs;
         const budget = deadline === undefined ? configured : Math.min(configured, deadline - performance.now());
         if (deadline !== undefined && budget <= 0) refuse('remote_time_budget');
-        return run(bin, lockFd, budget, command, options, operands, consume, inclusive);
+        return run(bin, lockFd, budget, command, options, operands, consume, inclusive, signal);
     };
     const metadata = (stream) => collect(stream, legacy ? 16 * 1024 * 1024 : MAX_JSON);
     const empty = (stream) => collect(stream, 1024);

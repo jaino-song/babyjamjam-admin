@@ -2,7 +2,8 @@ import { Global, INestApplication, Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import Redis from "ioredis";
-import { fork, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { AddressInfo, createServer } from "node:net";
@@ -66,7 +67,7 @@ class FixtureHolidayModule {}
 class FixtureServiceRecordModule {}
 
 async function eventually<T>(read: () => T | false | undefined | Promise<T | false | undefined>, description: string): Promise<T> {
-    const deadline = performance.now() + 5_000;
+    const deadline = performance.now() + 7_500;
     do {
         const value = await read();
         if (value) return value;
@@ -134,21 +135,39 @@ function post(app: INestApplication, docId: string, eventType = "ready_document_
 
 type WorkerMessage = { connected?: number; frame?: string; delivered?: string; drained?: boolean };
 
+function stopFixture(child: ChildProcess, name: string) {
+    const exited = once(child, "close");
+    return async () => {
+        const timer = new AbortController();
+        child.kill("SIGTERM");
+        try {
+            const closed = await Promise.race([exited, delay(3_000, null, { signal: timer.signal })]);
+            if (!closed) {
+                child.kill("SIGKILL");
+                if (!await Promise.race([exited, delay(2_000, null, { signal: timer.signal })])) {
+                    throw new Error(`Could not reap ${name} after SIGKILL`);
+                }
+                throw new Error(`${name} required SIGKILL after SIGTERM`);
+            }
+        } finally {
+            timer.abort();
+        }
+    };
+}
+
 async function startWorker(app: INestApplication, root: string) {
     const messages: WorkerMessage[] = [];
     const worker = fork(join(__dirname, "eformsign-backup-wake-worker.fixture.mjs"), [await app.getUrl(), root], {
         execArgv: [], env: {}, stdio: ["ignore", "ignore", "inherit", "ipc"],
     });
     worker.on("message", (message: WorkerMessage) => messages.push(message));
-    const stopped = once(worker, "exit");
-    return { messages, async stop() {
-        worker.kill("SIGTERM");
-        await stopped;
-    } };
+    return { messages, stop: stopFixture(worker, "wake worker") };
 }
 
 const haveRedis = spawnSync("redis-server", ["--version"]).status === 0;
+const redisTest = haveRedis || process.env["CI"] === "true" ? it : it.skip;
 async function startRedis(root: string) {
+    if (!haveRedis) throw new Error("redis-server is required for the private Redis wake tests in CI");
     const reservation = createServer();
     reservation.listen(0, "127.0.0.1");
     await once(reservation, "listening");
@@ -157,10 +176,14 @@ async function startRedis(root: string) {
     const child = spawn("redis-server", [
         "--bind", "127.0.0.1", "--port", String(port), "--dir", root, "--save", "", "--appendonly", "no",
     ], { stdio: ["ignore", "pipe", "inherit"] });
-    const exited = once(child, "exit");
+    const stop = stopFixture(child, "private Redis");
+    let output = "";
     let ready = false;
-    child.stdout?.on("data", (data: Buffer) => { ready ||= data.toString().includes("Ready to accept connections"); });
-    const stop = async () => { child.kill("SIGTERM"); await exited; };
+    child.stdout?.on("data", (data: Buffer) => {
+        if (ready) return;
+        output = output.slice(-64) + data.toString();
+        ready = output.includes("Ready to accept connections");
+    });
     try {
         await eventually(() => ready, "private Redis startup");
         return { url: `redis://127.0.0.1:${port}`, stop };
@@ -183,14 +206,19 @@ describe("private eformsign backup wake", () => {
         delete process.env["VALKEY_URL"];
     });
     afterEach(async () => {
+        const errors: unknown[] = [];
         try {
-            for (const stop of cleanup.reverse()) await stop();
+            for (const stop of cleanup.reverse()) {
+                try { await stop(); }
+                catch (error) { errors.push(error); }
+            }
         } finally {
             cleanup.length = 0;
             if (previousUrl === undefined) delete process.env["VALKEY_URL"];
             else process.env["VALKEY_URL"] = previousUrl;
             await rm(root, { recursive: true, force: true });
         }
+        if (errors.length) throw new AggregateError(errors, "Private wake fixture cleanup failed");
     });
     const openApp = async () => {
         const app = await startApp(ledger);
@@ -252,10 +280,10 @@ describe("private eformsign backup wake", () => {
         expect(ledger.rows.at(-1)?.documentId).toBe("notification-failed");
     });
 
-    (haveRedis ? it : it.skip)("delivers across independent Valkey providers and catches up after subscriber loss in place", async () => {
+    redisTest("delivers across independent Valkey providers and catches up after subscriber loss in place", async () => {
         const redis = await startRedis(root);
         cleanup.push(redis.stop);
-        const admin = new Redis(redis.url);
+        const admin = new Redis(redis.url, { commandTimeout: 2_000 });
         cleanup.push(async () => admin.disconnect());
         process.env["VALKEY_URL"] = redis.url;
         const producer = await openApp();
@@ -279,5 +307,62 @@ describe("private eformsign backup wake", () => {
         expect(messages.filter((message) => message.connected === 200)).toHaveLength(1);
         expect(messages.filter((message) => message.frame === "ready")).toHaveLength(2);
         expect(messages.filter((message) => message.frame === "wake")).toHaveLength(1);
+    });
+
+    redisTest("flushes a persisted pending wake after a transient publisher disconnect without another webhook", async () => {
+        const redis = await startRedis(root);
+        cleanup.push(redis.stop);
+        const admin = new Redis(redis.url, { commandTimeout: 2_000 });
+        cleanup.push(async () => admin.disconnect());
+
+        const username = "fixture-publisher";
+        const password = randomBytes(32).toString("hex");
+        await admin.acl("SETUSER", username, "on", `>${password}`, "~*", "&*", "+@all");
+        const producerUrl = new URL(redis.url);
+        producerUrl.username = username;
+        producerUrl.password = password;
+        process.env["VALKEY_URL"] = producerUrl.href;
+        const producer = await openApp();
+        const publisher = producer.get(EformsignBackupWakeTransport)["publisher"];
+        if (!publisher) throw new Error("Expected a separate publisher connection");
+        await eventually(() => publisher.status === "ready", "initial publisher connection");
+        const originalId = String(await publisher.client("ID"));
+
+        process.env["VALKEY_URL"] = redis.url;
+        const consumer = await openApp();
+        const messages = await openWorker(consumer);
+        const drained = () => messages.filter((message) => message.drained).length;
+        await eventually(() => drained() === 1, "initial consumer catch-up");
+
+        // Prevent reauthentication until the persisted event has been observed.
+        // Killing this socket leaves the independently connected consumer live.
+        let authenticationRejected = false;
+        publisher.on("error", (error: Error) => {
+            if (error.message.startsWith("WRONGPASS ")) authenticationRejected = true;
+        });
+        await admin.acl("SETUSER", username, "off");
+        await admin.client("KILL", "ID", originalId);
+        await eventually(() => publisher.status !== "ready", "publisher disconnect");
+        await post(producer, "publisher-recovery");
+        expect(ledger.rows.map((row) => row.documentId)).toEqual(["publisher-recovery"]);
+        expect(messages.filter((message) => message.frame === "wake")).toHaveLength(0);
+        expect(drained()).toBe(1);
+
+        await eventually(() => authenticationRejected, "publisher reauthentication rejection");
+        await admin.acl("SETUSER", username, "on");
+        await eventually(() => drained() === 2, "delivery following publisher recovery");
+        expect(String(await publisher.client("ID"))).not.toBe(originalId);
+        expect(messages.filter((message) => message.frame === "ready")).toHaveLength(1);
+        expect(messages.filter((message) => message.frame === "wake")).toHaveLength(1);
+        expect(messages.flatMap(({ delivered }) => delivered ? [delivered] : [])).toEqual(["publisher-recovery"]);
+
+        const subscribers = String(await admin.client("LIST")).split("\n");
+        const consumerId = subscribers.find((line) => /\bsub=1\b/.test(line) && /\buser=default\b/.test(line))
+            ?.match(/^id=(\d+)/)?.[1];
+        if (!consumerId) throw new Error("Expected the consumer subscriber socket");
+        await admin.client("KILL", "ID", consumerId);
+        await eventually(() => drained() === 3, "consumer catch-up over the same persisted event");
+        expect(messages.flatMap(({ delivered }) => delivered ? [delivered] : [])).toEqual(["publisher-recovery"]);
+        expect(ledger.rows).toHaveLength(1);
     });
 });

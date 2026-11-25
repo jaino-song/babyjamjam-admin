@@ -7,6 +7,9 @@ import { checkDirectory, checkPrivate, MAX_JSON, mirrorErrorCode, readJson, stat
 
 const minute = 60_000;
 const day = 24 * 60 * minute;
+const kstOffset = 9 * 60 * minute;
+const handoffStart = 176 * minute;
+const handoffEnd = 181 * minute;
 const retention = 90 * day;
 const overlap = 5 * minute;
 const pageSize = 50;
@@ -20,10 +23,17 @@ const timestamp = (value) => typeof value === 'string' && Number.isFinite(Date.p
 const sameId = (value) => typeof value === 'string' && value.length <= 255 && /^[^\s\p{Cc}]+$/u.test(value);
 const epoch = (value) => value === null ? -Infinity : Date.parse(value);
 
+const kstTimeOfDay = (now) => ((now + kstOffset) % day + day) % day;
+
 export function dailyHandoffEnd(now) {
-    const kst = new Date(now + 9 * 60 * minute);
-    const time = kst.getUTCHours() * 60 + kst.getUTCMinutes();
-    return time >= 176 && time < 181 ? Math.floor(now / minute) * minute + (181 - time) * minute : null;
+    const time = kstTimeOfDay(now);
+    return time >= handoffStart && time < handoffEnd ? now + handoffEnd - time : null;
+}
+
+export function readyBatchBudget(now) {
+    const time = kstTimeOfDay(now);
+    if (time >= handoffStart && time < handoffEnd) return 0;
+    return (handoffStart - time + day) % day;
 }
 
 export const inDailyHandoff = (now) => dailyHandoffEnd(now) !== null;

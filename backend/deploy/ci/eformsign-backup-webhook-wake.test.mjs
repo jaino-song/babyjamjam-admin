@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -15,8 +15,8 @@ import { baseTime, fixture, pair, put, v1 } from './eformsign-backup-ready-event
 
 const exec = promisify(execFile);
 
-async function eventually(read, description) {
-    const deadline = performance.now() + 60_000;
+async function eventually(read, description, timeout = 20_000) {
+    const deadline = performance.now() + timeout;
     do {
         const value = await read();
         if (value) return value;
@@ -25,15 +25,54 @@ async function eventually(read, description) {
     assert.fail('Timed out waiting for ' + description);
 }
 
-test('the installed daemon turns an in-flight wake into targeted signed-original and raster delivery', async (t) => {
-    const f = await fixture(t);
-    const child = f.startWake();
+async function bounded(promise, milliseconds) {
+    const timer = new AbortController();
+    try { return await Promise.race([promise, wait(milliseconds, null, { signal: timer.signal })]); }
+    finally { timer.abort(); }
+}
+
+function observeDaemon(f, now) {
+    const child = f.startWake(now);
     const stopped = once(child, 'close');
     const reports = [];
     const stderr = [];
     const delivered = () => reports.reduce((count, { readyEvents }) => count + (readyEvents?.delivered ?? 0), 0);
     createInterface({ input: child.stdout }).on('line', (line) => reports.push(JSON.parse(line)));
     child.stderr.on('data', (chunk) => stderr.push(String(chunk)));
+    return { reports, delivered, async stop() {
+        const signalled = child.kill('SIGTERM');
+        const exit = await bounded(stopped, 3_000);
+        if (!exit) {
+            child.kill('SIGKILL');
+            assert.ok(await bounded(stopped, 2_000), 'could not reap fixture daemon after SIGKILL');
+            assert.fail('fixture daemon required SIGKILL after SIGTERM');
+        }
+        assert.equal(signalled, true, 'fixture daemon exited before SIGTERM');
+        assert.deepEqual([...exit, stderr], [0, null, []]);
+        await eventually(() => f.wake.connections === 0, 'notification socket close', 1_000);
+    } };
+}
+
+test('the installed daemon renews a quiet stream and shuts down idle on Node without AbortSignal.any', async (t) => {
+    const f = await fixture(t, false);
+    await appendFile(join(f.root, 'clock.mjs'), `
+AbortSignal.any = undefined;
+const realSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (callback, ms, ...args) => realSetTimeout(callback, ms === 45_000 ? 400 : ms, ...args);
+`);
+    const daemon = observeDaemon(f);
+    try {
+        await eventually(() => f.wake.openings === 2 && f.wake.connections === 1, 'renewed quiet stream', 5_000);
+        assert.deepEqual(f.calls, []);
+    } finally {
+        await daemon.stop();
+    }
+});
+
+test('the installed daemon turns an in-flight wake into targeted signed-original and raster delivery', async (t) => {
+    const f = await fixture(t);
+    await appendFile(join(f.root, 'clock.mjs'), '\nAbortSignal.any = undefined;\n');
+    const daemon = observeDaemon(f);
     try {
         await eventually(() => f.wake.connections === 1, 'notification connection');
         f.wake.send('heartbeat');
@@ -53,7 +92,7 @@ test('the installed daemon turns an in-flight wake into targeted signed-original
             f.wake.send('wake');
         };
         f.wake.send('wake');
-        await eventually(() => delivered() === 2,
+        await eventually(() => daemon.delivered() === 2,
             'both targeted deliveries without a third wake');
         await f.checkCopies(pair('기타', alpha), [[101], [102]]);
         await f.checkCopies(pair('기타', beta), [[103], [104]]);
@@ -65,16 +104,99 @@ test('the installed daemon turns an in-flight wake into targeted signed-original
         f.event(503, 'second', true, v1, f.wake.cutoff);
         f.wake.cutoff++;
         f.wake.send('wake');
-        await eventually(() => delivered() === 3,
+        await eventually(() => daemon.delivered() === 3,
             'duplicate processing');
         assert.equal(await f.remoteUploads(), before);
         assert.equal(f.calls.filter(([route]) => route === 'file').length, 4);
         await exec('/usr/bin/flock', ['-n', f.lock, '/usr/bin/true']);
         assert.equal(f.wake.connections, 1);
     } finally {
-        child.kill('SIGTERM');
-        const [code, signal] = await stopped;
-        assert.deepEqual([code, signal, stderr], [0, null, []]);
+        await daemon.stop();
+    }
+});
+
+test('SIGTERM cancels an active target response and releases the ready holder lock', async (t) => {
+    const f = await fixture(t);
+    f.event(501, 'held', true, v1);
+    let response;
+    let closed = false;
+    f.wake.holdTarget = (res) => {
+        response = res;
+        res.writeHead(200, { 'Content-Type': 'application/json' }).flushHeaders();
+        res.once('close', () => { closed = true; });
+    };
+    const daemon = observeDaemon(f);
+    try {
+        await eventually(() => f.wake.connections === 1, 'notification connection');
+        f.wake.send('ready');
+        await eventually(() => response, 'target response headers');
+        assert.ok((await f.queue()).pending.held);
+        await assert.rejects(exec('/usr/bin/flock', ['-n', f.lock, '/usr/bin/true']), { code: 1 });
+    } finally {
+        await daemon.stop();
+    }
+    await eventually(() => closed, 'target socket close', 1_000);
+    await exec('/usr/bin/flock', ['-n', f.lock, '/usr/bin/true']);
+    assert.ok((await f.queue()).pending.held);
+});
+
+test('the running holder reaps a slow converter before daily handoff and recovers pending work on restart', async (t) => {
+    const f = await fixture(t);
+    const handoff = Date.parse('2026-11-24T17:56:00Z');
+    const start = handoff - 10_000;
+    f.wake.cutoff = start - 1;
+    f.event(501, 'slow', true, v1, f.wake.cutoff - 1);
+    f.targets.set('slow', f.target(v1, f.doc('slow', [105, 106])));
+    const startedPath = join(f.root, 'converter.json');
+    const gsBin = join(f.root, 'slow-gs.cjs');
+    await put(gsBin, `#!${process.execPath}
+const { writeFileSync } = require('node:fs');
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1_000);
+writeFileSync(${JSON.stringify(startedPath)}, JSON.stringify({ pid: process.pid, holder: process.ppid }));
+`, 0o700);
+    await f.config({ ...f.settings, gsBin });
+    const elapsed = performance.now();
+    const daemon = observeDaemon(f, start);
+    try {
+        await eventually(() => f.wake.connections === 1, 'notification connection');
+        f.wake.send('ready');
+        const { pid, holder } = await eventually(async () => {
+            const bytes = await readFile(startedPath, 'utf8').catch((error) => {
+                if (error.code !== 'ENOENT') throw error;
+            });
+            return bytes && JSON.parse(bytes);
+        }, 'slow converter start', 8_000);
+        const gone = (id) => {
+            try { process.kill(id, 0); return false; }
+            catch (error) { if (error.code === 'ESRCH') return true; throw error; }
+        };
+        try {
+            f.wake.disconnect();
+            await eventually(() => f.wake.openings === 2, 'reconnected notifications while processing', 3_000);
+            assert.equal(gone(pid), false, 'stream disconnect must not interrupt the running holder');
+            await assert.rejects(exec('/usr/bin/flock', ['-n', f.lock, '/usr/bin/true']), { code: 1 });
+            await eventually(() => gone(pid) && gone(holder), 'converter and holder reap', 10_500 - (performance.now() - elapsed));
+            assert.equal(daemon.delivered(), 0);
+            await exec('/usr/bin/flock', ['-n', f.lock, '/usr/bin/true']);
+            assert.ok((await f.queue()).pending.slow);
+        } finally {
+            if (!gone(pid)) process.kill(pid, 'SIGKILL');
+        }
+    } finally {
+        await daemon.stop();
+    }
+
+    await f.config();
+    const recovered = observeDaemon(f, handoff + 6 * 60_000);
+    try {
+        await eventually(() => f.wake.connections === 1, 'notification connection after restart');
+        f.wake.send('ready');
+        await eventually(() => recovered.delivered() === 1, 'recovered archive delivery');
+        await f.checkCopies(pair('기타', 'Synthetic name'), [[105], [106]]);
+        assert.deepEqual((await f.queue()).pending, {});
+    } finally {
+        await recovered.stop();
     }
 });
 

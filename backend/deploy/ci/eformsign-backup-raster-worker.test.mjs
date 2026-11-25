@@ -440,7 +440,7 @@ async function fixture(t, { explicit = false, remote = true, real = false, drive
     await fs.mkdir(worker);
     for (const name of [
         'backup.mjs', 'provider-contract-migration.mjs', 'provider-contract-paths.mjs', 'provider-contract-publication.mjs',
-        'raster-mirror-remote.mjs', 'raster-mirror-io.mjs', 'ready-events.mjs', 'ready-originals.mjs',
+        'raster-mirror-remote.mjs', 'raster-mirror-io.mjs', 'ready-events.mjs', 'ready-originals.mjs', 'ready-wake.mjs',
     ]) {
         await fs.copyFile(new URL(name, unit), join(worker, name));
     }

@@ -3,15 +3,20 @@ import * as fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { once } from 'node:events';
 import { resolve, relative, basename, dirname, isAbsolute, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import {
     assertRasterMigration, hasRasterMigrationHistory, migrateProviderContracts, migrationInProgress, preserveMigration, readMigration,
     readPreRasterMigration, replayRasterMigration, restorePreRasterMigration, timerLockDirectory, withTimerLock,
 } from './provider-contract-migration.mjs';
 import { providerPublication } from './provider-contract-publication.mjs';
-import { inDailyHandoff, pollReadyEvents, readyJson, readyTarget } from './ready-events.mjs';
-import { createReadyWorkQueue, followReadyWake } from './ready-wake.mjs';
+import { inDailyHandoff, pollReadyEvents, readyBatchBudget, readyJson, readyTarget } from './ready-events.mjs';
+import {
+    createReadyWorkQueue, followReadyWake, monotonicMs, readyBatchLimit, readyBatchStartMargin, readyStopGrace, runReadyWork,
+    signalReadyGroup,
+} from './ready-wake.mjs';
 import { originalPairIntact, readyScratch, writeReadyOriginals } from './ready-originals.mjs';
 import { pairPaths, providerBase, providerFolder, matchesProviderPair, pairedPaths, sanitize, syncDirectory, writeJson } from './provider-contract-paths.mjs';
 
@@ -20,9 +25,16 @@ const cleanReason = (error) => error instanceof SyntaxError ? 'JSON 형식 오�
     : error?.path ? '보관 파일 작업 실패'
         : String(error?.message ?? error).split(token || '\0').join('[redacted]').slice(0, 500);
 const log = (value) => console.log(JSON.stringify(value).split(token || '\0').join('[redacted]'));
-const execute = (bin, args, deadline) => new Promise((done, reject) => {
+const execute = (bin, args, deadline, signal) => new Promise((done, reject) => {
+    signal?.throwIfAborted();
     const options = deadline ? { timeout: Math.max(1, Math.ceil(deadline - performance.now())), killSignal: 'SIGKILL' } : {};
-    execFile(bin, args, options, (error) => error ? reject(new Error(`프로세스 실패 (${error.code})`)) : done());
+    const child = execFile(bin, args, options, (error) => {
+        signal?.removeEventListener('abort', stop);
+        if (error) reject(new Error(`프로세스 실패 (${error.code})`));
+        else done();
+    });
+    const stop = () => child.kill('SIGKILL');
+    signal?.addEventListener('abort', stop, { once: true });
 });
 const compare = (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.docId < b.docId ? -1 : a.docId > b.docId ? 1 : 0);
 const types = ['document', 'audit_trail'];
@@ -79,7 +91,13 @@ async function settingsAndArgs() {
         || (rasterArchive && (migration || raster)) || (!migration && !rasterArchive && action !== 'dry-run')) {
         throw new Error('설정 경로 또는 실행 모드 오류');
     }
-    const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    const config = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    const settings = checkedSettings(config);
+    return { ...settings, ...(readyDaemon && { config }), limit, migration, rasterArchive, readyEvents, readyDaemon,
+        raster: raster || rasterArchive || Boolean(settings.originalArchiveDir), action };
+}
+
+function checkedSettings(settings) {
     const required = ['apiBaseUrl', 'tokenFile', 'archiveDir', 'stateDir'];
     const allowed = [...required, 'originalArchiveDir', 'rcloneRemote', 'rcloneBin', 'gsBin', 'qpdfBin'];
     if (!settings || Array.isArray(settings) || typeof settings !== 'object' ||
@@ -89,8 +107,7 @@ async function settingsAndArgs() {
     const url = new URL(settings.apiBaseUrl);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
     if ((!loopback && url.protocol !== 'https:') || !['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('API URL은 HTTPS 또는 로컬 HTTP여야 합니다');
-    return { rcloneBin: 'rclone', gsBin: 'gs', qpdfBin: 'qpdf', ...settings, limit, migration, rasterArchive, readyEvents, readyDaemon,
-        raster: raster || rasterArchive || Boolean(settings.originalArchiveDir), action };
+    return { rcloneBin: 'rclone', gsBin: 'gs', qpdfBin: 'qpdf', ...settings };
 }
 
 // Validate existing ancestors as well as roots, including roots not created yet.
@@ -217,7 +234,7 @@ async function copyMergeBytes(source, destination, hash) {
     return bytes;
 }
 
-async function rasterMerge(bin, stageInputs, target, createdAt, deadline, workspace) {
+async function rasterMerge(bin, stageInputs, target, createdAt, deadline, workspace, signal) {
     // The system qpdf profile permits ordinary PDFs under /tmp. mkdtemp makes
     // the directory private before any input or output is placed in it.
     const tmpInfo = await fs.lstat('/tmp');
@@ -242,7 +259,7 @@ async function rasterMerge(bin, stageInputs, target, createdAt, deadline, worksp
             const current = await stat(path);
             if (!privateMergeFile(current) || !sameInode(current, info)) throw mergeGuard();
         }
-        await execute(bin, ['--empty', '--pages', ...inputs, '--', output.path], deadline);
+        await execute(bin, ['--empty', '--pages', ...inputs, '--', output.path], deadline, signal);
         const { handle, info } = await openMergeFile(output.tmp, output.info);
         try {
             if (!info.size) throw rasterError('empty_raster_merge');
@@ -492,6 +509,7 @@ async function standaloneRaster(settings, guard, lockFd) {
 }
 
 async function main() {
+    if (process.connected && process.argv.length === 3 && process.argv[2] === '--ready-batch') return runReadyBatch();
     let settings = await settingsAndArgs();
     if (settings.readyDaemon) return runReadyDaemon(settings);
     if (settings.readyEvents && inDailyHandoff(Date.now())) return;
@@ -538,23 +556,20 @@ async function readyToken(settings) {
 async function runReadyDaemon(settings) {
     const shutdown = new AbortController();
     const stop = () => shutdown.abort();
-    process.once('SIGINT', stop);
-    process.once('SIGTERM', stop);
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
     const queue = createReadyWorkQueue({
         async work(refresh) {
-            await canonicalDirectory(timerLockDirectory(), true);
-            return withTimerLock(async (lockFd) => {
-                if (inDailyHandoff(Date.now()) || shutdown.signal.aborted) throw rasterError('ready_work_deferred');
-                return runReadyEvents(await rasterSettings(settings), lockFd, { refresh, signal: shutdown.signal });
-            }, { privateLock: true });
+            const report = await runReadyWork(fileURLToPath(import.meta.url), settings.config, refresh, shutdown.signal);
+            return logReadyReport(report);
         },
-        onFailure: () => log({ readyEvents: 'deferred' }),
+        onFailure: () => { if (!shutdown.signal.aborted) log({ readyEvents: 'deferred' }); },
     });
     try {
         await followReadyWake({
             async connect(signal) {
                 return fetch(new URL('/internal/eformsign-backup/ready-wake', settings.apiBaseUrl), {
-                    headers: { Authorization: `Bearer ${await readyToken(settings)}`, Accept: 'text/plain' },
+                    headers: { Authorization: `Bearer ${await readyToken(settings)}`, Accept: 'text/plain', Connection: 'close' },
                     redirect: 'error', signal,
                 });
             },
@@ -571,20 +586,99 @@ async function runReadyDaemon(settings) {
     }
 }
 
-async function runReadyEvents(settings, lockFd, daemon) {
-    const started = Date.now();
-    const deadline = performance.now() + 110_000;
-    const bearer = await readyToken(settings);
-    const request = (path) => {
-        const left = deadline - performance.now();
-        if (left <= 0) throw rasterError('ready_time_budget');
-        const timeout = Math.min(path.includes('/files/') ? 15_000 : 8_000, Math.ceil(left));
-        const signal = AbortSignal.timeout(timeout);
-        return fetch(new URL(path, settings.apiBaseUrl), {
-            headers: { Authorization: `Bearer ${bearer}`, ...(daemon && { Connection: 'close' }) }, redirect: 'error',
-            signal: daemon ? AbortSignal.any([signal, daemon.signal]) : signal,
-        });
+async function runReadyBatch() {
+    const shutdown = new AbortController();
+    const stop = () => shutdown.abort();
+    let orphan;
+    const disconnected = () => {
+        stop();
+        orphan = setTimeout(() => signalReadyGroup(process.pid, 'SIGKILL'), readyStopGrace);
     };
+    process.on('SIGTERM', stop);
+    process.once('disconnect', disconnected);
+    try {
+        const [{ config, refresh, deadline: wallDeadline }] = await once(process, 'message', { signal: shutdown.signal });
+        const budget = Math.min(wallDeadline - monotonicMs(), readyBatchBudget(Date.now()));
+        if (typeof refresh !== 'boolean' || !Number.isFinite(budget) || budget <= 0 || budget > readyBatchLimit) {
+            throw rasterError('ready_work_deferred');
+        }
+        const deadline = performance.now() + budget;
+        // Use the same validated settings snapshot as the subscriber. The
+        // bearer is read from disk inside the holder, never sent over IPC.
+        const settings = { ...checkedSettings(config), raster: true };
+        await canonicalDirectory(timerLockDirectory(), true);
+        const report = await withTimerLock(async (lockFd) => {
+            shutdown.signal.throwIfAborted();
+            if (inDailyHandoff(Date.now())) throw rasterError('ready_work_deferred');
+            return collectReadyEvents(await rasterSettings(settings), lockFd, deadline, { refresh, signal: shutdown.signal });
+        }, { privateLock: true });
+        if (!shutdown.signal.aborted) await new Promise((done, reject) => {
+            process.send(report, (error) => error ? reject(error) : done());
+        });
+    } catch (error) {
+        if (!shutdown.signal.aborted) throw error;
+    } finally {
+        process.off('SIGTERM', stop);
+        process.off('disconnect', disconnected);
+        if (process.connected) process.disconnect();
+        // On parent loss the watchdog also covers tools that outlived this batch.
+        if (orphan) {
+            clearTimeout(orphan);
+            signalReadyGroup(process.pid, 'SIGKILL');
+        }
+    }
+}
+
+async function runReadyEvents(settings, lockFd) {
+    logReadyReport(await collectReadyEvents(settings, lockFd, performance.now() + readyBatchLimit));
+}
+
+function readyRequests(settings, bearer, deadline, signal) {
+    const active = new Set();
+    const abort = () => { for (const cancel of active) cancel(); };
+    signal?.addEventListener('abort', abort, { once: true });
+    return {
+        request(path) {
+            signal?.throwIfAborted();
+            const left = deadline - performance.now();
+            if (left <= 0) throw rasterError('ready_time_budget');
+            const timeout = Math.min(path.includes('/files/') ? 15_000 : 8_000, Math.ceil(left));
+            const url = new URL(path, settings.apiBaseUrl);
+            const headers = { Authorization: `Bearer ${bearer}` };
+            if (!signal) return fetch(url, { headers, redirect: 'error', signal: AbortSignal.timeout(timeout) });
+
+            const request = new AbortController();
+            const timer = setTimeout(cancel, timeout);
+            // Headers can arrive before the body. Keep cancellation available
+            // until the per-request timeout or the end of the batch.
+            function cancel() {
+                clearTimeout(timer);
+                active.delete(cancel);
+                request.abort();
+            }
+            active.add(cancel);
+            headers.Connection = 'close';
+            return fetch(url, { headers, redirect: 'error', signal: request.signal }).catch((error) => {
+                cancel();
+                throw error;
+            });
+        },
+        close() {
+            signal?.removeEventListener('abort', abort);
+            abort();
+        },
+    };
+}
+
+async function collectReadyEvents(settings, lockFd, deadline, batch) {
+    const started = Date.now();
+    const bearer = await readyToken(settings);
+    const requests = readyRequests(settings, bearer, deadline, batch?.signal);
+    try { return await drainReadyEvents(settings, lockFd, deadline, started, batch, requests.request); }
+    finally { requests.close(); }
+}
+
+async function drainReadyEvents(settings, lockFd, deadline, started, batch, request) {
     let context;
     const deliveryContext = async () => {
         if (!settings.rcloneRemote) return null;
@@ -601,12 +695,12 @@ async function runReadyEvents(settings, lockFd, daemon) {
         return Boolean(context);
     });
     const queueBinding = { ...readyBinding(settings), remote: null };
-    const report = await pollReadyEvents({
+    return pollReadyEvents({
         stateDir: settings.stateDir, binding: queueBinding, request, now: started,
-        canStart: () => performance.now() + 5_000 < deadline
-            && (!daemon || (!daemon.signal.aborted && !inDailyHandoff(Date.now()))),
-        resumeOnly: daemon && !daemon.refresh,
-        refreshUntil: daemon?.refresh ? async () => {
+        canStart: () => performance.now() + readyBatchStartMargin < deadline
+            && (!batch || (!batch.signal.aborted && !inDailyHandoff(Date.now()))),
+        resumeOnly: batch && !batch.refresh,
+        refreshUntil: batch?.refresh ? async () => {
             const { until } = await readyJson(request, 'ready-events/cutoff');
             const cutoff = Date.parse(until);
             if (typeof until !== 'string' || !Number.isFinite(cutoff)) throw rasterError('ready_cutoff_invalid');
@@ -619,7 +713,7 @@ async function runReadyEvents(settings, lockFd, daemon) {
             if (authority === 'pending') return authority;
             const hash = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
             const publicationOwner = { owner: hash(docId), authority: authority === 'ineligible' ? null : hash(authority) };
-            const settle = (current) => context.mirror.settleReady({ readyPublication: current, deadline });
+            const settle = (current) => context.mirror.settleReady({ readyPublication: current, deadline, signal: batch?.signal });
             await settle(publicationOwner);
             if (authority === 'ineligible') return authority;
             let changed;
@@ -634,7 +728,8 @@ async function runReadyEvents(settings, lockFd, daemon) {
             try {
                 return await backup({
                     settings, lockFd, ...context, request, report: counts, failure: () => { counts.failedFiles++; },
-                    ready: { docId, docs: authority.items, revision: authority.sourceUpdatedAt, publicationOwner, recheck, deadline },
+                    ready: { docId, docs: authority.items, revision: authority.sourceUpdatedAt, publicationOwner, recheck, deadline,
+                        signal: batch?.signal },
                 });
             } catch (error) {
                 if (changed) await settle({ ...publicationOwner, authority: null });
@@ -643,6 +738,9 @@ async function runReadyEvents(settings, lockFd, daemon) {
             }
         },
     });
+}
+
+function logReadyReport(report) {
     const { startedWindow, continueIntake, pendingAt, ...counts } = report;
     if (counts.events || counts.delivered || counts.skipped || counts.retried || counts.expired || counts.intakeFailed) {
         log({ readyEvents: counts });
@@ -1075,7 +1173,7 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         const paths = [...units, ...merges].filter((unit) => !unit.broken).flatMap((unit) => Object.keys(unit.files));
         if (new Set(paths.map(normalizePath)).size !== paths.length) return 'pending';
         const readyPaths = new Map(paths.map((path) => [path, null]));
-        mirrorProof = await mirror.prepare({ readyPaths, deadline: ready.deadline });
+        mirrorProof = await mirror.prepare({ readyPaths, deadline: ready.deadline, signal: ready.signal });
     }
 
     async function fetchInto(file, handle) {
@@ -1321,7 +1419,7 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
                     } finally { await handle.close(); }
                 }
                 return inputs;
-            }, target, unit.createdAt, ready?.deadline, workspace?.qpdf);
+            }, target, unit.createdAt, ready?.deadline, workspace?.qpdf, ready?.signal);
         } else {
             const inputs = unit.chunks.map((chunk) => finalPath(Object.keys(chunk.files)[i]));
             await execute(settings.qpdfBin, ['--empty', '--pages', ...inputs, '--', tmp]);
@@ -1433,7 +1531,7 @@ async function backup({ settings, lockFd, report, request, reason, failure, time
         }
         await ready.recheck();
         const receipt = await mirror.publish({ readyPaths: files, readyPublication: ready.publicationOwner,
-            beforeVisible: ready.recheck, deadline: ready.deadline });
+            beforeVisible: ready.recheck, deadline: ready.deadline, signal: ready.signal });
         if (receipt?.verified !== files.size) return 'pending';
         await ready.recheck();
         await clearPublicationFence(verifiedUnits);

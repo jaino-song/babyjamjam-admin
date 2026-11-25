@@ -217,7 +217,7 @@ async function readBinding(settings, options) {
     const manifest = join(home, 'manifest.json');
     const rasterDir = join(home, 'rendered');
     const rawDir = join(home, 'original-blobs');
-    const remote = remoteTransport(settings, lockFd, undefined, options.deadline);
+    const remote = remoteTransport(settings, lockFd, undefined, options.deadline, options.signal);
     const target = remote?.target ?? null;
     const state = await readJson(manifest).catch((error) => {
         if (error instanceof SyntaxError || error instanceof TypeError) refuse('invalid_manifest');
@@ -378,7 +378,7 @@ async function openArchive(settings, options) {
             version: 1, binding: { ...binding, remoteRoot: remoteInventory?.root ?? null },
             phase: 'active', records: [], intent: null,
         },
-        existed: Boolean(state), readyPaths, beforeVisible: options.beforeVisible, deadline: options.deadline,
+        existed: Boolean(state), readyPaths, beforeVisible: options.beforeVisible, deadline: options.deadline, signal: options.signal,
         readyPublication: options.readyPublication,
     };
     await guardBinding(ctx);
@@ -809,7 +809,7 @@ async function ensureRender(ctx, path, raw, override) {
         let reason;
         try {
             await renderer({ sourcePath, outputPath, outputHandle, lockFd: ctx.lockFd, gsBin: ctx.gsBin, qpdfBin: ctx.qpdfBin,
-                ...(ctx.deadline && { deadline: ctx.deadline }) });
+                ...(ctx.deadline && { deadline: ctx.deadline }), ...(ctx.signal && { signal: ctx.signal }) });
         } catch (error) {
             rejected = true;
             // A renderer's own data property is the only classification input.

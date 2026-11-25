@@ -27,16 +27,17 @@ function requireRaster(condition, code) {
 }
 
 function runTool(bin, args, {
-    scratch, failure, timeout = TOOL_TIMEOUT_MS, collect = false, deadline,
+    scratch, failure, timeout = TOOL_TIMEOUT_MS, collect = false, deadline, signal,
     stdoutLimit = MAX_DIAGNOSTIC_BYTES, overflow = 'RASTER_LIMIT', outputFile, hash,
 }) {
     const budget = deadline === undefined ? timeout : Math.min(timeout, deadline - performance.now());
-    if (budget <= 0) throw new RasterError('RASTER_TIMEOUT');
+    if (budget <= 0 || signal?.aborted) throw new RasterError('RASTER_TIMEOUT');
     return new Promise((done, reject) => {
         const child = spawn(bin.includes('/') ? resolve(bin) : bin, args, {
             cwd: scratch,
             env: { PATH: process.env.PATH, TMPDIR: scratch },
-            detached: true,
+            // A ready holder already owns a bounded process group.
+            detached: !signal,
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         const chunks = [];
@@ -51,13 +52,15 @@ function runTool(bin, args, {
             stopping = code;
             if (!child.pid) return;
             try {
-                process.kill(-child.pid, 'SIGKILL');
+                process.kill(signal ? child.pid : -child.pid, 'SIGKILL');
             } catch (error) {
                 if (error.code !== 'ESRCH') child.kill('SIGKILL');
             }
         }
 
-        const timer = setTimeout(() => stop('RASTER_TIMEOUT'), budget);
+        const abort = () => stop('RASTER_TIMEOUT');
+        const timer = setTimeout(abort, budget);
+        signal?.addEventListener('abort', abort, { once: true });
         const watcher = outputFile ? setInterval(async () => {
             if (inspecting || stopping) return;
             inspecting = true;
@@ -99,6 +102,7 @@ function runTool(bin, args, {
             closed = true;
             clearTimeout(timer);
             clearInterval(watcher);
+            signal?.removeEventListener('abort', abort);
             if (stopping || code !== 0) reject(new RasterError(stopping ?? failure));
             else done({ stdout: collect ? Buffer.concat(chunks, stdoutBytes) : undefined, stdoutBytes });
         });
@@ -189,11 +193,11 @@ async function checkPdfEnvelope(path, failure) {
     }
 }
 
-async function inspectPdf(bin, path, scratch, failure, deadline) {
+async function inspectPdf(bin, path, scratch, failure, tools) {
     const { stdout } = await runTool(bin, [
         '--suppress-recovery', '--json=2', '--json-key=pages', '--json-key=qpdf',
         '--json-stream-data=none', path,
-    ], { scratch, failure, deadline, collect: true, stdoutLimit: MAX_JSON_BYTES });
+    ], { scratch, failure, ...tools, collect: true, stdoutLimit: MAX_JSON_BYTES });
     try {
         const result = JSON.parse(stdout);
         requireRaster(result.version === 2 && Array.isArray(result.pages) && isDictionary(result.qpdf?.[1]), failure);
@@ -284,9 +288,9 @@ function hasOnlyKeys(value, allowed) {
     return isDictionary(value) && Object.keys(value).every((key) => allowed.includes(key));
 }
 
-async function verifyOutput(bin, path, scratch, sizes, { repairs, expectedPages, deadline } = {}) {
+async function verifyOutput(bin, path, scratch, sizes, { repairs, expectedPages, tools } = {}) {
     const failure = 'RASTER_INVALID_OUTPUT';
-    const { pages, objects } = await inspectPdf(bin, path, scratch, failure, deadline);
+    const { pages, objects } = await inspectPdf(bin, path, scratch, failure, tools);
     requireRaster(pages.length === sizes.length, failure);
     const used = new Set();
     const pageSignatures = [];
@@ -313,7 +317,7 @@ async function verifyOutput(bin, path, scratch, sizes, { repairs, expectedPages,
         const [number, generation] = ref.split(' ');
         return runTool(bin, [
             '--suppress-recovery', `--show-object=${number},${generation}`, '--filtered-stream-data', path,
-        ], { scratch, failure, deadline, overflow: failure, ...options });
+        ], { scratch, failure, ...tools, overflow: failure, ...options });
     }
 
     // Allow only the objects and dictionaries emitted by the flat pdfimage24 document.
@@ -403,7 +407,7 @@ async function verifyOutput(bin, path, scratch, sizes, { repairs, expectedPages,
     return pageSignatures;
 }
 
-async function normalizeOutput(bin, rendered, snapshot, scratch, repairs, deadline) {
+async function normalizeOutput(bin, rendered, snapshot, scratch, repairs, tools) {
     const failure = 'RASTER_INVALID_OUTPUT';
     const patch = join(scratch, 'patch.json');
     const normalized = join(scratch, 'normalized.pdf');
@@ -413,7 +417,7 @@ async function normalizeOutput(bin, rendered, snapshot, scratch, repairs, deadli
     await assertOutputAbsent(normalized, failure);
     requireSameRasterSnapshot(snapshot, await rasterSnapshot(rendered));
     await runTool(bin, ['--suppress-recovery', `--update-from-json=${patch}`, rendered, normalized], {
-        scratch, failure, deadline, outputFile: 'normalized.pdf',
+        scratch, failure, ...tools, outputFile: 'normalized.pdf',
     });
     requireSameRasterSnapshot(snapshot, await rasterSnapshot(rendered));
     return normalized;
@@ -495,7 +499,8 @@ export async function renderRasterPdf(options) {
     let scratch;
     let destinationScratch;
     try {
-        const { sourcePath, outputPath, gsBin = 'gs', qpdfBin = 'qpdf', outputHandle, deadline } = options ?? {};
+        const { sourcePath, outputPath, gsBin = 'gs', qpdfBin = 'qpdf', outputHandle, deadline, signal } = options ?? {};
+        const tools = { deadline, signal };
         requireRaster([sourcePath, outputPath].every((path) => typeof path === 'string' &&
             isAbsolute(path) && !path.includes('\0')) &&
             [gsBin, qpdfBin].every((bin) => typeof bin === 'string' && bin && !bin.includes('\0')),
@@ -517,16 +522,16 @@ export async function renderRasterPdf(options) {
         const rendered = join(scratch, 'rendered.pdf');
         const ownedOutput = await copyPdf(sourcePath, source, 'RASTER_INVALID_SOURCE', { preflight });
         await checkPdfEnvelope(source, 'RASTER_INVALID_SOURCE');
-        const sizes = sourcePixelSizes(await inspectPdf(qpdfBin, source, scratch, 'RASTER_INVALID_SOURCE', deadline));
+        const sizes = sourcePixelSizes(await inspectPdf(qpdfBin, source, scratch, 'RASTER_INVALID_SOURCE', tools));
         await runTool(qpdfBin, ['--suppress-recovery', '--check', source], {
-            scratch, deadline, failure: 'RASTER_INVALID_SOURCE',
+            scratch, ...tools, failure: 'RASTER_INVALID_SOURCE',
         });
         await runTool(gsBin, [
             '-q', '-dSAFER', '-dBATCH', '-dNOPAUSE', '-dPDFSTOPONERROR', '-dUseCropBox',
             '-dPrinted=false', '-dShowAnnots=true', '-sDEVICE=pdfimage24', '-sCompression=Flate',
             '-r300', `-sOutputFile=${rendered}`, '-f', source,
         ], {
-            scratch, deadline, failure: 'RASTER_RENDER_FAILED', outputFile: 'rendered.pdf',
+            scratch, ...tools, failure: 'RASTER_RENDER_FAILED', outputFile: 'rendered.pdf',
             timeout: Math.min(600_000, 30_000 + 5_000 * sizes.length),
         });
 
@@ -534,12 +539,12 @@ export async function renderRasterPdf(options) {
         let result = await rasterSnapshot(rendered);
         await checkPdfEnvelope(final, 'RASTER_INVALID_OUTPUT');
         const repairs = {};
-        const expectedPages = await verifyOutput(qpdfBin, final, scratch, sizes, { repairs, deadline });
+        const expectedPages = await verifyOutput(qpdfBin, final, scratch, sizes, { repairs, tools });
         if (Object.keys(repairs).length > 0) {
-            final = await normalizeOutput(qpdfBin, rendered, result, scratch, repairs, deadline);
+            final = await normalizeOutput(qpdfBin, rendered, result, scratch, repairs, tools);
             result = await rasterSnapshot(final);
             await checkPdfEnvelope(final, 'RASTER_INVALID_OUTPUT');
-            await verifyOutput(qpdfBin, final, scratch, sizes, { expectedPages, deadline });
+            await verifyOutput(qpdfBin, final, scratch, sizes, { expectedPages, tools });
         }
 
         if (ownedOutput) {

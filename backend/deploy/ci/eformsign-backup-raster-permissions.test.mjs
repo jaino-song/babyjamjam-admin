@@ -334,7 +334,7 @@ test('the actual standalone raster dry-run accepts the remediated metadata', asy
     await fs.mkdir(worker);
     for (const file of [
         'backup.mjs', 'provider-contract-migration.mjs', 'provider-contract-paths.mjs', 'provider-contract-publication.mjs',
-        'raster-mirror-io.mjs', 'ready-events.mjs', 'ready-originals.mjs',
+        'raster-mirror-io.mjs', 'ready-events.mjs', 'ready-originals.mjs', 'ready-wake.mjs',
     ]) {
         await fs.copyFile(new URL(file, source), join(worker, file));
     }

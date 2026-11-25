@@ -187,7 +187,7 @@ async function fixture(t, { originalsMount } = {}) {
     const tokenFile = join(home, 'token');
     await fs.mkdir(worker);
     for (const name of ['backup.mjs', 'provider-contract-migration.mjs', 'provider-contract-paths.mjs',
-        'provider-contract-publication.mjs', 'raster-mirror-io.mjs', 'ready-events.mjs', 'ready-originals.mjs']) {
+        'provider-contract-publication.mjs', 'raster-mirror-io.mjs', 'ready-events.mjs', 'ready-originals.mjs', 'ready-wake.mjs']) {
         await fs.copyFile(fileURLToPath(new URL(name, source)), join(worker, name));
     }
     await put(qpdfBin, wrapper, 0o700);

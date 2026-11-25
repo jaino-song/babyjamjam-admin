@@ -107,11 +107,15 @@ export async function fixture(t, initialise = true) {
     const targets = new Map();
     const dailyDocs = [];
     const streams = new Set();
+    let openings = 0;
     const wake = {
         get connections() { return streams.size; },
+        get openings() { return openings; },
+        disconnect() { for (const stream of streams) stream.destroy(); },
         send(frame) { for (const stream of streams) stream.write(frame + '\n'); },
         cutoff: baseTime,
         afterPage: undefined,
+        holdTarget: undefined,
     };
     const server = createServer((req, res) => {
         const url = new URL(req.url, 'http://127.0.0.1');
@@ -123,6 +127,7 @@ export async function fixture(t, initialise = true) {
         if (req.headers.authorization !== 'Bearer ' + token) return res.writeHead(401).end();
         if (route === 'ready-wake') {
             res.writeHead(200, { 'Content-Type': 'text/plain' }).flushHeaders();
+            openings++;
             streams.add(res);
             res.once('close', () => streams.delete(res));
             return;
@@ -146,6 +151,7 @@ export async function fixture(t, initialise = true) {
         if (route === 'ready-documents') {
             const id = url.searchParams.get('docId');
             calls.push([route, id]);
+            if (wake.holdTarget) return wake.holdTarget(res);
             const lookup = targets.get(id);
             return send(typeof lookup === 'function' ? lookup() : lookup ?? { status: 'pending', sourceUpdatedAt: null, items: [] });
         }
