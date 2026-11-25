@@ -1222,6 +1222,11 @@ function ClientFormContent({
     const toggleSmsAutomation = () => handleChange(smsAutomationField, !smsAutomationChecked);
 
     const allocationSnapshot = allocationSnapshotRef.current;
+    // Termination clears the current projection. The old staff names are display-only
+    // so they never become inputs to the allocation draft or an edit payload.
+    const historicalStaff = allocationSnapshot?.serviceStatus === "terminated" && allocationSnapshot.providers?.length === 0
+        ? [allocationSnapshot.primaryEmployee, allocationSnapshot.secondaryEmployee] as const
+        : undefined;
     const providerIds: ClientProviderIds = {
         0: formData.primaryEmployeeId,
         1: formData.secondaryEmployeeId ?? null,
@@ -1492,9 +1497,10 @@ function ClientFormContent({
                 const fieldBase = `${sectionBase}_provider-${slot}`;
                 const label = clientProviderLabel(slot, locale);
                 const message = allocationFieldMessage(field);
+                const historicalEmployee = slot === 0 || slot === 1 ? historicalStaff?.[slot] : undefined;
                 const manualTarget = !formData.voucherClient && (slot === 0 || slot === 1)
                     ? slot === 0 ? "primary" : "secondary" : null;
-                return slot < providerCapacity ? (
+                return slot < providerCapacity && !historicalEmployee ? (
                     <EmployeeAutocomplete
                         key={slot}
                         data-component={fieldBase}
@@ -1516,7 +1522,8 @@ function ClientFormContent({
                     <FormField key={slot} data-component={fieldBase} htmlFor={`${formId}-${field}`}
                         label={label} labelAccessory={allocationLabelAccessory(field, fieldBase)}>
                         <FormTextInput id={`${formId}-${field}`} data-component={`${fieldBase}_input`}
-                            disabled className="bg-muted" value="" error={message !== null} {...allocationControlProps(field)} />
+                            disabled className="bg-muted" value={historicalEmployee?.name ?? ""}
+                            error={message !== null} {...allocationControlProps(field)} />
                     </FormField>
                 );
             })}
