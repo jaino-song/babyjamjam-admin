@@ -164,6 +164,57 @@ describeReal("baby-record case keys (real PostgreSQL)", () => {
         })).rejects.toBe(ROLLBACK_FIXTURES);
     }
 
+    async function expectStageRefusal(setup: string, cleanup: string, diagnostic: string) {
+        expectSqlSuccess(psql(setup, url));
+        try {
+            const before = await readIndexes(db);
+            const attempt = psql(STAGE, url);
+            expect(attempt.error).toBeUndefined();
+            expect(attempt.status).toBe(3);
+            expect(attempt.stderr).toContain(diagnostic);
+            expect(await readIndexes(db)).toEqual(before);
+        } finally {
+            expectSqlSuccess(psql(`BEGIN;\n${cleanup};\nCOMMIT;`, url));
+        }
+    }
+
+    it("rejects a duplicate global key before staging", async () => {
+        const name = "qa_duplicate_global_case_key";
+        await expectStageRefusal(
+            `CREATE UNIQUE INDEX ${name} ON public.${LEGACY_KEYS.service_record_case_client_id_key}`,
+            `DROP INDEX public.${name}`,
+            "Unexpected duplicate global key for public.service_record_case_client_id_key",
+        );
+    });
+
+    it("rejects a missing retained index before staging", async () => {
+        const name = "uniq_service_record_day_case_session";
+        await expectStageRefusal(
+            `DROP INDEX public.${name}`,
+            `CREATE UNIQUE INDEX ${name} ON public.service_record_day (service_record_case_id, case_session_index)`,
+            `Missing retained index public.${name}`,
+        );
+    });
+
+    it("rejects a constraint-backed legacy index before staging", async () => {
+        const name = "service_record_schedule_id_key";
+        await expectStageRefusal(
+            `ALTER TABLE public.service_record ADD CONSTRAINT ${name} UNIQUE USING INDEX ${name}`,
+            `ALTER TABLE public.service_record DROP CONSTRAINT ${name};
+             CREATE UNIQUE INDEX ${name} ON public.${LEGACY_KEYS[name]}`,
+            `Constraint depends on legacy index public.${name}`,
+        );
+    });
+
+    it.each([1, 2, 3])("rejects initial staging with only %i legacy keys", async (legacyCount) => {
+        const missingKeys = Object.entries(LEGACY_KEYS).slice(legacyCount);
+        await expectStageRefusal(
+            `DROP INDEX ${missingKeys.map(([name]) => `public.${name}`).join(", ")}`,
+            missingKeys.map(([name, definition]) => `CREATE UNIQUE INDEX ${name} ON public.${definition}`).join(";\n"),
+            "Incomplete case-key stage: expected four legacy indexes or all replacements",
+        );
+    });
+
     it("rejects a same-name ineffective index or wrong predicate without changing existing keys", async () => {
         const original = await readIndexes(db);
         const malformed = [
