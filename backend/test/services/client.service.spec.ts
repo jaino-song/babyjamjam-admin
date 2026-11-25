@@ -223,6 +223,7 @@ describe("ClientService", () => {
     const createMockServiceRecordLifecycleService = () => ({
         validatePeriodChange: jest.fn().mockResolvedValue(undefined),
         ensureAllForClient: jest.fn().mockResolvedValue([]),
+        recompute: jest.fn().mockResolvedValue(undefined),
         resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         markTerminated: jest.fn().mockResolvedValue(undefined),
     });
@@ -816,11 +817,9 @@ describe("ClientService", () => {
 
             it.each([7, 10])("restores legacy N only if ensureAllForClient changed it to %s", async (syncedN) => {
                 const w = setup();
-                const recompute = jest.fn();
-                (serviceRecordLifecycleService as unknown as { recompute: jest.Mock }).recompute = recompute;
                 serviceRecordLifecycleService.ensureAllForClient.mockResolvedValue([{ id: "case-1", requiredSessionCount: syncedN }]);
-                const updateCase = jest.fn();
-                (prismaService.service_record_case as unknown as { update: jest.Mock }).update = updateCase;
+                const { recompute } = serviceRecordLifecycleService;
+                const { update: updateCase } = prismaService.service_record_case;
                 await w.withStartChange.update(branchId, 1, w.patch);
                 if (syncedN !== 10) {
                     expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-1", branchId }, data: { requiredSessionCount: 10 } });
@@ -829,6 +828,40 @@ describe("ClientService", () => {
                     expect(updateCase).not.toHaveBeenCalled();
                     expect(recompute).not.toHaveBeenCalled();
                 }
+            });
+
+            it("restores each sibling's own required session count after start-date synchronization", async () => {
+                const w = setup();
+                const restoreByCase = new Map([
+                    ["case-1", 10],
+                    ["case-2", 12],
+                    ["case-3", 7],
+                ]);
+                serviceRecordLifecycleService.validatePeriodChange.mockResolvedValue({
+                    ...w.decision,
+                    cases: [...restoreByCase.keys()].map((caseId) => ({
+                        caseId,
+                        previousStartDate: w.decision.previousStartDate,
+                        recordedSessionCount: w.decision.recordedSessionCount,
+                    })),
+                });
+                w.startChange.applyInTransaction.mockResolvedValue({ restoreRequiredSessionCount: null, restoreByCase });
+                serviceRecordLifecycleService.ensureAllForClient.mockResolvedValue([
+                    { id: "case-2", requiredSessionCount: 7 },
+                    { id: "case-3", requiredSessionCount: 7 },
+                    { id: "case-1", requiredSessionCount: 7 },
+                ]);
+
+                await w.withStartChange.update(branchId, w.client.id, w.patch);
+
+                const { update: updateCase } = prismaService.service_record_case;
+                expect(updateCase).toHaveBeenCalledTimes(2);
+                expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-1", branchId }, data: { requiredSessionCount: 10 } });
+                expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-2", branchId }, data: { requiredSessionCount: 12 } });
+                const { recompute } = serviceRecordLifecycleService;
+                expect(recompute).toHaveBeenCalledTimes(2);
+                expect(recompute).toHaveBeenCalledWith("case-1", prismaService, expect.anything());
+                expect(recompute).toHaveBeenCalledWith("case-2", prismaService, expect.anything());
             });
 
             it("propagates archive/apply failure and never runs lifecycle synchronization afterward", async () => {
