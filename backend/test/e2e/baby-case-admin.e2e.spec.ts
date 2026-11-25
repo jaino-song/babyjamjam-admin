@@ -26,6 +26,8 @@ const LEGACY_DB = `${DATABASE_ORIGIN}throwaway_baby_admin_verify_legacy`;
 const ALLOWED = new Set([
     `${DATABASE_ORIGIN}throwaway_baby_admin_work`,
     `${DATABASE_ORIGIN}throwaway_baby_admin_verify`,
+    `${DATABASE_ORIGIN}throwaway_baby_period_work`,
+    `${DATABASE_ORIGIN}throwaway_baby_period_verify`,
     LEGACY_DB,
 ]);
 const enabled = process.env["E2E_VENDOR_STUBS"] === "1";
@@ -34,6 +36,10 @@ const legacyMode = process.env["DATABASE_URL"] === LEGACY_DB;
 const at = (date: string) => new Date(`${date}T00:00:00Z`);
 const START = at("2026-09-07");
 const END = at("2026-09-11");
+const MISMATCH_DATE = at("2026-09-14");
+const ORIGINAL_TOKEN_EXPIRY = new Date("2026-09-18T15:00:00.000Z");
+const FITTED_TOKEN_EXPIRY = new Date("2026-09-21T15:00:00.000Z");
+const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 function assertTarget(): void {
     const url = process.env["DATABASE_URL"];
@@ -154,6 +160,87 @@ describeE2E("case-bound administration using the real app and PostgreSQL", () =>
             patch: (url: string) => client.patch(url).auth(token, { type: "bearer" }),
         };
     };
+
+    async function seedPeriodMismatch() {
+        const fixture = await seedFamily(db, { twins: true });
+        const credentials = [];
+        for (const { record, employee, days } of fixture.cases) {
+            for (const day of days) {
+                const serviceDate = day.sessionIndex === 2 ? MISMATCH_DATE : day.serviceDate;
+                await db.service_record_day.update({
+                    where: { id: day.id },
+                    data: {
+                        serviceDate, submittedAt: serviceDate, clientSignedAt: serviceDate,
+                        answers: { synthetic: day.notes }, momApproval: "approved",
+                        clientSignature: `QA-Signature ${day.notes}`, paymentConfirmed: true,
+                    },
+                });
+            }
+            const binding = {
+                branchId: fixture.branchId, scheduleId: fixture.schedule.id,
+                serviceRecordCaseId: record.id, employeeId: employee.id, active: true,
+            };
+            const { id } = await db.service_record_token.create({
+                data: {
+                    ...binding, expiresAt: ORIGINAL_TOKEN_EXPIRY,
+                    linkTokenHash: digest(randomUUID()), accessTokenHash: digest(randomUUID()),
+                    expectedPhoneHash: digest(employee.phone!),
+                },
+                select: { id: true },
+            });
+            credentials.push({ ...binding, id });
+        }
+        return { fixture, credentials };
+    }
+
+    async function periodSnapshot({ branchId, clientId, schedule }: Fixture) {
+        const [client, scheduleRow, cases, tokens] = await Promise.all([
+            db.client.findUniqueOrThrow({ where: { id: clientId } }),
+            db.employee_schedule.findUniqueOrThrow({ where: { id: schedule.id } }),
+            db.service_record_case.findMany({
+                where: { branchId, clientId },
+                orderBy: { baby: { ordinal: "asc" } },
+                include: { days: { orderBy: [{ caseSessionIndex: "asc" }, { id: "asc" }] } },
+            }),
+            db.service_record_token.findMany({
+                where: { OR: [{ scheduleId: schedule.id }, { serviceRecordCase: { branchId, clientId } }] },
+                orderBy: [{ employeeId: "asc" }, { id: "asc" }],
+            }),
+        ]);
+        expect(cases).toHaveLength(2);
+        const [first, second] = cases;
+        return {
+            client, schedule: scheduleRow, first: first!, second: second!,
+            // Compare every credential field without showing the stored hashes in Jest diffs.
+            tokens: tokens.map(({ linkTokenHash, accessTokenHash, expectedPhoneHash, ...row }) => ({
+                ...row,
+                linkTokenFingerprint: digest(linkTokenHash),
+                accessTokenFingerprint: accessTokenHash === null ? null : digest(accessTokenHash),
+                phoneFingerprint: digest(expectedPhoneHash),
+            })),
+        };
+    }
+
+    async function periodScenario() {
+        const { fixture, credentials } = await seedPeriodMismatch();
+        const before = await periodSnapshot(fixture);
+        for (const [index, record] of [before.first, before.second].entries()) {
+            const order = index + 1;
+            expect(record).toMatchObject({
+                id: fixture.cases[index]!.record.id, startDate: START, endDate: END, requiredSessionCount: 5,
+                days: [
+                    { sessionIndex: 1, serviceDate: START, periodMismatchKeptAt: null,
+                        clientSignedAt: START, clientSignature: `QA-Signature prior-${order}-1` },
+                    { sessionIndex: 2, serviceDate: MISMATCH_DATE, periodMismatchKeptAt: null,
+                        clientSignedAt: MISMATCH_DATE, clientSignature: `QA-Signature prior-${order}-2`,
+                        locked: true, submittedAt: MISMATCH_DATE, notes: `prior-${order}-2` },
+                ],
+            });
+        }
+        expect(before.tokens).toHaveLength(2);
+        expect(before.tokens).toMatchObject(credentials.map((binding) => ({ ...binding, expiresAt: ORIGINAL_TOKEN_EXPIRY })));
+        return { fixture, before, http: await as(fixture) };
+    }
 
     const readDay = async (id: string) => {
         const [row] = await db.$queryRaw<Array<{
@@ -321,6 +408,71 @@ describeE2E("case-bound administration using the real app and PostgreSQL", () =>
             ]);
             for (const row of [schedule, client, sibling]) {
                 expect(row).toMatchObject({ startDate: START, endDate: END });
+            }
+        });
+
+        it("keeping an explicit second case leaves sibling mismatch and household dates untouched", async () => {
+            const { fixture, before, http } = await periodScenario();
+            const { body } = await http.post(path(fixture, "/period-mismatch/keep"))
+                .query({ caseId: before.second.id }).send({ sessionIndexes: [2] }).expect(200);
+            expect(body).toEqual({ keptSessionIndexes: [2] });
+
+            const after = await periodSnapshot(fixture);
+            expect(after.second).toMatchObject({
+                id: before.second.id, startDate: START, endDate: END, requiredSessionCount: 5,
+            });
+            expect(after.second.days).toEqual([
+                before.second.days[0],
+                { ...before.second.days[1], periodMismatchKeptAt: expect.any(Date), updatedAt: expect.any(Date) },
+            ]);
+            expect(after.first).toEqual(before.first);
+            expect(after.client).toEqual(before.client);
+            expect(after.schedule).toEqual(before.schedule);
+            expect(after.tokens).toHaveLength(2);
+            expect(after.tokens).toEqual(before.tokens);
+        });
+
+        it("fitting an explicit second case preserves sibling days and household dates", async () => {
+            const { fixture, before, http } = await periodScenario();
+            const { body } = await http.post(path(fixture, "/period-mismatch/fit"))
+                .query({ caseId: before.second.id }).send({}).expect(200);
+            expect(body).toEqual({ startDate: "2026-09-07", endDate: "2026-09-14" });
+
+            const after = await periodSnapshot(fixture);
+            expect(after.second).toMatchObject({
+                id: before.second.id, startDate: START, endDate: MISMATCH_DATE, requiredSessionCount: 5,
+            });
+            expect(after.second.days).toEqual(before.second.days);
+            expect(after.first).toEqual(before.first);
+            expect(after.client).toEqual(before.client);
+            expect(after.schedule).toEqual(before.schedule);
+            expect(after.tokens).toHaveLength(2);
+            expect(after.tokens).toEqual([
+                before.tokens[0],
+                { ...before.tokens[1], expiresAt: FITTED_TOKEN_EXPIRY },
+            ]);
+        });
+
+        it("ambiguous and foreign period mutations leave the household untouched", async () => {
+            const { fixture, before, http } = await periodScenario();
+            const { fixture: foreign, before: foreignBefore } = await periodScenario();
+            const targets = [
+                { query: {}, status: 409, code: "REQUEST_CONFLICT", reason: "SERVICE_RECORD_CASE_SELECTION_REQUIRED" },
+                { query: { caseId: foreignBefore.second.id }, status: 404, code: "RESOURCE_NOT_FOUND", reason: null },
+                { query: { caseId: randomUUID() }, status: 404, code: "RESOURCE_NOT_FOUND", reason: null },
+            ];
+            const actions = [
+                { route: "/period-mismatch/fit", payload: {} },
+                { route: "/period-mismatch/keep", payload: { sessionIndexes: [2] } },
+            ];
+            for (const { route, payload } of actions) {
+                for (const { query, status, code, reason } of targets) {
+                    const { body } = await http.post(path(fixture, route)).query(query).send(payload).expect(status);
+                    expect(body.code).toBe(code);
+                    expect(body.reason ?? null).toBe(reason);
+                    expect(await periodSnapshot(fixture)).toEqual(before);
+                    expect(await periodSnapshot(foreign)).toEqual(foreignBefore);
+                }
             }
         });
 
