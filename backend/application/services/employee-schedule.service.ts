@@ -107,7 +107,7 @@ export class EmployeeScheduleService {
             // Keep lifecycle writes in the transaction that owns the schedule
             // mutation; a post-commit root transaction could observe a
             // partially synchronized case under concurrent writes.
-            await this.serviceRecordLifecycleService?.ensureForClient(
+            await this.serviceRecordLifecycleService?.ensureAllForClient(
                 created.clientId,
                 transaction,
                 created.clientId === params.clientId ? calendar : undefined,
@@ -216,7 +216,7 @@ export class EmployeeScheduleService {
                 intentAt,
                 replaceExisting: true,
             });
-            await this.serviceRecordLifecycleService?.ensureForClient(
+            await this.serviceRecordLifecycleService?.ensureAllForClient(
                 updated.clientId,
                 transaction,
                 updated.clientId === preRead?.clientId ? calendar : undefined,
@@ -275,7 +275,7 @@ export class EmployeeScheduleService {
                 scheduleIds: [schedule.id],
             });
             await this.deleteEmployeeScheduleUsecase.execute(branchid, id, transaction);
-            await this.serviceRecordLifecycleService?.ensureForClient(
+            await this.serviceRecordLifecycleService?.ensureAllForClient(
                 schedule.clientId,
                 transaction,
                 calendar,

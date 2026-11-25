@@ -196,7 +196,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
         };
         const serviceRecordLifecycle = {
-            ensureForClient: jest.fn().mockResolvedValue(undefined),
+            ensureAllForClient: jest.fn().mockResolvedValue([]),
             resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         };
         const notificationService = {
@@ -250,7 +250,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.create).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
         if (suppressed) {
             expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
@@ -283,7 +283,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.create).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
         expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
     });
 
@@ -299,7 +299,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.create).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
     });
 
@@ -314,7 +314,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             branchId: "branch-1", customerPhone: "01012345678", detailPayload: detail,
         }));
         Object.assign(transaction.employee_schedule, { findMany: jest.fn().mockResolvedValue([]) });
-        Object.assign(transaction, { service_record_case: { findUnique: jest.fn().mockResolvedValue(null) } });
+        Object.assign(transaction, { service_record_case: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) } });
         const log = jest.spyOn(Logger.prototype, "log").mockImplementation();
         try {
             await expect(usecase.execute("doc-1")).resolves.toBe("needs_confirmation");
@@ -322,7 +322,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
             expect(transaction.client.updateMany).not.toHaveBeenCalled();
             expect(transaction.client.create).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
             expect(log).toHaveBeenCalledWith({
                 event: "eformsign_link_confirmation_required", fields: ["name"],
             });
@@ -405,7 +405,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
         expect(probe.state.forBranchWhileOpen).toEqual([false]);
         expect(probe.holidayCalendar.forBranch).toHaveBeenCalledWith(probe.branchId, { fresh: true });
-        expect(probe.tables.service_record_case.upsert).toHaveBeenCalled();
+        expect(probe.tables.service_record_case.create).toHaveBeenCalled();
         expect(prisma.$transaction).toHaveBeenCalledTimes(retry ? 2 : 1);
         if (knownClient) {
             expect(resolveCalendar).toHaveBeenCalledWith(21);
@@ -512,10 +512,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-            service_record_case: { findUnique: jest.Mock };
+            service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
         };
         tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
         tx.service_record_case = {
+            findMany: jest.fn().mockResolvedValue([]),
             findUnique: jest.fn().mockResolvedValue(null),
         };
         transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) => {
@@ -719,7 +720,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(settings.getGreetingOnAutoRegistrationEnabled).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
     });
 
     it("does not guess when the normalized phone matches multiple clients", async () => {
@@ -749,10 +750,10 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             const { document: mirrored, transaction, usecase } = setup(document);
             const tx = transaction as typeof transaction & {
                 employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-                service_record_case: { findUnique: jest.Mock };
+                service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
             };
             tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
-            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+            tx.service_record_case = { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) };
             let reads = 0;
             transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) => {
                 const sql = query.strings?.join(" ").toLowerCase() ?? "";
@@ -910,7 +911,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         const { transaction, serviceRecordLifecycle, usecase } = setup(document);
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-            service_record_case: { findUnique: jest.Mock };
+            service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
         };
         tx.employee_schedule.findMany = jest.fn().mockResolvedValue([{
             id: 91,
@@ -918,6 +919,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             secondaryEmployeeId: 72,
         }]);
         tx.service_record_case = {
+            findMany: jest.fn().mockResolvedValue([{ babyId: null,
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+            }]),
             findUnique: jest.fn().mockResolvedValue({
                 id: "case-1",
                 branchId: "branch-1",
@@ -948,7 +954,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             "eformsign_doc",
             "eformsign_doc",
         ]);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction, undefined);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(21, transaction, undefined);
     });
 
     it("does not claim an older mirrored revision before document or client pointer writes", async () => {
@@ -961,10 +967,18 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         const { transaction, usecase } = setup(document);
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-            service_record_case: { findUnique: jest.Mock };
+            service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
         };
         tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
         tx.service_record_case = {
+            findMany: jest.fn().mockResolvedValue([{ babyId: null,
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+                currentRevisionId: "revision-current",
+                currentUsableRevisionId: "revision-current",
+                currentUsableDocumentVersion: 2,
+            }]),
             findUnique: jest.fn().mockResolvedValue({
                 id: "case-1",
                 branchId: "branch-1",
@@ -1003,10 +1017,18 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         const { transaction, usecase } = setup(document);
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-            service_record_case: { findUnique: jest.Mock };
+            service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
         };
         tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
         tx.service_record_case = {
+            findMany: jest.fn().mockResolvedValue([{ babyId: null,
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+                currentRevisionId: "revision-current",
+                currentUsableRevisionId: "revision-current",
+                currentUsableDocumentVersion: 2,
+            }]),
             findUnique: jest.fn().mockResolvedValue({
                 id: "case-1",
                 branchId: "branch-1",
@@ -1053,10 +1075,18 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         const { transaction, usecase } = setup(document);
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-            service_record_case: { findUnique: jest.Mock };
+            service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
         };
         tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
         tx.service_record_case = {
+            findMany: jest.fn().mockResolvedValue([{ babyId: null,
+                id: "case-1",
+                branchId: "branch-1",
+                clientId: 21,
+                currentRevisionId: "revision-current",
+                currentUsableRevisionId: "revision-current",
+                currentUsableDocumentVersion: 2,
+            }]),
             findUnique: jest.fn().mockResolvedValue({
                 id: "case-1",
                 branchId: "branch-1",
@@ -1128,7 +1158,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             },
             data: { eDocId: "doc-1" },
         });
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction, undefined);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(21, transaction, undefined);
     });
 
     it("does not initialize lifecycle when an assigned mirror repair is ambiguous", async () => {
@@ -1161,7 +1191,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             createdDate: document.createdDate,
         })).resolves.toBe("ambiguous");
 
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
     });
 
     it("does not repair an assigned document after the expected mirror generation loses its fence", async () => {
@@ -1188,7 +1218,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.findUnique).toHaveBeenCalledTimes(2);
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
     });
 
     it("creates a client once from a completed, branch-owned contract", async () => {
@@ -1270,7 +1300,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 ruleId: "system:message_automation_intent",
             }),
         });
-        expect(serviceRecordLifecycle.ensureForClient)
+        expect(serviceRecordLifecycle.ensureAllForClient)
             .toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
@@ -1297,7 +1327,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
         expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
             .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, transaction, branchCalendar);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(31, transaction, branchCalendar);
         expect(transaction.client.create).toHaveBeenCalledWith({
             data: expect.objectContaining({ duration: 9 }),
             select: { id: true },
@@ -1319,10 +1349,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         transaction.client.findMany.mockResolvedValue([]);
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-            service_record_case: { findUnique: jest.Mock };
+            service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
         };
         tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
         tx.service_record_case = {
+            findMany: jest.fn().mockResolvedValue([]),
             findUnique: jest.fn().mockResolvedValue(null),
         };
         settings.getEformsignTemplateBranch.mockResolvedValue({
@@ -1640,7 +1671,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
         expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
     });
 
     it("does not initialize lifecycle while repairing an assigned mirror in existing-only mode", async () => {
@@ -1654,7 +1685,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             linkExistingOnly: true,
         })).resolves.toBe("linked");
 
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
     });
 
     it("creates and initializes a historical client without outbound automation", async () => {
@@ -1690,7 +1721,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
         expect(transaction.message_trigger_rule.createManyAndReturn).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("retries a raw PostgreSQL serialization conflict from the mirror fence", async () => {
@@ -1758,7 +1789,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
     });
 
     it("locks a partial detail generation without requiring final files", async () => {
@@ -1795,7 +1826,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.create).not.toHaveBeenCalled();
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
     });
 
     it("keeps assigned-link lifecycle inside its owning transaction when the post-link generation recheck loses", async () => {
@@ -1824,7 +1855,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
         expect(transaction.client.updateMany).toHaveBeenCalledTimes(1);
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(4);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(
             21,
             transaction,
             undefined,
@@ -1857,7 +1888,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.client.create).toHaveBeenCalledTimes(1);
         expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(
             31,
             transaction,
             KR_BUILTIN_CALENDAR,
@@ -1881,7 +1912,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         } = setup(document);
         const tx = transaction as typeof transaction & {
             employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-            service_record_case: { findUnique: jest.Mock };
+            service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
         };
         let createdClientId: number | null = null;
         let createdScheduleId: number | null = null;
@@ -1892,6 +1923,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 : [{ id: createdScheduleId, primaryEmployeeId: 55, secondaryEmployeeId: 56 }]
         ));
         tx.service_record_case = {
+            findMany: jest.fn().mockResolvedValue([]),
             findUnique: jest.fn().mockResolvedValue(null),
         };
         tx.employee.findMany.mockResolvedValue([
@@ -1950,7 +1982,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(tx.client.create).toHaveBeenCalledTimes(1);
         expect(tx.employee_schedule.create).toHaveBeenCalledTimes(1);
         expect(tx.eformsign_doc.updateMany).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, transaction, KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(31, transaction, KR_BUILTIN_CALENDAR);
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
     });
 
@@ -1976,7 +2008,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
         expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(
             31,
             transaction,
             KR_BUILTIN_CALENDAR,
@@ -2009,7 +2041,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             usecase,
         } = setup(document);
         transaction.client.findMany.mockResolvedValue([]);
-        serviceRecordLifecycle.ensureForClient.mockRejectedValue(new Error("lifecycle unavailable"));
+        serviceRecordLifecycle.ensureAllForClient.mockRejectedValue(new Error("lifecycle unavailable"));
 
         await expect(usecase.execute(
             "doc-1",
@@ -2076,7 +2108,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 customerPhone: "01012345678",
             },
         });
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("uses only an explicitly active global branch for auto-registration", async () => {
@@ -2503,10 +2535,10 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         const withLockSurface = (transaction: ReturnType<typeof setup>["transaction"]) => {
             const tx = transaction as typeof transaction & {
                 employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-                service_record_case: { findUnique: jest.Mock };
+                service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
             };
             tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
-            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+            tx.service_record_case = { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) };
             // No other client points at the document (the default double would report client 11).
             transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) =>
                 Promise.resolve(
@@ -2520,7 +2552,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
             expect(transaction.client.updateMany).not.toHaveBeenCalled();
             expect(transaction.client.create).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
         };
 
         const assignedDocument = (overrides: Record<string, unknown> = {}) =>
@@ -2560,7 +2592,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                     where: { id: 21, branchId: "branch-1", eDocId: null },
                     data: { eDocId: "doc-1" },
                 });
-                expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledTimes(1);
+                expect(arranged.serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledTimes(1);
             });
         });
 
@@ -2702,7 +2734,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
                 expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
                 expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
-                expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledTimes(1);
+                expect(arranged.serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledTimes(1);
             });
 
             it("links a document newer than the voided one and lets it take the pointer", async () => {
@@ -2838,7 +2870,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             // Written inside the rolled-back transaction, before the locked re-read saw the void.
             expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
             expect(arranged.transaction.employee_schedule.create).toHaveBeenCalledTimes(1);
-            expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+            expect(arranged.serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(
                 31, arranged.transaction, expect.anything(),
             );
             // Nothing after the re-read: no claim, no automation intents, no notice.
@@ -2863,7 +2895,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             });
             expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
             expect(arranged.transaction.employee_schedule.create).toHaveBeenCalledTimes(1);
-            expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+            expect(arranged.serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(
                 31, arranged.transaction, expect.anything(),
             );
             expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
@@ -2893,10 +2925,10 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         const withLockSurface = (transaction: ReturnType<typeof setup>["transaction"]) => {
             const tx = transaction as typeof transaction & {
                 employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
-                service_record_case: { findUnique: jest.Mock };
+                service_record_case: { findMany: jest.Mock; findUnique: jest.Mock };
             };
             tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
-            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+            tx.service_record_case = { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) };
         };
 
         const expectNothingWritten = (
@@ -2905,7 +2937,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
             expect(transaction.client.updateMany).not.toHaveBeenCalled();
             expect(transaction.client.create).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureAllForClient).not.toHaveBeenCalled();
         };
 
         describe.each([

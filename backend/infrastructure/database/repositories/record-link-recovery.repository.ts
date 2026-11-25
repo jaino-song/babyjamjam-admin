@@ -1,3 +1,4 @@
+import { allowsLegacyServiceRecordLink } from "application/services/service-record-legacy-link-target";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { Prisma } from "@prisma/client";
 import {
@@ -117,7 +118,9 @@ export async function observePreBookingRecordLinkAssignment(
     const now = new Date();
     if (!schedule || schedule.client.branchId !== branchId || schedule.client.deletedAt || schedule.replaced
         || recordLinkClientStatus(schedule.client, now) !== SERVICE_STATUS.PRE_BOOKING) return false;
-    await observeRecordLinkBlock(tx, schedule, now);
+    if (await allowsLegacyServiceRecordLink(tx, schedule)) {
+        await observeRecordLinkBlock(tx, schedule, now);
+    }
     return true;
 }
 
@@ -292,6 +295,7 @@ export async function fenceRecordLinkAttempt(
     if (!recordLinkAssignmentMatches(schedule, job.branchId, row.clientId, now)) {
         return cancel(SERVICE_RECORD_LINK_ENDED_REASON);
     }
+    if (!await allowsLegacyServiceRecordLink(tx, schedule)) return cancel(RECORD_LINK_RECOVERY_REFUSED);
     const status = recordLinkClientStatus(schedule.client, now);
     if (!row.originalJobId) {
         const reason = await findRecordLinkTerminalSibling(tx, schedule, row.id);

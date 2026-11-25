@@ -1269,7 +1269,7 @@ export class ClientService {
                     intentAt,
                 });
             }
-            await this.serviceRecordLifecycleService?.ensureForClient(
+            await this.serviceRecordLifecycleService?.ensureAllForClient(
                 params.clientId,
                 transaction,
                 params.calendar,
@@ -1469,7 +1469,7 @@ export class ClientService {
                 // own owning transaction so the lifecycle service can lock and
                 // reread the client/schedule set before any case repair.
                 await this.prismaService.$transaction(async (transaction) => {
-                    await this.serviceRecordLifecycleService?.ensureForClient(existing.id, transaction, calendar);
+                    await this.serviceRecordLifecycleService?.ensureAllForClient(existing.id, transaction, calendar);
                 });
             }
             await this.linkContractDocumentsByPhone(branchid, existing, normalizedPhone);
@@ -1633,7 +1633,7 @@ export class ClientService {
                         intentAt: automationIntentAt,
                     });
                 }
-                await this.serviceRecordLifecycleService?.ensureForClient(
+                await this.serviceRecordLifecycleService?.ensureAllForClient(
                     created.client.id,
                     transaction,
                     calendar,
@@ -1661,7 +1661,7 @@ export class ClientService {
                         intentAt: automationIntentAt,
                     });
                 }
-                await this.serviceRecordLifecycleService?.ensureForClient(
+                await this.serviceRecordLifecycleService?.ensureAllForClient(
                     created.id,
                     transaction,
                     calendar,
@@ -2387,6 +2387,7 @@ export class ClientService {
                     ? lockedDerivedDuration
                     : undefined;
             const startDateChangeDecision = await this.serviceRecordLifecycleService?.validatePeriodChange({
+                branchId: branchid,
                 clientId: id,
                 startDate: startDateUpdate,
                 endDate: endDateUpdate,
@@ -2523,22 +2524,32 @@ export class ClientService {
                     replaced: false, excludeScheduleId: currentSchedule?.id,
                 });
             };
-            const alignPreBookingPeriod = configuredPreBooking && currentSchedule && !startDateChangeDecision
-                && lockedHasDateUpdate && lockedMergedServicePeriod.startDate && lockedMergedServicePeriod.endDate
-                && (currentSchedule.startDate.getTime() !== startDate.getTime() || currentSchedule.endDate.getTime() !== endDate.getTime());
-            const requestedPeriod = handoverPeriod(alignPreBookingPeriod ? startDate : currentSchedule?.startDate, startDate, endDate);
-            if ((handoverNeeded || teamChanged || alignPreBookingPeriod || (snapshot && lockedHasDateUpdate)) && !startDateChangeDecision) {
-                await validateSchedule(handoverNeeded || lockedHasDateUpdate || !currentSchedule ? requestedPeriod : currentSchedule);
+            const alignConfiguredPeriod = snapshot && currentSchedule && !handoverNeeded && !startDateChangeDecision
+                && lockedHasDateUpdate && lockedMergedServicePeriod.startDate && lockedMergedServicePeriod.endDate;
+            const alignment = alignConfiguredPeriod ? {
+                startDate: configuredPreBooking || startDateUpdate !== undefined ? startDate : currentSchedule.startDate,
+                endDate: configuredPreBooking || endDateUpdate !== undefined ? endDate : currentSchedule.endDate,
+            } : null;
+            const alignSchedule = alignment && currentSchedule && (
+                currentSchedule.startDate.getTime() !== alignment.startDate.getTime()
+                || currentSchedule.endDate.getTime() !== alignment.endDate.getTime()
+            );
+            const requestedPeriod = handoverPeriod(currentSchedule?.startDate, startDate, endDate);
+            if ((handoverNeeded || teamChanged || alignSchedule) && !startDateChangeDecision) {
+                await validateSchedule(alignment ?? (handoverNeeded || !currentSchedule ? requestedPeriod : currentSchedule));
             }
-            if (alignPreBookingPeriod) {
-                // The original no-date registration used the normal fallback
-                // period. Use the real dates once entered, on that same row.
+            if (alignSchedule) {
                 await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
                     ...scope, mutationId: ordinaryMutationId, scheduleIds: [currentSchedule.id],
                 });
                 await transaction.employee_schedule.updateMany({
-                    where: { ...scope, id: currentSchedule.id }, data: { startDate, endDate },
+                    where: { ...scope, id: currentSchedule.id }, data: alignment,
                 });
+                if (!configuredPreBooking && !allocation) {
+                    await persistReevaluationIntents(transaction, {
+                        ...scope, scheduleIds: [currentSchedule.id], intentAt: new Date(),
+                    });
+                }
             }
             const saveStaffing = async (period: ReturnType<typeof handoverPeriod>) => {
                 if (handoverNeeded && currentSchedule && period.outgoingEndDate) {
@@ -2665,20 +2676,17 @@ export class ClientService {
             }
             // Service-day flags follow the ordinary lifecycle sync; existing session
             // dates and any explicitly supplied end date are not re-laid.
-            const syncedRecord = await this.serviceRecordLifecycleService?.ensureForClient(id, transaction, calendar);
-            // A start-date change keeps the case's owed session count even if the
-            // lifecycle sync re-caps a legacy case from its new period.
-            const restoreRequiredSessionCount = startDateChange?.restoreRequiredSessionCount;
-            if (
-                restoreRequiredSessionCount != null
-                && syncedRecord
-                && syncedRecord.requiredSessionCount !== restoreRequiredSessionCount
-            ) {
-                await transaction.service_record_case.update({
-                    where: { id: syncedRecord.id },
-                    data: { requiredSessionCount: restoreRequiredSessionCount },
-                });
-                await this.serviceRecordLifecycleService?.recompute(syncedRecord.id, transaction, calendar);
+            const syncedRecords = await this.serviceRecordLifecycleService?.ensureAllForClient(id, transaction, calendar) ?? [];
+            for (const record of syncedRecords) {
+                const required = startDateChange?.restoreByCase?.get(record.id)
+                    ?? (syncedRecords.length === 1 ? startDateChange?.restoreRequiredSessionCount : null);
+                if (required != null && record.requiredSessionCount !== required) {
+                    await transaction.service_record_case.update({
+                        where: { id: record.id, branchId: branchid },
+                        data: { requiredSessionCount: required },
+                    });
+                    await this.serviceRecordLifecycleService?.recompute(record.id, transaction, calendar);
+                }
             }
             if (
                 automationImpact
@@ -2838,12 +2846,6 @@ export class ClientService {
         // connection.
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const updatedClient = await this.withRecordLinkWrite(branchid, async (transaction) => {
-            const existingCase = transaction.service_record_case?.findUnique
-                ? await transaction.service_record_case.findUnique({
-                    where: { clientId },
-                    select: { id: true, branchId: true, clientId: true },
-                })
-                : null;
             const schedules = transaction.employee_schedule?.findMany
                 ? await transaction.employee_schedule.findMany({
                     where: { clientId, branchId: branchid },
@@ -2858,9 +2860,6 @@ export class ClientService {
             await lockServiceRecordWriteSet(transaction, {
                 branchId: branchid,
                 clientId,
-                caseId: existingCase?.branchId === branchid && existingCase.clientId === clientId
-                    ? existingCase.id
-                    : undefined,
                 expectedScheduleIds: schedules.map((schedule) => schedule.id),
                 scheduleIds: schedules.map((schedule) => schedule.id),
                 employeeIds: schedules.flatMap((schedule) => [
@@ -2877,6 +2876,7 @@ export class ClientService {
             // Revalidate after the client and dependent rows are locked. The
             // initial existence lookup is only a fast preflight.
             await this.serviceRecordLifecycleService?.validatePeriodChange({
+                branchId: branchid,
                 clientId,
                 endDate: terminationEndDate,
             }, transaction);
@@ -2894,7 +2894,7 @@ export class ClientService {
                 where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },
                 data: { terminatedAt: terminationAt },
             });
-            await this.serviceRecordLifecycleService?.markTerminated(clientId, transaction);
+            await this.serviceRecordLifecycleService?.markTerminated(clientId, transaction, branchid);
             return updated;
         });
         if (this.triggerService) {
@@ -3094,7 +3094,7 @@ export class ClientService {
                 },
             });
             if (allocation) await persistClientAllocation(transaction, scope, allocation, createdSchedule.id, currentSchedule?.id ?? null);
-            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
+            await this.serviceRecordLifecycleService?.ensureAllForClient(clientId, transaction, calendar);
             return createdSchedule;
         });
         if (replacedScheduleId !== null) {
@@ -3135,12 +3135,6 @@ export class ClientService {
         // terminateService).
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const { updatedClient, priorStatusInputs } = await this.withRecordLinkWrite(branchid, async (transaction) => {
-            const existingCase = transaction.service_record_case?.findUnique
-                ? await transaction.service_record_case.findUnique({
-                    where: { clientId },
-                    select: { id: true, branchId: true, clientId: true },
-                })
-                : null;
             const schedules = transaction.employee_schedule?.findMany
                 ? await transaction.employee_schedule.findMany({
                     where: { clientId, branchId: branchid },
@@ -3155,9 +3149,6 @@ export class ClientService {
             await lockServiceRecordWriteSet(transaction, {
                 branchId: branchid,
                 clientId,
-                caseId: existingCase?.branchId === branchid && existingCase.clientId === clientId
-                    ? existingCase.id
-                    : undefined,
                 expectedScheduleIds: schedules.map((schedule) => schedule.id),
                 scheduleIds: schedules.map((schedule) => schedule.id),
                 employeeIds: schedules.flatMap((schedule) => [
@@ -3189,7 +3180,7 @@ export class ClientService {
                 serviceStatus: computedStatus,
             }, transaction, calendar);
             await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);
-            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
+            await this.serviceRecordLifecycleService?.ensureAllForClient(clientId, transaction, calendar);
             return {
                 updatedClient: updated,
                 priorStatusInputs: {
@@ -3233,12 +3224,6 @@ export class ClientService {
         let configuredScheduleId: number | null = null;
         let intentAt: Date | undefined;
         const priorStatusInputs = await this.withRecordLinkWrite(branchid, async (transaction) => {
-            const existingCase = transaction.service_record_case?.findUnique
-                ? await transaction.service_record_case.findUnique({
-                    where: { clientId },
-                    select: { id: true, branchId: true, clientId: true },
-                })
-                : null;
             const schedules = transaction.employee_schedule?.findMany
                 ? await transaction.employee_schedule.findMany({
                     where: { clientId, branchId: branchid },
@@ -3266,9 +3251,6 @@ export class ClientService {
             await lockServiceRecordWriteSet(transaction, {
                 branchId: branchid,
                 clientId,
-                caseId: existingCase?.branchId === branchid && existingCase.clientId === clientId
-                    ? existingCase.id
-                    : undefined,
                 expectedScheduleIds: schedules.map((schedule) => schedule.id),
                 scheduleIds: schedules.map((schedule) => schedule.id),
                 employeeIds: schedules.flatMap((schedule) => [
@@ -3305,7 +3287,7 @@ export class ClientService {
             } else {
                 await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);
             }
-            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
+            await this.serviceRecordLifecycleService?.ensureAllForClient(clientId, transaction, calendar);
             if (configuredScheduleId !== null) {
                 intentAt = now;
                 await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
