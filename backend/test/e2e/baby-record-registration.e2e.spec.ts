@@ -7,10 +7,12 @@ import request from "supertest";
 
 import { resolveBabyRecordAllocation } from "@babyjamjam/shared/client/baby-record-allocation";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordStartDateChangeService } from "application/services/service-record-start-date-change.service";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
+import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { PrismaExceptionFilter } from "infrastructure/filters/prisma-exception.filter";
@@ -26,6 +28,7 @@ import { SchedulerLeaseModule } from "module/scheduler-lease.module";
 const describeE2E = process.env["E2E_VENDOR_STUBS"] === "1" ? describe : describe.skip;
 const PRICE_YEAR = 2026;
 const prices = ["B가①형", "B가②형", "C가①형", "C가②형", "D가①형", "D가②형"];
+const householdTemplates = ["CLIENT_GREETING", "SERVICE_INFO"];
 
 function assertTestTarget(): void {
     const origin = "postgresql://bjj_revision_test@127.0.0.1:62295/";
@@ -99,6 +102,7 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     let outsideEmployee: number;
     let priceRowIds: number[];
     let priorTombstoneSetting: string | undefined;
+    const aligo = new E2eAligoApiStub();
 
     beforeAll(async () => {
         assertTestTarget();
@@ -121,7 +125,7 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
                     return true;
                 },
             })
-            .overrideProvider(ALIGO_SMS_API_PORT).useValue(new E2eAligoApiStub())
+            .overrideProvider(ALIGO_SMS_API_PORT).useValue(aligo)
             .compile();
         app = module.createNestApplication({ logger: ["error", "warn"] });
         const tenantMiddleware = app.get(TenantAlsMiddleware);
@@ -187,6 +191,7 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
     const edit = (id: number, values: object) => http().patch(`/clients/${id}`).send(values);
     const get = (id: number) => http().get(`/clients/${id}`);
+    const confirm = (id: number) => http().patch(`/clients/${id}/confirm-booking`).send({}).expect(200);
     const schedules = (clientId: number) => db.employee_schedule.findMany({
         where: { branchId, clientId }, orderBy: { id: "asc" },
     });
@@ -197,9 +202,214 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     async function assertNoRecordEffects(clientId: number) {
         const where = { branchId, clientId };
         expect(await db.service_record_case.count({ where })).toBe(0);
-        expect(await db.message_trigger_job.count({ where })).toBe(0);
+        expect(await db.service_record_job_member.count({ where })).toBe(0);
+        expect(await db.message_trigger_job.count({ where: {
+            ...where,
+            OR: [
+                { ruleId: SERVICE_RECORD_LINK_RULE_ID },
+                { templateKey: "SERVICE_RECORD_LINK" },
+                { recipientType: { in: ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"] } },
+                { ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, employeeScheduleId: { not: null } },
+            ],
+        } })).toBe(0);
         expect(await db.message_log.count({ where })).toBe(0);
     }
+
+    const approveSender = () => db.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
+
+    const householdJobs = (clientId: number, status?: string) => db.message_trigger_job.findMany({
+        where: { branchId, clientId, templateKey: { in: householdTemplates }, status },
+        orderBy: [{ templateKey: "asc" }, { scheduledFor: "asc" }],
+        select: {
+            id: true, templateKey: true, clientId: true, employeeScheduleId: true, recipientType: true, recipientPhone: true,
+            status: true, scheduledFor: true, payload: true, cancelReason: true,
+        },
+    });
+
+    async function expectPendingHouseholdRoutines(clientId: number, phone: string, startDate: string) {
+        const jobs = await householdJobs(clientId, "pending");
+        const rule = await db.message_trigger_rule.findFirstOrThrow({
+            where: { branchId, templateKey: "SERVICE_INFO", eventType: "SERVICE_START", offsetDays: 7, isActive: true },
+            select: { sendTime: true },
+        });
+        const serviceInfoDay = new Date(Date.parse(startDate) - 7 * 86_400_000).toISOString().slice(0, 10);
+        const recipient = {
+            clientId, employeeScheduleId: null, recipientType: "CLIENT", recipientPhone: phone, status: "pending",
+            payload: expect.objectContaining({ clientId, recipientPhone: phone }),
+        };
+        expect(jobs).toEqual([
+            expect.objectContaining({ ...recipient, templateKey: "CLIENT_GREETING" }),
+            expect.objectContaining({
+                ...recipient, templateKey: "SERVICE_INFO",
+                scheduledFor: new Date(`${serviceInfoDay}T${rule.sendTime}:00+09:00`),
+            }),
+        ]);
+        return { greeting: jobs[0]!, serviceInfo: jobs[1]! };
+    }
+
+    it("configured prebooking keeps the household greeting and holds record links", async () => {
+        const send = jest.spyOn(aligo, "sendSms");
+        try {
+            await approveSender();
+            const assignmentRule = await db.message_trigger_rule.create({ data: {
+                branchId, name: "QA-Prebooking assignment notice", isActive: true, eventType: "EMPLOYEE_ASSIGNED",
+                offsetType: "IMMEDIATE", recipientType: "PRIMARY_EMPLOYEE", templateKey: "EMPLOYEE_ASSIGNED",
+            } });
+            const dates = { startDate: dateAt(10), endDate: dateAt(28) };
+            const common = { ...dates, serviceStatus: "pre_booking", applyMessageAutomation: true, smsAutomationEnabled: true };
+            const configuredPhone = "010-0000-7101";
+            const legacyPhone = "010-0000-7102";
+            const { body: configured } = await create({ ...twins(employeeIds[0]), ...common, phone: configuredPhone }).expect(201);
+            const configuredJobs = await expectPendingHouseholdRoutines(configured.id, configuredPhone, dates.startDate);
+            const { body: legacy } = await create({ ...common, type: "B가2형", primaryEmployeeId: employeeIds[1], phone: legacyPhone }).expect(201);
+            const legacyJobs = await expectPendingHouseholdRoutines(legacy.id, legacyPhone, dates.startDate);
+            for (const { greeting } of [configuredJobs, legacyJobs]) {
+                const client = await db.client.findUniqueOrThrow({ where: { id: greeting.clientId! }, select: { createdAt: true } });
+                expect(greeting.scheduledFor.getTime()).toBeGreaterThanOrEqual(client.createdAt!.getTime());
+                expect(greeting.scheduledFor.getTime()).toBeLessThanOrEqual(Date.now());
+            }
+            expect(configuredJobs.serviceInfo.scheduledFor).toEqual(legacyJobs.serviceInfo.scheduledFor);
+            await assertNoRecordEffects(configured.id);
+            expect(send).not.toHaveBeenCalled();
+
+            await confirm(configured.id);
+            await confirm(legacy.id);
+            const confirmed = await committedRows(configured.id);
+            await confirm(configured.id);
+            await confirm(legacy.id);
+            expect(await committedRows(configured.id)).toEqual(confirmed);
+            for (const { greeting, serviceInfo } of [configuredJobs, legacyJobs]) {
+                expect(await householdJobs(greeting.clientId!)).toEqual([greeting, serviceInfo]);
+            }
+            expect(await db.service_record_case.count({ where: { branchId, clientId: configured.id } })).toBe(1);
+            for (const ruleId of [SERVICE_RECORD_LINK_RULE_ID, assignmentRule.id]) {
+                expect(await db.message_trigger_job.count({ where: { branchId, clientId: configured.id, ruleId, status: "pending" } })).toBe(1);
+            }
+            expect(send).not.toHaveBeenCalled();
+        } finally {
+            send.mockRestore();
+        }
+    });
+
+    it("confirmed allocation edits reschedule pending household jobs for the current phone", async () => {
+        await approveSender();
+        const startDate = dateAt(10);
+        const common = { startDate, endDate: dateAt(30), serviceStatus: "pre_booking", applyMessageAutomation: true, smsAutomationEnabled: true };
+        const { body: transition } = await create({ ...common, type: "B가2형", phone: "010-0000-7111" }).expect(201);
+        const { body: legacy } = await create({ ...common, type: "B가2형", phone: "010-0000-7121" }).expect(201);
+        const initial = await expectPendingHouseholdRoutines(transition.id, "010-0000-7111", startDate);
+        const legacyInitial = await expectPendingHouseholdRoutines(legacy.id, "010-0000-7121", startDate);
+
+        const transitionedStart = dateAt(14);
+        await edit(transition.id, {
+            ...twins(employeeIds[0]), expectedAllocationVersion: transition.allocationVersion,
+            startDate: transitionedStart, phone: "010-0000-7112",
+        }).expect(200);
+        await edit(legacy.id, { startDate: transitionedStart, phone: "010-0000-7122" }).expect(200);
+        await assertNoRecordEffects(transition.id);
+        const transitioned = await expectPendingHouseholdRoutines(transition.id, "010-0000-7112", transitionedStart);
+        const legacyEdited = await expectPendingHouseholdRoutines(legacy.id, "010-0000-7122", transitionedStart);
+        expect(transitioned.serviceInfo.scheduledFor).toEqual(legacyEdited.serviceInfo.scheduledFor);
+
+        const finalStart = dateAt(17);
+        await edit(transition.id, { startDate: finalStart, phone: "010-0000-7113" }).expect(200);
+        await edit(legacy.id, { startDate: finalStart, phone: "010-0000-7123" }).expect(200);
+        await assertNoRecordEffects(transition.id);
+        const final = await expectPendingHouseholdRoutines(transition.id, "010-0000-7113", finalStart);
+        const legacyFinal = await expectPendingHouseholdRoutines(legacy.id, "010-0000-7123", finalStart);
+        expect(final.serviceInfo.scheduledFor).toEqual(legacyFinal.serviceInfo.scheduledFor);
+        for (const [original, intermediate, latest] of [[initial, transitioned, final], [legacyInitial, legacyEdited, legacyFinal]] as const) {
+            for (const { greeting } of [intermediate, latest]) {
+                expect(greeting).toMatchObject({ id: original.greeting.id, scheduledFor: original.greeting.scheduledFor });
+            }
+            expect(await householdJobs(original.greeting.clientId!, "canceled")).toContainEqual(expect.objectContaining({
+                id: original.serviceInfo.id, templateKey: "SERVICE_INFO", recipientPhone: original.serviceInfo.recipientPhone,
+                scheduledFor: original.serviceInfo.scheduledFor,
+            }));
+        }
+    });
+
+    it("configured prebooking respects each recipient's automation setting", async () => {
+        const send = jest.spyOn(aligo, "sendSms");
+        try {
+            await approveSender();
+            const trigger = app.get(MessageTriggerService);
+            await trigger.ensureDefaultRulesForBranch(branchId);
+            const key = SystemTemplateKey.SERVICE_RECORD_LINK;
+            await db.system_template.upsert({
+                where: { templateKey: key }, update: {},
+                create: { templateKey: key, content: SYSTEM_TEMPLATE_REGISTRY[key].defaultContent },
+            });
+            const [configuredEmployee, legacyEmployee] = employeeIds as [number, number];
+            await db.employee.updateMany({ where: { branchId, id: { in: [configuredEmployee, legacyEmployee] } }, data: { smsAutomationEnabled: true } });
+            const common = {
+                serviceStatus: "pre_booking", startDate: dateAt(10), endDate: dateAt(30),
+                applyMessageAutomation: false, smsAutomationEnabled: false,
+            };
+            const { body: configured } = await create({ ...twins(configuredEmployee), ...common, phone: "010-0000-7131" }).expect(201);
+            const { body: legacy } = await create({ ...common, type: "B가2형", phone: "010-0000-7141" }).expect(201);
+            const cases = [
+                { clientId: configured.id as number, phone: "010-0000-7132", employeeId: configuredEmployee, staffPhone: "01000000000" },
+                { clientId: legacy.id as number, phone: "010-0000-7142", employeeId: legacyEmployee, staffPhone: "01000000001" },
+            ];
+
+            for (const { clientId } of cases) {
+                await assertNoRecordEffects(clientId);
+                expect(await householdJobs(clientId)).toEqual([]);
+            }
+            expect(send).not.toHaveBeenCalled();
+
+            const newStart = dateAt(14);
+            const canceledRoutines = [];
+            for (const { clientId, phone } of cases) {
+                await edit(clientId, { startDate: newStart, phone }).expect(200);
+                await assertNoRecordEffects(clientId);
+                // The legacy update path reserves service info for a future date.
+                // Exercise its dispatch guard without advancing the scheduler's clock.
+                const jobs = await householdJobs(clientId);
+                expect(jobs).toEqual([expect.objectContaining({ templateKey: "SERVICE_INFO", status: "pending", clientId, recipientPhone: phone })]);
+                await trigger.dispatchPendingJobNow(jobs[0]!.id, { expectedBranchId: branchId });
+                const canceled = await householdJobs(clientId);
+                expect(canceled).toEqual([{
+                    ...jobs[0], status: "canceled", cancelReason: "sms_automation_safeguard:recipient",
+                }]);
+                canceledRoutines.push(canceled);
+                expect(send).not.toHaveBeenCalled();
+                // A start date of today makes the ordinary staff link due at confirmation.
+                await edit(clientId, { startDate: dateAt(0) }).expect(200);
+                await assertNoRecordEffects(clientId);
+                expect(await householdJobs(clientId)).toEqual(canceled);
+            }
+
+            await confirm(configured.id);
+            await confirm(legacy.id);
+            // Legacy's ordinary assignment on a confirmed booking creates its link.
+            await edit(legacy.id, { primaryEmployeeId: legacyEmployee }).expect(200);
+            const statusBeforeReplay = await Promise.all(cases.map(({ clientId }) => committedRows(clientId)));
+            await confirm(configured.id);
+            await confirm(legacy.id);
+            expect(await Promise.all(cases.map(({ clientId }) => committedRows(clientId)))).toEqual(statusBeforeReplay);
+            expect(send).not.toHaveBeenCalled();
+
+            const linkTimes = [];
+            for (const [index, { clientId, employeeId, staffPhone }] of cases.entries()) {
+                expect(await householdJobs(clientId)).toEqual(canceledRoutines[index]);
+                const links = await db.message_trigger_job.findMany({ where: { branchId, clientId, ruleId: SERVICE_RECORD_LINK_RULE_ID } });
+                expect(links).toEqual([expect.objectContaining({
+                    status: "pending", clientId, recipientType: "PRIMARY_EMPLOYEE", recipientPhone: staffPhone,
+                    payload: expect.objectContaining({ clientId, employeeId }),
+                })]);
+                linkTimes.push(links[0]!.scheduledFor);
+                const result = await trigger.dispatchPendingJobNow(links[0]!.id, { expectedBranchId: branchId });
+                expect(result).toMatchObject({ status: "sent", cancelReason: null });
+                expect(await householdJobs(clientId)).toEqual(canceledRoutines[index]);
+            }
+            expect(linkTimes[0]).toEqual(linkTimes[1]);
+            expect(send.mock.calls.flatMap(([params]) => params.receiver.split(","))).toEqual(cases.map(({ staffPhone }) => staffPhone));
+        } finally {
+            send.mockRestore();
+        }
+    });
 
     it.each([false, true])("retains one pre-booking schedule with staff (service dates supplied: %s)", async (dated) => {
         const [primary, assistant] = employeeIds as [number, number];
