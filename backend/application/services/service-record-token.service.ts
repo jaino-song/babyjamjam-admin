@@ -66,6 +66,27 @@ interface ServiceRecordLinkTokenParams {
     resetChallenge?: boolean;
 }
 
+/** A change in caregiver history leaves an unbound case for explicit adoption. */
+export async function hasConflictingUnboundCaseHistory(
+    db: Prisma.TransactionClient,
+    { branchId, clientId, scheduleId, employeeId, babyId }: {
+        branchId: string; clientId: number; scheduleId: number; employeeId: number; babyId: string;
+    },
+): Promise<boolean> {
+    const conflictingAssignment = await db.service_record_baby_assignment.findFirst({
+        where: { branchId, clientId, OR: [{ employeeId: { not: employeeId } }, { babyId: { not: babyId } }] },
+        select: { id: true },
+    });
+    if (conflictingAssignment) return true;
+
+    // The first configured allocation may have no outgoing baby owners.
+    // Other schedules still carry that legacy caregiver history.
+    return Boolean(await db.employee_schedule.findFirst({
+        where: { branchId, clientId, id: { not: scheduleId }, primaryEmployeeId: { not: employeeId } },
+        select: { id: true },
+    }));
+}
+
 /**
  * No-login per-assignment service-record access (BJJ-247).
  * Two secrets per token row:
@@ -159,21 +180,39 @@ export class ServiceRecordTokenService {
             });
             if (!current || current.id !== scheduleId || current.client.serviceStatus === "terminated") return null;
 
-            const employee = babyId
-                ? (await db.service_record_baby_assignment.findFirst({
+            let employee: { name: string; phone: string | null } | null;
+            if (babyId) {
+                employee = (await db.service_record_baby_assignment.findFirst({
                     where: {
                         branchId, clientId, scheduleId, babyId, employeeId,
                         activeOwner: true, endedAt: null, teamSlot: { active: true },
                         employee: { branchId, deletedAt: null },
                     },
                     select: { employee: { select: { name: true, phone: true } } },
-                }))?.employee
-                : current.primaryEmployeeId === employeeId
-                    ? await db.employee.findFirst({
-                        where: { id: employeeId, branchId, deletedAt: null },
-                        select: { name: true, phone: true },
-                    })
-                    : null;
+                }))?.employee ?? null;
+            } else {
+                if (current.primaryEmployeeId !== employeeId) return null;
+                const { babyCount } = target;
+                if (babyCount !== null) {
+                    if (babyCount !== 1) return null;
+                    const [owner, otherOwner] = await db.service_record_baby_assignment.findMany({
+                        where: {
+                            branchId, clientId, scheduleId, activeOwner: true, endedAt: null,
+                            baby: { active: true }, teamSlot: { active: true },
+                        },
+                        select: { babyId: true, employeeId: true },
+                        take: 2,
+                    });
+                    if (!owner || otherOwner || owner.employeeId !== employeeId
+                        || await hasConflictingUnboundCaseHistory(db, { branchId, clientId, scheduleId, employeeId, babyId: owner.babyId })) {
+                        return null;
+                    }
+                }
+                employee = await db.employee.findFirst({
+                    where: { id: employeeId, branchId, deletedAt: null },
+                    select: { name: true, phone: true },
+                });
+            }
             const phone = this.normalizePhone(employee?.phone ?? "");
             return employee && phone ? { target, clientId, employeeName: employee.name, phoneHash: this.hash(phone) } : null;
         });

@@ -193,7 +193,236 @@ describeE2E("caregiver case authority over the real public routes", () => {
         });
     }
 
+    type AccessFixture = Awaited<ReturnType<typeof fixture>>;
+
+    function allocateSingleton(
+        f: AccessFixture,
+        babyId: string | null,
+        providerSlot: 0 | 1,
+        replacement?: { primaryEmployeeId: number; secondaryEmployeeId: number },
+    ) {
+        return scoped(f.branch.id, () => db.$transaction(async tx => {
+            await lockClientForScheduleWrite(tx, f.branch.id, f.scope.clientId);
+            const staffing = replacement ?? { primaryEmployeeId: f.primary.id, secondaryEmployeeId: f.assistant.id };
+            let scheduleId = f.schedule.id;
+            if (replacement) {
+                await tx.employee_schedule.update({
+                    where: { id: f.schedule.id, branchId: f.branch.id }, data: { replaced: true },
+                });
+                scheduleId = (await tx.employee_schedule.create({
+                    data: { ...f.scope, ...replacement, workAddress: "", startDate: start, endDate: end },
+                })).id;
+            }
+            await persistClientAllocation(tx, f.scope, {
+                fetalType: "SINGLETON", retired: [], unchanged: false,
+                providers: [
+                    { slot: 0, employeeId: staffing.primaryEmployeeId },
+                    { slot: 1, employeeId: staffing.secondaryEmployeeId },
+                ],
+                assignments: [{ babyId, ordinal: 1, providerSlot }],
+            }, scheduleId, f.schedule.id);
+            return scheduleId;
+        }));
+    }
+
+    function seedHistoricalLink(
+        f: AccessFixture,
+        caseId: string | null,
+        state: Partial<Pick<Prisma.service_record_tokenUncheckedCreateInput,
+            "expectedPhoneHash" | "expiresAt" | "active" | "revokedAt" | "lockedAt" | "failedAttempts">> = {},
+    ) {
+        return scoped(f.branch.id, () => db.service_record_token.create({
+            data: {
+                branchId: f.branch.id, scheduleId: f.schedule.id, employeeId: f.primary.id,
+                serviceRecordCaseId: caseId, linkTokenHash: `qa-legacy-${randomUUID()}`,
+                expectedPhoneHash: digest(phone[0]), expiresAt: new Date(Date.now() + 86_400_000), ...state,
+            },
+        }));
+    }
+
+    function storedCredential(f: AccessFixture, id: string) {
+        return scoped(f.branch.id, () => db.service_record_token.findUniqueOrThrow({ where: { branchId: f.branch.id, id } }));
+    }
+
+    async function expectUnavailable(link: string, access: string) {
+        expect((await status(link).expect(200)).body).toEqual({ valid: false, reason: "unavailable" });
+        await context(access).expect(401);
+    }
+
+    async function expectIssueAndPrepareDenied(f: AccessFixture, employeeId: number, scheduleId = f.schedule.id) {
+        const error = { response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } };
+        for (const caseId of [undefined, f.first.id]) {
+            const params = f.params(caseId, employeeId, scheduleId);
+            await expect(scoped(f.branch.id, () => tokens.issueLink(params))).rejects.toMatchObject(error);
+            await expect(scoped(f.branch.id, () => tokens.prepareLink(params))).rejects.toMatchObject(error);
+        }
+    }
+
+    async function proveUnboundContinuation(preallocated: boolean) {
+        for (const explicitCase of [false, true]) {
+            const f = await fixture(true);
+            if (preallocated) await allocateSingleton(f, null, 0);
+            const initialOwners = await scoped(f.branch.id, () => db.service_record_baby_assignment.findMany({
+                where: { ...f.scope, scheduleId: f.schedule.id },
+            }));
+            expect(initialOwners).toHaveLength(preallocated ? 1 : 0);
+            const caseId = explicitCase ? f.first.id : null;
+            const credential = await seedHistoricalLink(f, caseId);
+            expect(credential.serviceRecordCaseId).toBe(caseId);
+            const link = credential.linkTokenHash;
+            expect((await status(link).expect(200)).body).toEqual({ valid: true });
+            const access = await authorize(link, phone[0]);
+            expect((await context(access).expect(200)).body).toMatchObject({
+                babyId: null, employee: { id: f.primary.id },
+            });
+            await setHeader(access, "기존아기").expect(200);
+            await submit(access, "QA-original unbound record").expect(201);
+            const before = await storedCredential(f, credential.id);
+            const dayScope = { branchId: f.branch.id, serviceRecordCaseId: f.first.id };
+            const original = await scoped(f.branch.id, () => db.service_record_day.findMany({ where: dayScope }));
+            expect(original).toMatchObject([{ employeeId: f.primary.id, locked: true, clientSignature: signature }]);
+
+            const excluded = explicitCase ? [] : await Promise.all([
+                seedHistoricalLink(f, null, { active: false, revokedAt: new Date() }),
+                seedHistoricalLink(f, null, { expiresAt: new Date(0) }),
+                seedHistoricalLink(f, null, { expectedPhoneHash: digest(phone[1]) }),
+            ]);
+            const locked = explicitCase ? null : await seedHistoricalLink(f, null, { lockedAt: new Date(), failedAttempts: 5 });
+            const scheduleId = await allocateSingleton(f, initialOwners[0]?.babyId ?? null, 0, {
+                primaryEmployeeId: f.primary.id, secondaryEmployeeId: f.next.id,
+            });
+            expect(scheduleId).not.toBe(f.schedule.id);
+            expect((await status(link).expect(200)).body).toEqual({ valid: true });
+            await context(access).expect(200);
+            await scoped(f.branch.id, () => links.revoke(f.schedule.id));
+            expect((await status(link).expect(200)).body).toEqual({ valid: true });
+            expect(await tokens.resolveAccess(access)).toMatchObject({
+                scheduleId, serviceRecordCaseId: f.first.id, babyId: null, employeeId: f.primary.id,
+            });
+            await context(access).expect(200);
+            const after = await storedCredential(f, credential.id);
+            expect(after).toMatchObject({
+                scheduleId, serviceRecordCaseId: caseId, employeeId: f.primary.id, active: true, revokedAt: null,
+                verifiedAt: before.verifiedAt, expiresAt: before.expiresAt,
+            });
+            expect(after.accessTokenHash === digest(access) && after.linkTokenHash === link
+                && after.expectedPhoneHash === before.expectedPhoneHash).toBe(true);
+            for (const row of excluded) {
+                expect(await storedCredential(f, row.id)).toMatchObject({
+                    scheduleId: f.schedule.id, active: false, revokedAt: expect.any(Date),
+                });
+                expect((await status(row.linkTokenHash).expect(200)).body.valid).toBe(false);
+            }
+            if (locked) {
+                expect(await storedCredential(f, locked.id)).toMatchObject({
+                    scheduleId, lockedAt: locked.lockedAt, failedAttempts: locked.failedAttempts, verifiedAt: null,
+                });
+                expect((await status(locked.linkTokenHash).expect(200)).body.valid).toBe(false);
+            }
+            await expectIssueAndPrepareDenied(f, f.next.id, scheduleId);
+            expect(await scoped(f.branch.id, () => db.service_record_case.findMany({
+                where: f.scope, select: { id: true, babyId: true },
+            }))).toEqual([{ id: f.first.id, babyId: null }]);
+            expect(await scoped(f.branch.id, () => db.service_record_day.findMany({ where: dayScope }))).toEqual(original);
+        }
+    }
+
+    it("unchanged caregiver keeps an unbound singleton URL and session through assistant replacement", async () => {
+        await proveUnboundContinuation(true);
+    });
+
+    it("first allocation preserves null and explicit case credentials through assistant-only handover", async () => {
+        await proveUnboundContinuation(false);
+    });
+
+    it("never reactivates unbound credentials after a same-schedule A to B to A change", async () => {
+        const f = await fixture(true);
+        await allocateSingleton(f, null, 0);
+        const baby = await scoped(f.branch.id, () => db.client_baby.findFirstOrThrow({ where: { ...f.scope, active: true } }));
+        const old = await Promise.all([null, f.first.id].map(async caseId => {
+            const row = await seedHistoricalLink(f, caseId);
+            const link = row.linkTokenHash;
+            return { id: row.id, link, access: await authorize(link, phone[0]) };
+        }));
+        await setHeader(old[0]!.access, "기존아기").expect(200);
+        const original = await submit(old[0]!.access, "QA-submitted before reassignment").expect(201);
+
+        const revokedGenerations = new Map<string, Date | null>();
+        for (const slot of [1, 0, 1] as const) {
+            await allocateSingleton(f, baby.id, slot);
+            for (const { id, link, access } of old) {
+                await expectUnavailable(link, access);
+                expect((await verify(link, phone[0]).expect(201)).body.ok).toBe(false);
+                const row = await storedCredential(f, id);
+                expect(row).toMatchObject({ active: false, revokedAt: expect.any(Date), accessTokenHash: null, verifiedAt: null });
+                if (revokedGenerations.has(id)) expect(row.revokedAt).toEqual(revokedGenerations.get(id));
+                else revokedGenerations.set(id, row.revokedAt);
+            }
+            await expectIssueAndPrepareDenied(f, f.primary.id);
+            await expectIssueAndPrepareDenied(f, f.assistant.id);
+        }
+        const originalCase = await scoped(f.branch.id, () => db.service_record_case.findFirstOrThrow({
+            where: { ...f.scope, id: f.first.id }, select: { id: true, babyId: true },
+        }));
+        expect(originalCase).toEqual({ id: f.first.id, babyId: null });
+
+        // Supply the committed result of explicit adoption, which is owned by Task 3.1.
+        await scoped(f.branch.id, () => db.$transaction(async tx => {
+            await lockClientForScheduleWrite(tx, f.branch.id, f.scope.clientId);
+            await tx.service_record_case.update({
+                where: { ...f.scope, id: originalCase.id }, data: { babyId: baby.id },
+            });
+        }));
+        const fresh = await f.issue(originalCase.id, f.assistant.id);
+        expect(old.some(({ link }) => fresh === link)).toBe(false);
+        const access = await authorize(fresh, phone[1]);
+        expect((await context(access).expect(200)).body).toMatchObject({
+            babyId: baby.id, employee: { id: f.assistant.id },
+            sessions: [{ id: original.body.id, notes: "QA-submitted before reassignment", employeeId: f.primary.id }],
+        });
+        for (const { link, access: previous } of old) await expectUnavailable(link, previous);
+    });
+
     if (!legacyKeys) {
+        it("ambiguous or reassigned unbound case never continues the former credential", async () => {
+            for (const change of ["sibling", "primary", "owner", "finalized"] as const) {
+                const f = await fixture(true);
+                const legacy = await seedHistoricalLink(f, null);
+                const explicit = await seedHistoricalLink(f, f.first.id);
+                const sessions = await Promise.all([legacy, explicit].map(row => authorize(row.linkTokenHash, phone[0])));
+                if (change === "sibling") {
+                    const sibling = await scoped(f.branch.id, () => db.client_baby.create({ data: { ...f.scope, ordinal: 2, active: false } }));
+                    await scoped(f.branch.id, () => db.service_record_case.create({
+                        data: { ...f.scope, babyId: sibling.id, startDate: start, endDate: end },
+                    }));
+                }
+                if (change === "finalized") {
+                    await scoped(f.branch.id, () => db.service_record_case.update({
+                        where: { ...f.scope, id: f.first.id }, data: { finalizedAt: new Date() },
+                    }));
+                }
+                const scheduleId = await allocateSingleton(f, null, change === "owner" ? 1 : 0, {
+                    primaryEmployeeId: change === "primary" ? f.assistant.id : f.primary.id,
+                    secondaryEmployeeId: f.next.id,
+                });
+                await scoped(f.branch.id, () => links.revoke(f.schedule.id));
+                for (const [index, row] of [legacy, explicit].entries()) {
+                    await expectUnavailable(row.linkTokenHash, sessions[index]!);
+                    expect(await storedCredential(f, row.id)).toMatchObject({
+                        scheduleId: f.schedule.id, revokedAt: expect.any(Date), accessTokenHash: null, verifiedAt: null,
+                    });
+                }
+                if (change !== "finalized") {
+                    await expectIssueAndPrepareDenied(f, f.primary.id, scheduleId);
+                    await expectIssueAndPrepareDenied(f, f.assistant.id, scheduleId);
+                    await expectIssueAndPrepareDenied(f, f.next.id, scheduleId);
+                }
+                expect(await scoped(f.branch.id, () => db.service_record_case.findFirst({
+                    where: { ...f.scope, id: f.first.id }, select: { babyId: true },
+                }))).toEqual({ babyId: null });
+            }
+        });
+
         it("one employee verifies two different baby links", async () => {
             const f = await fixture();
             const a = await f.issue(f.first.id, f.primary.id);
