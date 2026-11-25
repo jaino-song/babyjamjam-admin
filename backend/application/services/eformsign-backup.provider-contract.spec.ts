@@ -19,7 +19,7 @@ async function list(patch: Partial<BackupDocumentRow> = {}) {
         serviceRecordSnapshotChunk: null, files: [], ...patch,
     };
     const repository: jest.Mocked<IEformsignBackupRepository> = {
-        listReadyEvents: jest.fn(), findReadyTarget: jest.fn(),
+        readyEventCutoff: jest.fn(), listReadyEvents: jest.fn(), findReadyTarget: jest.fn(),
         listDocuments: jest.fn().mockResolvedValue([row]), findFile: jest.fn(), createRun: jest.fn(), listRuns: jest.fn(),
     };
     return (await new EformsignBackupService(repository).listDocuments(undefined, 200)).items[0];

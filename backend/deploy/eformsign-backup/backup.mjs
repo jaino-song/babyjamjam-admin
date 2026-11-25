@@ -10,7 +10,8 @@ import {
     readPreRasterMigration, replayRasterMigration, restorePreRasterMigration, timerLockDirectory, withTimerLock,
 } from './provider-contract-migration.mjs';
 import { providerPublication } from './provider-contract-publication.mjs';
-import { inDailyHandoff, pollReadyEvents, readyTarget } from './ready-events.mjs';
+import { inDailyHandoff, pollReadyEvents, readyJson, readyTarget } from './ready-events.mjs';
+import { createReadyWorkQueue, followReadyWake } from './ready-wake.mjs';
 import { originalPairIntact, readyScratch, writeReadyOriginals } from './ready-originals.mjs';
 import { pairPaths, providerBase, providerFolder, matchesProviderPair, pairedPaths, sanitize, syncDirectory, writeJson } from './provider-contract-paths.mjs';
 
@@ -55,6 +56,7 @@ async function settingsAndArgs() {
     let raster = false;
     let rasterArchive = false;
     let readyEvents = false;
+    let readyDaemon = false;
     let action = 'dry-run';
     const seen = new Set();
     for (let i = 0; i < args.length; i += 1) {
@@ -67,11 +69,13 @@ async function settingsAndArgs() {
         else if (flag === '--raster') raster = true;
         else if (flag === '--raster-archive') rasterArchive = true;
         else if (flag === '--ready-events') readyEvents = true;
+        else if (flag === '--ready-wake') readyDaemon = true;
         else if (['--apply', '--rollback'].includes(flag) && action === 'dry-run') action = flag.slice(2);
         else throw new Error('설정 경로 또는 실행 모드 오류');
     }
     if (!settingsPath || (seen.has('--limit') && (!Number.isSafeInteger(limit) || migration || rasterArchive))
-        || (readyEvents && (!raster || migration || rasterArchive || seen.has('--limit')))
+        || (readyEvents && readyDaemon)
+        || ((readyEvents || readyDaemon) && (!raster || migration || rasterArchive || seen.has('--limit')))
         || (rasterArchive && (migration || raster)) || (!migration && !rasterArchive && action !== 'dry-run')) {
         throw new Error('설정 경로 또는 실행 모드 오류');
     }
@@ -85,7 +89,7 @@ async function settingsAndArgs() {
     const url = new URL(settings.apiBaseUrl);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
     if ((!loopback && url.protocol !== 'https:') || !['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('API URL은 HTTPS 또는 로컬 HTTP여야 합니다');
-    return { rcloneBin: 'rclone', gsBin: 'gs', qpdfBin: 'qpdf', ...settings, limit, migration, rasterArchive, readyEvents,
+    return { rcloneBin: 'rclone', gsBin: 'gs', qpdfBin: 'qpdf', ...settings, limit, migration, rasterArchive, readyEvents, readyDaemon,
         raster: raster || rasterArchive || Boolean(settings.originalArchiveDir), action };
 }
 
@@ -489,6 +493,7 @@ async function standaloneRaster(settings, guard, lockFd) {
 
 async function main() {
     let settings = await settingsAndArgs();
+    if (settings.readyDaemon) return runReadyDaemon(settings);
     if (settings.readyEvents && inDailyHandoff(Date.now())) return;
     const locked = async (lockFd) => {
         if (settings.raster) settings = await rasterSettings(settings);
@@ -524,17 +529,60 @@ const readyBinding = (settings) => ({ ...cutoverBinding(settings), apiOrigin: ne
 const readyScratchBinding = (settings) => ({ originalRoot: settings.originalArchiveDir,
     stateRoot: settings.stateDir, lockRoot: timerLockDirectory(), uid: process.getuid() });
 
-async function runReadyEvents(settings, lockFd) {
-    const started = Date.now();
-    const deadline = performance.now() + 110_000;
+async function readyToken(settings) {
     token = (await fs.readFile(settings.tokenFile, 'utf8')).trim();
     if (!token) throw rasterError('ready_token_missing');
+    return token;
+}
+
+async function runReadyDaemon(settings) {
+    const shutdown = new AbortController();
+    const stop = () => shutdown.abort();
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+    const queue = createReadyWorkQueue({
+        async work(refresh) {
+            await canonicalDirectory(timerLockDirectory(), true);
+            return withTimerLock(async (lockFd) => {
+                if (inDailyHandoff(Date.now()) || shutdown.signal.aborted) throw rasterError('ready_work_deferred');
+                return runReadyEvents(await rasterSettings(settings), lockFd, { refresh, signal: shutdown.signal });
+            }, { privateLock: true });
+        },
+        onFailure: () => log({ readyEvents: 'deferred' }),
+    });
+    try {
+        await followReadyWake({
+            async connect(signal) {
+                return fetch(new URL('/internal/eformsign-backup/ready-wake', settings.apiBaseUrl), {
+                    headers: { Authorization: `Bearer ${await readyToken(settings)}`, Accept: 'text/plain' },
+                    redirect: 'error', signal,
+                });
+            },
+            onWake(frame) {
+                if (frame === 'ready') log({ readyEvents: 'subscribed' });
+                queue.wake();
+            },
+            signal: shutdown.signal,
+        });
+    } finally {
+        await queue.stop();
+        process.off('SIGINT', stop);
+        process.off('SIGTERM', stop);
+    }
+}
+
+async function runReadyEvents(settings, lockFd, daemon) {
+    const started = Date.now();
+    const deadline = performance.now() + 110_000;
+    const bearer = await readyToken(settings);
     const request = (path) => {
         const left = deadline - performance.now();
         if (left <= 0) throw rasterError('ready_time_budget');
         const timeout = Math.min(path.includes('/files/') ? 15_000 : 8_000, Math.ceil(left));
+        const signal = AbortSignal.timeout(timeout);
         return fetch(new URL(path, settings.apiBaseUrl), {
-            headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(timeout),
+            headers: { Authorization: `Bearer ${bearer}`, ...(daemon && { Connection: 'close' }) }, redirect: 'error',
+            signal: daemon ? AbortSignal.any([signal, daemon.signal]) : signal,
         });
     };
     let context;
@@ -555,7 +603,15 @@ async function runReadyEvents(settings, lockFd) {
     const queueBinding = { ...readyBinding(settings), remote: null };
     const report = await pollReadyEvents({
         stateDir: settings.stateDir, binding: queueBinding, request, now: started,
-        canStart: () => performance.now() + 5_000 < deadline,
+        canStart: () => performance.now() + 5_000 < deadline
+            && (!daemon || (!daemon.signal.aborted && !inDailyHandoff(Date.now()))),
+        resumeOnly: daemon && !daemon.refresh,
+        refreshUntil: daemon?.refresh ? async () => {
+            const { until } = await readyJson(request, 'ready-events/cutoff');
+            const cutoff = Date.parse(until);
+            if (typeof until !== 'string' || !Number.isFinite(cutoff)) throw rasterError('ready_cutoff_invalid');
+            return cutoff;
+        } : undefined,
         async deliver(docId, expected) {
             context ??= await deliveryContext();
             if (!context) return 'pending';
@@ -587,9 +643,11 @@ async function runReadyEvents(settings, lockFd) {
             }
         },
     });
-    if (report.events || report.delivered || report.skipped || report.retried || report.expired || report.intakeFailed) {
-        log({ readyEvents: report });
+    const { startedWindow, continueIntake, pendingAt, ...counts } = report;
+    if (counts.events || counts.delivered || counts.skipped || counts.retried || counts.expired || counts.intakeFailed) {
+        log({ readyEvents: counts });
     }
+    return { startedWindow, continueIntake, pendingAt, intakeFailed: report.intakeFailed };
 }
 
 async function run(settings, lockFd, guard) {
@@ -1428,7 +1486,7 @@ async function postResult(report, request, reason) {
 }
 
 main().catch((error) => {
-    if (process.argv.includes('--ready-events')) log({ readyEvents: 'failed' });
+    if (process.argv.includes('--ready-events') || process.argv.includes('--ready-wake')) log({ readyEvents: 'failed' });
     else log({ reason: error.rasterReason ?? cleanReason(error) });
     log({ status: 'failed', exitCode: 1 });
     process.exitCode = 1;

@@ -67,6 +67,7 @@ export interface BackupReadyTarget {
 }
 
 export interface IEformsignBackupRepository {
+    readyEventCutoff(): Promise<Date>;
     listReadyEvents(since: Date, until: Date, afterId: number, limit: number): Promise<BackupReadyEventRow[]>;
     findReadyTarget(docId: string): Promise<BackupReadyTarget | null>;
     listDocuments(cursor: number | undefined, limit: number): Promise<BackupDocumentRow[]>;

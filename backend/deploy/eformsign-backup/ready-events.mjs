@@ -20,11 +20,13 @@ const timestamp = (value) => typeof value === 'string' && Number.isFinite(Date.p
 const sameId = (value) => typeof value === 'string' && value.length <= 255 && /^[^\s\p{Cc}]+$/u.test(value);
 const epoch = (value) => value === null ? -Infinity : Date.parse(value);
 
-export function inDailyHandoff(now) {
+export function dailyHandoffEnd(now) {
     const kst = new Date(now + 9 * 60 * minute);
     const time = kst.getUTCHours() * 60 + kst.getUTCMinutes();
-    return time >= 176 && time < 181;
+    return time >= 176 && time < 181 ? Math.floor(now / minute) * minute + (181 - time) * minute : null;
 }
+
+export const inDailyHandoff = (now) => dailyHandoffEnd(now) !== null;
 
 export async function readyJson(request, path) {
     const response = await request(prefix + path);
@@ -87,11 +89,10 @@ function seenPages(seen) {
     return pages;
 }
 
-function newWindow(state, now) {
-    if (state.window) return state.window;
-    if (state.watermark !== null && now <= state.watermark) return null;
-    const since = state.watermark === null ? now - day : Math.max(now - retention, state.watermark - overlap);
-    return { since, until: now, afterId: 0 };
+function newWindow(watermark, until, refresh) {
+    if (!refresh && watermark !== null && until <= watermark) return null;
+    const since = watermark === null ? until - day : Math.max(until - retention, Math.min(watermark, until) - overlap);
+    return { since, until, afterId: 0 };
 }
 
 async function saveQueue(path, value, { syncParent = true, maxBytes = MAX_JSON } = {}) {
@@ -339,7 +340,9 @@ async function expire(index, cutoff, canStart, save) {
     return removed;
 }
 
-export async function pollReadyEvents({ stateDir, binding, request, deliver, now = Date.now(), canStart = () => true }) {
+export async function pollReadyEvents({
+    stateDir, binding, request, deliver, now = Date.now(), canStart = () => true, refreshUntil, resumeOnly = false,
+}) {
     // Fail closed on an absent state root. Ready mode never creates or repairs an archive.
     const files = new QueueFiles(stateDir);
     let stored = await readCheckpoint(files.path);
@@ -370,7 +373,11 @@ export async function pollReadyEvents({ stateDir, binding, request, deliver, now
         await save(true);
     }
     const fresh = new Set();
-    const window = newWindow(state, now);
+    let window = savedWindow;
+    if (!window && !resumeOnly && canStart()) {
+        try { window = newWindow(state.watermark, refreshUntil ? await refreshUntil() : now, Boolean(refreshUntil)); }
+        catch { report.intakeFailed = true; }
+    }
     if (window) {
         state.window = window;
         for (let page = 0; page < intakePages && canStart(); page++) {
@@ -408,7 +415,7 @@ export async function pollReadyEvents({ stateDir, binding, request, deliver, now
     }
 
     // A prolonged quiet period also ages out targets after the ledger replay horizon.
-    const oldest = Math.max(state.newest, state.watermark ?? 0) - retention;
+    const oldest = Math.max(now, state.newest, state.watermark ?? 0) - retention;
     let firstFresh;
     for (const id of fresh) {
         if (!canStart()) break;
@@ -443,8 +450,14 @@ export async function pollReadyEvents({ stateDir, binding, request, deliver, now
     }
     report.expired += await expire(pending, oldest, canStart, save);
     if (state.watermark !== null) await expire(seen, state.watermark - overlap, canStart, save);
-    report.pending = pending.summary(pending.root).count;
-    return report;
+    const { count, heads } = pending.summary(pending.root);
+    report.pending = count;
+    return {
+        ...report,
+        startedWindow: Boolean(window && !savedWindow && report.pages),
+        continueIntake: state.window !== null,
+        pendingAt: heads.due?.[0] ?? null,
+    };
 }
 
 export async function readyTarget(request, docId, expected) {

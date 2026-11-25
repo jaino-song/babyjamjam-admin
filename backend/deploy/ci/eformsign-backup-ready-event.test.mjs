@@ -106,6 +106,13 @@ export async function fixture(t, initialise = true) {
     const files = new Map();
     const targets = new Map();
     const dailyDocs = [];
+    const streams = new Set();
+    const wake = {
+        get connections() { return streams.size; },
+        send(frame) { for (const stream of streams) stream.write(frame + '\n'); },
+        cutoff: baseTime,
+        afterPage: undefined,
+    };
     const server = createServer((req, res) => {
         const url = new URL(req.url, 'http://127.0.0.1');
         const route = url.pathname.split('/').at(-1);
@@ -114,6 +121,16 @@ export async function fixture(t, initialise = true) {
             res.end(JSON.stringify(data));
         };
         if (req.headers.authorization !== 'Bearer ' + token) return res.writeHead(401).end();
+        if (route === 'ready-wake') {
+            res.writeHead(200, { 'Content-Type': 'text/plain' }).flushHeaders();
+            streams.add(res);
+            res.once('close', () => streams.delete(res));
+            return;
+        }
+        if (url.pathname.endsWith('/ready-events/cutoff')) {
+            calls.push(['cutoff']);
+            return send({ until: timestamp(wake.cutoff) });
+        }
         if (route === 'ready-events') {
             calls.push([route, Object.fromEntries(url.searchParams)]);
             const after = Number(url.searchParams.get('afterId'));
@@ -123,6 +140,7 @@ export async function fixture(t, initialise = true) {
             const rows = ledger.filter((row) => row.id > after && Date.parse(row.createdAt) >= since
                 && Date.parse(row.createdAt) < until).sort((a, b) => a.id - b.id);
             const items = rows.slice(0, limit);
+            wake.afterPage?.();
             return send({ items, nextCursor: rows.length >= limit ? items.at(-1).id : null });
         }
         if (route === 'ready-documents') {
@@ -144,7 +162,10 @@ export async function fixture(t, initialise = true) {
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
-    t.after(() => new Promise((resolve) => server.close(resolve)));
+    t.after(() => new Promise((resolve) => {
+        server.close(resolve);
+        server.closeAllConnections();
+    }));
     settings.apiBaseUrl = 'http://127.0.0.1:' + server.address().port;
     const config = (value = settings) => put(configPath, JSON.stringify(value));
     await config();
@@ -168,6 +189,9 @@ export async function fixture(t, initialise = true) {
         assert.equal(stderr, '');
         return stdout.trim() ? JSON.parse(stdout.trim()).readyEvents : null;
     };
+    const startWake = (now = baseTime) => spawn(process.execPath, [
+        '--import', shim, worker, '--settings', configPath, '--raster', '--ready-wake',
+    ], { cwd: root, env: { ...process.env, HOME: home, FIXTURE_READY_CLOCK: String(now) } });
     const doc = (docId, widths, options = {}) => ({
         docId, kind: 'other', title: 'Synthetic name', createdAt: v1, customerName: null, serviceStartDate: null,
         serviceRecordChunk: null, completed: widths.length === 2, ...options,
@@ -196,7 +220,7 @@ export async function fixture(t, initialise = true) {
             assert.deepEqual(parsed.pages.map(({ object }) => Math.round(parsed.qpdf[1]['obj:' + object].value['/MediaBox'][2])), expected[i]);
         }
     };
-    return { root, settings, calls, targets, files, dailyDocs, doc, event, target, tick, run, guardPath, lock, config,
+    return { root, settings, calls, targets, files, dailyDocs, doc, event, target, tick, run, startWake, wake, guardPath, lock, config,
         queue: () => readReadyQueue(queuePath),
         queuePath, checkCopies, remoteCalls, remoteUploads: async () => (await remoteCalls()).filter((command) => command === 'copyto').length };
 }
@@ -429,18 +453,19 @@ test('rechecks authority again after verified placement before acknowledging the
 
 test('systemd keeps the nightly schedule and gates bounded ready work around 03:00 KST', async () => {
     const read = (name) => fs.readFile(new URL('eformsign-backup' + name, source), 'utf8');
-    const [timer, service, daily, dailyService] = await Promise.all([
-        read('-ready-events.timer'), read('-ready-events.service'), read('.timer'), read('.service'),
+    const [service, daily, dailyService] = await Promise.all([
+        read('-ready-events.service'), read('.timer'), read('.service'),
     ]);
-    assert.match(timer, /^OnBootSec=30s$/m);
-    assert.match(timer, /^OnUnitInactiveSec=30s$/m);
-    assert.match(timer, /^AccuracySec=1s$/m);
-    assert.match(timer, /^WantedBy=timers.target$/m);
-    assert.match(service, /--raster --ready-events$/m);
-    assert.match(service, /^TimeoutStartSec=120s$/m);
+    await assert.rejects(read('-ready-events.timer'), { code: 'ENOENT' });
+    assert.match(service, /^Type=simple$/m);
+    assert.match(service, /--raster --ready-wake$/m);
+    assert.match(service, /^Restart=on-failure$/m);
+    assert.match(service, /^WantedBy=default.target$/m);
     assert.match(service, /^TimeoutStopSec=10s$/m);
     assert.match(service, /^KillMode=control-group$/m);
     assert.match(daily, /^OnCalendar=\*-\*-\* 03:00:00 Asia\/Seoul$/m);
+    assert.match(daily, /^Persistent=true$/m);
+    assert.match(daily, /^WantedBy=timers.target$/m);
     assert.match(dailyService, /--raster$/m);
     for (const [hour, expected] of [['17:55:59', false], ['17:56:00', true], ['18:00:59', true], ['18:01:00', false]]) {
         assert.equal(inDailyHandoff(Date.parse(`2026-11-24T${hour}Z`)), expected);

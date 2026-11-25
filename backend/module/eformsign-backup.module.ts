@@ -7,9 +7,13 @@ import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { SbEformsignBackupRepository } from "infrastructure/database/repositories/sb.eformsign-backup.repository";
 import { EformsignBackupInternalController } from "interface/controllers/eformsign-backup-internal.controller";
 import { EformsignBackupRunsController } from "interface/controllers/eformsign-backup-runs.controller";
+import { EformsignBackupWakeController } from "interface/controllers/eformsign-backup-wake.controller";
+
+import { EformsignBackupWakeModule } from "./eformsign-backup-wake.module";
 
 @Module({
-    controllers: [EformsignBackupInternalController, EformsignBackupRunsController],
+    imports: [EformsignBackupWakeModule],
+    controllers: [EformsignBackupInternalController, EformsignBackupRunsController, EformsignBackupWakeController],
     providers: [
         EformsignBackupTokenGuard, OwnerGuard, EformsignBackupService,
         { provide: EFORMSIGN_BACKUP_REPOSITORY, useClass: SbEformsignBackupRepository },

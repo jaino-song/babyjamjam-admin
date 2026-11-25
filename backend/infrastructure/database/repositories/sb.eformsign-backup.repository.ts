@@ -39,6 +39,16 @@ export class SbEformsignBackupRepository implements IEformsignBackupRepository {
         }));
     }
 
+    async readyEventCutoff(): Promise<Date> {
+        // The ledger uses the database clock with microsecond precision. Round
+        // up to the next millisecond for the feed's exclusive upper bound.
+        const [row] = await runSystemScope(() => this.prisma.$queryRaw<{ cutoff: Date }[]>`
+            SELECT date_trunc('milliseconds', clock_timestamp()) + interval '1 millisecond' AS cutoff
+        `);
+        if (!row) throw new Error("Archive feed cutoff unavailable");
+        return row.cutoff;
+    }
+
     listReadyEvents(since: Date, until: Date, afterId: number, limit: number) {
         return this.prisma.eformsign_webhook_event.findMany({
             where: {

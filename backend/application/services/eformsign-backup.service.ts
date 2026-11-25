@@ -112,6 +112,10 @@ export class EformsignBackupService {
         return { items, nextCursor: rows.length === limit ? rows[rows.length - 1]?.id ?? null : null };
     }
 
+    async readyEventCutoff(): Promise<{ until: string }> {
+        return { until: (await this.repository.readyEventCutoff()).toISOString() };
+    }
+
     async listReadyEvents(since: Date, until: Date, afterId: number, limit: number) {
         const span = until.getTime() - since.getTime();
         if (!(span > 0 && span <= BACKUP_READY_RETENTION_MS)) {

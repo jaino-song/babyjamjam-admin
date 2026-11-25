@@ -16,16 +16,15 @@ import { SystemSettingController } from "interface/controllers/system-setting.co
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { PublicSettingsController } from "interface/controllers/public-settings.controller";
 import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
-import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
-import { EFORMSIGN_WEBHOOK_EVENT_REPOSITORY } from "domain/repositories/eformsign-webhook-event.repository.interface";
-import { SbEformsignWebhookEventRepository } from "infrastructure/database/repositories/sb.eformsign-webhook-event.repository";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MESSAGE_AUTOMATION_DATABASE } from "domain/repositories/message-automation-database.repository.interface";
 
+import { EformsignWebhookEventModule } from "./eformsign-webhook-event.module";
+
 @Module({
-    imports: [DatabaseModule],
+    imports: [DatabaseModule, EformsignWebhookEventModule],
     controllers: [SystemSettingController, PublicSettingsController],
     providers: [
         { provide: MESSAGE_TRIGGER_RULE_REPOSITORY, useClass: SbMessageTriggerRuleRepository },
@@ -38,11 +37,6 @@ import { MESSAGE_AUTOMATION_DATABASE } from "domain/repositories/message-automat
         BranchManagerGuard,
         MessageSenderApprovalService,
         EformsignAutomationStatusService,
-        EformsignWebhookEventWriter,
-        {
-            provide: EFORMSIGN_WEBHOOK_EVENT_REPOSITORY,
-            useClass: SbEformsignWebhookEventRepository,
-        },
         AdminAuditEventWriter,
         { provide: MESSAGE_AUTOMATION_DATABASE, useExisting: PrismaService },
         MessageAutomationBranchLockService,

@@ -129,22 +129,41 @@ eformsign 템플릿 이름이 정확히 `제공인력 계약서`이고 `제공�
 
 ## PDF 준비 이벤트 전달
 
-운영 전환 승인이 끝나고 양쪽 게시 경로와 라스터 상태가 `active`로 확인된 설치에서 사용자 타이머를 추가할 수 있습니다. 기존 03:00 KST 전체 작업과 타이머는 계속 실행합니다. 설치·업그레이드 중에는 설치된 백업 타이머와 서비스를 모두 멈춘 뒤 같은 버전의 `.mjs` 파일 및 유닛을 복사합니다.
+운영 전환 승인이 끝나고 라스터 상태와 로컬·Drive 게시가 `active`로 검증된 설치에서 상시 사용자 서비스를 켭니다. 첫 전환이 끝날 때까지 공개 경로에 서명 원본이 남을 수 있으므로 위의 접근 범위 관리 절차를 적용합니다. 서비스는 기존 `tokenFile`의 백업 전용 bearer로 API의 `/internal/eformsign-backup/ready-wake`에 아웃바운드 HTTPS 연결을 맺습니다. API 배포를 먼저 완료하고 중간 프록시에서 해당 응답의 버퍼링을 끄고 유휴 제한을 15초보다 길게 둡니다. 단일 백엔드는 프로세스 내 신호를 쓸 수 있습니다. 백엔드가 여러 인스턴스라면 모두 기존 `VALKEY_URL`로 같은 Valkey에 연결되어야 합니다. 백업 머신에 인바운드 포트는 필요하지 않습니다.
+
+이전 30초 타이머가 설치된 경우 아래처럼 비활성화하고 해당 서비스를 멈춘 뒤 유닛 파일을 제거합니다. 같은 버전의 작업 모듈 전체를 설치해야 하므로 일일 타이머도 잠시 멈추고 진행 중인 일일 서비스가 끝난 뒤 복사합니다. 다음 명령은 아카이브 실행 계정과 저장소 루트에서 실행합니다.
 
 ```sh
-install -m 600 backend/deploy/eformsign-backup/eformsign-backup-ready-events.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now eformsign-backup-ready-events.timer
+if systemctl --user cat eformsign-backup-ready-events.timer >/dev/null 2>&1; then
+    systemctl --user disable --now eformsign-backup-ready-events.timer
+fi
+if systemctl --user cat eformsign-backup-ready-events.service >/dev/null 2>&1; then
+    systemctl --user stop eformsign-backup-ready-events.service
+fi
+rm -f ~/.config/systemd/user/eformsign-backup-ready-events.timer
+systemctl --user stop eformsign-backup.timer
 ```
 
-- 첫 준비 조회는 UTC 기준 최근 24시간입니다. 이후 완료한 상한에서 5분을 겹쳐 읽습니다. 각 실행은 고정 구간의 장부 페이지를 최대 50개씩 두 번 읽고 대상은 최대 8개 처리합니다. 페이지의 대기 항목과 다음 커서는 `stateDir/ready-events.json`에 소유자 전용으로 함께 기록합니다. 새 대상에 처리 기회를 우선 배정하고, 나머지는 재시도 시각 순으로 처리합니다. 재시도는 30초에서 최대 30분까지 늘어납니다.
+`systemctl --user status eformsign-backup.service`에서 일일 작업이 종료된 것을 확인한 뒤 실행합니다.
+
+```sh
+install -m 700 backend/deploy/eformsign-backup/*.mjs ~/eformsign-backup/
+install -m 600 backend/deploy/eformsign-backup/eformsign-backup-ready-events.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user start eformsign-backup.timer
+systemctl --user enable --now eformsign-backup-ready-events.service
+systemctl --user status eformsign-backup-ready-events.service
+journalctl --user -u eformsign-backup-ready-events.service
+```
+
+- 구독이 준비되면 한 번 장부를 따라잡고, 이후 PDF 준비 신호나 재연결 시 다시 읽습니다. 첫 준비 조회는 DB 시계 기준 최근 24시간이며, 이후 완료한 상한에서 5분을 겹쳐 읽습니다. 각 실행은 고정 구간의 장부 페이지를 최대 50개씩 두 번 읽고 대상은 최대 8개 처리합니다. 페이지의 대기 항목과 다음 커서는 `stateDir/ready-events.json`에 소유자 전용으로 함께 기록합니다. 새 대상에 처리 기회를 우선 배정하고, 나머지는 재시도 시각 순으로 처리합니다. 대상 재시도는 30초에서 최대 30분까지 늘어납니다. 전송 확인용 heartbeat는 장부나 문서 조회를 실행하지 않습니다.
 - 장부 보존 및 재조회 범위는 최대 90일입니다. 범위를 벗어난 대기 항목은 집계의 `expired`에 기록되며 03:00 KST 전체 조회에서 다시 확인합니다. 5분 겹침보다 늦게 보인 장부 행과 장부에 기록되지 않은 문서에도 전체 조회가 적용됩니다. 쓰기가 실패하면 마지막으로 저장된 커서에서 재개합니다.
 - 조회만 한 실행에는 아카이브 스캔과 일일 이력 POST가 없습니다. 대상 원본을 확보할 때는 정확한 두 경로와 검증된 바이트의 소유권을 `state.json`에 기록합니다. 중단된 예약은 다음 이벤트 실행이나 현재 원본을 확인한 일일 실행에서 재사용합니다. 현재 원본을 증명할 수 없는 비공개 파일은 예약과 함께 보존합니다.
 - 이벤트 원본을 내려받거나 병합하기 전에 `stateDir/ready-original-scratch.json`에 소유자 전용 작업 디렉터리를 기록합니다. 중단되면 다음 전달 가능한 이벤트 실행 또는 일일 실행이 공유 잠금 아래 이 기록과 일치하는 임시 파일을 정리합니다. 큐에서 대상이 만료되어도 정리 기록은 유지됩니다. 이전 버전에서 기록 없이 남은 `.ready-raw-*.tmp`와 qpdf 임시 디렉터리는 두 서비스가 모두 멈춘 뒤 소유자·권한·출처를 확인한 항목만 수동으로 정리합니다. 이전 코드로 되돌릴 때는 이 버전의 작업 디렉터리 정리가 끝난 뒤 모듈을 교체합니다.
 - 완료 문서는 본문과 감사추적이 모두 현재 미러 리비전이어야 합니다. 준비된 청크 원본의 래스터 사본은 먼저 게시할 수 있습니다. 같은 지점·케이스·스냅샷의 전체 청크와 감사추적이 준비되면 첫 세션 순으로 병합합니다. 게시 직전과 전달 확인 전 API에서 원본을 다시 확인합니다. Drive와 로컬에서 확인한 결과만 `delivered`로 집계합니다. 집계는 사용자 서비스 저널에 남습니다.
-- Drive 설정 누락, 미완료 전환·이동, 원격 중단 또는 잠금 경합 중에는 게시가 대기합니다. 타이머는 부팅 후와 실행 종료 후 약 30초 간격으로 동작합니다. KST 02:56부터 03:01 직전까지는 03:00 작업에 잠금을 넘깁니다. 시작 제한은 120초, 정지 유예는 10초입니다. 전달 시간에는 미러 준비와 큐, 변환, 네트워크 상태 및 정기 작업 대기가 모두 포함됩니다.
+- Drive 설정 누락, 미완료 전환·이동, 원격 중단 또는 잠금 경합 중에는 게시가 대기합니다. 서비스는 처리하는 동안에만 공유 `run.lock`을 잡으며 KST 02:56부터 03:01 직전까지는 일일 작업에 잠금을 넘깁니다. 각 처리 단위에는 기존 110초 작업 예산을 적용하고, 서비스 정지 유예는 10초입니다. 전달 시간에는 미러 준비와 큐, 변환, 네트워크 상태 및 정기 작업 대기가 모두 포함됩니다. 운영자가 한 번만 준비 장부를 처리할 때는 기존 `--raster --ready-events` 명령을 사용할 수 있습니다.
 
-이벤트 실행을 중지하려면 `systemctl --user disable --now eformsign-backup-ready-events.timer`로 추가 타이머를 끄고 실행 중인 `eformsign-backup-ready-events.service`가 끝났는지 확인합니다. 복구에 필요한 상태와 비공개 파일은 보존합니다.
+이벤트 실행만 되돌리려면 `systemctl --user disable --now eformsign-backup-ready-events.service`를 실행합니다. 03:00 일일 백업이 계속 대상을 조정합니다. 이전 30초 실행까지 복원해야 하면 위와 같이 일일 타이머를 잠시 멈추고 실행을 마친 뒤, 직전 승인 버전의 `.mjs` 파일 전체와 `eformsign-backup-ready-events.{service,timer}`를 각 설치 경로에 복사합니다. `systemctl --user daemon-reload`, `systemctl --user start eformsign-backup.timer`, `systemctl --user enable --now eformsign-backup-ready-events.timer` 순으로 실행합니다. 복구에 필요한 큐 상태와 비공개 파일은 보존합니다.
 
 ## 완료된 기존 제공인력 계약서 이동
 
