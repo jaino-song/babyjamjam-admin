@@ -19,7 +19,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { EMPLOYEE_STATUS_LABELS } from "@babyjamjam/shared/constants/employee-status";
-import { getUserErrorMessage } from "@babyjamjam/shared";
+import { summarizeErrorForLog, getUserErrorMessage } from "@babyjamjam/shared";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 
 const EMPLOYEES_TABLE_BASE = "mobile_employees_table";
@@ -100,7 +100,7 @@ export function EmployeesTable() {
             setDeleteTargetEmployeeId(null);
             handleDetailModalClose();
         } catch (err) {
-            console.error("Failed to delete employee:", err);
+            console.error("Failed to delete employee:", summarizeErrorForLog(err));
             setDeleteTargetEmployeeId(null);
             setDeleteErrorMessage(getUserErrorMessage(
                 err,

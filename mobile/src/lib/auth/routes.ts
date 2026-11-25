@@ -8,6 +8,8 @@ export const AUTH_ROUTES = {
   resetPassword: "/reset-password",
   verifyEmail: "/verify-email",
   callback: "/callback",
+  kakaoOnboarding: "/kakao/onboarding",
+  onboarding: "/onboarding",
 } as const;
 
 export const PUBLIC_AUTH_PATHS = new Set<string>(Object.values(AUTH_ROUTES));

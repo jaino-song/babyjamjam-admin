@@ -1,6 +1,6 @@
 import type { EformsignDocumentJobResponse } from "@/services/eformsign";
 
-export interface DocumentJobRecoveryMetadata extends Pick<EformsignDocumentJobResponse, "recoveryPresentation"> {
+export interface DocumentJobRecoveryMetadata extends Pick<EformsignDocumentJobResponse, "documentKind" | "recoveryPresentation"> {
   jobId: string;
   jobType: string;
   source?: "staff" | "auto_finalize";

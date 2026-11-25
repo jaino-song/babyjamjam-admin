@@ -1,6 +1,7 @@
 "use client";
 
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useState, useEffect, useCallback } from "react";
 import type {
   EformSignDocument,
@@ -77,7 +78,7 @@ export function useEformsign(): UseEformsignResult {
       } catch (err) {
         // Locally authored copy only — the vendor script URL / Error.message
         // (upstream internals) is never rendered to the user.
-        console.error("eformsign SDK failed to load", err);
+        console.error("eformsign SDK failed to load", summarizeErrorForLog(err));
         setError("전자계약 서명 화면을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
       } finally {
         setIsLoading(false);
@@ -111,7 +112,6 @@ export function useEformsign(): UseEformsignResult {
       };
 
       const errorCallback = (response: EformsignErrorResponse) => {
-        console.error("Eformsign error:", response);
         callbacks?.onError?.(response);
       };
 

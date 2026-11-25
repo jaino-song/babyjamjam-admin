@@ -1,9 +1,10 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { clearPendingOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { clearAuthSessionCookies } from "@/lib/auth/session-cookies";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 export async function logout(pushEndpoint?: string): Promise<{ success: boolean; error?: string }> {
   let serverLogoutError: string | undefined;
@@ -41,6 +42,7 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
     }
 
     clearAuthSessionCookies(cookieStore);
+    clearPendingOnboarding(cookieStore);
     cookieStore.delete("selected_branch_id");
     cookieStore.delete("selected_organization_id");
 
@@ -48,7 +50,7 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
       ? { success: false, error: serverLogoutError }
       : { success: true };
   } catch (error) {
-    console.error("[Logout] Error:", error);
+    console.error("[Logout] Error:", summarizeErrorForLog(error));
     return { success: false, error: "로그아웃 중 오류가 발생했어요." };
   }
 }

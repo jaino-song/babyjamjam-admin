@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import { ACCOUNT_LINK_VERSION } from "@babyjamjam/shared";
 import {
     resolveFieldMessage,
     type FieldInputState,
@@ -19,11 +20,11 @@ import { t } from "@/lib/i18n/translations";
 import { normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { useLocale } from "@/providers/LocaleProvider";
 import { Alert } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
 import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
 import { kakaoOnboardingSchema, type KakaoOnboardingFormData } from "@/lib/validations/auth";
 import { appendSafeReturnPath } from "@/lib/auth/safe-return-path";
-import { completeKakaoOnboarding } from "./actions";
+import { LinkVerificationStep } from "@/components/auth/link-verification-step";
+import { completeKakaoOnboarding, verifyKakaoLink } from "./actions";
 
 const PANEL_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-kakao-onboarding-title']]:!text-[1.72rem] md:[&_[data-component='auth-kakao-onboarding-title']]:!text-[1.5rem] [&_[data-component='auth-kakao-onboarding-subtitle']]:!max-w-[34ch] [&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.82rem] md:[&_[data-component='auth-kakao-onboarding-subtitle']]:!text-[0.76rem]";
 const PRIMARY_BUTTON_CLASS_NAME = "h-10 px-5 gap-1.5 text-[0.72rem] md:text-[0.77rem] font-bold";
@@ -96,6 +97,7 @@ export function OnboardingForm({
     returnPath,
 }: OnboardingFormProps) {
     const router = useRouter();
+    const [challenge, setChallenge] = useState<string | null>(null);
     const [formData, setFormData] = useState<Partial<KakaoOnboardingFormData>>({
         phone: phone ?? "",
         birthDate: birthDate ?? "",
@@ -167,14 +169,23 @@ export function OnboardingForm({
         }
 
         startTransition(async () => {
-            const response = await completeKakaoOnboarding(result.data);
+            const response = await completeKakaoOnboarding(result.data, ACCOUNT_LINK_VERSION);
+            if (response.code) {
+                router.replace(appendSafeReturnPath(`/login?authError=${response.code}`, returnPath));
+                return;
+            }
             if (!response.success) {
                 // The server action already normalizes the failure through the
                 // problem contract; render its copy verbatim.
+                if (response.field) { setErrors({ [response.field]: response.error || "계정 정보를 저장하지 못했습니다." }); return; }
                 setServerError(response.error || "계정 정보를 저장하지 못했습니다.");
                 return;
             }
 
+            if (response.linkVerificationRequired && response.linkChallengeToken) {
+                setChallenge(response.linkChallengeToken);
+                return;
+            }
             router.replace(appendSafeReturnPath("/login?authError=PENDING_APPROVAL", returnPath));
         });
     };
@@ -224,6 +235,11 @@ export function OnboardingForm({
             className={PANEL_CLASS_NAME}
             contentClassName="gap-[18px]"
         >
+            {challenge ? <LinkVerificationStep data-component="desktop_auth_kakao-onboarding_link-verification" onRestart={() => setChallenge(null)} onVerify={async (code) => {
+                const result = await verifyKakaoLink(challenge, code);
+                if (result.success) router.replace(appendSafeReturnPath("/login?authError=ACCOUNT_LINKED", returnPath));
+                return result;
+            }} /> : <>
             {serverError && (
                 <div data-component="desktop_auth_kakao-onboarding_alert">
                     <Alert variant="destructive" onClose={() => setServerError(null)}>
@@ -293,17 +309,16 @@ export function OnboardingForm({
                     variant="positive"
                     size="md"
                     className={PRIMARY_BUTTON_CLASS_NAME}
-                    disabled={isPending}
+                    loading={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_submit-btn"
                 >
-                    {isPending ? <Spinner size="sm" /> : (
-                        <>
+                    <>
                             가입 완료
                             <ChevronRight className="w-4 h-4" />
-                        </>
-                    )}
+                    </>
                 </Button>
             </form>
+            </> }
         </AuthPanel>
     );
 }

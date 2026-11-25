@@ -18,6 +18,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
 import type { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
 import { ContractSupersedeService } from "application/services/contract-supersede.service";
+import { setup as initialRecoveryFixture, input as initialRecoveryInput } from "../utils/service-record-initial-recovery.fixture";
 
 const validContractData = {
     customerName: "산모",
@@ -89,6 +90,7 @@ const failedJob = (overrides: Partial<EformsignDocumentJobEntity> = {}) =>
 
 let authRole = "admin";
 let authUserId: string | undefined = "user-a";
+let authBranchId = "branch-a";
 let acceptingEnabled = "true";
 
 describe("EformsignDocumentJobController (Integration)", () => {
@@ -101,6 +103,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
         claimRecovery: jest.Mock;
         resolveManually: jest.Mock;
         cancel: jest.Mock;
+        retry: jest.Mock;
     };
     let supersedeService: { isDocumentVisibleToBranch: jest.Mock } | undefined;
     let dispatchBoundary: { reconcile: jest.Mock; findById?: jest.Mock };
@@ -108,10 +111,10 @@ describe("EformsignDocumentJobController (Integration)", () => {
     const authGuard = {
         canActivate: (context: ExecutionContext) => {
             const req = context.switchToHttp().getRequest();
-            req.user = { userId: authUserId, branchId: "branch-a", role: authRole, branchRole: authRole };
+            req.user = { userId: authUserId, branchId: authBranchId, role: authRole, branchRole: authRole };
             req.tenant = {
                 userId: authUserId,
-                branchId: "branch-a",
+                branchId: authBranchId,
                 globalRole: authRole,
                 branchRole: authRole,
             };
@@ -122,6 +125,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
     beforeEach(async () => {
         authRole = "admin";
         authUserId = "user-a";
+        authBranchId = "branch-a";
         acceptingEnabled = "true";
         supersedeService = { isDocumentVisibleToBranch: jest.fn().mockResolvedValue(true) };
         documentJobService = {
@@ -132,6 +136,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
             claimRecovery: jest.fn(),
             resolveManually: jest.fn(),
             cancel: jest.fn(),
+            retry: jest.fn(),
         };
         dispatchBoundary = {
             reconcile: jest.fn().mockResolvedValue({
@@ -143,6 +148,43 @@ describe("EformsignDocumentJobController (Integration)", () => {
         };
 
         await buildApp();
+    });
+
+    it.each(["retry", "cancel"] as const)("POST %s refuses malformed stored INITIAL dates with 409", async action => {
+        const f = initialRecoveryFixture();
+        f.job.payload.context = { ...f.job.payload.context, plannedSessionDates: [null] } as never;
+        authBranchId = initialRecoveryInput.branchId;
+        documentJobService[action].mockImplementation(input => f.repo[action](input));
+
+        const response = await request(app.getHttpServer())
+            .post(`/eformsign-docs/jobs/${initialRecoveryInput.jobId}/${action}`);
+
+        expect(response.status).toBe(409);
+        expect(response.body).toEqual({ code: action === "retry" ? "JOB_NOT_RETRYABLE" : "JOB_NOT_CANCELLABLE" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.job.status).toBe("failed");
+    });
+
+    it("retries into the new queued job", async () => {
+        documentJobService.retry.mockResolvedValue({ kind: "retried", jobId: "new-job", status: "queued" });
+        const response = await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(200);
+        expect(response.body).toEqual({ jobId: "new-job", status: "queued" });
+        expect(documentJobService.retry).toHaveBeenCalledWith({ jobId: JOB_ID, branchId: "branch-a", userId: "user-a", now: expect.any(Date) });
+    });
+    it.each([["not_retryable", 409, "JOB_NOT_RETRYABLE"], ["not_found", 404, "RESOURCE_NOT_FOUND"]] as const)("rejects retry %s", async (kind, status, code) => {
+        documentJobService.retry.mockResolvedValue({ kind });
+        const response = await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(status);
+        expect(response.body.code).toBe(code);
+    });
+    it("refuses retry without dispatch capability", async () => {
+        authRole = "staff";
+        await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(403);
+        expect(documentJobService.retry).not.toHaveBeenCalled();
+    });
+    it("checks the accepting gate before retry creates work", async () => {
+        acceptingEnabled = "false";
+        await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(503);
+        expect(documentJobService.retry).not.toHaveBeenCalled();
     });
 
     it.each(["cancelled", "already_cancelled"])("cancels idempotently: %s", async kind => {

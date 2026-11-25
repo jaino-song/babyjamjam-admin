@@ -68,6 +68,19 @@ describe("initial finalization operator diagnostics", () => {
         expect(printed).not.toContain("synthetic-");
         expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
     });
+    it("uses the shared strict identity and stopped/pre-send/error eligibility without changing dry-run defaults", async () => {
+        await main(["--branch-id", branchId]);
+        const query = prisma.$queryRaw.mock.calls[0]![0];
+        expect(query.text).toContain("status IN ('failed', 'requires_attention')");
+        expect(query.text).toContain("'SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED', 'PRE_SEND_RETRY_EXHAUSTED'");
+        expect(query.text).toContain("IN ('', 'queued', 'validating', 'preparing')");
+        expect(query.text).toContain("lease_token IS NULL");
+        expect(query.text).toContain("snapshotReference");
+        expect(query.text).toContain("generationKind");
+        expect(query.text).not.toContain("request_key LIKE");
+        expect(query.values).toContainEqual([branchId]);
+        expect(repository.requeueInitialFinalizationJob).not.toHaveBeenCalled();
+    });
     it("prints not_found without inspecting or exposing a payload", async () => {
         repository.diagnoseInitialFinalizationJob.mockResolvedValue({ kind: "not_found" });
         await main(["--branch-id", branchId]);

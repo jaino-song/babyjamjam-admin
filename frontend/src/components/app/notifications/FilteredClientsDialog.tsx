@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/table";
 import { useFilteredClients, useClient, useDeleteClient } from "@/hooks/useClients";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { Client, DocumentStatus } from "@/lib/client/types";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { ClientDetailModal } from "../clients/ClientDetailModal";
@@ -125,7 +125,7 @@ export function FilteredClientsDialog({
                 onClose();
             }
         } catch (err) {
-            console.error("Failed to delete client:", err);
+            console.error("Failed to delete client:", summarizeErrorForLog(err));
             // The mutation outcome is surfaced to the user flow — never
             // silently swallowed. A registered problem body drives the copy.
             const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });

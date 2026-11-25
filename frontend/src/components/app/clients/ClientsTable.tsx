@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Plus, Users } from "lucide-react";
@@ -120,7 +121,7 @@ export function ClientsTable() {
             await deleteClient.mutateAsync(deleteTargetClientId);
             setDeleteTargetClientId(null);
         } catch (err) {
-            console.error("Failed to delete client:", err);
+            console.error("Failed to delete client:", summarizeErrorForLog(err));
         }
     };
 

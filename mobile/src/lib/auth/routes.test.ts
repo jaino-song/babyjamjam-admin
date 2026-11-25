@@ -6,6 +6,16 @@ describe("public route boundaries", () => {
     expect(isAuthPath(path)).toBe(false);
   });
 
+  it.each(["/onboarding", "/kakao/onboarding", "/kakao/onboarding/"])("keeps onboarding %s public and shell-free", path => {
+    expect(isAuthPath(path)).toBe(true);
+    expect(isPublicAuthPath(path)).toBe(true);
+  });
+
+  it.each(["/kakao", "/onboarding/extra"])("does not widen the auth boundary to %s", path => {
+    expect(isAuthPath(path)).toBe(false);
+    expect(isPublicAuthPath(path)).toBe(false);
+  });
+
   it.each(Object.values(AUTH_ROUTES))("preserves the auth route %s", (path) => {
     expect(isAuthPath(path)).toBe(true);
     expect(isPublicAuthPath(path)).toBe(true);

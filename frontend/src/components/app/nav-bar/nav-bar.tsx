@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useEffect } from "react";
 import { X, House, MessageCircle, File, Settings, FileText, Users, UserCog, ShieldCheck } from 'lucide-react';
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                     staleTime: 1000 * 60 * 5,
                 });
             } catch (error) {
-                console.error("[NavBar] Failed to verify eformsign auth status before prefetch:", error);
+                console.error("[NavBar] Failed to verify eformsign auth status before prefetch:", summarizeErrorForLog(error));
             }
         };
 

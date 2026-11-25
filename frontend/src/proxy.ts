@@ -222,6 +222,10 @@ export async function proxy(request: NextRequest) {
 
   let authToken = request.cookies.get("auth_token")?.value;
 
+  if (pathname === "/kakao/onboarding" && request.cookies.has("pending_kakao_signup")) {
+    return NextResponse.next();
+  }
+
   if (
     pathname === "/onboarding" &&
     request.cookies.has(PENDING_ACCOUNT_ONBOARDING_COOKIE)

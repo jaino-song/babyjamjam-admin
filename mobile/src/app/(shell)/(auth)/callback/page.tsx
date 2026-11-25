@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { LoadingState } from "@/components/app/ui/LoadingState";
 import { exchangeToken } from "./actions";
 import { getSafeCallbackError } from "@/lib/auth/auth-errors";
@@ -73,8 +73,8 @@ export default function AuthCallbackPage() {
                 }
             }
             catch (err) {
-                console.error("[Auth Callback] Token Exchange Error:", err);
-                console.error("[Auth Callback] Error message:", err instanceof Error ? err.message : String(err));
+                console.error("[Auth Callback] Token Exchange Error:", summarizeErrorForLog(err));
+                console.error("[Auth Callback] Error message:", summarizeErrorForLog(err));
                 // Shared problem contract resolution — upstream internals are
                 // never rendered; the normalized message is already safe copy.
                 setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);

@@ -9,6 +9,7 @@ import { HttpException } from "@nestjs/common";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { assertEformsignBackfillConfirmation } from "../application/utils/eformsign-backfill-safety";
 import { SbEformsignDocumentJobRepository } from "../infrastructure/database/repositories/sb.eformsign-document-job.repository";
+import { initialFinalizationRetryCandidateSql } from "../infrastructure/database/utils/service-record-initial-recovery-sql";
 import { createPrismaClientConfig } from "../infrastructure/database/prisma-url.utils";
 import { loadOperatorEnvironment, resolveOperatorDatabaseTarget } from "./repair-eformsign-branch-ownership";
 import type { PrismaService } from "../infrastructure/database/prisma.service";
@@ -115,11 +116,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         }
         const candidates = await prisma.$queryRaw<Array<{ id: string; branch_id: string }>>(Prisma.sql`
             SELECT id, branch_id FROM eformsign_document_job
-            WHERE job_type = 'create_document' AND source = 'auto_finalize'
-              AND request_key LIKE 'service-record-initial-finalization:%'
-              AND status = 'requires_attention'
-              AND last_error_code = 'SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED'
-              AND document_id IS NULL AND branch_id = ANY(${[...branchIds]}::uuid[])
+            WHERE ${initialFinalizationRetryCandidateSql()}
+              AND branch_id = ANY(${[...branchIds]}::uuid[])
               ${jobIds.size ? Prisma.sql`AND id = ANY(${[...jobIds]}::uuid[])` : Prisma.empty}
             ORDER BY id
         `);

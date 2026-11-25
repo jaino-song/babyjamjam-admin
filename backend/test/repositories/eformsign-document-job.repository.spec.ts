@@ -48,7 +48,7 @@ const row = (overrides: Record<string, unknown> = {}) => ({
     auto_finalize_outcome_recorded_at: null,
     started_at: null,
     completed_at: null,
-    last_error_code: null,
+    last_error_code: null as string | null,
     created_by_user_id: null,
     created_at: new Date("2026-08-13T00:00:00Z"),
     updated_at: new Date("2026-08-13T00:00:00Z"),
@@ -122,7 +122,7 @@ describe("SbEformsignDocumentJobRepository", () => {
     let repository: SbEformsignDocumentJobRepository;
 
     beforeEach(() => {
-        queryRaw = jest.fn();
+        queryRaw = jest.fn().mockResolvedValue([]);
         executeRaw = jest.fn();
         const prisma = {
             $queryRaw: queryRaw,
@@ -662,8 +662,9 @@ describe("SbEformsignDocumentJobRepository", () => {
 
         queryRaw.mockReset();
         queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+        queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
         await repository.listForBranch(row().branch_id, new Date(), 100);
-        expect(queryRaw).toHaveBeenCalledTimes(3);
+        expect(queryRaw).toHaveBeenCalledTimes(5);
         expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("branch_id = "))).toBe(true);
     });
 
@@ -1107,7 +1108,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         it("counts contract failed rows from the last 7 days and unresolved rows, and lists their ids", async () => {
             queryRaw
                 .mockResolvedValueOnce([{ active_count: 1, attention_count: 4, failed_count: 2, unresolved_count: 3 }])
-                .mockResolvedValueOnce([{ id: "job-newest" }, { id: "job-middle" }, { id: "job-oldest" }]);
+                .mockResolvedValueOnce([{ id: "job-newest", completed_at: new Date("2026-11-03") }, { id: "job-middle", completed_at: new Date("2026-11-02") }, { id: "job-oldest", completed_at: new Date("2026-11-01") }]);
 
             await expect(repository.getSummary(branchId)).resolves.toEqual({
                 activeCount: 1,
@@ -1119,22 +1120,25 @@ describe("SbEformsignDocumentJobRepository", () => {
 
             const countsQuery = queryRaw.mock.calls[0][0] as Prisma.Sql;
             const counts = countsQuery.text;
-            expect(counts).toContain("count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count");
+            expect(counts).toContain("::int AS attention_count");
+            expect(counts).toContain("JOB_CANCELLED_AFTER_DISPATCH");
+            expect(counts).toContain("generationKind");
             expect(counts).toMatch(/FILTER \(\s*WHERE \(source = 'staff'[\s\S]*?\) AND status = 'failed'\s+AND progress_step IS DISTINCT FROM \$\d+\s+AND completed_at >= now\(\) - interval '7 days'\s*\)::int AS failed_count/);
             expect(counts).toContain("a.creation_job_id = eformsign_document_job.id");
             expect(counts).toContain("a.branch_id = eformsign_document_job.branch_id");
             expect(counts).toContain("a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed'");
             expect(counts).toMatch(/OR status = 'requires_attention'[\s\S]*AS unresolved_count/);
-            expect(countsQuery.values).toEqual(["cancelled", "cancelled", "superseded", branchId]);
+            expect(countsQuery.values).toEqual(["cancelled", "superseded", branchId]);
             const ids = sqlText(queryRaw.mock.calls[1][0]);
             expect(ids).toContain(CONTRACT_FRAGMENT);
             expect(ids).toContain("ORDER BY completed_at DESC");
-            expect(ids).toContain("LIMIT 50");
+            expect((queryRaw.mock.calls[1][0] as Prisma.Sql).text).toMatch(/LIMIT \$\d+/);
+            expect((queryRaw.mock.calls[1][0] as Prisma.Sql).values.at(-1)).toBe(50);
         });
 
         it("moves recent contract failures into requiresAttention and out of recent", async () => {
             const terminalSince = new Date("2026-10-21T03:00:00.000Z");
-            queryRaw
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([])
                 .mockResolvedValueOnce([row({ status: "queued", client_name: "A" })])
                 .mockResolvedValueOnce([
                     row({ id: "job-failed", status: "failed", client_name: "B" }),
@@ -1149,69 +1153,81 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(list.requiresAttention[1]?.clientName).toBeNull();
             expect(list.recent.map((job) => job.id)).toEqual(["job-done"]);
 
-            const attention = sqlText(queryRaw.mock.calls[1][0]);
+            const attention = sqlText(queryRaw.mock.calls[3][0]);
             expect(attention).toContain("j.status = 'requires_attention'");
             expect(attention).toContain(`j.status = 'failed' AND ${CONTRACT_FRAGMENT_J}`);
             expect(attention).toContain("j.completed_at >= now() - interval '7 days'");
-            expect(attention).toContain("ORDER BY j.completed_at DESC");
-            expect(attention).toContain("LIMIT 50");
+            expect(attention).toContain("ORDER BY NULL::int ASC NULLS LAST");
+            expect(attention).toContain("j.completed_at DESC NULLS LAST, j.created_at DESC, j.id ASC");
+            expect((queryRaw.mock.calls[3][0] as Prisma.Sql).text).toMatch(/LIMIT \$\d+/);
+            expect((queryRaw.mock.calls[3][0] as Prisma.Sql).values.at(-1)).toBe(50);
             // The 7-day window is the repository's; terminalSince never narrows the attention list.
-            expect((queryRaw.mock.calls[1][0] as { values: unknown[] }).values).not.toContain(terminalSince);
+            expect((queryRaw.mock.calls[3][0] as { values: unknown[] }).values).not.toContain(terminalSince);
 
-            const recent = sqlText(queryRaw.mock.calls[2][0]);
-            expect(recent).toContain(`NOT (j.status = 'failed' AND ${CONTRACT_FRAGMENT_J})`);
+            const recent = sqlText(queryRaw.mock.calls[4][0]);
+            expect(recent).toContain(`NOT (j.status = 'failed' AND (${CONTRACT_FRAGMENT_J} OR`);
             expect(recent).toContain("j.completed_at >= ");
-            expect((queryRaw.mock.calls[2][0] as { values: unknown[] }).values).toContain(terminalSince);
-            expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("LEFT JOIN \"client\" c ON c.id = j.client_id"))).toBe(true);
+            expect((queryRaw.mock.calls[4][0] as { values: unknown[] }).values).toContain(terminalSince);
+            expect(queryRaw.mock.calls.slice(2).every((call) => sqlText(call[0]).includes("LEFT JOIN \"client\" c ON c.id = j.client_id"))).toBe(true);
         });
 
         it("excludes superseded failures from popup counts and ids, retaining their recent history", async () => {
             queryRaw.mockResolvedValueOnce([{ unresolved_count: 0 }]).mockResolvedValueOnce([]);
             const summary = await repository.getSummary(branchId);
             expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).toEqual([]);
-            for (const [query] of queryRaw.mock.calls) {
+            // The first two queries cover contract popup counts/ids; the third is INITIAL-only.
+            for (const [query] of queryRaw.mock.calls.slice(0, 2)) {
                 const statement = query as Prisma.Sql;
                 const marker = statement.text.match(/status = 'failed' AND progress_step IS DISTINCT FROM \$(\d+)/);
                 expect(marker).not.toBeNull();
                 expect(statement.values[Number(marker?.[1]) - 1]).toBe("superseded");
             }
             queryRaw.mockReset();
-            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([
                 row({ id: "superseded", status: "failed", progress_step: "superseded", last_error_code: "PRE_SEND_RETRY_EXHAUSTED" }),
             ]);
             const list = await repository.listForBranch(branchId, new Date(0));
             expect(list.requiresAttention).toEqual([]); expect(list.recent[0]?.status).toBe("failed");
-            expect(queryRaw.mock.calls[1][0]).toMatchObject({
-                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $3"),
-                values: [branchId, "cancelled", "superseded"],
+            expect(queryRaw.mock.calls[3][0]).toMatchObject({
+                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $2"),
+                values: [branchId, "superseded", 50],
             });
-            expect(queryRaw.mock.calls[2][0]).toMatchObject({
-                text: expect.stringContaining("OR j.progress_step = $4"),
-                values: [branchId, "cancelled", new Date(0), "superseded", 50],
+            expect(queryRaw.mock.calls[4][0]).toMatchObject({
+                text: expect.stringContaining("OR j.progress_step = $3"),
+                values: [branchId, new Date(0), "superseded", 50],
             });
         });
 
         it("filters cancelled rows in summary and both history lists and maps the eligibility hint", async () => {
             queryRaw.mockResolvedValueOnce([{ failed_count: 0, unresolved_count: 0 }]).mockResolvedValueOnce([]);
             await repository.getSummary(branchId);
-            for (const [query] of queryRaw.mock.calls) expect((query as Prisma.Sql).values).toContain("cancelled");
+            for (const [query] of queryRaw.mock.calls) expect((query as Prisma.Sql).text).toContain("JOB_CANCELLED_AFTER_DISPATCH");
             queryRaw.mockReset();
-            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...row({ status: "requires_attention" }), cancellable: true }]).mockResolvedValueOnce([]);
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...row({ status: "requires_attention" }), cancellable: true }]).mockResolvedValueOnce([]);
             const list = await repository.listForBranch(branchId, new Date(0));
             expect(list.requiresAttention[0]?.cancellable).toBe(true);
-            const attention = queryRaw.mock.calls[1][0] as Prisma.Sql, recent = queryRaw.mock.calls[2][0] as Prisma.Sql;
-            expect(attention.values).toContain("cancelled"); expect(recent.values).toContain("cancelled");
+            const attention = queryRaw.mock.calls[3][0] as Prisma.Sql, recent = queryRaw.mock.calls[4][0] as Prisma.Sql;
+            expect(attention.text).toContain("JOB_CANCELLED_AFTER_DISPATCH"); expect(recent.text).toContain("JOB_CANCELLED_AFTER_DISPATCH");
             expect(attention.text).toContain("a.creation_job_id = j.id");
             expect(attention.text).toContain("a.generation = j.contract_generation");
             expect(attention.text).toContain("u.provider_document_id IS NULL OR u.provider_document_id ~ U&'^[");
             expect(attention.text).toContain("AS cancellable");
-            expect(attention.text).not.toContain("claim_expires_at");
+            expect(attention.text).toContain("AS retryable");
+            const [cancellableSql, afterCancellableSql] = attention.text.split("AS cancellable");
+            expect(cancellableSql).not.toContain("claim_expires_at");
+            expect(cancellableSql).toContain("NOT IN ('creating', 'sent', 'superseded', 'cancelled')");
+            const retryableSql = afterCancellableSql?.split("AS retryable")[0];
+            expect(retryableSql).toContain("claim_expires_at");
+            expect(retryableSql).not.toContain("'creating'");
+            expect(retryableSql).not.toContain("PRE_SEND_RETRY_EXHAUSTED");
+            expect((queryRaw.mock.calls[2][0] as Prisma.Sql).text).toContain("false AS retryable");
+            expect(recent.text).toContain("false AS retryable");
         });
 
         it("matches the SQL receipt character class to ECMAScript trim whitespace", async () => {
-            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
             await repository.listForBranch(branchId, new Date(0));
-            const statement = queryRaw.mock.calls[1][0] as Prisma.Sql;
+            const statement = queryRaw.mock.calls[3][0] as Prisma.Sql;
             const pattern = statement.text.match(/u\.provider_document_id ~ U&'([^']+)'/)?.[1];
             expect(pattern).toBeDefined();
             // Decode PostgreSQL U& four-digit escapes from the actual Prisma SQL text.
@@ -1278,6 +1294,8 @@ describe("stored INITIAL finalization authorization and requeue", () => {
             payload: { kind: "service_record_revision", generationKind: "INITIAL_FINALIZATION", revisionId,
                 context, documentStateId: stateId, generation: "generation-1", documentVersion: 3,
                 snapshotReference: requestKey, immutablePayload, payloadFingerprint: fingerprint }, ...options.job });
+        if (["failed", "requires_attention"].includes(stored.status)) stored.lease_token = null;
+        stored.last_error_code = "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED";
         const state = { id: stateId, branchId: dispatchBranchId, clientId: 7, serviceRecordCaseId: dispatchCaseId,
             revisionId, operation: "record_snapshot", generation: "generation-1", documentVersion: 3,
             inputFingerprint: fingerprint, workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey },

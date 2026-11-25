@@ -1,10 +1,15 @@
 "use server"
 
 import { cookies } from "next/headers";
+import {
+    clearPendingOnboarding,
+    replacePendingAccountOnboarding,
+    replacePendingKakaoSignup,
+} from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -40,9 +45,6 @@ type TokenExchangeResponse =
     | TokenExchangeSuccessResponse
     | TokenExchangePendingSignupResponse
     | TokenExchangeAccountOnboardingResponse;
-
-const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
-const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
 
 // Locally authored failure copy — upstream body messages and Error.message
 // internals are never forwarded to the client flow.
@@ -106,30 +108,14 @@ export async function exchangeToken(
         const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 
         if (isPendingSignupResponse(data)) {
-            cookieStore.set(PENDING_KAKAO_SIGNUP_COOKIE, data.pendingSignupToken, {
-                httpOnly: true,
-                secure: isSecureCookie,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 60,
-            });
-
-            cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
+            replacePendingKakaoSignup(cookieStore, data.pendingSignupToken, { secure: isSecureCookie });
             clearAuthSessionCookies(cookieStore);
 
             return { success: true, onboardingRequired: true, onboardingRoute: data.onboardingRoute };
         }
 
         if (isAccountOnboardingResponse(data)) {
-            cookieStore.set(PENDING_ACCOUNT_ONBOARDING_COOKIE, data.pendingAccountOnboardingToken, {
-                httpOnly: true,
-                secure: isSecureCookie,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 60,
-            });
-
-            cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
+            replacePendingAccountOnboarding(cookieStore, data.pendingAccountOnboardingToken, { secure: isSecureCookie });
             clearAuthSessionCookies(cookieStore);
 
             return { success: true, onboardingRequired: true, onboardingRoute: data.onboardingRoute };
@@ -140,15 +126,14 @@ export async function exchangeToken(
             refreshToken: data.refreshToken,
         });
 
-        cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
-        cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
+        clearPendingOnboarding(cookieStore);
 
         return {
             success: true,
             requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
         };
     } catch (error) {
-        console.error("[Server Action] Token Exchange Error:", error);
+        console.error("[Server Action] Token Exchange Error:", summarizeErrorForLog(error));
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;

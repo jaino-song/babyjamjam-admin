@@ -3,6 +3,7 @@ import { authApi } from "./auth";
 import { callIngestTokenApi } from "./call-ingest-tokens";
 import { consultationInquiriesApi } from "./consultation-inquiries";
 import {
+  EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES,
   eformsignApi,
   normalizeDocumentListResponse,
   withEformsignReauth,
@@ -16,6 +17,7 @@ jest.mock("@/lib/api/client", () => ({ api: {} }));
 describe("services/api compatibility entry point", () => {
   it("should expose every legacy runtime export as the original domain instance", () => {
     const domainExports = {
+      EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES,
       authApi,
       callIngestTokenApi,
       consultationInquiriesApi,

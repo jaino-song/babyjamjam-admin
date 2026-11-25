@@ -16,11 +16,12 @@ describe("onboarding return navigation lifecycle", () => {
     );
   });
 
-  it("keeps the account onboarding fallback on the validated local editor path", () => {
+  it("keeps the account onboarding form on the validated local editor path", () => {
     expect(accountPageSource).toContain("searchParams: Promise<Record");
     expect(accountPageSource).toContain("getSafeServiceRecordAdminReturnPath");
+    expect(accountPageSource).toContain("returnPath={returnPath}");
     expect(accountPageSource).toContain(
-      'appendSafeReturnPath("/login?authError=ACCOUNT_PROFILE_INCOMPLETE", returnPath)',
+      'appendSafeReturnPath("/login", returnPath)',
     );
   });
 });

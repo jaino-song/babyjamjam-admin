@@ -44,7 +44,8 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
     // Callers pass copy already normalized through the problem contract; no
     // legacy string adapter re-processing here.
     const resolved = message !== undefined ? message : error ? { tone: "error" as const, text: error } : null;
-    const hasError = resolved?.tone === "error";
+    const hasError = resolved?.tone === "error" || props["aria-invalid"] === true || props["aria-invalid"] === "true";
+    const describedBy = [resolved ? errorId : undefined, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
     const trailingContent = resolved
       ? (
           <FieldMessageText id={errorId} tone={resolved.tone} data-component="desktop_auth_form-field_message">
@@ -71,7 +72,7 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
         inputDataComponent={dataComponent}
         labelRowDataComponent="desktop_auth_form-field_label-row"
         labelTrailingDataComponent={trailingContent ? "desktop_auth_form-field_label-row_trailing" : undefined}
-        aria-describedby={resolved ? errorId : undefined}
+        aria-describedby={describedBy}
         aria-invalid={hasError}
       />
     );

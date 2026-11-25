@@ -48,6 +48,29 @@ function toOverrideRecord(row: OverrideRow): BranchHolidayOverrideRecord {
     };
 }
 
+export async function readHolidayCalendarRows(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+): Promise<Omit<HolidayCalendarReadData, "revision">> {
+    const snapshots = await tx.holiday_year_snapshot.findMany({
+        select: { year: true, validatedAt: true },
+        orderBy: { year: "asc" },
+    });
+    const holidays = await tx.public_holiday.findMany({
+        select: { date: true, name: true },
+        orderBy: { date: "asc" },
+    });
+    const overrides = await tx.branch_holiday_override.findMany({
+        where: { branchId },
+        orderBy: { date: "asc" },
+    });
+    return {
+        snapshots,
+        holidays: holidays.map((row) => ({ date: fromDbDate(row.date), name: row.name })),
+        overrides: overrides.map(toOverrideRecord),
+    };
+}
+
 /**
  * Holiday calendar reads and branch-override writes.
  *
@@ -71,23 +94,9 @@ export class SbHolidayCalendarRepository implements IHolidayCalendarRepository {
         return this.prisma.$transaction(
             async (tx) => {
                 const revisionRow = await tx.holiday_calendar_revision.findUnique({ where: { id: 1 } });
-                const snapshots = await tx.holiday_year_snapshot.findMany({
-                    select: { year: true, validatedAt: true },
-                    orderBy: { year: "asc" },
-                });
-                const holidays = await tx.public_holiday.findMany({
-                    select: { date: true, name: true },
-                    orderBy: { date: "asc" },
-                });
-                const overrides = await tx.branch_holiday_override.findMany({
-                    where: { branchId },
-                    orderBy: { date: "asc" },
-                });
                 return {
                     revision: revisionRow ? Number(revisionRow.revision) : 0,
-                    snapshots: snapshots.map((row) => ({ year: row.year, validatedAt: row.validatedAt })),
-                    holidays: holidays.map((row) => ({ date: fromDbDate(row.date), name: row.name })),
-                    overrides: overrides.map(toOverrideRecord),
+                    ...await readHolidayCalendarRows(tx, branchId),
                 };
             },
             {

@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import * as Sentry from "@sentry/nextjs";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect } from "react";
@@ -17,7 +18,7 @@ export default function AppError({ error, reset }: AppErrorProps) {
   const router = useRouter();
 
   useEffect(() => {
-    console.error(error);
+    console.error({ ...summarizeErrorForLog(error), digest: error.digest });
     Sentry.captureException(error);
   }, [error]);
 

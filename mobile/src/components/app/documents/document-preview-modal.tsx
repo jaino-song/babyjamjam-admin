@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useState } from "react";
 import {
   X,
@@ -97,7 +98,7 @@ export default function DocumentPreviewModal({
       try {
         iframe.contentWindow?.print();
       } catch (e) {
-        console.error("Print failed", e);
+        console.error("Print failed", summarizeErrorForLog(e));
       }
       // Cleanup after a delay to ensure print dialog has opened
       setTimeout(() => {

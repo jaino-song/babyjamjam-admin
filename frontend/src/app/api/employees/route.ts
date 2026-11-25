@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
 
         // Check if backend returned an error status
         if (response.status >= 400) {
-            console.error("[API] Backend error fetching employees:", response.data);
+            console.error("[API] Backend error fetching employees:", { status: response.status });
             return NextResponse.json(
                 { error: response.data?.message || "Failed to fetch employees" },
                 { status: response.status }
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
 
         // Check if backend returned an error status
         if (response.status >= 400) {
-            console.error("[API] Backend error creating employee:", response.data);
+            console.error("[API] Backend error creating employee:", { status: response.status });
             // Pass through the backend response as-is for consistent error structure
             return NextResponse.json(response.data, { status: response.status });
         }
@@ -102,7 +102,7 @@ export async function PATCH(request: NextRequest) {
 
         // Check if backend returned an error status
         if (response.status >= 400) {
-            console.error("[API] Backend error updating employee:", response.data);
+            console.error("[API] Backend error updating employee:", { status: response.status });
             return NextResponse.json(response.data, { status: response.status });
         }
 
@@ -141,7 +141,7 @@ export async function DELETE(request: NextRequest) {
 
         // Check if backend returned an error status
         if (response.status >= 400) {
-            console.error("[API] Backend error deleting employee:", response.data);
+            console.error("[API] Backend error deleting employee:", { status: response.status });
             return NextResponse.json(
                 { error: response.data?.message || "Failed to delete employee" },
                 { status: response.status }

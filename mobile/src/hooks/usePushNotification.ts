@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
@@ -269,7 +270,7 @@ export function usePushNotification() {
                     isLoading: false,
                 }));
             } catch (err) {
-                console.error('[Push] Failed to check subscription:', err);
+                console.error('[Push] Failed to check subscription:', summarizeErrorForLog(err));
                 if (!active) return;
                 setState((prev) => ({
                     ...prev,
@@ -299,7 +300,7 @@ export function usePushNotification() {
             console.log('[Push] Service Worker registered:', registration.scope);
             return registration;
         } catch (err) {
-            console.error('[Push] Service Worker registration failed:', err);
+            console.error('[Push] Service Worker registration failed:', summarizeErrorForLog(err));
             throw err;
         }
     }, [state.isSupported]);
@@ -351,7 +352,7 @@ export function usePushNotification() {
             console.log('[Push] Successfully subscribed');
             return true;
         } catch (err) {
-            console.error('[Push] Subscription failed:', err);
+            console.error('[Push] Subscription failed:', summarizeErrorForLog(err));
             setState((prev) => ({
                 ...prev,
                 isLoading: false,
@@ -391,7 +392,7 @@ export function usePushNotification() {
             console.log('[Push] Successfully unsubscribed');
             return true;
         } catch (err) {
-            console.error('[Push] Unsubscription failed:', err);
+            console.error('[Push] Unsubscription failed:', summarizeErrorForLog(err));
             setState((prev) => ({
                 ...prev,
                 isLoading: false,

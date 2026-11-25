@@ -4,6 +4,11 @@ import { cookies } from "next/headers";
 import { AxiosError } from "axios";
 import { jwtDecode } from "jwt-decode";
 
+import {
+    clearPendingOnboarding,
+    replacePendingAccountOnboarding,
+    replacePendingKakaoSignup,
+} from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -11,7 +16,7 @@ import {
     decodeAccessBranchId,
     getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 interface TokenPayload {
     sub: string;
@@ -41,8 +46,6 @@ interface TokenExchangeOnboardingResponse {
 
 type TokenExchangeResponse = TokenExchangeSuccessResponse | TokenExchangeOnboardingResponse;
 
-const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
-const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
 
 // Locally authored failure copy — upstream body messages and Error.message
 // internals are never forwarded to the client flow.
@@ -106,18 +109,8 @@ export async function exchangeToken(code: string): Promise<{
                 return { success: false, error: "온보딩 세션을 시작하지 못했습니다." };
             }
 
-            cookieStore.set(
-                isKakaoSignup ? PENDING_KAKAO_SIGNUP_COOKIE : PENDING_ACCOUNT_ONBOARDING_COOKIE,
-                pendingToken,
-                {
-                    httpOnly: true,
-                    secure: isSecureCookie,
-                    sameSite: "lax",
-                    path: "/",
-                    maxAge: 30 * 60,
-                },
-            );
-            cookieStore.delete(isKakaoSignup ? PENDING_ACCOUNT_ONBOARDING_COOKIE : PENDING_KAKAO_SIGNUP_COOKIE);
+            const replacePending = isKakaoSignup ? replacePendingKakaoSignup : replacePendingAccountOnboarding;
+            replacePending(cookieStore, pendingToken, { secure: isSecureCookie });
             cookieStore.delete("auth_token");
             cookieStore.delete("refresh_token");
             cookieStore.delete("auto_login");
@@ -186,6 +179,8 @@ export async function exchangeToken(code: string): Promise<{
             cookieStore.delete("selected_branch_id");
         }
 
+        clearPendingOnboarding(cookieStore);
+
         console.log("[Server Action] Token exchange successful");
         console.log("[Server Action] requiresBranchSelection:", requiresBranchSelection);
 
@@ -194,7 +189,7 @@ export async function exchangeToken(code: string): Promise<{
             requiresBranchSelection,
         };
     } catch (error) {
-        console.error("[Server Action] Token Exchange Error:", error);
+        console.error("[Server Action] Token Exchange Error:", summarizeErrorForLog(error));
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;

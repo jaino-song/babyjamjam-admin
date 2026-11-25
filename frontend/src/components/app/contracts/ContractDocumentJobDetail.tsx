@@ -8,15 +8,19 @@ import { Card } from "@/components/ui/card";
 import { documentJobOperationLabel, documentJobStatus } from "@/features/document-jobs/job-display";
 import { describeJobFailureDetail } from "@/features/document-jobs/failure-popup-copy";
 import { recoverJobHref } from '@/features/document-jobs/failure-popup-copy';
+import { SERVICE_RECORD_RECOVERY_COPY, serviceRecordMayExist } from "@/features/document-jobs/service-record-recovery-copy";
 
 import type { ContractDocumentJob } from "./ContractDocumentJobsPopover";
 import { DocumentJobProgressSummary } from "./DocumentJobProgressSummary";
 
 export type DocumentJobCancelHandler = (jobId: string, trigger: HTMLButtonElement, onCancelled?: () => void) => void;
 
+export type DocumentJobRetryHandler = (jobId: string, trigger: HTMLButtonElement, onRetried?: () => void) => void;
+
 interface ContractDocumentJobDetailProps {
   job: ContractDocumentJob;
   onDocumentNavigate?: () => void;
+  onRetryJob?: DocumentJobRetryHandler;
   onCancel?: DocumentJobCancelHandler;
   onCancelled?: () => void;
   onRecover?: (jobId: string, trigger: HTMLButtonElement) => void;
@@ -37,7 +41,7 @@ function formatTime(value?: string | null): string {
   return `${part("year")}.${part("month")}.${part("day")} ${part("hour")}:${part("minute")}`;
 }
 
-export function ContractDocumentJobDetail({ job, onDocumentNavigate, onRecover, onCancel, onCancelled, "data-component": base }: ContractDocumentJobDetailProps): React.ReactElement {
+export function ContractDocumentJobDetail({ job, onDocumentNavigate, onRecover, onCancel, onRetryJob, onCancelled, "data-component": base }: ContractDocumentJobDetailProps): React.ReactElement {
   const sub = (suffix: string) => base ? `${base}_${suffix}` : undefined;
   const failure = describeJobFailureDetail(job);
   const rows = [
@@ -56,10 +60,18 @@ export function ContractDocumentJobDetail({ job, onDocumentNavigate, onRecover, 
             onClick={event => onRecover(job.jobId, event.currentTarget)}>{failure.actionLabel}</Button>
         : <Button asChild className="w-full" data-component={sub("progress_action_button")} data-slot="job-failure-action">
             <Link href={recoverJobHref(job.jobId)} onClick={onDocumentNavigate}>{failure.actionLabel}</Link>
-          </Button>) : null} secondaryAction={job.cancellable === true ? (
+          </Button>) : null} retryAction={job.retryable === true ? (
+        <Button type="button" variant="outline" className="w-full" data-component={sub("progress_retry_button")} data-slot="job-retry-action"
+          onClick={event => onRetryJob?.(job.jobId, event.currentTarget, onCancelled)}>재시도</Button>
+      ) : null} secondaryAction={job.cancellable === true ? (
         <Button type="button" variant="outline" className="w-full" data-component={sub("progress_cancel_button")} data-slot="job-cancel-action"
           onClick={event => onCancel?.(job.jobId, event.currentTarget, onCancelled)}>취소</Button>
       ) : null} />
+      {job.documentKind === "service_record" && serviceRecordMayExist(job) ? (
+        <p data-component={sub("dispatch-warning")} data-slot="job-dispatch-warning" className="text-sm text-v3-text-muted">
+          {SERVICE_RECORD_RECOVERY_COPY.afterDispatch}
+        </p>
+      ) : null}
       <Card data-component={sub("info")} data-slot="job-info-card" className="rounded-[18px] border-0 bg-v3-dim-white p-4 shadow-none">
         <h3 data-component={sub("info_title")} data-slot="job-info-title" className="mb-2 text-xs font-semibold leading-[18px] text-v3-text-muted">작업 정보</h3>
         {rows.map(([key, label, value]) => (

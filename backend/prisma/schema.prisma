@@ -1093,6 +1093,25 @@ model auth_flow_state {
   @@index([kind, expiresAt], map: "idx_auth_flow_state_kind_expires_at")
 }
 
+model auth_phone_challenge {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  purpose      String    @db.VarChar(32)
+  tokenHash    String    @unique @map("token_hash")
+  phone        String    @db.VarChar(20)
+  codeHash     String?   @map("code_hash")
+  attemptCount Int       @default(0) @map("attempt_count")
+  userId       String?   @map("user_id") @db.Uuid
+  kakaoId      String?   @map("kakao_id") @db.VarChar
+  email        String?   @db.VarChar
+  passwordHash String?   @map("password_hash") @db.VarChar
+  name         String?   @db.VarChar
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@index([phone, createdAt])
+}
+
 /// Database note: partial index `idx_message_log_carrier_check_due` on
 /// (carrier_check_due_at) WHERE carrier_check_due_at IS NOT NULL exists in the
 /// database but cannot be expressed in Prisma (created via migration SQL).

@@ -357,6 +357,29 @@ describe("admin gateway proxy", () => {
     fetchMock.mockRestore();
   });
 
+  it.each([
+    ["/onboarding", "pending_kakao_signup"],
+    ["/kakao/onboarding", "pending_account_onboarding"],
+  ])("rejects %s with only the other pending cookie %s", async (path, cookie) => {
+    const response = await proxy(new NextRequest(`http://localhost${path}`, { headers: { cookie: `${cookie}=pending` } }));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/login");
+  });
+
+  it("allows pending Kakao onboarding with only its pending cookie", async () => {
+    const response = await proxy(new NextRequest("http://localhost/kakao/onboarding", {
+      headers: { cookie: "pending_kakao_signup=pending-token" },
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("protects Kakao onboarding without its pending cookie", async () => {
+    const response = await proxy(new NextRequest("http://localhost/kakao/onboarding"));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/login");
+  });
+
   it("allows pending account onboarding navigation without an auth session", async () => {
     const response = await proxy(new NextRequest("http://localhost/onboarding", {
       method: "GET",

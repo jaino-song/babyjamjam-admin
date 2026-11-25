@@ -10,7 +10,7 @@ import {
   decodeAccessRole,
   getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { prioritizeRecentBranch } from "./branch-order";
 
@@ -63,7 +63,7 @@ export async function getUserBranches(): Promise<{
       branches: prioritizeRecentBranch(data.branches ?? [], recentBranchId),
     };
   } catch (error) {
-    console.error("[Server Action] Error fetching branches:", error);
+    console.error("[Server Action] Error fetching branches:", summarizeErrorForLog(error));
 
     if (error instanceof AxiosError) {
       const axiosError = error as AxiosError<APIErrorResponse>;
@@ -145,7 +145,7 @@ export async function setCurrentBranch(branchId: string): Promise<{
 
     return { success: true };
   } catch (error) {
-    console.error("[Server Action] Error setting current branch:", error);
+    console.error("[Server Action] Error setting current branch:", summarizeErrorForLog(error));
 
     if (error instanceof AxiosError) {
       const axiosError = error as AxiosError<APIErrorResponse>;

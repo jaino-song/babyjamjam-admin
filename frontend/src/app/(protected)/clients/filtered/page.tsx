@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { X } from "lucide-react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
 import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { useFilteredClients, useDeleteClient } from "@/hooks/useClients";
@@ -128,7 +128,7 @@ export default function FilteredClientsPage() {
             setDetailModalOpen(false);
             setDeleteTargetClientId(null);
         } catch (err) {
-            console.error("Failed to delete client:", err);
+            console.error("Failed to delete client:", summarizeErrorForLog(err));
             setDeleteTargetClientId(null);
             // Registered problem message (verified) or locally authored copy —
             // upstream body messages are never rendered.

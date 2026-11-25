@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { documentJobRecoveryPresentation, type DocumentJobRecoveryMetadata } from "@/features/document-jobs/recovery-presentation";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
+import { SERVICE_RECORD_RECOVERY_COPY } from "@/features/document-jobs/service-record-recovery-copy";
 import { useToast } from "@/hooks/use-toast";
 import {
   eformsignApi,
@@ -219,7 +220,7 @@ function RoutedDocumentJobRecoveryDialog(props: RoutedDocumentJobRecoveryDialogP
       >
         {pending
           ? <LoadingState label="작업 불러오는 중" data-component={`${base}_loading`} className="min-h-24" size="sm" />
-          : <p data-component={`${base}_failure`} className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">{unavailable ? COPY.unavailable : COPY.gone}</p>}
+          : <p data-component={`${base}_failure`} className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">{job?.documentKind === "service_record" ? SERVICE_RECORD_RECOVERY_COPY.recoveryUnsupported : unavailable ? COPY.unavailable : COPY.gone}</p>}
       </FormDialogShell>
     </Dialog>
   );

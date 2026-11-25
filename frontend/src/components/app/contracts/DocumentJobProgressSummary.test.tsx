@@ -132,3 +132,11 @@ test.each([true, false])("renders cancellation after the primary action, includi
   expect(cancel).toHaveTextContent("취소");
   expect(cancel.previousElementSibling).toHaveAttribute("data-slot", hasAction ? "progress-action" : "progress-hero");
 });
+
+it("renders the retry slot between the manual and cancel actions", () => {
+  const { container } = render(<DocumentJobProgressSummary job={JOB} data-component={BASE}
+    action={<span>수동 전송</span>} retryAction={<span>재시도</span>} secondaryAction={<span>취소</span>} />);
+  const actions = container.querySelectorAll('[data-slot="progress-action"], [data-slot="progress-retry"], [data-slot="progress-cancel"]');
+  expect(Array.from(actions).map(element => element.textContent)).toEqual(["수동 전송", "재시도", "취소"]);
+  expect(actions[1]).toHaveAttribute("data-component", `${BASE}_retry`);
+});

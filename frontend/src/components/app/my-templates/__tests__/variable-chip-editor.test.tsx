@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import {
     VariableChipEditor,
@@ -12,6 +12,29 @@ import {
 const VARIABLES = [
     { key: "name", label: "이름", type: "text" as const, required: true },
 ];
+
+const originalRangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+const originalRangeBounds = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+
+beforeAll(() => {
+    // jsdom has selection ranges but no layout geometry. Tiptap requests these
+    // only to scroll the focused selection; layout is checked in a real browser.
+    Object.defineProperty(Range.prototype, "getClientRects", { configurable: true, value: () => [] });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+        configurable: true,
+        value: () => document.createElement("span").getBoundingClientRect(),
+    });
+});
+
+afterAll(() => {
+    for (const [name, descriptor] of [
+        ["getClientRects", originalRangeRects],
+        ["getBoundingClientRect", originalRangeBounds],
+    ] as const) {
+        if (descriptor) Object.defineProperty(Range.prototype, name, descriptor);
+        else Reflect.deleteProperty(Range.prototype, name);
+    }
+});
 
 /** Waits for the ProseMirror contenteditable element to be mounted (useEditor with immediatelyRender: false creates it post-mount). */
 async function getEditableElement(container: HTMLElement) {
@@ -63,6 +86,12 @@ describe("VariableChipEditor", () => {
         });
         const lastValue = handleChange.mock.calls.at(-1)?.[0] as string;
         expect(lastValue).toContain("{{name}}");
+
+        // Keep the editor mounted until Tiptap's delayed focus has run.
+        await act(async () => {
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        });
+        expect(container.querySelector('[contenteditable="true"]')).toBeInTheDocument();
     });
 
     it("converts pasted plain text containing {{key}} into a chip via the real paste handler", async () => {

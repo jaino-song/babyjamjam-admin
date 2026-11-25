@@ -291,6 +291,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  if (
+    (pathname === "/onboarding" && request.cookies.get("pending_account_onboarding")?.value)
+    || (pathname === "/kakao/onboarding" && request.cookies.get("pending_kakao_signup")?.value)
+  ) return NextResponse.next();
+
   const isLocalLoginNavigation = !isApiRoute(pathname)
     && (
       pathname === "/"

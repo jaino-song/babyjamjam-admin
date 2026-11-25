@@ -17,6 +17,9 @@ import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 describe("AdminServiceRecordService", () => {
     const createPrisma = () => ({
+        $transaction: jest.fn(async (run: (tx: { $queryRaw: jest.Mock }) => Promise<unknown>) => run({
+            $queryRaw: jest.fn().mockResolvedValue([{ id: "case-1", status: "failed", version: 3 }]),
+        })),
         client: {
             findFirst: jest.fn(),
         },
@@ -1450,7 +1453,7 @@ describe("AdminServiceRecordService", () => {
                 findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue({
                     generation: "current-generation",
                 }),
-                retryRevisionDocumentState: jest.fn(),
+                retryRevisionDocumentStateInTransaction: jest.fn(),
             };
             const service = buildService(prisma, editRepository);
 
@@ -1459,14 +1462,14 @@ describe("AdminServiceRecordService", () => {
                 409,
                 "SERVICE_RECORD_WRITE_TARGET_CHANGED",
             );
-            expect(editRepository.retryRevisionDocumentState).not.toHaveBeenCalled();
+            expect(editRepository.retryRevisionDocumentStateInTransaction).not.toHaveBeenCalled();
         });
 
         it("maps an invalid retry generation to a registered conflict body", async () => {
             const prisma = createPrisma();
             const editRepository = {
                 findRevisionDocumentStateForBranch: jest.fn(),
-                retryRevisionDocumentState: jest.fn(),
+                retryRevisionDocumentStateInTransaction: jest.fn(),
             };
             const service = buildService(prisma, editRepository);
 
@@ -1484,7 +1487,7 @@ describe("AdminServiceRecordService", () => {
                 findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue({
                     generation: "current-generation",
                 }),
-                retryRevisionDocumentState: jest.fn().mockResolvedValue(null),
+                retryRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue(null),
             };
             const service = buildService(prisma, editRepository);
 
@@ -1499,7 +1502,7 @@ describe("AdminServiceRecordService", () => {
             const prisma = createPrisma();
             const editRepository = {
                 findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(null),
-                retryRevisionDocumentState: jest.fn(),
+                retryRevisionDocumentStateInTransaction: jest.fn(),
             };
             const service = buildService(prisma, editRepository);
 
@@ -1508,7 +1511,7 @@ describe("AdminServiceRecordService", () => {
                 404,
                 "RESOURCE_NOT_FOUND",
             );
-            expect(editRepository.retryRevisionDocumentState).not.toHaveBeenCalled();
+            expect(editRepository.retryRevisionDocumentStateInTransaction).not.toHaveBeenCalled();
         });
 
         it("keeps ConflictException as the rejection type for revision conflicts", async () => {
@@ -1517,7 +1520,7 @@ describe("AdminServiceRecordService", () => {
                 findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue({
                     generation: "current-generation",
                 }),
-                retryRevisionDocumentState: jest.fn().mockResolvedValue(null),
+                retryRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue(null),
             };
             const service = buildService(prisma, editRepository);
 

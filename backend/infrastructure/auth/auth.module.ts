@@ -18,10 +18,15 @@ import { AuthEmailTokenService } from "../../application/services/auth-email-tok
 import { AuthEmailOutboxService } from "../../application/services/auth-email-outbox.service";
 import { SmtpEmailAdapter } from "../adapters/smtp-email.adapter";
 import { KakaoAuthGuard } from "./kakao-auth.guard";
+import { AligoModule } from "../../module/aligo.module";
+import { AuthPhoneChallengeService } from "../../application/services/auth-phone-challenge.service";
+import { AUTH_PHONE_CHALLENGE_REPOSITORY } from "../../domain/repositories/auth-phone-challenge.repository.interface";
+import { SbAuthPhoneChallengeRepository } from "../database/repositories/sb.auth-phone-challenge.repository";
 
 @Module({
     imports: [
         DatabaseModule,
+        AligoModule,
         PassportModule,
         JwtModule.register({
             secret: getJwtSecret(),
@@ -34,6 +39,7 @@ import { KakaoAuthGuard } from "./kakao-auth.guard";
         AuthSessionService,
         AuthEmailTokenService,
         AuthEmailOutboxService,
+        AuthPhoneChallengeService,
         KakaoStrategy,
         KakaoAuthGuard,
         LocalStrategy,
@@ -46,10 +52,14 @@ import { KakaoAuthGuard } from "./kakao-auth.guard";
                 : new ResendEmailAdapter(),
         },
         {
+            provide: AUTH_PHONE_CHALLENGE_REPOSITORY,
+            useClass: SbAuthPhoneChallengeRepository,
+        },
+        {
             provide: AUTH_TOKEN_REPOSITORY,
             useClass: SbAuthTokenRepository,
         },
     ],
-    exports: [AuthService, AuthSessionService, RateLimitGuard, EMAIL_PORT],
+    exports: [AuthPhoneChallengeService, AuthService, AuthSessionService, RateLimitGuard, EMAIL_PORT],
 })
 export class AuthModule { }

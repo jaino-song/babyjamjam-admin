@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { resendVerificationEmail } from "@/features/auth/shared/auth-api";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
@@ -140,7 +140,7 @@ export function useLoginPageController() {
         setEmailVerificationRequired(true);
       }
     } catch (error) {
-      console.error("Login error:", error);
+      console.error("Login error:", summarizeErrorForLog(error));
       // Shared problem contract resolution — upstream internals are never
       // rendered; the normalized message is already safe copy.
       setServerError(normalizeApiError(error, { locale: "ko-KR", operation: "mutation" }).message);

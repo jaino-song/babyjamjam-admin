@@ -34,7 +34,7 @@ import type {
     MessageSenderApprovalResponse,
     MessageSenderApprovalStatus,
 } from "@babyjamjam/shared/types/message";
-import type { RegisterRequest } from "@babyjamjam/shared";
+import { ACCOUNT_LINK_VERSION, ACCOUNT_LINK_VERSION_HEADER, type RegisterRequest } from "@babyjamjam/shared";
 import { isAxiosError } from "axios";
 
 export interface EformsignLinkConfirmation {
@@ -259,6 +259,9 @@ function buildDocumentListParams(
 }
 
 export interface AuthResponse {
+    linkVerificationRequired?: boolean;
+    linkChallengeToken?: string;
+    emailVerificationRequired?: boolean;
     success: boolean;
     message?: string;
     code?: string;
@@ -286,7 +289,14 @@ export const authApi = {
 
     // Email authentication
     register: async (params: RegisterRequest): Promise<AuthResponse> => {
-        const { data } = await api.post('/auth/register', params);
+        const { data } = await api.post('/auth/register', params, {
+            headers: { [ACCOUNT_LINK_VERSION_HEADER]: ACCOUNT_LINK_VERSION },
+        });
+        return data;
+    },
+
+    verifyRegisterLink: async (challengeToken: string, code: string): Promise<AuthResponse & { emailVerificationRequired?: boolean; linked?: boolean }> => {
+        const { data } = await api.post('/auth/register/link/verify', { challengeToken, code });
         return data;
     },
 
@@ -295,13 +305,12 @@ export const authApi = {
         return data;
     },
 
-    checkEmailExists: async (email: string): Promise<{ exists: boolean; linkable: boolean }> => {
+    checkEmailExists: async (email: string): Promise<{ exists: boolean }> => {
         const { data } = await api.get('/auth/check-email', {
             params: { email },
         });
         return {
             exists: data?.exists === true,
-            linkable: data?.linkable === true,
         };
     },
 

@@ -1,5 +1,11 @@
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import {
+    clearPendingOnboarding,
+    replacePendingAccountOnboarding,
+    replacePendingKakaoSignup,
+} from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import {
@@ -43,8 +49,6 @@ type TokenExchangeResponse =
 
 const isProduction = process.env.NODE_ENV === "production";
 const isSecureCookie = isProduction || process.env.VERCEL_ENV === "preview";
-const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
-const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
 
 function isPendingSignupResponse(data: TokenExchangeResponse): data is TokenExchangePendingSignupResponse {
     return "onboardingRequired" in data && data.onboardingRequired === true && data.onboardingRoute === "/kakao/onboarding";
@@ -75,30 +79,20 @@ export async function POST(request: NextRequest) {
         const cookieStore = await cookies();
 
         if (isPendingSignupResponse(data)) {
-            cookieStore.set(PENDING_KAKAO_SIGNUP_COOKIE, data.pendingSignupToken, {
-                httpOnly: true,
+            replacePendingKakaoSignup(cookieStore, data.pendingSignupToken, {
                 secure: isSecureCookie,
                 sameSite: isSecureCookie ? "none" : "lax",
-                path: "/",
-                maxAge: 30 * 60,
             });
-
-            cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
             clearAuthSessionCookies(cookieStore);
 
             return NextResponse.json({ onboardingRequired: true, onboardingRoute: data.onboardingRoute }, { status: 200 });
         }
 
         if (isAccountOnboardingResponse(data)) {
-            cookieStore.set(PENDING_ACCOUNT_ONBOARDING_COOKIE, data.pendingAccountOnboardingToken, {
-                httpOnly: true,
+            replacePendingAccountOnboarding(cookieStore, data.pendingAccountOnboardingToken, {
                 secure: isSecureCookie,
                 sameSite: isSecureCookie ? "none" : "lax",
-                path: "/",
-                maxAge: 30 * 60,
             });
-
-            cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
             clearAuthSessionCookies(cookieStore);
 
             return NextResponse.json({ onboardingRequired: true, onboardingRoute: data.onboardingRoute }, { status: 200 });
@@ -109,15 +103,14 @@ export async function POST(request: NextRequest) {
             refreshToken: data.refreshToken,
         });
 
-        cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
-        cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
+        clearPendingOnboarding(cookieStore);
 
         return NextResponse.json({
             message: "Success",
             requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
         }, { status: 200 });
     } catch (error) {
-        console.error("Token Exchange Error:", error);
+        console.error("Token Exchange Error:", summarizeErrorForLog(error));
         console.error("Backend URL:", serverAPIClient.defaults?.baseURL);
         console.error("Environment:", process.env.NODE_ENV);
 

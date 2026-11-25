@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Check } from "lucide-react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { LoadingState } from "@/components/app/ui/LoadingState";
 import { ButtonLoadingContent } from "@/components/ui/button";
@@ -69,7 +69,7 @@ export default function SelectBranchPage() {
       window.location.replace("/dashboard");
       return true;
     } catch (err) {
-      console.error("[Select Branch] Error selecting branch:", err);
+      console.error("[Select Branch] Error selecting branch:", summarizeErrorForLog(err));
       // Shared problem contract resolution — upstream internals are never
       // rendered; the normalized message is already safe copy.
       setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);
@@ -100,7 +100,7 @@ export default function SelectBranchPage() {
         setBranches(fetched);
         setSelectedId((current) => current ?? fetched[0]?.id ?? null);
       } catch (err) {
-        console.error("[Select Branch] Error fetching branches:", err);
+        console.error("[Select Branch] Error fetching branches:", summarizeErrorForLog(err));
         // Shared problem contract resolution — upstream internals are never
         // rendered; the normalized message is already safe copy.
         setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);
@@ -132,7 +132,7 @@ export default function SelectBranchPage() {
       }
       window.location.replace("/login");
     } catch (err) {
-      console.error("[Select Branch] Error logging out:", err);
+      console.error("[Select Branch] Error logging out:", summarizeErrorForLog(err));
       // Shared problem contract resolution — upstream internals are never
       // rendered; the normalized message is already safe copy.
       setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);

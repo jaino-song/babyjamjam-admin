@@ -1,3 +1,7 @@
+import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { isInitialFinalizationJobIdentity } from "application/policies/service-record-initial-finalization.policy";
+import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
+import { initialFinalizationJobSql, initialFinalizationRetryCandidateSql } from "./service-record-initial-recovery-sql";
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { Prisma, PrismaClient } from "@prisma/client";
@@ -51,6 +55,17 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     let db: PrismaClient, a: PrismaClient, b: PrismaClient;
     let branches: string[], users: string[], clients: number[], documents: string[], jobs: AuthorityReservation[], employees: number[];
     let beforeCounts: unknown;
+    // Match test/integrity/helpers/tracker.ts: append-only revisions pin their case
+    // and branch until the owned runner drops its throwaway cluster. Keep exact IDs
+    // across tests so counts exclude only these fixtures, never an entire table.
+    const retained = { branches: new Set<string>(), cases: new Set<string>(), revisions: new Set<string>() };
+    function retainRevision(revision: { id: string; branchId: string; serviceRecordCaseId: string }) {
+        retained.revisions.add(revision.id);
+        retained.cases.add(revision.serviceRecordCaseId);
+        retained.branches.add(revision.branchId);
+    }
+    const excludingRetained = (ids: Set<string>) => ids.size
+        ? Prisma.sql`WHERE id::text NOT IN (${Prisma.join([...ids])})` : Prisma.empty;
     const transaction = <T>(connection: PrismaClient, callback: (tx: Prisma.TransactionClient) => Promise<T>) =>
         connection.$transaction(async (tx) => {
             await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
@@ -58,11 +73,14 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             return callback(tx);
         }, { maxWait: 5000, timeout: 15000 });
     const counts = () => db.$queryRaw`SELECT jsonb_build_object(
-        'branches',(SELECT count(*) FROM branch),'users',(SELECT count(*) FROM "user"),
+        'branches',(SELECT count(*) FROM branch ${excludingRetained(retained.branches)}),'users',(SELECT count(*) FROM "user"),
         'clients',(SELECT count(*) FROM client),'documents',(SELECT count(*) FROM eformsign_doc),
         'jobs',(SELECT count(*) FROM eformsign_document_job),'intents',(SELECT count(*) FROM eformsign_dispatch_intent),
         'employees',(SELECT count(*) FROM employee),'schedules',(SELECT count(*) FROM employee_schedule),
-        'authorities',(SELECT count(*) FROM eformsign_contract_authority)) AS counts`;
+        'authorities',(SELECT count(*) FROM eformsign_contract_authority),
+        'cases',(SELECT count(*) FROM service_record_case ${excludingRetained(retained.cases)}),
+        'revisions',(SELECT count(*) FROM service_record_revision ${excludingRetained(retained.revisions)}),
+        'revisionDocumentStates',(SELECT count(*) FROM service_record_revision_document_state)) AS counts`;
     const read = (client = clients[0]!, branch = branches[0]!) => transaction(db, (tx) => lockAuthorityScope(tx, branch, [client]));
     const reserve = (job = jobs[0]!) => transaction(db, (tx) => reserveAuthority(tx, job));
     const expected = (state: AuthorityState): AuthorityExpected => ({ branchId: state.branchId, clientId: state.clientId,
@@ -166,7 +184,8 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         }
     });
     afterEach(async () => {
-        // Transactions really commit; remove every fixture explicitly in FK order, including partial setup.
+        // Transactions really commit; remove mutable fixtures in FK order, including
+        // partial setup. Revisions and only their pinned parents survive cluster-wide.
         try {
             await db.eformsign_contract_authority.deleteMany({ where: { branchId: { in: branches } } });
             await db.eformsign_document_job.deleteMany({ where: { branchId: { in: branches } } });
@@ -174,10 +193,12 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             await db.client.updateMany({ where: { branchId: { in: branches } }, data: { eDocId: null } });
             await db.eformsign_doc.deleteMany({ where: { documentId: { in: documents } } });
             await db.employee_schedule.deleteMany({ where: { branchId: { in: branches } } });
+            await db.service_record_revision_document_state.deleteMany({ where: { branchId: { in: branches } } });
+            await db.service_record_case.deleteMany({ where: { branchId: { in: branches }, id: { notIn: [...retained.cases] } } });
             await db.client.deleteMany({ where: { branchId: { in: branches } } });
             await db.employee.deleteMany({ where: { id: { in: employees } } });
             await db.user.deleteMany({ where: { id: { in: users } } });
-            await db.branch.deleteMany({ where: { id: { in: branches } } });
+            await db.branch.deleteMany({ where: { id: { in: branches, notIn: [...retained.branches] } } });
             expect(await counts()).toEqual(beforeCounts);
         } finally { await Promise.all([a.$disconnect(), b.$disconnect()]); }
     });
@@ -649,6 +670,300 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         });
     });
 
+    async function snapshot() {
+        const where = { branchId: branches[0]! };
+        return {
+            jobs: await db.eformsign_document_job.findMany({ where, orderBy: { id: "asc" } }),
+            authorities: await db.eformsign_contract_authority.findMany({ where, orderBy: { clientId: "asc" } }),
+            intents: await db.eformsign_dispatch_intent.findMany({ where, orderBy: { id: "asc" } }),
+            clients: await db.client.findMany({ where, orderBy: { id: "asc" } }),
+        };
+    }
+
+    describe("RETRY locked non-delivery proof and display projection", () => {
+        async function projected(s: Awaited<ReturnType<typeof runtime>>) {
+            const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0));
+            return [...list.active, ...list.requiresAttention, ...list.recent].find(job => job.id === s.worker.jobId)?.retryable ?? false;
+        }
+        async function uncertainRuntime() {
+            const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+            await s.recovery.markAutomaticUncertain(s.worker);
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "requires_attention", leaseToken: null,
+                progressStep: "processing", progressDetail: "info-inserted", completedAt: new Date() } });
+            return { s, claimed };
+        }
+        async function reconciledRuntime() {
+            const { s, claimed } = await uncertainRuntime();
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId: claimed.intent.id,
+                branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Synthetic provider confirms no delivery", attemptCount: claimed.intent.attemptCount });
+            return s;
+        }
+        it.each(["reconciled", "pre-send"])("retries %s into exactly one new queued generation and never retries the old job twice", async scenario => {
+            const s = scenario === "reconciled" ? await reconciledRuntime() : await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            const before = await snapshot();
+            const result = await s.jobRepository.retry(cancelInput(s));
+            expect(result).toMatchObject({ kind: "retried", status: "queued" });
+            if (result.kind !== "retried") throw new Error("Expected new job");
+            const after = await snapshot(), next = after.jobs.find(job => job.id === result.jobId)!;
+            expect(after.jobs).toHaveLength(before.jobs.length + 1);
+            expect(after.jobs.filter(job => !before.jobs.some(previous => previous.id === job.id))).toEqual([next]);
+            expect(next.status).toBe("queued");
+            expect(after.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "failed", progressStep: "superseded" });
+            expect(after.authorities[0]).toMatchObject({ creationJobId: next.id, generation: next.contractGeneration, phase: "reserved" });
+            expect(next).toMatchObject({ status: "queued", attempts: 0, createdByUserId: users[0], activeKey: `create:${branches[0]}:${clients[0]}` });
+            expect(next.requestKey).not.toBe(s.enqueue.requestKey);
+            expect(next.payload).toEqual({ clientId: clients[0], contractData: data });
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(after);
+            await db.eformsign_document_job.update({ where: { id: next.id }, data: { status: "completed", completedAt: new Date(), activeKey: null } });
+            const completed = await snapshot();
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(completed);
+        });
+
+        it.each(["processing", "creating", "sent"])("retries a reconciled creation job with the %s marker holding the production active key and never retries it twice", async marker => {
+            const s = await reconciledRuntime(), activeKey = `create:${branches[0]}:${clients[0]}`;
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: {
+                activeKey, progressStep: marker, progressDetail: marker === "processing" ? "info-inserted" : marker,
+            } });
+            expect(await projected(s)).toBe(true);
+            if (marker !== "processing") expect(await projectedCancellation(s)).toBe(false);
+            const before = await snapshot();
+            expect(before.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "requires_attention", leaseToken: null, activeKey });
+            const result = await s.jobRepository.retry(cancelInput(s));
+            expect(result).toMatchObject({ kind: "retried", status: "queued" });
+            if (result.kind !== "retried") throw new Error("Expected new job");
+            const after = await snapshot(), next = after.jobs.find(job => job.id === result.jobId)!;
+            expect(after.jobs).toHaveLength(before.jobs.length + 1);
+            expect(after.jobs.filter(job => !before.jobs.some(previous => previous.id === job.id))).toEqual([next]);
+            expect(next).toMatchObject({ status: "queued", activeKey });
+            expect(after.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "failed", progressStep: "superseded", activeKey: null });
+            expect(after.authorities[0]).toMatchObject({ creationJobId: next.id, generation: next.contractGeneration, phase: "reserved" });
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(after);
+        });
+
+        it.each(["processing", "creating", "sent"])("refuses an uncertain creation job with the %s marker holding the production active key with every row unchanged", async marker => {
+            const { s, claimed } = await uncertainRuntime(), activeKey = `create:${branches[0]}:${clients[0]}`;
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: {
+                activeKey, progressStep: marker, progressDetail: marker === "processing" ? "info-inserted" : marker,
+            } });
+            const before = await snapshot();
+            expect(before.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "requires_attention", leaseToken: null, activeKey });
+            expect(before.intents.find(intent => intent.id === claimed.intent.id)).toMatchObject({ status: "uncertain", reconciledOutcome: null });
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(before);
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ activeKey });
+        });
+
+        async function expectRetryRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>) {
+            const before = await snapshot();
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(before);
+        }
+
+        it("refuses pre-send exhaustion with an unlinked human intent", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "manual_process",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-human:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0,
+            } });
+            expect((await read())[0]!.humanIntentId).toBeNull();
+            await expectRetryRefusedWithoutWrites(s);
+        });
+
+        it("refuses pre-send exhaustion with an unlinked unreleased draft intent", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create_draft",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0, startedAt: null,
+            } });
+            expect((await read())[0]!.draftIntentId).toBeNull();
+            await expectRetryRefusedWithoutWrites(s);
+        });
+
+        it.each(["create", "create_draft"])("refuses pre-send exhaustion with an uncertain %s intent for the customer", async action => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-uncertain-${randomUUID()}`),
+                status: "uncertain", attemptCount: 1, startedAt: new Date(),
+            } });
+            await expectRetryRefusedWithoutWrites(s);
+        });
+
+        it.each([
+            ["create", "\t"], ["create", "\u00a0"], ["create_draft", "\t"], ["create_draft", "\u00a0"],
+        ])("refuses pre-send exhaustion with an accepted %s receipt %j that trims to blank", async (action, receipt) => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            // The storage CHECK trims spaces only; these receipts reach the strict proof.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-blank-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: receipt,
+            } });
+            await expectRetryRefusedWithoutWrites(s);
+        });
+
+        it.each(["legacy", "started", "uncertain", "manual-claim", "expired-manual-claim", "payload-cleared", "serialized-payload", "missing-contract-data", "client-mismatch",
+            "cancelled", "manual-resolved", "leased", "document", "live-authority-claim", "missing-authority", "closed-authority", "auto-finalize", "finalize", "service-record", "processing"])("refuses %s with false projection and every row unchanged", async defect => {
+            const s = await exhaustedRuntime();
+            const where = { id: s.worker.jobId }, scope = { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } };
+            if (defect === "legacy" || defect === "missing-authority") {
+                await db.eformsign_contract_authority.delete({ where: scope });
+                if (defect === "legacy") await db.eformsign_document_job.update({ where, data: { contractGeneration: null } });
+            }
+            if (defect === "started" || defect === "uncertain") await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, businessKey: digest(`retry-${randomUUID()}`), generation: "synthetic",
+                fingerprint: "a".repeat(64), action: "create", status: defect, attemptCount: 1, startedAt: new Date() } });
+            if (defect === "manual-claim" || defect === "expired-manual-claim") await db.eformsign_document_job.update({ where, data: {
+                progressStep: `manual_in_progress:${users[0]}:${defect === "manual-claim" ? Date.now() + 60000 : 1}` } });
+            if (defect === "payload-cleared") await db.eformsign_document_job.update({ where, data: { payload: Prisma.DbNull } });
+            if (defect === "serialized-payload") await db.eformsign_document_job.update({ where, data: { payload: JSON.stringify({ clientId: clients[0]!, contractData: data }) } });
+            if (defect === "missing-contract-data") await db.eformsign_document_job.update({ where, data: { payload: { clientId: clients[0]! } } });
+            if (defect === "client-mismatch") await db.eformsign_document_job.update({ where, data: { payload: { clientId: clients[1]!, contractData: data } } });
+            if (defect === "cancelled" || defect === "manual-resolved") await db.eformsign_document_job.update({ where, data: { progressStep: defect === "cancelled" ? "cancelled" : "manual_resolved" } });
+            if (defect === "leased") await db.eformsign_document_job.update({ where, data: { leaseToken: randomUUID() } });
+            if (defect === "document") await db.eformsign_document_job.update({ where, data: { documentId: documents[0]! } });
+            if (defect === "live-authority-claim") await db.eformsign_contract_authority.update({ where: scope, data: { claimUserId: users[0]!, claimExpiresAt: new Date(Date.now() + 60000) } });
+            if (defect === "closed-authority") await db.eformsign_contract_authority.update({ where: scope, data: { phase: "closed" } });
+            if (defect === "auto-finalize") await db.eformsign_document_job.update({ where, data: { source: "auto_finalize" } });
+            if (defect === "finalize") await db.eformsign_document_job.update({ where, data: { jobType: "finalize_document" } });
+            if (defect === "service-record") await db.eformsign_document_job.update({ where, data: { requestKey: `service-record-${randomUUID()}` } });
+            if (defect === "processing") await db.eformsign_document_job.update({ where, data: { status: "processing" } });
+            const before = await snapshot();
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(before);
+        });
+        it("maps invalid stored phones to refusal without writes", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: { clientId: clients[0]!, contractData: { ...data, customerContact: "invalid" } } } });
+            const before = await snapshot();
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(before);
+        });
+        it.each(["conflict", "authority", "key", "idempotency", "existing", "not-superseded", "unexpected"])("rolls back every enqueue write before handling %s", async failure => {
+            const s = await exhaustedRuntime(), before = await snapshot();
+            const enqueue = s.jobRepository.enqueueInTransaction.bind(s.jobRepository);
+            const unexpected = new Error("Synthetic unexpected storage failure");
+            const intercepted = jest.spyOn(s.jobRepository, "enqueueInTransaction").mockImplementation(async (tx, input) => {
+                const result = await enqueue(tx, input);
+                expect(result.existing).toBe(false);
+                if (failure === "existing") return { ...result, existing: true };
+                if (failure === "not-superseded") {
+                    await tx.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { progressStep: "preparing" } });
+                    return result;
+                }
+                if (failure === "conflict") throw new ConflictException({ code: "REQUEST_CONFLICT" });
+                if (failure === "authority") throw new AuthorityConflictError();
+                if (failure === "key") throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+                if (failure === "idempotency") throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
+                throw unexpected;
+            });
+            try {
+                if (failure === "unexpected") await expect(s.jobRepository.retry(cancelInput(s))).rejects.toBe(unexpected);
+                else expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+                expect(await snapshot()).toEqual(before);
+            } finally { intercepted.mockRestore(); }
+        });
+        it("refuses an existing active job without changing the original rows", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_document_job.create({ data: { branchId: branches[0]!, clientId: clients[0]!, jobType: "create_document",
+                source: "staff", requestKey: randomUUID(), activeKey: `create:${branches[0]}:${clients[0]}` } });
+            const before = await snapshot();
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(before);
+        });
+        it("returns not found for another branch or unknown job without writes", async () => {
+            const s = await exhaustedRuntime(), before = await snapshot();
+            expect(await s.jobRepository.retry({ ...cancelInput(s), branchId: branches[1]! })).toEqual({ kind: "not_found" });
+            expect(await s.jobRepository.retry({ ...cancelInput(s), jobId: randomUUID() })).toEqual({ kind: "not_found" });
+            const foreign = await s.jobRepository.listForBranch(branches[1]!, new Date(0));
+            expect([...foreign.active, ...foreign.requiresAttention, ...foreign.recent].find(job => job.id === s.worker.jobId)).toBeUndefined();
+            expect(await snapshot()).toEqual(before);
+        });
+    });
+
+    describe("creation requires the strict pre-send non-delivery proof", () => {
+        async function expectCreationRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>) {
+            const input = nextInput(s), before = await snapshot();
+            const attempt = s.jobRepository.enqueue(input);
+            await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+            await expect(attempt).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" }, status: 409 });
+            expect(await db.eformsign_document_job.findUnique({ where: { requestKey: input.requestKey } })).toBeNull();
+            const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+            expect(old.progressStep).not.toBe("superseded");
+            expect((await read())[0]).toMatchObject({ generation: s.worker.contractGeneration, phase: "reserved" });
+            expect(await snapshot()).toEqual(before);
+        }
+
+        it("refuses pre-send exhaustion with an unlinked human intent", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "manual_process",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-human:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0,
+            } });
+            expect((await read())[0]!.humanIntentId).toBeNull();
+            await expectCreationRefusedWithoutWrites(s);
+        });
+
+        it("refuses pre-send exhaustion with an unlinked unreleased draft intent", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create_draft",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0, startedAt: null,
+            } });
+            expect((await read())[0]!.draftIntentId).toBeNull();
+            await expectCreationRefusedWithoutWrites(s);
+        });
+
+        it.each(["create", "create_draft"])("refuses pre-send exhaustion with an uncertain %s intent for the customer", async action => {
+            const s = await exhaustedRuntime();
+            // The repository already refuses uncertain create intents; retain that coverage here.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-uncertain-${randomUUID()}`),
+                status: "uncertain", attemptCount: 1, startedAt: new Date(),
+            } });
+            await expectCreationRefusedWithoutWrites(s);
+        });
+
+        it.each([
+            ["create", "\t"], ["create", "\u00a0"], ["create_draft", "\t"], ["create_draft", "\u00a0"],
+        ])("refuses pre-send exhaustion with an accepted %s receipt %j that trims to blank", async (action, receipt) => {
+            const s = await exhaustedRuntime();
+            // The storage CHECK trims spaces only; these receipts reach the strict proof.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-blank-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: receipt,
+            } });
+            await expectCreationRefusedWithoutWrites(s);
+        });
+    });
+
     it.each([false, true])("P13 replaces pre-send exhaustion with purged payload=%s and removes stale popup entries", async purged => {
         const s = await exhaustedRuntime();
         if (purged) await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });
@@ -658,6 +973,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(next.job.contractGeneration).not.toBe(s.worker.contractGeneration);
         const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
         expect(old).toMatchObject({ status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: "superseded" });
+        expect(old.payload).toBeNull();
         expect(classifyRecovery({ ...old, payload: old.payload as Record<string, unknown> | null, source: "staff", jobType: "create_document", status: "failed" })).toBeNull();
         const summary = await s.jobRepository.getSummary(branches[0]!);
         expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).not.toContain(s.worker.jobId);
@@ -1270,5 +1586,262 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         } finally { release.resolve(); await Promise.allSettled([pa, ...(pb ? [pb] : [])]); }
         return Promise.allSettled([pa, pb!]);
     }
+
+    async function initialRuntime(step = "preparing", code = "PRE_SEND_RETRY_EXHAUSTED", status = "failed") {
+        const branchId = branches[0]!, clientId = clients[0]!;
+        const record = await db.service_record_case.create({ data: { branchId, clientId, status: "READY_TO_FINALIZE", formVersion: 3 } });
+        const revision = await db.service_record_revision.create({ data: { branchId, serviceRecordCaseId: record.id,
+            revisionNumber: 1, confirmedByUserId: users[0]!, payload: {}, plannedSessions: [], provenance: {}, formVersionAtConfirm: 3 } });
+        retainRevision(revision);
+        await db.service_record_case.update({ where: { id: record.id }, data: { currentRevisionId: revision.id } });
+        const requestKey = `service-record-initial-finalization:${revision.id}`, generation = randomUUID();
+        const immutablePayload = { frozen: true }, fingerprint = sha256CanonicalJson(immutablePayload);
+        const state = await db.service_record_revision_document_state.create({ data: { branchId, clientId,
+            serviceRecordCaseId: record.id, revisionId: revision.id, operation: "record_snapshot", generation,
+            immutableInput: immutablePayload, inputFingerprint: fingerprint, documentVersion: 3,
+            workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey },
+            status: "capability_unverified", step: "capability_unverified", lastErrorCode: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" } });
+        const payload = { kind: "service_record_revision", generationKind: "INITIAL_FINALIZATION", revisionId: revision.id,
+            documentStateId: state.id, generation, documentVersion: 3, snapshotReference: requestKey,
+            completeness: "complete", manualReviewRequired: true, immutablePayload, payloadFingerprint: fingerprint,
+            context: { branchId, clientId, serviceRecordCaseId: record.id, revisionId: revision.id, revisionNumber: 1,
+                businessFingerprint: fingerprint, plannedSessionCount: 1,
+                plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-09-01" }],
+                documentSyncStatus: "capability_unverified", lifecycleStatus: "READY_TO_FINALIZE", formVersion: 3 } };
+        const job = await db.eformsign_document_job.create({ data: { branchId, clientId, source: "auto_finalize", jobType: "create_document",
+            requestKey, payload, payloadFingerprint: fingerprint, status, progressStep: step, progressDetail: ["dispatch_authorized", "creating", "sent"].includes(step) ? "creating" : null,
+            lastErrorCode: code, activeKey: `service-record-initial:${record.id}`, completedAt: new Date() } });
+        const repo = new SbEformsignDocumentJobRepository(db as unknown as PrismaService);
+        const input = { branchId, jobId: job.id, userId: users[0]!, now: new Date() };
+        const readJob = () => db.eformsign_document_job.findUniqueOrThrow({ where: { id: job.id } });
+        const readState = () => db.service_record_revision_document_state.findUniqueOrThrow({ where: { id: state.id } });
+        return { repo, input, job, state, payload, readJob, readState, record };
+    }
+    it("keeps an older actionable INITIAL job reachable behind 51 newer report-only INITIAL jobs", async () => {
+        const f = await initialRuntime();
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: {
+            completedAt: new Date("2026-01-01"), createdAt: new Date("2026-01-01"),
+        } });
+        await db.eformsign_document_job.createMany({ data: Array.from({ length: 51 }, () => {
+            const revisionId = randomUUID(), requestKey = `service-record-initial-finalization:${revisionId}`;
+            return { branchId: f.input.branchId, clientId: clients[0]!, source: "auto_finalize", jobType: "create_document",
+                requestKey, payloadFingerprint: f.job.payloadFingerprint,
+                payload: { ...f.payload, revisionId, snapshotReference: requestKey,
+                    context: { ...f.payload.context, revisionId }, documentStateId: randomUUID() },
+                status: "failed", progressStep: "sent", completedAt: new Date("2026-02-01"), createdAt: new Date("2026-02-01") };
+        }) });
+        const summary = await f.repo.getSummary(f.input.branchId);
+        const list = await f.repo.listForBranch(f.input.branchId, new Date(0));
+        expect(summary).toMatchObject({ requiresAttentionCount: 52, unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
+        expect(list.requiresAttention).toHaveLength(50);
+        expect(list.requiresAttention[0]).toMatchObject({ id: f.job.id, retryable: true, cancellable: true });
+        expect(summary.unresolvedJobIds.every(id => list.requiresAttention.some(job => job.id === id))).toBe(true);
+        expect(list.requiresAttention.slice(1).every(job => !job.retryable && !job.cancellable)).toBe(true);
+    });
+    it("matches uppercase documentStateId in SQL listing/summary and the UUID retry verifier", async () => {
+        const f = await initialRuntime();
+        // Use alphabetic digits deterministically; randomly generated UUIDs need not contain any.
+        const id = "abcdefab-abcd-4abc-8abc-abcdefabcdef";
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { id } });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { payload: {
+            ...f.payload, documentStateId: id.toUpperCase(),
+        } } });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention[0])
+            .toMatchObject({ id: f.job.id, retryable: true, cancellable: true });
+        expect(await f.repo.retry(f.input)).toMatchObject({ kind: "retried" });
+    });
+    it.each(["SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED", "PRE_SEND_RETRY_EXHAUSTED"])("INITIAL %s retry is CAS protected and branch scoped", async code => {
+        const f = await initialRuntime("preparing", code, "requires_attention");
+        expect(await f.repo.retry({ ...f.input, branchId: branches[1]! })).toEqual({ kind: "not_found" });
+        const other = new SbEformsignDocumentJobRepository(b as unknown as PrismaService);
+        const results = await Promise.all([f.repo.retry(f.input), other.retry(f.input)]);
+        expect(results.filter(result => result.kind === "retried")).toHaveLength(1);
+        expect(results.filter(result => result.kind === "not_retryable")).toHaveLength(1);
+        expect(await f.readJob()).toMatchObject({ status: "queued", attempts: 0, createdByUserId: null });
+        expect(await f.readState()).toMatchObject({ status: "pending", step: "requeued", attempts: 1 });
+    });
+    it.each(["dispatch_authorized", "creating", "sent"])("INITIAL %s refuses retry, preserves evidence when cancelled, and leaves all buckets", async step => {
+        const f = await initialRuntime(step);
+        expect(await f.repo.retry(f.input)).toEqual({ kind: "not_retryable" });
+        const listed = await f.repo.listForBranch(f.input.branchId, new Date(0));
+        expect(listed.requiresAttention.find(job => job.id === f.job.id)).toMatchObject({ retryable: false, cancellable: true });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readJob()).toMatchObject({ status: "failed", progressStep: step, progressDetail: f.job.progressDetail,
+            payload: f.payload, activeKey: f.job.activeKey, lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
+        expect(await f.readState()).toMatchObject({ status: "manual_review", step: "unknown" });
+        const adminBefore = await f.readState();
+        expect(await new ServiceRecordEditRepository(db as unknown as PrismaService).retryRevisionDocumentState({
+            branchId: f.input.branchId, clientId: f.state.clientId, revisionId: f.state.revisionId,
+            stateId: f.state.id, expectedGeneration: f.state.generation,
+        })).toMatchObject({ status: "manual_review", step: "unknown" });
+        expect(await f.readState()).toEqual(adminBefore);
+        expect(await f.repo.retry(f.input)).toEqual({ kind: "not_retryable" });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "already_cancelled" });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { completedAt: new Date("2020-01-01") } });
+        await f.repo.deleteExpiredTerminal(new Date());
+        expect((await f.readJob()).payload).toEqual(f.payload);
+        const summary = await f.repo.getSummary(f.input.branchId);
+        expect(summary).toMatchObject({ requiresAttentionCount: 0, unresolvedCount: 0, unresolvedJobIds: [] });
+        const after = await f.repo.listForBranch(f.input.branchId, new Date(0));
+        expect([...after.requiresAttention, ...after.recent, ...after.active].some(job => job.id === f.job.id)).toBe(false);
+        // Its case-wide key remains a deliberate fence even for a different INITIAL request key.
+        await expect(db.eformsign_document_job.create({ data: { branchId: f.input.branchId, clientId: f.job.clientId,
+            jobType: "create_document", source: "auto_finalize", requestKey: randomUUID(), activeKey: f.job.activeKey } })).rejects.toMatchObject({ code: "P2002" });
+    });
+    it.each(["pending", "capability_unverified"])("pre-dispatch INITIAL cancellation fails %s state, keeps payload across retention and releases only its key", async status => {
+        const f = await initialRuntime();
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status } });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readJob()).toMatchObject({ status: "failed", progressStep: "cancelled", payload: f.payload, activeKey: null });
+        expect(await f.readState()).toMatchObject({ status: "failed", step: "unknown", lastErrorCode: f.state.lastErrorCode });
+        const admin = new ServiceRecordEditRepository(db as unknown as PrismaService);
+        expect((await admin.listRevisionHistory(f.input.branchId, f.state.clientId))?.revisions[0]?.documents[0])
+            .toMatchObject({ status: "failed", canRetry: false });
+        expect(await admin.retryRevisionDocumentState({
+            branchId: f.input.branchId, clientId: f.state.clientId, revisionId: f.state.revisionId,
+            stateId: f.state.id, expectedGeneration: f.state.generation,
+        })).toMatchObject({ status: "failed", step: "unknown" });
+        expect(await f.readState()).toMatchObject({ status: "failed", step: "unknown" });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { completedAt: new Date("2020-01-01") } });
+        await f.repo.deleteExpiredTerminal(new Date());
+        expect((await f.readJob()).payload).toEqual(f.payload);
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "already_cancelled" });
+        expect(await f.repo.retry(f.input)).toEqual({ kind: "not_retryable" });
+    });
+    it.each(["completed", "not_required", "failed", "manual_review", "unknown",
+        "waiting_for_completion", "waiting_for_signature"])("INITIAL cancel preserves %s state and projects cancellable false", async status => {
+        const f = await initialRuntime("sent");
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status } });
+        const beforeJob = await f.readJob(), beforeState = await f.readState();
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(await f.repo.cancel(f.input)).toMatchObject({ kind: "not_cancellable" });
+        expect(await f.readJob()).toEqual(beforeJob);
+        expect(await f.readState()).toEqual(beforeState);
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 0, unresolvedJobIds: [] });
+    });
+    it.each(["capability_unverified", "pending", "processing"])("INITIAL post-dispatch cancel accepts unresolved %s state in API and listing", async status => {
+        const f = await initialRuntime("sent");
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status } });
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: true });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readState()).toMatchObject({ status: "manual_review", step: "unknown" });
+    });
+    it("INITIAL preparing with processing state preserves evidence and active key on cancel", async () => {
+        const f = await initialRuntime();
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status: "processing" } });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readJob()).toMatchObject({ progressStep: "preparing", progressDetail: null,
+            payload: f.payload, activeKey: f.job.activeKey, lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
+        expect(await f.readState()).toMatchObject({ status: "manual_review", step: "unknown" });
+    });
+    it.each(["generation", "revisionId"])("INITIAL cancel preserves a later state with changed %s and projects cancellable false", async field => {
+        const f = await initialRuntime("sent");
+        if (field === "generation") {
+            await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { generation: randomUUID() } });
+        } else {
+            const revision = await db.service_record_revision.create({ data: { branchId: f.input.branchId,
+                serviceRecordCaseId: f.record.id, revisionNumber: 2, confirmedByUserId: users[0]!,
+                payload: {}, plannedSessions: [], provenance: {}, formVersionAtConfirm: 3 } });
+            retainRevision(revision);
+            await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { revisionId: revision.id } });
+        }
+        const beforeJob = await f.readJob(), beforeState = await f.readState();
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(await f.repo.cancel(f.input)).toMatchObject({ kind: "not_cancellable" });
+        expect(await f.readJob()).toEqual(beforeJob);
+        expect(await f.readState()).toEqual(beforeState);
+    });
+    it.each(["invalid", "branch", "client"])("INITIAL %s context refuses retry and listing flags and popup counts", async variant => {
+        const f = await initialRuntime();
+        const context = { ...f.payload.context, ...(variant === "invalid" ? { formVersion: 0 }
+            : variant === "branch" ? { branchId: branches[1]! } : { clientId: clients[1]! }) };
+        await db.eformsign_document_job.update({ where: { id: f.job.id },
+            data: { payload: { ...f.payload, context } } });
+        const beforeJob = await f.readJob();
+        expect(await f.repo.retry(f.input)).toEqual({ kind: "not_retryable" });
+        expect(await f.readJob()).toEqual(beforeJob);
+        expect(await f.readState()).toEqual(f.state);
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 0, unresolvedJobIds: [] });
+    });
+    it.each(["queued", "processing", "reconciling", "leased"])("INITIAL %s cannot be cancelled", async status => {
+        const f = await initialRuntime("preparing", "PRE_SEND_RETRY_EXHAUSTED", status === "leased" ? "failed" : status);
+        if (status === "leased") await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { leaseToken: randomUUID() } });
+        const before = await f.readJob();
+        expect(await f.repo.cancel(f.input)).toMatchObject({ kind: "not_cancellable" });
+        expect(await f.readJob()).toEqual(before);
+        expect(await f.readState()).toEqual(f.state);
+    });
+    it("INITIAL SQL identity matches the TS predicate and the script candidate guard", async () => {
+        const f = await initialRuntime();
+        const variants = [{}, { source: "staff" }, { jobType: "finalize_document" }, { requestKey: "service-record-other" },
+            { payload: { ...f.payload, revisionId: 1 } }, { payload: { ...f.payload, context: {} } },
+            { payload: { ...f.payload, snapshotReference: "wrong" } }, { payload: { ...f.payload, generationKind: "OTHER" } },
+            { payload: { ...f.payload, kind: "contract" } }];
+        for (const variant of variants) {
+            const job = { ...f.job, ...variant };
+            await db.eformsign_document_job.update({ where: { id: f.job.id }, data: {
+                source: job.source, jobType: job.jobType, requestKey: job.requestKey, payload: job.payload as Prisma.InputJsonValue } });
+            const [row] = await db.$queryRaw<Array<{ identity: boolean; eligible: boolean }>>(Prisma.sql`
+                SELECT ${initialFinalizationJobSql("j")} AS identity, ${initialFinalizationRetryCandidateSql("j")} AS eligible
+                FROM eformsign_document_job j WHERE id = ${f.job.id}::uuid`);
+            expect(row?.identity).toBe(isInitialFinalizationJobIdentity(job));
+            expect(row?.eligible).toBe(isInitialFinalizationJobIdentity(job));
+        }
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { source: f.job.source, jobType: f.job.jobType,
+            requestKey: f.job.requestKey, payload: f.payload } });
+        for (const status of ["failed", "requires_attention", "queued"]) {
+            for (const code of ["SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED", "PRE_SEND_RETRY_EXHAUSTED", "UNRELATED"]) {
+                for (const step of ["preparing", "dispatch_authorized"]) {
+                    await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { status, lastErrorCode: code, progressStep: step } });
+                    const candidates = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                        SELECT id FROM eformsign_document_job WHERE id = ${f.job.id}::uuid AND ${initialFinalizationRetryCandidateSql()}`);
+                    expect(candidates.length).toBe(status !== "queued" && code !== "UNRELATED" && step === "preparing" ? 1 : 0);
+                }
+            }
+        }
+    });
+    it("INITIAL listing computes verifier-backed flags and counts older failures", async () => {
+        const f = await initialRuntime();
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { completedAt: new Date("2020-01-01") } });
+        const listed = await f.repo.listForBranch(f.input.branchId, new Date(0));
+        expect(listed.requiresAttention.find(job => job.id === f.job.id)).toMatchObject({ retryable: true, cancellable: true });
+        expect(listed.recent.some(job => job.id === f.job.id)).toBe(false);
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status: "processing" } });
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id)).toMatchObject({ retryable: false, cancellable: true });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status: "manual_review" } });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { status: "requires_attention" } });
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 0, unresolvedJobIds: [] });
+    });
+    it("INITIAL retry waits on the client before locking the job or revision state", async () => {
+        const f = await initialRuntime(), ready = deferred<void>(), release = deferred<void>();
+        const [connection] = await b.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        const holder = transaction(a, async tx => {
+            await tx.$queryRaw`SELECT id FROM client WHERE id = ${f.job.clientId} FOR UPDATE`;
+            ready.resolve(); await bounded(release.promise, 9000);
+        });
+        void holder.catch(() => undefined);
+        let retry: Promise<unknown> | undefined;
+        try {
+            await bounded(ready.promise, 5000);
+            retry = new SbEformsignDocumentJobRepository(b as unknown as PrismaService).retry(f.input);
+            void retry.catch(() => undefined);
+            await lockObserved(connection!.pid);
+            await transaction(db, async tx => {
+                await tx.$queryRaw`SELECT id FROM eformsign_document_job WHERE id = ${f.job.id}::uuid FOR UPDATE NOWAIT`;
+                await tx.$queryRaw`SELECT id FROM service_record_revision_document_state WHERE id = ${f.state.id}::uuid FOR UPDATE NOWAIT`;
+            });
+        } finally { release.resolve(); await holder; }
+        expect(await retry).toMatchObject({ kind: "retried" });
+    });
 
 });
