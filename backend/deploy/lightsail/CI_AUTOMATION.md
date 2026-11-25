@@ -160,6 +160,23 @@ succeeds: one API container, the authoritative route and exact
 `DATABASE_CONNECTION_MODE`, scheduler ownership, health/restart, image
 tag/digest identity, internal and public `/health/ready`, and public liveness.
 
+Before promoting the first image containing `20261126010000_baby_case_keys`:
+
+1. From the reviewed revision, run the existing root-only
+   `install-ci-operator.sh install` and `install-ci-operator.sh check` on the
+   deployment host. Verify the installed bundle before allowing promotion.
+2. On each existing target database, complete the rollout gates and drain all
+   old writers that rely on singleton keys. Then explicitly apply
+   `backend/prisma/scripts/stage-baby-case-keys.sql` to that database.
+3. Promote the reviewed image. The operator uses the image's read-only stage
+   check before `prisma migrate deploy`. A populated database with missing or
+   incorrect replacement indexes or surviving legacy keys blocks the release.
+
+Before staging, the previous image can continue serving with the legacy keys.
+After staging, use only a recovery image that supports case-scoped keys before
+resuming writes. Retain the guarded operator while the new image is eligible
+for promotion.
+
 If deployment or verification fails, the operator immediately invokes the
 existing rollback script with the recorded known-good commit image, preserves
 the prior rollback-tag history, restores the prior digest state, and verifies
