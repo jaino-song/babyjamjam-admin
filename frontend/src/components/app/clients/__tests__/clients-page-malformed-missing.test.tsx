@@ -31,6 +31,7 @@ jest.mock('@/features/clients/hooks/use-clients', () => ({
   useDeleteClient: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock('@/lib/client/badges', () => ({
+  getClientAvatarBadge: () => null,
   getClientBadgeAvatarClassName: () => '',
   getClientBadges: () => [],
   getPrimaryClientBadge: () => undefined,

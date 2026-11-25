@@ -283,4 +283,36 @@ describe("DetailPanel", () => {
     fireEvent.click(container.querySelector('[data-component="desktop_v3_detail-tabs_button"]') as HTMLElement);
     expect(onTabChange).not.toHaveBeenCalled();
   });
+  it("renders the reusable header notice under the subtitle and hides it while loading", () => {
+    const { rerender } = render(
+      <DetailPanel
+        data-component="desktop_v3_tests_split-layout_detail-panel"
+        title="상세"
+        subtitle="부제"
+        headerNotice={{ tone: "warning", content: "계약서는 따로 확인해 주세요." }}
+      >
+        본문
+      </DetailPanel>,
+    );
+
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveAttribute(
+      "data-component",
+      "desktop_v3_tests_split-layout_detail-panel_header_title-group_notice",
+    );
+    expect(notice).toHaveTextContent("계약서는 따로 확인해 주세요.");
+
+    rerender(
+      <DetailPanel
+        data-component="desktop_v3_tests_split-layout_detail-panel"
+        title="상세"
+        subtitle="부제"
+        headerNotice={{ tone: "warning", content: "계약서는 따로 확인해 주세요." }}
+        isLoading
+      >
+        본문
+      </DetailPanel>,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
 });

@@ -40,7 +40,7 @@ describe("TwoButtonModal", () => {
     );
     expect(description).toHaveClass("sr-only");
     expect(description).toHaveClass(
-      "text-[calc(14px*var(--v3-ui-scale,1))]",
+      "text-[calc(12px*var(--v3-ui-scale,1))]",
       "leading-[calc(20px*var(--v3-ui-scale,1))]",
     );
     expect(description).toHaveClass("mt-0");
@@ -104,5 +104,31 @@ describe("TwoButtonModal", () => {
     expect(screen.getByText("최근 같은 메시지를 보낸 기록이 있습니다.")).not.toHaveClass("sr-only");
     expect(screen.getByTestId("review-body")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "전송" })).toHaveClass("w-1/2");
+  });
+
+  it("keeps the compact width without the fixed ratio for a short review body", () => {
+    render(
+      <TwoButtonModal
+        open
+        size="review"
+        onOpenChange={jest.fn()}
+        title="확인이 필요해요"
+        description="계약서가 완료된 상태여서 계약서는 변경할 수 없어요. 그래도 수정할까요?"
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="수정"
+        onApprove={jest.fn()}
+      >
+        <div data-testid="review-body">계약서와 달라지는 수정 사항</div>
+      </TwoButtonModal>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveClass("min-h-0", "sm:max-w-[300px]");
+    expect(dialog).not.toHaveClass("aspect-[5/3]");
+    expect(dialog.querySelector('[data-slot="dialog-header"]')).not.toHaveClass("flex-1");
+    const description = screen.getByText("계약서가 완료된 상태여서 계약서는 변경할 수 없어요. 그래도 수정할까요?");
+    expect(description).not.toHaveClass("sr-only");
+    expect(description).toHaveClass("text-[calc(12px*var(--v3-ui-scale,1))]", "text-v3-text-muted");
+    expect(screen.getByTestId("review-body").parentElement).toHaveClass("overflow-y-auto");
   });
 });

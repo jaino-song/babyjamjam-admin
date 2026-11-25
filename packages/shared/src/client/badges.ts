@@ -31,6 +31,8 @@ export interface LegacyClientBadge {
 }
 
 const LEGACY_CLIENT_BADGE_ORDER: Record<ClientBadgeKey, number> = {
+    // Never derived here (it needs the client note), but kept in the order for the type.
+    contract_info_mismatch: 5,
     contract_required: 10,
     contract_status: 15,
     service_status: 20,

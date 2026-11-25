@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-21",
+  "updated": "2026-11-25",
   "purpose": "Machine-readable inventory of BabyJamJam design-system components. Agents MUST consult this before any UI work and compose ONLY these components in pages. See docs/design-system/AGENT_UI_RULES.md.",
   "docs": {
     "rules": "docs/design-system/AGENT_UI_RULES.md",
@@ -646,8 +646,10 @@
         "file": "frontend/src/components/app/ui/TwoButtonModal.tsx",
         "exports": [
           "TwoButtonModal",
-          "TwoButtonModalProps"
+          "TwoButtonModalProps",
+          "TwoButtonModalSize"
         ],
+        "note": "size compact: 300px with a fixed 5:3 ratio; review: 300px whose height follows a short body; detail: 420px with a scrolling body. The visible description is 12px.",
         "replaces": [
           "custom two-button confirmation modal markup"
         ],
@@ -1024,6 +1026,7 @@
           "DetailPanel",
           "DetailPanelFooterActions"
         ],
+        "note": "headerNotice ({ tone, icon?, content }) renders a reusable one-line notice under the subtitle via PanelTitleGroup and is hidden while loading.",
         "replaces": [
           "custom detail containers"
         ],
@@ -1225,9 +1228,51 @@
         "import": "@/components/app/v3",
         "file": "frontend/src/components/app/v3/PanelTitleGroup.tsx",
         "exports": [
-          "PanelTitleGroup"
+          "PanelTitleGroup",
+          "PanelTitleNotice",
+          "PanelTitleNoticeTone"
         ],
-        "note": "Optional data-component omits owned metadata when absent or empty; title, subtitle and all badge slots are preserved."
+        "note": "Optional data-component omits owned metadata when absent or empty; title, subtitle and all badge slots are preserved. notice renders a one-line role=status notice under the subtitle (tone defaults to warning; icon sized 14px)."
+      },
+      {
+        "name": "ClientListStatus",
+        "layer": "molecule",
+        "import": "@/components/app/v3",
+        "file": "frontend/src/components/app/v3/ClientListStatus.tsx",
+        "exports": [
+          "ClientListStatus",
+          "ClientListStatusProps",
+          "ClientBadgeMark",
+          "ClientBadgeMarkProps"
+        ],
+        "replaces": [
+          "page-local first-badge plus +N markup in client list rows"
+        ],
+        "requiredFor": [
+          "status slot of client list and dashboard rows"
+        ]
+      },
+      {
+        "name": "ContractInfoMismatch",
+        "layer": "molecule",
+        "import": "@/components/app/v3",
+        "file": "frontend/src/components/app/v3/ContractInfoMismatch.tsx",
+        "exports": [
+          "ContractInfoMismatchIcon",
+          "ContractInfoMismatchPill",
+          "ContractInfoChangeList",
+          "getContractInfoMismatchNotice",
+          "CONTRACT_INFO_MISMATCH_HINT",
+          "CONTRACT_INFO_MISMATCH_NOTICE_TEXT",
+          "CONTRACT_INFO_CHANGE_CONFIRM_TITLE",
+          "CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION",
+          "CONTRACT_INFO_CHANGE_LIST_TITLE",
+          "ContractInfoChangeListProps",
+          "ContractInfoChangeListRow"
+        ],
+        "requiredFor": [
+          "\"정보 불일치\" list icon, detail pill and header notice, and the changed-fields card of the edit confirmation"
+        ]
       },
       {
         "name": "QuickActionButton",

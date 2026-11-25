@@ -40,3 +40,25 @@ test("keeps the minimal omitted call and caller-authored badge metadata intact",
   expect(screen.getByText("Owned badge")).toHaveAttribute("data-component", "caller_badge");
   expect(container.querySelectorAll("[data-component]")).toHaveLength(1);
 });
+
+test("renders an optional one-line notice under the subtitle with its tone and icon", () => {
+  const { container, rerender } = render(<PanelTitleGroup data-component="desktop_test_panel_title-group" title="Panel title" subtitle="Panel subtitle"
+    notice={{ icon: <svg data-testid="notice-icon" />, content: "계약서는 따로 확인해 주세요." }} />);
+  const notice = screen.getByRole("status");
+  expect(notice).toHaveAttribute("data-slot", "panel-notice");
+  expect(notice).toHaveAttribute("data-component", "desktop_test_panel_title-group_notice");
+  expect(notice).toHaveAttribute("data-tone", "warning");
+  expect(notice).toHaveClass("text-status-warning-fg");
+  expect(notice).toHaveTextContent("계약서는 따로 확인해 주세요.");
+  expect(notice.firstElementChild).toBe(screen.getByTestId("notice-icon"));
+  const root = container.firstElementChild!;
+  expect(root.lastElementChild).toBe(notice);
+  expect(notice.previousElementSibling).toBe(screen.getByText("Panel subtitle"));
+
+  rerender(<PanelTitleGroup title="Panel title" notice={{ tone: "info", content: "참고" }} />);
+  expect(screen.getByRole("status")).toHaveClass("text-status-info-fg");
+  expect(screen.getByRole("status")).not.toHaveAttribute("data-component");
+
+  rerender(<PanelTitleGroup title="Panel title" notice={null} />);
+  expect(container.querySelector('[data-slot="panel-notice"]')).toBeNull();
+});

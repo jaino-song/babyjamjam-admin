@@ -31,7 +31,13 @@ import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useConfirmBooking } from "@/features/clients/hooks/use-clients";
 import type { Client } from "@/lib/client/types";
 import { formatVoucherDurationLabel } from "@/lib/client/voucher-duration-label";
-import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
+import {
+    getClientAvatarBadge,
+    getClientBadgeAvatarClassName,
+    getClientBadges,
+    isContractInfoMismatchBadge,
+} from "@/lib/client/badges";
+import { ContractInfoMismatchPill, getContractInfoMismatchNotice } from "@/components/app/v3/ContractInfoMismatch";
 import { useToast } from "@/hooks/use-toast";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
@@ -1204,6 +1210,7 @@ function ClientDetailPanelBody({
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const clientBadges = useMemo(() => getClientBadges(client), [client]);
+    const hasContractInfoMismatch = clientBadges.some(isContractInfoMismatchBadge);
     const clientPhoneKey = useMemo(
         () => normalizeKoreanPhoneLookupKey(client.phone ?? ""),
         [client.phone]
@@ -1502,7 +1509,7 @@ function ClientDetailPanelBody({
                         data-component={`${dataComponentPrefix}_header_avatar`}
                         className={cn(
                             "w-16 h-16 rounded-[20px] flex items-center justify-center shadow-lg shrink-0",
-                            getClientBadgeAvatarClassName(getPrimaryClientBadge(clientBadges))
+                            getClientBadgeAvatarClassName(getClientAvatarBadge(clientBadges))
                         )}
                     >
                         <Users className="w-7 h-7 shrink-0 transition-colors text-current" aria-hidden="true" />
@@ -1514,11 +1521,15 @@ function ClientDetailPanelBody({
                         {clientBadges
                             .filter((badge) => badge.key !== "breast_pump")
                             .map((badge) => (
-                                <StatusBadge
-                                    key={badge.key}
-                                    status={badge.status}
-                                    label={badge.label ? getClientDisplayLabel(badge.label) : undefined}
-                                />
+                                isContractInfoMismatchBadge(badge) ? (
+                                    <ContractInfoMismatchPill key={badge.key} label={badge.label || undefined} />
+                                ) : (
+                                    <StatusBadge
+                                        key={badge.key}
+                                        status={badge.status}
+                                        label={badge.label ? getClientDisplayLabel(badge.label) : undefined}
+                                    />
+                                )
                             ))}
                     </>
                 }
@@ -1536,6 +1547,7 @@ function ClientDetailPanelBody({
                     </>
                 }
                 subtitle={getClientDetailSubtitle(client)}
+                headerNotice={hasContractInfoMismatch ? getContractInfoMismatchNotice() : null}
                 trailing={confirmButton || trailing ? <>{confirmButton}{trailing}</> : undefined}
                 tabs={
                     <DetailTabs

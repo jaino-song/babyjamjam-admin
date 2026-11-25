@@ -6,18 +6,18 @@ import { LoadingState } from "@/components/app/ui/LoadingState";
 import { AlertTriangle, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  getClientAvatarBadge,
   getClientBadgeAvatarClassName,
   getClientBadges,
-  getPrimaryClientBadge,
   prioritizeClientBadges,
 } from "@/lib/client/badges";
 import { getDashboardClientDueLabel } from "@/lib/dashboard/client-due";
 import { cn } from "@/lib/utils";
 import { AnimatedSlotList } from "./AnimatedSlotList";
 import { AnimatedSlotListItemContent } from "./AnimatedSlotListItemContent";
+import { ClientBadgeMark } from "./ClientListStatus";
 import { ListEmptyState } from "./ListEmptyState";
 import { ListPanel } from "./ListPanel";
-import { StatusBadge } from "./StatusBadge";
 import type { Client } from "@/lib/client/types";
 import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
@@ -198,7 +198,7 @@ export function RecentActivitiesPanel({
 
                 const clientBadges = getClientBadges(item.client);
                 const sortedClientBadges = prioritizeClientBadges(clientBadges);
-                const primaryClientBadge = getPrimaryClientBadge(clientBadges);
+                const avatarClientBadge = getClientAvatarBadge(clientBadges);
                 const subtitle = getDashboardClientDueLabel(item.client, { calendar })
                   ?? `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}`;
 
@@ -206,17 +206,13 @@ export function RecentActivitiesPanel({
                   <AnimatedSlotListItemContent
                     dataComponent="desktop_dashboard_split_activities-panel_list-panel_list_item_content"
                     icon={Users}
-                    iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
+                    iconContainerClassName={getClientBadgeAvatarClassName(avatarClientBadge)}
                     title={item.client.name}
                     subtitle={subtitle}
                     status={
                       sortedClientBadges.length > 0
                         ? sortedClientBadges.map((badge) => (
-                            <StatusBadge
-                              key={badge.key}
-                              status={badge.status}
-                              label={badge.label}
-                            />
+                            <ClientBadgeMark key={badge.key} badge={badge} />
                           ))
                         : null
                     }

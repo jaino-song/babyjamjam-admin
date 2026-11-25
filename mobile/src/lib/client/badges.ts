@@ -24,10 +24,13 @@ export interface MobileClientBadge {
 
 const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "contract_status", "service_status"] as const satisfies readonly ClientBadgeKey[];
 
+// "정보 불일치" shows as an orange warning badge right after the service status, so it never
+// takes the first slot that colours the mobile avatar. The desktop leads with it as an icon.
 const CLIENT_BADGE_ORDER: Record<ClientBadgeKey, number> = {
   contract_required: 10,
   contract_status: 15,
   service_status: 20,
+  contract_info_mismatch: 25,
   breast_pump: 30,
   care_center: 40,
 };

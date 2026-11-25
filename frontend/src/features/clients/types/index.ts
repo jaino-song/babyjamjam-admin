@@ -8,7 +8,13 @@ export interface EmployeeSummary {
 // Document status type for eformsign documents
 export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | 'voided' | null;
 
-export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeKey =
+    | "contract_info_mismatch"
+    | "contract_required"
+    | "contract_status"
+    | "breast_pump"
+    | "service_status"
+    | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
     | "active"

@@ -82,9 +82,11 @@ jest.mock("@/hooks/use-toast", () => ({
 }));
 
 jest.mock("@/lib/client/badges", () => ({
+  getClientAvatarBadge: () => null,
   getClientBadgeAvatarClassName: () => "",
   getClientBadges: () => [],
   getPrimaryClientBadge: () => undefined,
+  isContractInfoMismatchBadge: () => false,
   prioritizeClientBadges: () => [],
 }));
 
@@ -352,17 +354,15 @@ describe("ClientsPage deletion conflicts", () => {
 });
 
 describe("ClientsPage visual conventions", () => {
-  it("renders overflow client statuses as plain text instead of a badge", () => {
+  it("renders the list status through ClientListStatus instead of page-local badge markup", () => {
+    expect(source).toContain("<ClientListStatus");
     expect(source).toContain(
-      'data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"',
+      'data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item_status_badges"',
     );
-    expect(source).toContain("+{remainingClientBadges.length}");
-    const overflowStatus = source.slice(
-      source.indexOf('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"') - 80,
-      source.indexOf("+{remainingClientBadges.length}") + 40,
-    );
-    expect(overflowStatus).toContain("<span");
-    expect(overflowStatus).not.toContain("StatusPill");
+    expect(source).toContain("badges={sortedClientBadges}");
+    expect(source).not.toContain("+{remainingClientBadges.length}");
+    // The avatar keeps the service-status tone even when "정보 불일치" leads the badges.
+    expect(source).toContain("getClientBadgeAvatarClassName(avatarClientBadge)");
   });
 
   it("uses the people icon for the empty client list", () => {

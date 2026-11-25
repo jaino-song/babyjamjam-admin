@@ -13,11 +13,18 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-type ApprovalModalSize = "compact" | "detail";
+/**
+ * compact: 300px wide with a fixed 5:3 ratio, for a title-only confirmation.
+ * review: the same 300px width, but its height follows a short review body.
+ * detail: 420px wide with a scrolling body.
+ */
+type ApprovalModalSize = "compact" | "review" | "detail";
 type ApprovalButtonVariant = "positive" | "destructive";
 
 const SOURCE_COMPONENT = "TwoButtonModal";
 const DEFAULT_DATA_COMPONENT = "desktop_v3_two-button-modal";
+
+export type TwoButtonModalSize = ApprovalModalSize;
 
 export interface TwoButtonModalProps {
   open: boolean;
@@ -103,6 +110,7 @@ export function TwoButtonModal({
           "flex flex-col",
           layer === "nested" && "z-[1010]",
           size === "compact" && "aspect-[5/3] sm:max-w-[300px]",
+          size === "review" && "min-h-0 sm:max-w-[300px]",
           size === "detail" && "min-h-0 sm:max-w-[420px]",
         )}
       >
@@ -123,7 +131,7 @@ export function TwoButtonModal({
           <DialogDescription
             data-component={descriptionDataComponent ?? sub("description")}
             className={cn(
-              "mt-0 break-keep [overflow-wrap:anywhere] text-[calc(14px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
+              "mt-0 break-keep [overflow-wrap:anywhere] text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
               isDescriptionVisuallyHidden && "sr-only",
             )}
           >
@@ -134,7 +142,7 @@ export function TwoButtonModal({
         {children ? (
           <div
             data-component={bodyDataComponent ?? sub("body")}
-            className={cn("min-h-0", size === "detail" && "overflow-y-auto")}
+            className={cn("min-h-0", (size === "detail" || size === "review") && "overflow-y-auto")}
           >
             {children}
           </div>
