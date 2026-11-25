@@ -5,7 +5,9 @@ import {
   PROVIDER_SLOT_LABELS,
   resolveBabyRecordAllocation,
   type BabyRecordAllocationInput,
+  type BabyRecordAssignmentInput,
   type FetalType,
+  type ProviderSlot,
 } from "./baby-record-allocation";
 
 const catalog = {
@@ -289,6 +291,12 @@ describe("per-baby record ownership", () => {
     });
   });
 
+  it.each([-1, 4])("rejects out-of-range provider slot %i even when unstaffed", (slot) => {
+    expect(resolveBabyRecordAllocation({
+      ...twins, providers: [primary, { slot: slot as ProviderSlot, employeeId: null }],
+    })).toMatchObject({ status: "invalid", issue: { field: "providers", index: 1, code: "disabled-slot" } });
+  });
+
   it.each([
     [[{ ordinal: 1, providerSlot: 1 }], [primary, assistant], "fixed-primary"],
     [[{ ordinal: 2, providerSlot: 1 }], [primary], "unavailable-slot"],
@@ -303,6 +311,16 @@ describe("per-baby record ownership", () => {
     });
   });
 
+  it("rejects an assignment targeting both a saved baby ID and an ordinal", () => {
+    const mixedTarget = { babyId: "baby-2", ordinal: 1, providerSlot: 1 };
+    expect(resolveBabyRecordAllocation({
+      ...twins,
+      providers: [primary, assistant],
+      babies: [{ babyId: "baby-1", ordinal: 1 }, { babyId: "baby-2", ordinal: 2 }],
+      babyAssignments: [mixedTarget as unknown as BabyRecordAssignmentInput],
+    })).toMatchObject({ status: "invalid", issue: { field: "babyAssignments", index: 0, code: "invalid-target" } });
+  });
+
   it.each([
     [[{ babyId: "baby-1", ordinal: 1 }, { babyId: "baby-1", ordinal: 2 }], "duplicate-baby"],
     [[{ babyId: "baby-1", ordinal: 2 }, { babyId: "baby-2", ordinal: 2 }], "duplicate-ordinal"],
@@ -311,6 +329,12 @@ describe("per-baby record ownership", () => {
     expect(resolveBabyRecordAllocation({ ...twins, babies })).toMatchObject({
       status: "invalid", issue: { field: "babies", code },
     });
+  });
+
+  it.each(["", " \t", 42])("rejects invalid persisted baby ID %j with a valid ordinal", (babyId) => {
+    expect(resolveBabyRecordAllocation({
+      ...twins, babies: [{ babyId: "baby-1", ordinal: 1 }, { babyId: babyId as string, ordinal: 2 }],
+    })).toMatchObject({ status: "invalid", issue: { field: "babies", index: 1, code: "invalid-baby" } });
   });
 
   it("requires persisted IDs for saved babies and rejects a second override for the same ID", () => {
