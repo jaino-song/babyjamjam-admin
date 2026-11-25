@@ -170,9 +170,10 @@ const deploymentContractToolsStep = {
   shell: 'bash',
   run: [
     'sudo apt-get update',
-    'sudo apt-get install -y --no-install-recommends ghostscript qpdf rclone',
+    'sudo apt-get install -y --no-install-recommends ghostscript qpdf rclone redis-server',
     '/usr/bin/qpdf --version',
     '/usr/bin/rclone version',
+    'redis-server --version',
     'gs --version',
     'gs -h | grep -w pdfimage24',
     '',
