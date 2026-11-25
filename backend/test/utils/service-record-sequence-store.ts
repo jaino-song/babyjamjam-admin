@@ -18,7 +18,7 @@
  *    that does not exist);
  *  - nested shapes are checked too, against each column's kind from prisma/schema.prisma: a `where` field
  *    takes a literal, null or supported operators over literals (`not` recursively, `in` / `notIn` over
- *    literal lists), a Json column takes no filter, and a scalar `data` value is a literal, null or
+ *    literal lists), singular relations accept nested predicates, a Json column takes no filter, and a scalar `data` value is a literal, null or
  *    `{ increment: <int> }` on an int column; any other object is what Prisma's generated types reject;
  *  - single-row operations (`findUnique`, `update`, `upsert`) require a `where` that names a modelled
  *    single-column unique key with a scalar literal value (`{ equals }` is refused, as Prisma refuses it),
@@ -68,6 +68,7 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         bookingConfirmedAt: nul, birthDate: nul, eDocId: nul, deletedAt: nul, fetalConfirmation: nul,
         allowSaturdayService: no, allowSundayService: no, allowHolidayService: no,
     },
+    client_baby: { id: uuid, branchId: nul, clientId: nul, ordinal: nul, active: () => true },
     employee: { id: nul, branchId: nul, name: nul, phone: nul },
     branch: { id: nul, name: nul },
     employee_schedule: {
@@ -127,18 +128,26 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
  */
 const UNIQUES: Record<string, string[][]> = {
     client: [["id"], ["eDocId"]],
+    client_baby: [["id"], ["branchId", "clientId", "ordinal"]],
     employee: [["id"]],
     branch: [["id"]],
     employee_schedule: [["id"]],
-    service_record_case: [["id"], ["clientId"]],
-    service_record_assignment: [["id"], ["scheduleId"]],
-    service_record_day: [["id"], ["scheduleId", "sessionIndex"], ["serviceRecordCaseId", "caseSessionIndex"]],
+    service_record_case: [["id"], ["babyId"], ["branchId", "clientId", "babyId"]],
+    service_record_assignment: [["id"], ["scheduleId", "serviceRecordCaseId"]],
+    service_record_day: [["id"], ["scheduleId", "serviceRecordCaseId", "sessionIndex"], ["serviceRecordCaseId", "caseSessionIndex"]],
     service_record_token: [["id"]],
     service_record_edit_draft: [["id"]],
     service_record_revision: [["id"], ["serviceRecordCaseId", "revisionNumber"]],
-    service_record: [["id"], ["scheduleId"]],
+    service_record: [["id"], ["scheduleId", "serviceRecordCaseId"]],
     eformsign_doc: [["id"]],
     eformsign_document_job: [["id"], ["requestKey"]],
+};
+
+// Partial unique indexes protect legacy rows without exposing Prisma unique selectors.
+const UNBOUND_UNIQUES: Partial<Record<string, { columns: string[]; unboundField: string }>> = {
+    service_record_case: { columns: ["clientId"], unboundField: "babyId" },
+    service_record: { columns: ["scheduleId"], unboundField: "serviceRecordCaseId" },
+    service_record_day: { columns: ["scheduleId", "sessionIndex"], unboundField: "serviceRecordCaseId" },
 };
 
 /**
@@ -154,6 +163,7 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
         datetime: "startDate endDate bookingConfirmedAt birthDate deletedAt",
         boolean: "allowSaturdayService allowSundayService allowHolidayService",
     },
+    client_baby: { string: "id branchId", int: "clientId ordinal", boolean: "active" },
     employee: { int: "id", string: "branchId name phone" },
     branch: { string: "id name" },
     employee_schedule: {
@@ -234,21 +244,28 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
         client: { target: "client", many: false, local: "clientId", foreign: "id" },
         primaryEmployee: { target: "employee", many: false, local: "primaryEmployeeId", foreign: "id" },
         secondaryEmployee: { target: "employee", many: false, local: "secondaryEmployeeId", foreign: "id" },
-        serviceRecordAssignment: { target: "service_record_assignment", many: false, local: "id", foreign: "scheduleId" },
+        serviceRecordAssignments: { target: "service_record_assignment", many: true, local: "id", foreign: "scheduleId" },
     },
     service_record_case: {
         branch: { target: "branch", many: false, local: "branchId", foreign: "id" },
         client: { target: "client", many: false, local: "clientId", foreign: "id" },
+        baby: { target: "client_baby", many: false, local: "babyId", foreign: "id" },
         days: { target: "service_record_day", many: true, local: "id", foreign: "serviceRecordCaseId" },
         assignments: { target: "service_record_assignment", many: true, local: "id", foreign: "serviceRecordCaseId" },
     },
     service_record_assignment: {
         schedule: { target: "employee_schedule", many: false, local: "scheduleId", foreign: "id" },
     },
+    service_record_edit_draft: {
+        serviceRecordCase: { target: "service_record_case", many: false, local: "serviceRecordCaseId", foreign: "id" },
+    },
+    service_record_revision: {
+        serviceRecordCase: { target: "service_record_case", many: false, local: "serviceRecordCaseId", foreign: "id" },
+    },
 };
 
 const ALLOWED_ARGS: Record<Method, ReadonlySet<string>> = {
-    findMany: new Set(["where", "select", "include", "orderBy"]),
+    findMany: new Set(["where", "select", "include", "orderBy", "take"]),
     findFirst: new Set(["where", "select", "include", "orderBy"]),
     findUnique: new Set(["where", "select", "include"]),
     create: new Set(["data", "select", "include"]),
@@ -294,6 +311,12 @@ function isLiteral(kind: Kind, value: unknown): boolean {
     }
 }
 
+function relationFilter(filter: Row): Row {
+    if (!("is" in filter)) return filter;
+    if (Object.keys(filter).length !== 1 || !isPlainObject(filter["is"])) fail("unsupported singular relation filter");
+    return filter["is"];
+}
+
 function compareValues(left: unknown, right: unknown): number {
     const l = left instanceof Date ? left.getTime() : left;
     const r = right instanceof Date ? right.getTime() : right;
@@ -313,6 +336,7 @@ export class SequenceStore {
     private inTransaction = false;
 
     readonly client: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
+    readonly client_baby: Delegate<"findMany">;
     readonly employee: Delegate<"findMany">;
     readonly employee_schedule: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
     readonly service_record_case: Delegate<"findMany" | "findFirst" | "findUnique" | "create" | "update" | "updateMany" | "upsert">;
@@ -332,6 +356,7 @@ export class SequenceStore {
             for (const row of rows) this.insert(table, row);
         }
         this.client = this.delegate("client", ["findMany", "findFirst", "findUnique", "update", "updateMany"]);
+        this.client_baby = this.delegate("client_baby", ["findMany"]);
         this.employee = this.delegate("employee", ["findMany"]);
         this.employee_schedule = this.delegate("employee_schedule", [
             "findMany", "findFirst", "findUnique", "update", "updateMany",
@@ -458,7 +483,11 @@ export class SequenceStore {
             throw error;
         }
         switch (method) {
-            case "findMany": return this.matching(table, args).map((row) => this.project(table, row, args));
+            case "findMany": {
+                const take = args["take"];
+                return this.matching(table, args).slice(0, typeof take === "number" ? take : undefined)
+                    .map((row) => this.project(table, row, args));
+            }
             case "findFirst": {
                 const row = this.matching(table, args)[0];
                 return row ? this.project(table, row, args) : null;
@@ -491,6 +520,10 @@ export class SequenceStore {
             require("update");
         }
         this.assertWhere(table, args["where"]);
+        const take = args["take"];
+        if (take !== undefined && (typeof take !== "number" || !Number.isInteger(take) || take <= 0)) {
+            fail(`${label}: take must be a positive integer`);
+        }
         if (args["orderBy"] !== undefined) this.parseOrderBy(table, args["orderBy"]);
         if (method === "create" || method === "update" || method === "updateMany") this.assertData(table, args["data"]);
         if (method === "upsert") {
@@ -508,6 +541,11 @@ export class SequenceStore {
         for (const [key, value] of Object.entries(where)) {
             if (key === "AND" || key === "OR" || key === "NOT") {
                 for (const clause of Array.isArray(value) ? value : [value]) this.assertWhere(table, clause);
+                continue;
+            }
+            const relation = RELATIONS[table]?.[key];
+            if (relation && !relation.many && isPlainObject(value)) {
+                this.assertWhere(relation.target, relationFilter(value));
                 continue;
             }
             if (!(key in columns)) fail(`${table}: unsupported where field "${key}"`);
@@ -638,9 +676,14 @@ export class SequenceStore {
 
     /** Throws when `row` would collide with an existing row on a modelled unique key. */
     private assertUnique(table: string, row: Row): void {
-        for (const columns of UNIQUES[table]!) {
+        const constraints: Array<{ columns: string[]; unboundField?: string }> = UNIQUES[table]!.map((columns) => ({ columns }));
+        const unbound = UNBOUND_UNIQUES[table];
+        if (unbound) constraints.push(unbound);
+        for (const { columns, unboundField } of constraints) {
+            if (unboundField && row[unboundField] !== null) continue;
             if (columns.some((column) => row[column] === null || row[column] === undefined)) continue;
             const clash = this.tables[table]!.some((existing) => existing !== row
+                && (!unboundField || existing[unboundField] === null)
                 && columns.every((column) => compareValues(existing[column], row[column]) === 0));
             if (clash) fail(`${table}: unique constraint (${columns.join(", ")}) violated`);
         }
@@ -648,8 +691,18 @@ export class SequenceStore {
 
     // ------------------------------------------------------------------ evaluation (the request is already valid)
 
+    private matches(table: string, row: Row, where: Row | undefined): boolean {
+        return matchesWhere(row, where, (key, condition) => {
+            const relation = RELATIONS[table]?.[key];
+            if (!relation || relation.many) return undefined;
+            return row[relation.local] !== null && this.rows(relation.target).some((related) =>
+                related[relation.foreign] === row[relation.local] && this.matches(relation.target, related, relationFilter(condition)));
+        });
+    }
+
     private matching(table: string, args: Row): Row[] {
-        const rows = this.rows(table).filter((row) => matchesWhere(row, args["where"] as Row | undefined));
+        const where = args["where"];
+        const rows = this.rows(table).filter((row) => this.matches(table, row, isPlainObject(where) ? where : undefined));
         const orderBy = args["orderBy"];
         if (orderBy === undefined) return rows;
         const keys = this.parseOrderBy(table, orderBy);

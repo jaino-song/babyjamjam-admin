@@ -99,6 +99,11 @@ export class KeepServiceRecordPeriodMismatchDto {
 
 export class FitServiceRecordPeriodMismatchDto {}
 
+export class AdoptLegacyServiceRecordCaseDto {
+    @IsUUID()
+    babyId!: string;
+}
+
 export interface AdminServiceRecordSessionDto {
     periodMismatchKeptAt: string | null;
     sessionIndex: number;

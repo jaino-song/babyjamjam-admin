@@ -26,6 +26,7 @@ const LEGACY_DB = `${DATABASE_ORIGIN}throwaway_baby_admin_verify_legacy`;
 const ALLOWED = new Set([
     `${DATABASE_ORIGIN}throwaway_baby_admin_work`,
     `${DATABASE_ORIGIN}throwaway_baby_admin_verify`,
+    `${DATABASE_ORIGIN}throwaway_baby_schema_verify_consumers`,
     LEGACY_DB,
 ]);
 const enabled = process.env["E2E_VENDOR_STUBS"] === "1";

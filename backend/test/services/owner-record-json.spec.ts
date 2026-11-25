@@ -21,6 +21,7 @@ import {
 } from "interface/controllers/owner-record-json.controller";
 import { parseOwnerRecordJsonRequest, parseOwnerRecordJsonTarget, type OwnerRecordJsonRequest } from "interface/dto/owner-record-json.dto";
 import { ServiceRecordEntryModule } from "module/service-record-entry.module";
+import { matchesWhere } from "../utils/prisma-where-evaluator";
 
 const BRANCH = "11111111-1111-4111-8111-111111111111";
 const OTHER_BRANCH = "12121212-1212-4212-8212-121212121212";
@@ -74,7 +75,7 @@ function harness() {
         clientSignedAt: startDate, submittedAt: startDate,
     });
     const firstCase = {
-        id: CASE, branchId: BRANCH, branch: { name: "Fixture branch" }, clientId: CLIENT, version: 7,
+        id: CASE, branchId: BRANCH, branch: { name: "Fixture branch" }, clientId: CLIENT, babyId: null, version: 7,
         formVersion: 3, status: "IN_PROGRESS", startDate, endDate, requiredSessionCount: DATES.length,
         completedAt: null, finalizationDueAt: null, finalizationStartedAt: null, finalizedAt: null,
         documentsCompletedAt: null, currentRevisionId: null as string | null, currentUsableRevisionId: null,
@@ -84,13 +85,13 @@ function harness() {
     let db = {
         cases: [firstCase],
         clients: [
-            { id: CLIENT, branchId: BRANCH, startDate, endDate, name: "Fixture client", duration: 4, eDocId: null, serviceStatus: null },
-            { id: CLIENT + 1, branchId: BRANCH, startDate, endDate, name: "Fixture other client", duration: 4, eDocId: null, serviceStatus: null },
-            { id: CLIENT + 2, branchId: OTHER_BRANCH, startDate, endDate, name: "Fixture other branch", duration: 4, eDocId: null, serviceStatus: null },
+            { id: CLIENT, branchId: BRANCH, startDate, endDate, name: "Fixture client", duration: 4, eDocId: null, serviceStatus: null, deletedAt: null },
+            { id: CLIENT + 1, branchId: BRANCH, startDate, endDate, name: "Fixture other client", duration: 4, eDocId: null, serviceStatus: null, deletedAt: null },
+            { id: CLIENT + 2, branchId: OTHER_BRANCH, startDate, endDate, name: "Fixture other branch", duration: 4, eDocId: null, serviceStatus: null, deletedAt: null },
         ],
         schedules: [{
             id: SCHEDULE, branchId: BRANCH, clientId: CLIENT, startDate, endDate, primaryEmployeeId: EMPLOYEE,
-            secondaryEmployeeId: null, primaryEmployee: { name: "Fixture provider" }, replaced: false, terminatedAt: null,
+            secondaryEmployeeId: null, primaryEmployee: { name: "Fixture provider", branchId: BRANCH }, replaced: false, terminatedAt: null,
             serviceRecordAssignment: {
                 id: ASSIGNMENT, branchId: BRANCH, serviceRecordCaseId: CASE, startDate, endDate,
                 scheduleId: SCHEDULE, employeeId: EMPLOYEE, employeeNameSnapshot: "Fixture provider",
@@ -130,6 +131,12 @@ function harness() {
         $transaction: jest.fn((callback: (tx: unknown) => Promise<unknown>) => {
             const work = queue.then(async () => {
                 const working = structuredClone(db);
+                const findCases = ({ where, take }: { where: Row; take?: number }) => working.cases.filter((row) =>
+                    matchesWhere(row, where, (key, filter) => {
+                        if (key === "baby") return false;
+                        if (key !== "client") return undefined;
+                        return working.clients.some((client) => client.id === row.clientId && matchesWhere(client, filter));
+                    })).slice(0, take);
                 const tx = {
                     $executeRaw: jest.fn(async ({ sql }: Prisma.Sql) => {
                         if (sql.includes("pg_advisory_xact_lock")) trace.push("idempotency-lock");
@@ -184,6 +191,7 @@ function harness() {
                         findFirst: jest.fn(async ({ where }) => working.clients.find((row) => matches(row, where)) ?? null),
                         updateMany: periodWrite,
                     },
+                    client_baby: { findMany: jest.fn(async () => []) },
                     holiday_calendar_revision: {
                         findUnique: jest.fn(async () => {
                             trace.push("calendar-read");
@@ -204,11 +212,14 @@ function harness() {
                             ? [{ id: EMPLOYEE, deletedAt: working.employeeDeletedAt }] : [])),
                     },
                     employee_schedule: {
-                        findMany: jest.fn(async ({ where }) => working.schedules.filter((row) => matches(row, where))),
+                        findMany: jest.fn(async ({ where }) => working.schedules.filter((row) =>
+                            matchesWhere(row, where, (key, filter) =>
+                                key === "primaryEmployee" ? matchesWhere(row.primaryEmployee, filter) : undefined))),
                         updateMany: periodWrite,
                     },
                     service_record_case: {
-                        findFirst: jest.fn(async ({ where }) => working.cases.find((row) => matches(row, where)) ?? null),
+                        findFirst: jest.fn(async (args) => findCases(args)[0] ?? null),
+                        findMany: jest.fn(async (args) => findCases(args)),
                         update: jest.fn(async ({ where, data }) => {
                             caseWrite(data);
                             const row = working.cases.find((item) => matches(item, where))!;
@@ -231,7 +242,11 @@ function harness() {
                             return data;
                         }),
                     },
-                    service_record_assignment: { updateMany: periodWrite },
+                    service_record_assignment: {
+                        findMany: jest.fn(async ({ where }) => working.schedules.map(({ serviceRecordAssignment }) => serviceRecordAssignment)
+                            .filter((row) => matchesWhere(row, where))),
+                        updateMany: periodWrite,
+                    },
                     service_record_token: { updateMany: periodWrite },
                     eformsign_doc: { findMany: jest.fn(async () => []) },
                     service_record_revision: {

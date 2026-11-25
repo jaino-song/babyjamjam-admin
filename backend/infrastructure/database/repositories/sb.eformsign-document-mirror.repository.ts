@@ -658,7 +658,7 @@ implements IEformsignDocumentMirrorRepository {
                     where: {
                         ...rollbackEligibleWhere,
                         messageTriggerJobs: { none: {} },
-                        serviceRecordCase: { is: null },
+                        serviceRecordCases: { none: {} },
                     },
                 });
             }

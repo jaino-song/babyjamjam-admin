@@ -36,7 +36,7 @@ export async function resolveServiceRecordCaseTarget(
     });
     if (!client) return { kind: "missing" };
 
-    // Query cases directly while Prisma still declares the inverse as a singleton.
+    // Two rows are enough to detect ambiguity without loading the entire household.
     const cases = await tx.service_record_case.findMany({
         where: { branchId, clientId, client: liveClient, ...(explicit ? { id: caseId } : {}) },
         select: { id: true, babyId: true },

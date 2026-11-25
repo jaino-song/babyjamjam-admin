@@ -32,7 +32,11 @@ const householdTemplates = ["CLIENT_GREETING", "SERVICE_INFO"];
 
 function assertTestTarget(): void {
     const origin = "postgresql://bjj_revision_test@127.0.0.1:62295/";
-    const allowed = new Set([`${origin}throwaway_baby_reg_worker`, `${origin}throwaway_baby_reg_verify`]);
+    const allowed = new Set([
+        `${origin}throwaway_baby_reg_worker`,
+        `${origin}throwaway_baby_reg_verify`,
+        `${origin}throwaway_baby_schema_verify`,
+    ]);
     const url = process.env["DATABASE_URL"];
     if (!url || !allowed.has(url) || process.env["DIRECT_URL"] !== url || process.env["NODE_ENV"] !== "test") {
         throw new Error("Registration fixtures require matching DATABASE_URL and DIRECT_URL for the approved loopback PostgreSQL clone");
@@ -286,10 +290,13 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             for (const { greeting, serviceInfo } of [configuredJobs, legacyJobs]) {
                 expect(await householdJobs(greeting.clientId!)).toEqual([greeting, serviceInfo]);
             }
-            expect(await db.service_record_case.count({ where: { branchId, clientId: configured.id } })).toBe(1);
-            for (const ruleId of [SERVICE_RECORD_LINK_RULE_ID, assignmentRule.id]) {
-                expect(await db.message_trigger_job.count({ where: { branchId, clientId: configured.id, ruleId, status: "pending" } })).toBe(1);
-            }
+            const scope = { branchId, clientId: configured.id };
+            expect(await db.service_record_case.count({ where: { ...scope, babyId: { not: null } } })).toBe(2);
+            expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
+            expect(await db.message_trigger_job.count({ where: { ...scope, ruleId: SERVICE_RECORD_LINK_RULE_ID } })).toBe(0);
+            expect(await db.message_trigger_job.count({
+                where: { ...scope, ruleId: assignmentRule.id, status: "pending" },
+            })).toBe(1);
             expect(send).not.toHaveBeenCalled();
         } finally {
             send.mockRestore();
@@ -421,21 +428,32 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             expect(await Promise.all(cases.map(({ clientId }) => committedRows(clientId)))).toEqual(statusBeforeReplay);
             expect(send).not.toHaveBeenCalled();
 
-            const linkTimes = [];
             for (const [index, { clientId, employeeId, staffPhone }] of cases.entries()) {
                 expect(await householdJobs(clientId)).toEqual(canceledRoutines[index]);
                 const links = await db.message_trigger_job.findMany({ where: { branchId, clientId, ruleId: SERVICE_RECORD_LINK_RULE_ID } });
+                if (clientId === configured.id) {
+                    // Employee-group delivery is introduced after schema closure. A scalar
+                    // link would lose one of the two records even with a single caregiver.
+                    expect(await db.service_record_case.count({ where: { branchId, clientId, babyId: { not: null } } })).toBe(2);
+                    expect(await db.service_record_job_member.count({ where: { branchId, clientId } })).toBe(0);
+                    expect(links).toEqual([]);
+                    continue;
+                }
+                const legacySchedules = await schedules(clientId);
+                expect(legacySchedules).toHaveLength(1);
+                const [legacySchedule] = legacySchedules;
+                if (!legacySchedule) throw new Error("Expected the legacy caregiver's schedule");
+                const previousDay = new Date(legacySchedule.startDate.getTime() - 86_400_000).toISOString().slice(0, 10);
                 expect(links).toEqual([expect.objectContaining({
                     status: "pending", clientId, recipientType: "PRIMARY_EMPLOYEE", recipientPhone: staffPhone,
+                    scheduledFor: new Date(`${previousDay}T12:00:00+09:00`),
                     payload: expect.objectContaining({ clientId, employeeId }),
                 })]);
-                linkTimes.push(links[0]!.scheduledFor);
                 const result = await trigger.dispatchPendingJobNow(links[0]!.id, { expectedBranchId: branchId });
                 expect(result).toMatchObject({ status: "sent", cancelReason: null });
                 expect(await householdJobs(clientId)).toEqual(canceledRoutines[index]);
             }
-            expect(linkTimes[0]).toEqual(linkTimes[1]);
-            expect(send.mock.calls.flatMap(([params]) => params.receiver.split(","))).toEqual(cases.map(({ staffPhone }) => staffPhone));
+            expect(send.mock.calls.flatMap(([params]) => params.receiver.split(","))).toEqual(["01000000001"]);
         } finally {
             send.mockRestore();
         }
@@ -498,10 +516,31 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         expect(confirmed.body).toMatchObject({
             fetalConfirmation: "CONFIRMED", babies: body.babies, bookingConfirmedAt: expect.any(String),
         });
-        expect(await db.service_record_case.count({ where: { branchId, clientId: body.id } })).toBe(1);
+        expect(await db.service_record_case.count({ where: { branchId, clientId: body.id } })).toBe(2);
         const before = await committedRows(body.id);
         await http().patch(`/clients/${body.id}/confirm-booking`).send({}).expect(200);
         expect(await committedRows(body.id)).toEqual(before);
+    });
+
+    it("confirmed twins have two different case identities for their two registered babies", async () => {
+        const dates = { startDate: dateAt(7), endDate: dateAt(22) };
+        const { body }: { body: Registration } = await create({
+            ...twins(employeeIds[0], employeeIds[1]), ...dates, serviceStatus: "pre_booking",
+        }).expect(201);
+        expect(body.babies).toHaveLength(2);
+        await assertNoRecordEffects(body.id);
+
+        const { body: booked } = await confirm(body.id);
+        expect(booked.babies).toEqual(body.babies);
+        const rows = await db.service_record_case.findMany({
+            where: { branchId, clientId: body.id },
+            orderBy: { babyId: "asc" },
+            select: { id: true, babyId: true },
+        });
+        const identities = rows.map(({ id, babyId }) => ({ caseId: id, babyId }));
+        expect(rows).toHaveLength(2);
+        expect(new Set(identities.map(({ caseId }) => caseId)).size).toBe(2);
+        expect(identities.map(({ babyId }) => babyId)).toEqual(body.babies.map(({ babyId }) => babyId).sort());
     });
 
     it("round-trips a severe singleton's explicit assistant owner and preserves it on a legacy edit", async () => {
@@ -701,14 +740,18 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         await assertNoRecordEffects(initial.id);
     });
 
-    async function bookedTwin() {
+    async function bookedTwin(babyIndex: 0 | 1 = 0) {
         const [primary, assistant] = employeeIds as [number, number];
-        const { body } = await create({
+        const { body: client }: { body: Registration } = await create({
             ...twins(primary, assistant), startDate: dateAt(-5), endDate: dateAt(20),
             duration: 5, serviceStatus: "active", applyMessageAutomation: false,
         }).expect(201);
-        const record = await db.service_record_case.findFirstOrThrow({ where: { branchId, clientId: body.id } });
-        return { client: body as Registration, record };
+        const babyId = client.babies[babyIndex]?.babyId;
+        if (!babyId) throw new Error("Expected the booked twin's registered baby ID");
+        const record = await db.service_record_case.findUniqueOrThrow({
+            where: { branchId_clientId_babyId: { branchId, clientId: client.id, babyId } },
+        });
+        return { client, record };
     }
 
     it("materializes one immediate assignment notice for the successor on a configured PATCH without a name", async () => {
@@ -739,7 +782,9 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         const { client, record } = await bookedTwin();
         const original = (await schedules(client.id))[0]!;
         const calendar = await app.get(HolidayCalendarService).forBranch(branchId);
-        const sourceAssignment = await db.service_record_assignment.findUniqueOrThrow({ where: { scheduleId: original.id } });
+        const sourceAssignment = await db.service_record_assignment.findUniqueOrThrow({
+            where: { scheduleId_serviceRecordCaseId: { scheduleId: original.id, serviceRecordCaseId: record.id } },
+        });
         expect(record.requiredSessionCount).toBeGreaterThan(0);
         const vector = Array.from({ length: record.requiredSessionCount! }, (_, index) => {
             const serviceDate = calendar.calcEndDateBusinessDays(original.startDate.toISOString().slice(0, 10), index + 1);
@@ -828,9 +873,13 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("rolls back period and allocation when an exception occurs after realignment", async () => {
-        const { client, record } = await bookedTwin();
+        const { client } = await bookedTwin();
         const before = await committedRows(client.id);
-        let correctedPeriod: { startDate: Date | null; sessionCount: number | null } | undefined;
+        let correctedPeriod: {
+            startDate: Date | null;
+            sessionCount: number | null;
+            byCase: ReadonlyMap<string, number | null> | undefined;
+        } | undefined;
         const dateChanges = app.get(ServiceRecordStartDateChangeService);
         const apply = dateChanges.applyInTransaction.bind(dateChanges);
         const injected = jest.spyOn(dateChanges, "applyInTransaction").mockImplementationOnce(async (tx, params) => {
@@ -838,6 +887,7 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             correctedPeriod = {
                 startDate: (await tx.client.findUniqueOrThrow({ where: { id: client.id } })).startDate,
                 sessionCount: result.restoreRequiredSessionCount,
+                byCase: result.restoreByCase,
             };
             throw new Error("QA rollback after period correction");
         });
@@ -848,7 +898,9 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             }).expect(500);
             expect(injected).toHaveBeenCalledTimes(1);
             expect(correctedPeriod).toEqual({
-                startDate: new Date(dateAt(9)), sessionCount: record.requiredSessionCount,
+                startDate: new Date(dateAt(9)),
+                sessionCount: null,
+                byCase: new Map(before.cases.map(({ id, requiredSessionCount }) => [id, requiredSessionCount])),
             });
             expect(await committedRows(client.id)).toEqual(before);
         } finally {
@@ -857,7 +909,7 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("preserves signed history across staff replacement and refuses authored-baby retirement", async () => {
-        const { client, record } = await bookedTwin();
+        const { client, record } = await bookedTwin(1);
         const original = (await schedules(client.id))[0]!;
         const signed = await db.service_record_day.create({
             data: {
@@ -866,7 +918,7 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
                 employeeId: employeeIds[0], clientSignedAt: new Date(), locked: true, submittedAt: new Date(),
             },
         });
-        await db.service_record_case.update({ where: { id: record.id }, data: { babyId: client.babies[1]!.babyId } });
+        expect(record.babyId).toBe(client.babies[1]!.babyId);
         const remove = await edit(client.id, {
             ...twins(employeeIds[0], employeeIds[1]), fetalType: "SEVERE_SINGLETON", babyCount: 1,
             expectedAllocationVersion: client.allocationVersion,

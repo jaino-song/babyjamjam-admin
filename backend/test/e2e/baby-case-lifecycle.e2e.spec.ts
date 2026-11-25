@@ -26,6 +26,7 @@ const origin = "postgresql://bjj_revision_test@127.0.0.1:62295/";
 const allowedTargets = new Set([
     origin + "throwaway_baby_lifecycle_work",
     origin + "throwaway_baby_lifecycle_verify",
+    origin + "throwaway_baby_schema_verify_consumers",
 ]);
 const describeE2E = process.env["E2E_VENDOR_STUBS"] === "1" ? describe : describe.skip;
 const priceYear = 2026;
@@ -195,6 +196,14 @@ describeE2E("baby case lifecycle with the staged PostgreSQL keys", () => {
         return days;
     }
 
+    async function expectBoundDeliveryHeld(clientId: number) {
+        const scope = { branchId, clientId };
+        expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
+        expect(await db.message_trigger_job.count({
+            where: { ...scope, OR: [{ ruleId: SERVICE_RECORD_LINK_RULE_ID }, { templateKey: "SERVICE_RECORD_LINK" }] },
+        })).toBe(0);
+    }
+
     it("prebooking then booking creates two independent baby records", async () => {
         const client = await register(twins());
         const schedules = await db.employee_schedule.findMany({ where: { branchId, clientId: client.id } });
@@ -224,6 +233,7 @@ describeE2E("baby case lifecycle with the staged PostgreSQL keys", () => {
         expect(await db.message_trigger_job.count({
             where: { branchId, clientId: client.id, ruleId: SERVICE_RECORD_LINK_RULE_ID, status: "pending" },
         })).toBe(0);
+        await expectBoundDeliveryHeld(client.id);
     });
 
     it("two concurrent ensures preserve every sibling case id", async () => {
@@ -251,6 +261,7 @@ describeE2E("baby case lifecycle with the staged PostgreSQL keys", () => {
         await expect(resolveServiceRecordCaseTarget(db, { ...scope, branchId: otherBranchId, caseId: expected[1]!.caseId }))
             .resolves.toEqual({ kind: "missing" });
         await addDays(client.id);
+        await expectBoundDeliveryHeld(client.id);
     });
 
     it("severe singleton is owned by its assigned assistant", async () => {
@@ -258,6 +269,7 @@ describeE2E("baby case lifecycle with the staged PostgreSQL keys", () => {
         const client = await register(values);
         await book(client.id).expect(200);
         const [record] = await getCases(client.id);
+        expect(await getCases(client.id)).toHaveLength(1);
         expect(record?.babyId).toBe(client.babies[0]!.babyId);
         expect(await getAssignments(client.id)).toEqual([expect.objectContaining({
             caseId: record!.caseId, employeeId: employeeIds[1],
@@ -266,6 +278,7 @@ describeE2E("baby case lifecycle with the staged PostgreSQL keys", () => {
         expect((await addDays(client.id))[0]!.employeeId).toBe(employeeIds[1]);
         const schedule = await db.employee_schedule.findFirstOrThrow({ where: { branchId, clientId: client.id } });
         await expect(app.get(ServiceRecordLinkService).prepareLink(schedule.id)).rejects.toMatchObject({ status: 409 });
+        await expectBoundDeliveryHeld(client.id);
     });
 
     it("five babies keep separate records across four staff", async () => {
@@ -279,6 +292,7 @@ describeE2E("baby case lifecycle with the staged PostgreSQL keys", () => {
         expect(new Set(assignments.map(({ scheduleId }) => scheduleId)).size).toBe(1);
         expect(new Set(assignments.map(({ assignmentId }) => assignmentId)).size).toBe(5);
         await addDays(client.id);
+        await expectBoundDeliveryHeld(client.id);
     });
 
     it("explicit legacy adoption preserves original case and artifacts", async () => {

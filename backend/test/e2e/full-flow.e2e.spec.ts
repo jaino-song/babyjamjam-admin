@@ -1088,7 +1088,13 @@ describeE2E("BJJ-275 full connected flow", () => {
         expect(acknowledged.status).toBe(201);
         expect(acknowledged.body.status).toBe("READY_TO_FINALIZE");
 
-        const serviceCase = await prisma.service_record_case.findUniqueOrThrow({ where: { clientId } });
+        const cases = await prisma.service_record_case.findMany({
+            where: { clientId, branchId: BRANCH_ID },
+            orderBy: { id: "asc" },
+        });
+        expect(cases).toHaveLength(1);
+        const [serviceCase] = cases;
+        if (!serviceCase) throw new Error("Expected the booked client's service-record case");
         const dueAt = new Date(Date.now() - 60_000);
         await prisma.service_record_case.update({
             where: { id: serviceCase.id },

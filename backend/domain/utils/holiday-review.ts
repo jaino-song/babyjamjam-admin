@@ -15,9 +15,9 @@ export type ReviewReason =
 
 /** What the classification needs to know about one client's recorded service. */
 export interface ReviewClientFacts {
-    /** `service_record_case.status`, or null when the client has no case. */
+    /** A finalized or finalizing case status takes priority across the household. */
     caseStatus: string | null;
-    /** The case's `service_record_day` rows (`YYYY-MM-DD`). */
+    /** The household's `service_record_day` rows (`YYYY-MM-DD`). */
     days: ReadonlyArray<{ date: string; locked: boolean }>;
 }
 
