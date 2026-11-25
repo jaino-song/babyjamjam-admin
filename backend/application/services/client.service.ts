@@ -1376,7 +1376,8 @@ export class ClientService {
         const configuredPreBooking = configured && getEffectiveClientServiceStatus(
             params.serviceStatus ?? null, startDate, endDate, confirmBookingOnCreate ? new Date() : null,
         ) === SERVICE_STATUS.PRE_BOOKING;
-        const applyMessageAutomation = !configuredPreBooking && (params.applyMessageAutomation ?? true);
+        const applyMessageAutomation = params.applyMessageAutomation ?? true;
+        const applyScheduleMessageAutomation = applyMessageAutomation && !configuredPreBooking;
         // The create-time intent gating above stays keyed to applyMessageAutomation;
         // the persisted flag prefers the explicit field.
         const smsAutomationEnabled = params.smsAutomationEnabled ?? params.applyMessageAutomation ?? true;
@@ -1622,6 +1623,8 @@ export class ClientService {
                         suppressGreeting: suppressGreetingSms,
                         intentAt: automationIntentAt,
                     });
+                }
+                if (applyScheduleMessageAutomation) {
                     await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                         branchId: branchid,
                         clientId: created.client.id,
@@ -1681,7 +1684,7 @@ export class ClientService {
                 this.logger.error(`Failed to fulfill client message intent: ${error}`);
             });
         }
-        if (createdScheduleId !== null && applyMessageAutomation) {
+        if (createdScheduleId !== null && applyScheduleMessageAutomation) {
             await this.messageAutomationIntentService.fulfillScheduleIntent({
                 branchId: branchid,
                 scheduleId: createdScheduleId,
@@ -2717,11 +2720,11 @@ export class ClientService {
         if (updatedPhone) {
             await this.linkContractDocumentsByPhone(branchid, updatedClient, updatedPhone);
         }
-        if (this.triggerService && !configuredPreBooking) {
+        if (this.triggerService) {
             await this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
-            if (clientNameSupplied && !assignmentIntentAt) {
+            if (!configuredPreBooking && clientNameSupplied && !assignmentIntentAt) {
                 try {
                     const refreshed = await this.triggerService.syncEmployeeAssignmentRulesForClient(branchid, id);
                     if (refreshed === false) {
