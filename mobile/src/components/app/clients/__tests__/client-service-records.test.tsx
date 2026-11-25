@@ -1,8 +1,9 @@
 import type { ReactElement } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ClientServiceRecords } from "../client-service-records";
+import type { useClientServiceRecords } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import type {
@@ -16,6 +17,7 @@ const mockKeep = jest.fn();
 const mockFit = jest.fn();
 let mockPeriodPending = false;
 const mockUseGetAuthUser = jest.fn();
+const mockUseClientServiceRecords = jest.fn<ServiceRecordOverview | undefined, Parameters<typeof useClientServiceRecords>>();
 const TEST_COMPONENT =
     "mobile_clients_detail-sheet_stack_detail-page_content_tab-panel_service-records_content";
 const TEST_START_DATE = "2026-07-16T00:00:00+09:00";
@@ -26,7 +28,9 @@ const TEST_VERIFIED_AT = "2026-07-16T15:10:00+09:00";
 const TEST_EXPIRY = "2026-07-30T20:00:00+09:00";
 
 jest.mock("@/hooks/useServiceRecords", () => ({
-    useClientServiceRecords: jest.fn(() => ({ data: undefined, isLoading: false, isError: false })),
+    useClientServiceRecords: (...args: Parameters<typeof useClientServiceRecords>) => ({
+        data: mockUseClientServiceRecords(...args), isLoading: false, isError: false,
+    }),
     useKeepPeriodMismatch: () => ({ isPending: mockPeriodPending, mutateAsync: mockKeep }),
     useFitPeriodMismatch: () => ({ isPending: mockPeriodPending, mutateAsync: mockFit }),
     useSendServiceRecordLink: () => ({
@@ -146,6 +150,48 @@ describe("ClientServiceRecords", () => {
             isFetching: false,
             isError: false,
         });
+    });
+
+    afterEach(() => {
+        mockUseClientServiceRecords.mockReset();
+    });
+
+    it("sends the selected second case link on a schedule shared by siblings", async () => {
+        const assignment = createAssignment(1, "none");
+        const secondCaseId = "case-second";
+        const cases: NonNullable<ServiceRecordOverview["cases"]> = [
+            { caseId: "case-first", babyId: "baby-first", rank: 1 },
+            { caseId: secondCaseId, babyId: "baby-second", rank: 2 },
+        ].map((item) => ({
+            ...item,
+            babyCount: 2,
+            legacyName: null,
+            retired: false,
+            status: "IN_PROGRESS",
+            assignees: [assignment.employee],
+            totalSessions: 1,
+            submittedSessions: 0,
+        }));
+        mockUseClientServiceRecords.mockImplementation((clientId, options) => {
+            const selectedCase = cases.find(({ caseId }) => caseId === options?.caseId);
+            return clientId === client.id && selectedCase ? {
+                record: { ...createRecord("IN_PROGRESS"), id: selectedCase.caseId },
+                assignments: [assignment],
+            } : undefined;
+        });
+        mockMutateAsync.mockResolvedValue({ ok: true, status: "sent" });
+        renderComponent({ cases, assignments: [] });
+
+        fireEvent.click(screen.getByRole("button", { name: /^첫째 ·/ }));
+        fireEvent.click(screen.getByRole("button", { name: /^둘째 ·/ }));
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
+        });
+
+        expect(mockUseClientServiceRecords).toHaveBeenCalledWith(client.id, { caseId: secondCaseId, enabled: true });
+        expect(mockMutateAsync.mock.calls).toEqual([[
+            { clientId: client.id, scheduleId: assignment.scheduleId, caseId: secondCaseId },
+        ]]);
     });
 
     it("shows just the latest case header, not stale assignment headers", () => {
