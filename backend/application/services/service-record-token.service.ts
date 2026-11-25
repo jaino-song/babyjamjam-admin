@@ -1,3 +1,4 @@
+import { requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import { BadRequestException, ConflictException, Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
@@ -176,7 +177,7 @@ export class ServiceRecordTokenService {
                     client: { branchId, deletedAt: null },
                 },
                 orderBy: { id: "desc" },
-                select: { id: true, primaryEmployeeId: true, client: { select: { serviceStatus: true } } },
+                select: { id: true, primaryEmployeeId: true, client: { select: { serviceStatus: true, fetalConfirmation: true } } },
             });
             if (!current || current.id !== scheduleId || current.client.serviceStatus === "terminated") return null;
 
@@ -214,7 +215,10 @@ export class ServiceRecordTokenService {
                 });
             }
             const phone = this.normalizePhone(employee?.phone ?? "");
-            return employee && phone ? { target, clientId, employeeName: employee.name, phoneHash: this.hash(phone) } : null;
+            return employee && phone ? {
+                target, clientId, employeeName: employee.name, phoneHash: this.hash(phone),
+                configured: current.client.fetalConfirmation === "CONFIRMED",
+            } : null;
         });
     }
 
@@ -248,6 +252,7 @@ export class ServiceRecordTokenService {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
 
+            if (current.configured) await requireBabyRecordRollout(tx, params.branchId);
             const scope = await this.credentialScope(tx, params, current);
             const row = await tx.service_record_token.findFirst({
                 where: scope,
@@ -291,6 +296,7 @@ export class ServiceRecordTokenService {
         const reuse = async (tx: Prisma.TransactionClient) => {
             const current = await this.currentProvider(params, tx, { lockCase: true });
             if (!current || current.phoneHash !== this.hash(this.normalizePhone(params.expectedPhone))) return null;
+            if (current.configured) await requireBabyRecordRollout(tx, params.branchId);
             const where = {
                 ...await this.credentialScope(tx, params, current),
                 expectedPhoneHash: current.phoneHash,
@@ -326,6 +332,7 @@ export class ServiceRecordTokenService {
 
             const current = await this.currentProvider(params, tx, { lockCase: true });
             if (!current || current.phoneHash !== expectedPhoneHash) return false;
+            if (current.configured) await requireBabyRecordRollout(tx, params.branchId);
             const scope = await this.credentialScope(tx, params, current);
             const record = await tx.service_record_token.findFirst({ where: { ...scope, id: candidate.id } });
             if (!record || record.expectedPhoneHash !== expectedPhoneHash || record.expiresAt.getTime() <= Date.now()) return false;

@@ -1,3 +1,4 @@
+import { isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
 import { isAutomaticRecordLinkGroup, isRecordLinkGroup, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED } from "./service-record-link-group-source";
 import type { ServiceRecordLinkGroupService } from "./service-record-link-group.service";
 import type { message_trigger_job } from "@prisma/client";
@@ -2543,8 +2544,11 @@ export class MessageTriggerService {
             branchIds.filter(branchId => !approvedBranchIds.has(branchId)), now,
         ) ?? [];
         for (const job of denied) {
-            await this.messageAutomationBranchLockService?.runExclusive(job.branchId!, tx =>
-                this.jobRepository.fenceServiceRecordLinkAttempt!(tx, job, now, "pending", true));
+            await this.messageAutomationBranchLockService?.runExclusive(job.branchId!, async tx => {
+                if (!isRecordLinkGroup(job) || await isBabyRecordRolloutEnabled(tx, job.branchId!)) {
+                    await this.jobRepository.fenceServiceRecordLinkAttempt!(tx, job, now, "pending", true);
+                }
+            });
         }
         if (this.receiptRetrySettings && this.jobRepository.cancelDueReceiptJobsForDeniedSender) {
             for (const branchId of branchIds.filter(id => !approvedBranchIds.has(id))) {
@@ -4402,6 +4406,8 @@ export class MessageTriggerService {
         let processingDeadlineAt!: Date;
         let pastExpiryHours!: number;
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
+            if (isRecordLinkGroup(job) && !sentIds.has(job.id)
+                && (!job.branchId || !transaction || !await isBabyRecordRolloutEnabled(transaction, job.branchId))) return null;
             if (automaticReceipt && transaction && !resend && !sentIds.has(job.id)) {
                 if (receiptChild) {
                     const fence = await this.fenceReceiptChild(transaction, job, "pending", undefined, true);
@@ -4472,7 +4478,7 @@ export class MessageTriggerService {
         // their current due time and claim under the same branch transaction
         // as automatic jobs and policy reconciliation. Existing manual
         // needs_setup resends keep their separate, non-pending claim path.
-        const claimed = (automaticJob || job.templateKey === MANUAL_SMS_TEMPLATE_KEY || !resend)
+        const claimed = (automaticJob || isRecordLinkGroup(job) || job.templateKey === MANUAL_SMS_TEMPLATE_KEY || !resend)
             && job.branchId && this.messageAutomationBranchLockService
             ? await this.messageAutomationBranchLockService.runExclusive(job.branchId, (transaction) => claim(transaction))
             : await claim();
@@ -4652,7 +4658,7 @@ export class MessageTriggerService {
                 }
             }
             return { kind: "allow" };
-        } : undefined);
+        } : undefined, resend);
         if (preparationFence.kind === "lost") {
             return true;
         }
@@ -4719,7 +4725,8 @@ export class MessageTriggerService {
                 ? this.fenceReceiptChild(tx, job, "dispatching", job)
                 : this.fenceOrdinaryReceiptProvider(tx, job));
         }
-        if (await this.deliverClaimedJob(job, preparation, resend) === "preserve-stored" || (automaticReceipt && !job.claimToken)) return true;
+        if (await this.deliverClaimedJob(job, preparation, resend) === "preserve-stored"
+            || ((automaticReceipt || isRecordLinkGroup(job)) && !job.claimToken)) return true;
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
         return true;
     }
@@ -4844,9 +4851,25 @@ export class MessageTriggerService {
      * claim fence remains responsible for cancellation races after a source
      * change during preparation.
      */
+    private async releaseClaimIfBabyRecordsPaused(
+        job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient,
+        resend: boolean,
+    ): Promise<boolean> {
+        if (!isRecordLinkGroup(job) || !job.branchId || await isBabyRecordRolloutEnabled(transaction, job.branchId)) {
+            return false;
+        }
+        await transaction.message_trigger_job.updateMany({
+            where: { id: job.id, branchId: job.branchId, status: "processing", claimToken: job.claimToken },
+            data: { status: resend ? "needs_setup" : "pending", claimToken: null, processingDeadlineAt: null },
+        });
+        return true;
+    }
+
     private async authorizeClaimedJobBeforePreparation(
         job: MessageTriggerJobEntity,
         receiptFence?: (tx: Prisma.TransactionClient) => Promise<PreProviderSendFenceResult>,
+        resend = false,
     ): Promise<PreProviderSendFenceResult> {
         const automaticJob = this.isAutomaticMessageJob(job);
         if (
@@ -4856,6 +4879,7 @@ export class MessageTriggerService {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
         const authorize = async (transaction: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> => {
+            if (await this.releaseClaimIfBabyRecordsPaused(job, transaction, resend)) return { kind: "lost" };
             if (automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID && this.jobRepository.fenceServiceRecordLinkAttempt) {
                 const attempt = await this.jobRepository.fenceServiceRecordLinkAttempt(transaction, job, new Date(), "processing");
                 if (attempt.kind !== "allow") return attempt;
@@ -4898,6 +4922,9 @@ export class MessageTriggerService {
             if (!this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
             return this.automationDeliveryGate.authorizePreparation(job,
                 (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize);
+        }
+        if (isRecordLinkGroup(job) && job.branchId && this.messageAutomationBranchLockService) {
+            return this.messageAutomationBranchLockService.runExclusive(job.branchId, authorize);
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
@@ -4974,6 +5001,7 @@ export class MessageTriggerService {
         resend = false,
     ): Promise<PreProviderSendFenceResult> {
         const authorize = async (transaction: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> => {
+            if (await this.releaseClaimIfBabyRecordsPaused(job, transaction, resend)) return { kind: "lost" };
             if (
                 this.isAutomaticMessageJob(job)
                 && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !job.branchId)
@@ -5113,6 +5141,9 @@ export class MessageTriggerService {
                         ? this.fenceOutstandingDateRefresh(job, tx)
                         : { kind: "allow" },
                 });
+        }
+        if (isRecordLinkGroup(job) && job.branchId && this.messageAutomationBranchLockService) {
+            return this.messageAutomationBranchLockService.runExclusive(job.branchId, authorize);
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,

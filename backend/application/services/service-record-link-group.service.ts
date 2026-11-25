@@ -1,3 +1,4 @@
+import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
 import { randomUUID } from "node:crypto";
 
 import { renderServiceRecordLinks } from "@babyjamjam/shared/message/service-record-links";
@@ -74,6 +75,9 @@ export class ServiceRecordLinkGroupService {
             // Client/employee/case/schedule locks precede the job and token writes.
             const source = await readRecordLinkGroupSource(tx, branchId, scheduleId, true);
             if (!source) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            if (!await isBabyRecordRolloutEnabled(tx, branchId)) {
+                throw new BabyRecordRolloutPausedException();
+            }
             await lockRecordLinkSchedule(tx, scheduleId);
             return work(source, tx);
         });

@@ -1,3 +1,4 @@
+import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { BadRequestException, ConflictException, Injectable, Inject, InternalServerErrorException, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -1290,6 +1291,10 @@ export class ClientService {
         };
     }
 
+    async getBabyRecordCapability(branchId: string): Promise<{ enabled: boolean }> {
+        return { enabled: await isBabyRecordRolloutEnabled(this.prismaService, branchId) };
+    }
+
     async create(branchid: string, params: ClientAllocationInput & {
         name: string;
         primaryEmployeeId?: number | null;
@@ -1329,6 +1334,9 @@ export class ClientService {
         // checks, automation, or any other write/provider side effect.
         assertClientPhoneInput(params.phone);
         const configured = hasAllocationInput(params);
+        if (configured && !await isBabyRecordRolloutEnabled(this.prismaService, branchid)) {
+            throw new BabyRecordRolloutPausedException();
+        }
         assertAllocationStaffInput(params);
         const startDate = parseClientDate(params.startDate, "startDate") ?? null;
         const endDate = parseClientDate(params.endDate, "endDate") ?? null;
@@ -1527,6 +1535,7 @@ export class ClientService {
         const automationIntentAt = new Date();
         if (primaryEmployeeId !== null) {
             const result = await this.withRecordLinkWrite(branchid, async (transaction) => {
+                if (configured) await requireBabyRecordRollout(transaction, branchid);
                 const allocation = configured ? await planClientAllocation(transaction, params, createParams) : null;
                 const prelockedAuthorityOwnerIds = createParams.eDocId === null ? []
                     : await discoverAuthorityClientIds(transaction, branchid, [createParams.eDocId]);
@@ -1643,7 +1652,8 @@ export class ClientService {
             client = result.client;
             createdScheduleId = result.scheduleId;
         } else {
-            client = await this.prismaService.$transaction(async (transaction) => {
+            client = await this.withRecordLinkWrite(branchid, async (transaction) => {
+                if (configured) await requireBabyRecordRollout(transaction, branchid);
                 const allocation = configured ? await planClientAllocation(transaction, params, createParams) : null;
                 const created = await this.createClientUsecase.execute(
                     branchid,
@@ -3270,6 +3280,10 @@ export class ClientService {
             if (!lockedClient.startDate || !lockedClient.endDate) {
                 return refuse("서비스 시작일과 종료일을 먼저 입력해 주세요.");
             }
+            const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
+            if (snapshot?.fetalConfirmation === "CONFIRMED") {
+                await requireBabyRecordRollout(transaction, branchid);
+            }
             const now = new Date();
             const updateResult = await transaction.client.updateMany({
                 where: { id: clientId, branchId: branchid },
@@ -3281,7 +3295,6 @@ export class ClientService {
             if (updateResult.count === 0) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
-            const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
             if (snapshot?.fetalConfirmation === "CONFIRMED") {
                 configuredScheduleId = snapshot.employeeSchedules[0]?.id ?? null;
             } else {
