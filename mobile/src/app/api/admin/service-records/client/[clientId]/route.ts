@@ -37,7 +37,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             return invalidClientIdResponse();
         }
 
-        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}${new URL(request.url).search}`, {
+        const caseIds = new URL(request.url).searchParams.getAll("caseId");
+        if (caseIds.length > 1) {
+            return validationProblemResponse("Invalid case selection", [{ pointer: "/caseId", code: "INVALID_FORMAT", detail: "아기 제공기록지 한 건을 선택해 주세요.", location: "query" }]);
+        }
+        const selection = caseIds.length ? `?caseId=${encodeURIComponent(caseIds[0])}` : "";
+        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}${selection}`, {
             headers: getAuthHeaders(token),
         });
         return withNoStore(backendJsonResponse(response));

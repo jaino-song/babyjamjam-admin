@@ -1,5 +1,8 @@
 "use client";
 
+import { serviceRecordResetTarget } from "@babyjamjam/shared/utils";
+import type { ServiceRecordLinkResetSelection } from "./ServiceRecordLinkResetDialog";
+
 import { ServiceRecordCasePicker } from "@/components/app/service-record/ServiceRecordCasePicker";
 import { serviceRecordEditorPath } from "@/features/service-records/utils/case-selection";
 import Link from "next/link";
@@ -97,6 +100,7 @@ interface ClientServiceRecordsTabProps {
     serviceDays?: ServiceDayPolicy;
     selectedCaseId?: string;
     onSelectCase?: (caseId: string) => void;
+    onResetServiceRecordLink?: (selection: ServiceRecordLinkResetSelection) => void;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -172,6 +176,7 @@ function ClientServiceRecordsTabContent({
     serviceDays,
     selectedCaseId,
     onSelectCase,
+    onResetServiceRecordLink,
 }: Omit<ClientServiceRecordsTabProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
     const { toast } = useToast();
@@ -180,6 +185,14 @@ function ClientServiceRecordsTabContent({
     const record = overview?.record ?? null;
     const cases = overview?.cases ?? [];
     const selectedCase = cases.find((item) => item.caseId === record?.id);
+    const credentialTarget = overview && serviceRecordResetTarget(overview, selectedCaseId);
+    const groupTarget = credentialTarget && "members" in credentialTarget.request ? credentialTarget.request : undefined;
+    const matchesCredential = (assignment: ServiceRecordAssignment) => {
+        if (selectedCase?.retired || assignment.replaced) return false;
+        if (overview?.legacyLinkAssignment === undefined && !selectedCase?.babyId) return true;
+        return Boolean(credentialTarget?.scheduleId === assignment.scheduleId
+            && (!groupTarget || groupTarget.employeeId === assignment.employee.id));
+    };
     const showPicker = cases.length > 1 || (!record && cases.length > 0);
     const picker = showPicker && onSelectCase ? (
         <ServiceRecordCasePicker data-component={`${dataComponent}_case-picker`}
@@ -201,7 +214,8 @@ function ClientServiceRecordsTabContent({
     const projectionEntries = scheduleProjection && scheduleProjection.blockingReasons.length === 0
         ? scheduleProjection.entries
         : [];
-    const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+    const activeAssignment = assignments.find(matchesCredential)
+        ?? assignments.find((assignment) => !assignment.replaced)
         ?? assignments[0]
         ?? null;
     // The confirmation remembers only which assignment it was opened for; the
@@ -226,7 +240,7 @@ function ClientServiceRecordsTabContent({
     });
 
     const sendLink = async (assignment: ServiceRecordAssignment): Promise<boolean> => {
-        if (selectedCase?.retired) return false;
+        if (!matchesCredential(assignment) || isRefreshing) return false;
         // The caller may hold an assignment captured before the latest refresh, so the
         // send itself checks the newest status instead of trusting the click handler.
         const latest = latestAssignmentsRef.current.find(
@@ -238,7 +252,7 @@ function ClientServiceRecordsTabContent({
             const result = await sendLinkMutation.mutateAsync({
                 scheduleId: assignment.scheduleId,
                 clientId: clientId ?? undefined,
-                ...(selectedCaseId ? { caseId: selectedCaseId } : {}),
+                ...(groupTarget ? { target: groupTarget } : selectedCaseId ? { caseId: selectedCaseId } : {}),
             });
             // The outcome is decided by the job status alone: `ok` is false for
             // every non-sent job, including one the scheduler is already
@@ -384,7 +398,13 @@ function ClientServiceRecordsTabContent({
                                     layout={layout}
                                     clientId={clientId}
                                     caseId={selectedCaseId}
-                                    readOnly={selectedCase?.retired}
+                                    readOnly={!matchesCredential(activeAssignment) || (Boolean(groupTarget) && isRefreshing)}
+                                    onResetLink={selectedCase?.babyId && groupTarget && onResetServiceRecordLink && matchesCredential(activeAssignment)
+                                        ? () => onResetServiceRecordLink({
+                                            caseId: selectedCase.caseId,
+                                            scheduleId: activeAssignment.scheduleId,
+                                            employeeId: groupTarget.employeeId,
+                                        }) : undefined}
                                     assignment={activeAssignment}
                                     isRefreshing={isTextRefreshing}
                                     isPending={sendingSchedule?.scheduleId === activeAssignment.scheduleId
@@ -454,6 +474,7 @@ function ClientServiceRecordsTabContent({
                             layout={layout}
                             clientId={clientId}
                             assignment={assignment}
+                            readOnly={!matchesCredential(assignment)}
                             isRefreshing={isTextRefreshing}
                             isPending={sendingSchedule?.scheduleId === assignment.scheduleId
                                 || (sendLinkMutation.isPending
@@ -1149,6 +1170,7 @@ function LinkStatusCard({
     isPending,
     isSendingResend = false,
     onSendLink,
+    onResetLink,
     showStatusBadge = true,
 }: {
     layout?: "desktop" | "mobile";
@@ -1160,6 +1182,7 @@ function LinkStatusCard({
     isPending: boolean;
     isSendingResend?: boolean;
     onSendLink: () => void;
+    onResetLink?: () => void;
     showStatusBadge?: boolean;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("overview-grid", "link-card");
@@ -1214,7 +1237,7 @@ function LinkStatusCard({
                             ? SEND_LINK_BLOCKED_HINT
                             : link.status === "canceled"
                             ? CANCELED_LINK_HINT
-                            : "서비스 시작 하루 전 12:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
+                            : "서비스 시작 전날 정오(한국 시간)에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
                     </p>
                 </div>
                 <Button
@@ -1237,6 +1260,12 @@ function LinkStatusCard({
                 >
                     {isResend ? "메시지 재전송" : layout === "mobile" ? "제공기록지 링크 발송" : "링크 수동 전송"}
                 </Button>
+                {onResetLink && canEditServiceRecord ? (
+                    <Button type="button" variant="outline" className="mt-2" disabled={readOnly}
+                        data-component={`${dataComponent}_actions_reset`} onClick={onResetLink}>
+                        제공기록지 링크 재설정
+                    </Button>
+                ) : null}
                 {layout === "mobile" && clientId != null && canEditServiceRecord && (
                     <Button asChild variant="outline" className="mt-2 w-full" data-component={`${dataComponent}_actions_edit`}>
                         <Link href={serviceRecordEditorPath(clientId, caseId)}>제공기록지 수정</Link>

@@ -1,4 +1,5 @@
 "use client";
+import { serviceRecordResetTarget } from "@babyjamjam/shared/utils";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 
@@ -16,6 +17,7 @@ import {
     type ServiceRecordFieldDescriptor,
 } from "@babyjamjam/shared/constants/service-record-form-layout";
 import type {
+    ResetServiceRecordLinkRequest,
     ServiceRecordAssignment,
     ServiceRecordCase,
     ServiceRecordHeader,
@@ -50,6 +52,13 @@ import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 import { displayPeriodDate, outOfPeriodSessions, periodMismatchQuestion, periodFitToast } from "./period-mismatch";
 
+export interface ServiceRecordLinkResetSelection {
+    caseId: string;
+    scheduleId: number;
+    employeeId: number;
+    refresh?: () => void;
+}
+
 interface ClientServiceRecordsProps {
     "data-component": string;
     client: Client;
@@ -60,6 +69,7 @@ interface ClientServiceRecordsProps {
     isRefreshing?: boolean;
     onRefresh?: () => void;
     onPeriodFitted?: () => Promise<void>;
+    onResetServiceRecordLink?: (selection: ServiceRecordLinkResetSelection) => void;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -134,6 +144,7 @@ function ClientServiceRecordsContent({
     isRefreshing = false,
     onRefresh: refreshHousehold,
     onPeriodFitted,
+    onResetServiceRecordLink,
 }: Omit<ClientServiceRecordsProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
     const alertDataComponent = useClientServiceRecordsDataComponent("sessions-card", "out-of-period-alert");
@@ -164,7 +175,17 @@ function ClientServiceRecordsContent({
         </ul>
     ) : null;
     const record = overview?.record ?? null;
-    const retired = cases.some((item) => item.caseId === record?.id && item.retired);
+    const selectedCase = cases.find((item) => item.caseId === record?.id);
+    const retired = Boolean(selectedCase?.retired);
+    const credentialTarget = overview && serviceRecordResetTarget(overview, selectedCaseId);
+    const groupTarget = credentialTarget && "members" in credentialTarget.request ? credentialTarget.request : undefined;
+    const matchesCredential = (assignment: ServiceRecordAssignment) => {
+        if (retired || assignment.replaced) return false;
+        if (overview?.legacyLinkAssignment === undefined && !selectedCase?.babyId) return true;
+        return Boolean(credentialTarget?.scheduleId === assignment.scheduleId
+            && (!groupTarget || groupTarget.employeeId === assignment.employee.id));
+    };
+    const isSelectionFetching = selectedCaseId ? selectedQuery.isFetching : isRefreshing;
     const assignments = useMemo(
         () => sortAssignmentsNewestFirst(overview?.assignments ?? []),
         [overview?.assignments],
@@ -298,7 +319,15 @@ function ClientServiceRecordsContent({
                         assignment={assignment}
                         clientId={client.id}
                         caseId={selectedCaseId}
-                        readOnly={retired}
+                        readOnly={!matchesCredential(assignment) || (Boolean(groupTarget) && isSelectionFetching)}
+                        target={matchesCredential(assignment) ? groupTarget : undefined}
+                        onResetLink={selectedCase?.babyId && groupTarget && onResetServiceRecordLink && matchesCredential(assignment)
+                            ? () => onResetServiceRecordLink({
+                                caseId: selectedCase.caseId,
+                                scheduleId: assignment.scheduleId,
+                                employeeId: groupTarget.employeeId,
+                                refresh: onRefresh,
+                            }) : undefined}
                         delay={assignmentIndex * 180}
                         showStatus={!record}
                     />
@@ -407,6 +436,8 @@ function LinkCard({
     clientId,
     caseId,
     readOnly,
+    target,
+    onResetLink,
     delay,
     showStatus,
 }: {
@@ -414,6 +445,8 @@ function LinkCard({
     clientId: number;
     caseId?: string;
     readOnly?: boolean;
+    target?: Extract<ResetServiceRecordLinkRequest, { members: unknown }>;
+    onResetLink?: () => void;
     delay: number;
     showStatus: boolean;
 }) {
@@ -448,7 +481,7 @@ function LinkCard({
         setIsSending(true);
         try {
             const result = await sendLinkMutation.mutateAsync({
-                scheduleId: assignment.scheduleId, ...(caseId ? { caseId } : {}),
+                scheduleId: assignment.scheduleId, ...(target ? { target } : caseId ? { caseId } : {}),
                 clientId,
             });
             // The outcome is decided by the job status alone: `ok` is false for
@@ -482,7 +515,7 @@ function LinkCard({
     };
 
     const handleSendClick = () => {
-        if (isLinkSending) return;
+        if (readOnly || isLinkSending) return;
         if (isResend) {
             setResendModalOpen(true);
             return;
@@ -555,6 +588,12 @@ function LinkCard({
                 >
                     <ButtonLoadingContent loading={isPending} loadingLabel="발송 중">제공기록지 링크 발송</ButtonLoadingContent>
                 </button>
+                {onResetLink && canEditServiceRecord ? (
+                    <Button type="button" variant="outline" disabled={readOnly}
+                        data-component={`${dataComponent}_actions_reset`} onClick={onResetLink}>
+                        제공기록지 링크 재설정
+                    </Button>
+                ) : null}
                 {isLinkSending ? (
                     <p className="info-row-value-muted" role="status">
                         발송 처리 중이에요. 끝난 뒤에 다시 보낼 수 있어요.

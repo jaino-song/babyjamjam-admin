@@ -1,3 +1,4 @@
+import type { ResetServiceRecordLinkRequest } from "@babyjamjam/shared/types/service-record";
 import { withServiceRecordCase } from "../utils/case-selection";
 import { INITIAL_CONFIRM_CLIENT_CONFIG, type InitialDocumentTarget } from "@/lib/eformsign/initial-document-recovery-contract";
 import { api } from "@/lib/api/client";
@@ -201,10 +202,10 @@ export const serviceRecordsApi = {
             `/admin/service-records/schedules/${scheduleId}/prepare-link`,
             request,
         ),
-    resetLink: (scheduleId: number) =>
+    resetLink: (scheduleId: number, request: ResetServiceRecordLinkRequest = {}) =>
         api.post<ResetServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/reset-link`,
-            {},
+            request,
         ),
     sendLink: (scheduleId: number, request: SendServiceRecordLinkRequest = {}) =>
         api.post<SendServiceRecordLinkResponse>(

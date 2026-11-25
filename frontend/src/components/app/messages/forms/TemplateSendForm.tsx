@@ -16,6 +16,7 @@ import { ClientAutocomplete, type ClientAutocompleteLabelMessage } from "@/compo
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
+import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
@@ -327,6 +328,7 @@ export function TemplateSendForm({
   const phoneFields = useFieldInputStates<"phone">();
   const resetPhoneFields = phoneFields.reset;
   const [isServiceRecordLinkSending, setIsServiceRecordLinkSending] = useState(false);
+  const [rejectedServiceRecordPreparation, setRejectedServiceRecordPreparation] = useState<ServiceRecordLinkPreparation | null>(null);
   const [isReceiptLinkSending, setIsReceiptLinkSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
   const [feedback, setFeedback] = useState<{
@@ -352,6 +354,9 @@ export function TemplateSendForm({
   const smsSendIdRef = useRef(0);
   const requestKeysRef = useRef(new Map<string, { signature: string; key: string }>());
   const serviceSendIdRef = useRef(0);
+  const serviceSendInFlight = useRef(false);
+  const currentServiceRecordPreparation = useRef(serviceRecordLinkPreparation);
+  currentServiceRecordPreparation.current = serviceRecordLinkPreparation;
   const receiptSendIdRef = useRef(0);
   const {
     clientId,
@@ -421,7 +426,7 @@ export function TemplateSendForm({
     [phone],
   );
   const formattedRecipientPhone = recipientPhone ? formatKoreanPhoneNumber(recipientPhone) : "";
-  const normalizedEmployeePhone = normalizeKoreanPhoneLookupKey(employeePhone);
+  const normalizedEmployeePhone = normalizeKoreanPhoneLookupKey(serviceRecordLinkPreparation?.recipientPhone ?? employeePhone);
   const recipientName = name.trim();
   const trimmedMessage = message.trim();
   const isBodyTooLong = trimmedMessage.length > MAX_BODY_LENGTH;
@@ -453,7 +458,10 @@ export function TemplateSendForm({
         ? "관리사님 전화번호 형식이 올바르지 않아요"
         : clientId === null
           ? "산모님을 선택해 주세요"
-          : null;
+          : serviceRecordLinkPreparation && (serviceRecordLinkPreparation === rejectedServiceRecordPreparation
+              || (serviceRecordLinkPreparation.kind === "group" && serviceRecordLinkPreparation.employeeId !== employeeId))
+            ? "배정이 변경되었어요. 관리사님과 제공기록지를 다시 선택해 주세요"
+            : null;
   const receiptLinkValidationMessage = clientId === null || !recipientName
     ? "산모님을 선택해 주세요"
     : !isRecipientValid
@@ -1023,7 +1031,7 @@ export function TemplateSendForm({
   }, [createSmsSubmissionSnapshot, getRecipientsForSubmit, isPreparedLinkDelivery, isSmsSubmissionSnapshotCurrent, resolvedBranchId]);
 
   const sendServiceRecordLink = async () => {
-    if (rejectBranchContextChange() || !templateReady) {
+    if (serviceSendInFlight.current || rejectBranchContextChange() || !templateReady) {
       return;
     }
 
@@ -1036,23 +1044,35 @@ export function TemplateSendForm({
       return;
     }
 
+    const preparation = serviceRecordLinkPreparation;
+    const current = useFormStore.getState();
+    if (current.clientId !== clientId || current.employeeId !== employeeId) return;
+    if (preparation.kind === "group" && preparation.employeeId !== employeeId) return;
+    serviceSendInFlight.current = true;
     const sendId = ++serviceSendIdRef.current;
     setIsServiceRecordLinkSending(true);
     setFeedback(null);
     const failureStage: ServiceRecordLinkFailureStage = "send";
 
     try {
-      const response = await serviceRecordsApi.sendLink(serviceRecordLinkPreparation.scheduleId, {
-        preparedLinkToken: serviceRecordLinkPreparation.preparedLinkToken,
-        recipientPhone: serviceRecordLinkPreparation.recipientPhone,
-      });
+      const response = await serviceRecordsApi.sendLink(preparation.scheduleId, preparation.kind === "group"
+        ? {
+            employeeId: preparation.employeeId,
+            recipientPhone: preparation.recipientPhone,
+            members: preparation.members.map(({ caseId, assignmentVersion, preparedLinkToken }) => ({
+              caseId, assignmentVersion, preparedLinkToken,
+            })),
+          }
+        : { preparedLinkToken: preparation.preparedLinkToken, recipientPhone: preparation.recipientPhone });
       const { status } = response.data;
 
       if (status === "sent") {
         setFeedback({ tone: "success", message: "제공기록지 링크를 바로 보냈어요" });
         toast({ variant: "success", description: "제공기록지 링크를 바로 보냈어요" });
-        resetEmployeeFields();
-        resetClientFields();
+        if (currentServiceRecordPreparation.current === preparation) {
+          resetEmployeeFields();
+          resetClientFields();
+        }
       } else if (status === "processing" || status === "dispatching") {
         setFeedback({ tone: "success", message: "제공기록지 링크를 보내고 있어요" });
         toast({ description: "제공기록지 링크를 보내고 있어요" });
@@ -1065,10 +1085,16 @@ export function TemplateSendForm({
         toast({ variant: "destructive", description: errorMessage });
       }
     } catch (error) {
+      const problem = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" }).problem;
+      if (problem?.code === "SERVICE_RECORD_WRITE_TARGET_CHANGED") {
+        setRejectedServiceRecordPreparation(preparation);
+        void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
+      }
       const errorMessage = getServiceRecordLinkErrorMessage(error, failureStage);
       setFeedback({ tone: "error", message: errorMessage });
       toast({ variant: "destructive", description: errorMessage });
     } finally {
+      serviceSendInFlight.current = false;
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
       void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
       if (serviceSendIdRef.current === sendId && mountedRef.current) {
@@ -1243,9 +1269,11 @@ export function TemplateSendForm({
       <div data-component="desktop_messages_sections_template-send-form_header" className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 className="text-[calc(14.4px*var(--glint-ui-scale,1))] font-bold text-v3-dark">전송 정보</h3>
-          <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
-            메시지 전송에 필요한 정보를 입력해 주세요.
-          </p>
+          {!isServiceRecordLinkDelivery ? (
+            <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
+              메시지 전송에 필요한 정보를 입력해 주세요.
+            </p>
+          ) : null}
         </div>
         {showSubmitButton ? (
           <Button

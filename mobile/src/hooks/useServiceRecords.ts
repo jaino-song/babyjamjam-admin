@@ -1,10 +1,13 @@
 "use client";
 
+import { preparedServiceRecordMembers } from "@babyjamjam/shared/utils";
+import type { ResetServiceRecordLinkRequest } from "@babyjamjam/shared/types/service-record";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { clientQueryKeys } from "@/hooks/useClients";
 import { api } from "@/lib/api/client";
 import type {
+    PrepareServiceRecordLinkResponse,
     ResetServiceRecordLinkResponse,
     SendServiceRecordLinkResponse,
     ServiceRecordOverview,
@@ -30,10 +33,10 @@ export async function fetchClientServiceRecords(clientId: number, caseId?: strin
     return data;
 }
 
-export async function resetServiceRecordLink(scheduleId: number): Promise<ResetServiceRecordLinkResponse> {
+export async function resetServiceRecordLink(scheduleId: number, request: ResetServiceRecordLinkRequest = {}): Promise<ResetServiceRecordLinkResponse> {
     const { data } = await api.post<ResetServiceRecordLinkResponse>(
         `/admin/service-records/schedules/${scheduleId}/reset-link`,
-        {},
+        request,
     );
     return data;
 }
@@ -58,12 +61,23 @@ export function useSendServiceRecordLink() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ scheduleId, preparedLinkToken, caseId }: { scheduleId: number; clientId?: number; preparedLinkToken?: string; caseId?: string }) => {
-            const { data } = await api.post<SendServiceRecordLinkResponse>(
-                `/admin/service-records/schedules/${scheduleId}/send-link`,
-                { ...(preparedLinkToken ? { preparedLinkToken } : {}), ...(caseId ? { caseId } : {}) },
-            );
-            return data;
+        mutationFn: async ({ scheduleId, preparedLinkToken, caseId, target }: {
+            scheduleId: number;
+            clientId?: number;
+            preparedLinkToken?: string;
+            caseId?: string;
+            target?: Extract<ResetServiceRecordLinkRequest, { members: unknown }>;
+        }) => {
+            if (target) {
+                const { data } = await api.post<PrepareServiceRecordLinkResponse>(
+                    `/admin/service-records/schedules/${scheduleId}/prepare-link`,
+                    { employeeId: target.employeeId, caseIds: target.members.map((member) => member.caseId) },
+                );
+                const members = preparedServiceRecordMembers(data, target.employeeId, target.members);
+                if (!members) throw new Error("제공기록지 배정이 변경되었어요.");
+                return api.post<SendServiceRecordLinkResponse>(`/admin/service-records/schedules/${scheduleId}/send-link`, { employeeId: target.employeeId, members }).then(({ data }) => data);
+            }
+            return api.post<SendServiceRecordLinkResponse>(`/admin/service-records/schedules/${scheduleId}/send-link`, { ...(preparedLinkToken ? { preparedLinkToken } : {}), ...(caseId ? { caseId } : {}) }).then(({ data }) => data);
         },
         onSuccess: async (_, variables) => {
             if (Number.isInteger(variables.clientId) && variables.clientId !== undefined && variables.clientId > 0) {

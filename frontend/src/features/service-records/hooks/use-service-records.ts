@@ -1,5 +1,7 @@
 "use client";
 
+import { preparedServiceRecordMembers } from "@babyjamjam/shared/utils";
+import type { ResetServiceRecordLinkRequest } from "@babyjamjam/shared/types/service-record";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { clientKeys } from "@/features/clients/hooks/keys";
@@ -17,7 +19,7 @@ import { serviceRecordKeys } from "./keys";
 
 export function useClientServiceRecords(
     clientId: number | null,
-    options?: { enabled?: boolean; caseId?: string },
+    options?: { enabled?: boolean; caseId?: string; refreshOnFocus?: boolean },
 ) {
     return useQuery<ServiceRecordOverview>({
         queryKey: serviceRecordKeys.clientOverview(clientId, options?.caseId),
@@ -28,6 +30,11 @@ export function useClientServiceRecords(
             return serviceRecordsApi.getClientOverview(clientId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
         },
         enabled: clientId !== null && (options?.enabled ?? true),
+        ...(options?.refreshOnFocus ? {
+            staleTime: 0,
+            refetchOnWindowFocus: "always",
+            refetchOnReconnect: "always",
+        } as const : {}),
     });
 }
 
@@ -103,9 +110,23 @@ export function useSendServiceRecordLink() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ scheduleId, preparedLinkToken, caseId }: { scheduleId: number; clientId?: number; preparedLinkToken?: string; caseId?: string }) =>
-            serviceRecordsApi.sendLink(scheduleId, { ...(preparedLinkToken ? { preparedLinkToken } : {}), ...(caseId ? { caseId } : {}) })
-                .then((response) => response.data),
+        mutationFn: async ({ scheduleId, preparedLinkToken, caseId, target }: {
+            scheduleId: number;
+            clientId?: number;
+            preparedLinkToken?: string;
+            caseId?: string;
+            target?: Extract<ResetServiceRecordLinkRequest, { members: unknown }>;
+        }) => {
+            if (target) {
+                const { data } = await serviceRecordsApi.prepareLink(scheduleId, {
+                    employeeId: target.employeeId, caseIds: target.members.map((member) => member.caseId),
+                });
+                const members = preparedServiceRecordMembers(data, target.employeeId, target.members);
+                if (!members) throw new Error("제공기록지 배정이 변경되었어요.");
+                return serviceRecordsApi.sendLink(scheduleId, { employeeId: target.employeeId, members }).then(({ data }) => data);
+            }
+            return serviceRecordsApi.sendLink(scheduleId, { ...(preparedLinkToken ? { preparedLinkToken } : {}), ...(caseId ? { caseId } : {}) }).then(({ data }) => data);
+        },
         onSuccess: async (_, variables) => {
             if (variables.clientId !== undefined) {
                 await queryClient.invalidateQueries({

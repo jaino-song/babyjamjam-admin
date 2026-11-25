@@ -1,4 +1,5 @@
 import { resolveAdminServiceRecordTarget } from "./admin-service-record-target";
+import { IMMUTABLE_FINALIZATION_STATUSES, SERVICE_RECORD_CASE_STATUS } from "./service-record-lifecycle.service";
 import { ServiceRecordFinalizationService } from "./service-record-finalization.service";
 import {
     ConflictException,
@@ -189,11 +190,11 @@ export class AdminServiceRecordService {
         const scope = { branchId, clientId };
         const client = await this.prisma.client.findFirst({
             where: { id: clientId, branchId, deletedAt: null },
-            select: { fetalConfirmation: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
+            select: { fetalConfirmation: true, serviceStatus: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
         });
         if (!client) {
             if (includeSignatures || caseId !== undefined) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-            return { record: null, assignments: [] };
+            return { record: null, assignments: [], legacyLinkAssignment: null };
         }
         const target = await resolveAdminServiceRecordTarget(
             this.prisma, { ...scope, caseId }, includeSignatures && caseId !== undefined ? "read" : "overview",
@@ -205,7 +206,7 @@ export class AdminServiceRecordService {
         };
         const branchCalendar = await this.holidayCalendar.forBranch(branchId);
         const calendar = branchCalendar.withServiceDays(serviceDays);
-        const [caseRows, babies, activeOwners] = await Promise.all([
+        const [caseRows, babies, activeOwners, currentSchedule] = await Promise.all([
             this.prisma.service_record_case.findMany({
                 where: { ...scope, client: { branchId, deletedAt: null } },
                 include: { _count: { select: { days: { where: { branchId, locked: true } } } } },
@@ -218,21 +219,48 @@ export class AdminServiceRecordService {
             }),
             this.prisma.service_record_baby_assignment.findMany({
                 where: { ...scope, activeOwner: true, schedule: { replaced: false, terminatedAt: null } },
-                select: { babyId: true, scheduleId: true, employee: { select: { id: true, name: true, phone: true } } },
+                select: {
+                    babyId: true, scheduleId: true, version: true, endedAt: true,
+                    employee: { select: { id: true, name: true, phone: true, branchId: true, deletedAt: true } },
+                    teamSlot: { select: { active: true } },
+                },
                 orderBy: { scheduleId: "asc" },
+            }),
+            this.prisma.employee_schedule.findFirst({
+                where: { ...scope, replaced: false, terminatedAt: null, client: { branchId, deletedAt: null } },
+                orderBy: { id: "desc" },
+                select: {
+                    id: true,
+                    primaryEmployee: { select: { id: true, branchId: true, deletedAt: true } },
+                },
             }),
         ]);
         const activeBabies = babies.filter(({ active }) => active);
+        const canUseCurrentSchedule = Boolean(currentSchedule) && client.serviceStatus !== "terminated";
+        const isWritable = (record: Pick<typeof caseRows[number], "status" | "completedAt" | "finalizedAt">) =>
+            !record.completedAt && !record.finalizedAt && !IMMUTABLE_FINALIZATION_STATUSES.has(record.status)
+            && record.status !== SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED
+            && record.status !== SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED;
         const cases: AdminServiceRecordCaseSummary[] = caseRows.map((record) => {
             const rank = activeBabies.findIndex(({ id }) => id === record.babyId) + 1;
-            const assignees = activeOwners.filter(({ babyId }) => babyId === record.babyId)
-                .map(({ employee }) => ({ id: employee.id, name: employee.name }));
+            const owners = activeOwners.filter(({ babyId }) => babyId === record.babyId);
+            const assignees = owners.map(({ employee }) => ({ id: employee.id, name: employee.name }));
+            const currentOwners = owners.filter(({ scheduleId }) => scheduleId === currentSchedule?.id);
+            const [owner] = currentOwners;
+            const linkAssignments = canUseCurrentSchedule && rank > 0 && isWritable(record)
+                && client.fetalConfirmation === "CONFIRMED" && currentOwners.length === 1
+                && owner && owner.endedAt === null && owner.teamSlot.active
+                && owner.employee.branchId === branchId && owner.employee.deletedAt === null
+                && owner.version > 0
+                ? [{ scheduleId: owner.scheduleId, employeeId: owner.employee.id, assignmentVersion: owner.version }]
+                : [];
             return {
                 caseId: record.id, babyId: record.babyId, rank: rank || null,
                 babyCount: client.fetalConfirmation === "CONFIRMED" ? activeBabies.length : null,
                 legacyName: record.babyId === null ? record.babyName : null,
                 retired: record.babyId !== null && rank === 0,
                 status: record.status,
+                linkAssignments,
                 assignees: [...new Map(assignees.map((employee) => [employee.id, employee])).values()],
                 totalSessions: servicePeriodSessionCount(record.startDate, record.endDate,
                     record.requiredSessionCount, calendar, hasAuthoritativeServiceRecordCount(record)),
@@ -241,12 +269,19 @@ export class AdminServiceRecordService {
         }).sort((left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity));
         // An ambiguous household gets a list only. Never combine unbound schedule data with siblings.
         if (!target && (cases.length > 0 || activeBabies.length > 1)) {
-            return { cases, record: null, assignments: [], serviceDays };
+            return { cases, record: null, assignments: [], legacyLinkAssignment: null, serviceDays };
         }
 
         const selectedId = target?.caseId;
         const legacy = caseRows.length <= 1 && activeBabies.length <= 1
             && target?.kind !== "retired";
+        const legacyRecord = caseRows[0];
+        const legacyLinkAssignment = legacy && canUseCurrentSchedule && currentSchedule
+            && currentSchedule.primaryEmployee.branchId === branchId
+            && currentSchedule.primaryEmployee.deletedAt === null
+            && (!legacyRecord || (legacyRecord.babyId === null && isWritable(legacyRecord)))
+            ? { scheduleId: currentSchedule.id, employeeId: currentSchedule.primaryEmployee.id }
+            : null;
         const ownedRecord = selectedId ? await this.prisma.service_record_case.findFirst({
             where: { ...scope, id: selectedId, client: { branchId, deletedAt: null } },
             include: { days: { where: { branchId }, orderBy: { caseSessionIndex: "asc" } } },
@@ -322,6 +357,7 @@ export class AdminServiceRecordService {
 
         return {
             cases,
+            legacyLinkAssignment,
             record: ownedRecord ? this.mapCase(ownedRecord, signatureDocs, includeSignatures, calendar) : null,
             assignments: schedules.map((schedule) => this.mapAssignment(
                 schedule,

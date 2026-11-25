@@ -26,6 +26,8 @@ const LEGACY_DB = `${DATABASE_ORIGIN}throwaway_baby_admin_verify_legacy`;
 const ALLOWED = new Set([
     `${DATABASE_ORIGIN}throwaway_baby_admin_work`,
     `${DATABASE_ORIGIN}throwaway_baby_admin_verify`,
+    `${DATABASE_ORIGIN}throwaway_baby_composer_targets_work`,
+    `${DATABASE_ORIGIN}throwaway_baby_composer_targets_verify`,
     LEGACY_DB,
 ]);
 const enabled = process.env["E2E_VENDOR_STUBS"] === "1";
@@ -43,7 +45,7 @@ function assertTarget(): void {
     }
 }
 
-async function seedFamily(db: PrismaService, options: { twins: boolean; submit?: boolean; sharedProvider?: boolean }) {
+async function seedFamily(db: PrismaService, options: { twins: boolean; submit?: boolean; sharedProvider?: boolean; secondAssignmentVersion?: number }) {
     const unique = randomUUID();
     const branch = await db.branch.create({ data: { name: "QA-Admin records", slug: `qa-admin-records-${unique}` } });
     const { id: branchId } = branch;
@@ -93,6 +95,7 @@ async function seedFamily(db: PrismaService, options: { twins: boolean; submit?:
             await db.service_record_baby_assignment.create({ data: {
                 ...scope, babyId: baby.id, scheduleId: schedule.id, employeeId: employee.id,
                 teamSlotId: slots.get(employee.id)!,
+                version: index === 1 ? options.secondAssignmentVersion ?? 1 : 1,
             } });
         }
         await db.service_record_assignment.create({ data: {
@@ -239,6 +242,104 @@ describeE2E("case-bound administration using the real app and PostgreSQL", () =>
             expect(body.cases).toMatchObject(fixture.cases.map(({ record, employee }, index) => ({
                 caseId: record.id, babyId: record.babyId, rank: index + 1, babyCount: 2,
                 assignees: [{ id: employee.id, name: employee.name }], submittedSessions: 2, totalSessions: 5,
+            })));
+        });
+
+        it("the case picker exposes the current employee schedule and assignment version of each baby", async () => {
+            const fixture = await seedFamily(db, { twins: true, secondAssignmentVersion: 7 });
+            const [first, second] = fixture.cases;
+            const source = await db.service_record_baby_assignment.findMany({
+                where: { scheduleId: fixture.schedule.id, activeOwner: true },
+                select: { babyId: true, scheduleId: true, employeeId: true, version: true, teamSlotId: true },
+            });
+            const duplicate = source.find(({ babyId }) => babyId === second!.record.babyId)!;
+            await expect(db.service_record_baby_assignment.create({
+                data: { ...duplicate, branchId: fixture.branchId, clientId: fixture.clientId, version: 8 },
+            })).rejects.toMatchObject({ code: "P2002" });
+            expect(first!.employee.id).not.toBe(second!.employee.id);
+            const http = await as(fixture);
+            const { body } = await http.get(path(fixture)).expect(200);
+            expect(body.record).toBeNull();
+            expect(body.legacyLinkAssignment).toBeNull();
+            expect(body.cases.map(({ caseId, babyId, linkAssignments }: {
+                caseId: string; babyId: string; linkAssignments: unknown;
+            }) => ({ caseId, babyId, linkAssignments }))).toEqual(fixture.cases.map(({ record }) => {
+                const row = source.find(({ babyId }) => babyId === record.babyId)!;
+                return {
+                    caseId: record.id, babyId: record.babyId,
+                    linkAssignments: [{ scheduleId: row.scheduleId, employeeId: row.employeeId, assignmentVersion: row.version }],
+                };
+            }));
+            const { body: selected } = await http.get(path(fixture)).query({ caseId: second!.record.id }).expect(200);
+            expect(selected.record.id).toBe(second!.record.id);
+            expect(selected.assignments).toMatchObject([{ scheduleId: fixture.schedule.id, employee: { id: second!.employee.id } }]);
+            expect(selected.cases[1].linkAssignments).toEqual([
+                { scheduleId: fixture.schedule.id, employeeId: second!.employee.id, assignmentVersion: 7 },
+            ]);
+        });
+
+        it("a retired or replaced assignment offers no active reset tuple", async () => {
+            const fixture = await seedFamily(db, { twins: true });
+            const [first, second] = fixture.cases;
+            const http = await as(fixture);
+            await db.service_record_baby_assignment.updateMany({
+                where: { scheduleId: fixture.schedule.id, babyId: second!.record.babyId! },
+                data: { activeOwner: null, endedAt: new Date() },
+            });
+            const { body: revoked } = await http.get(path(fixture)).expect(200);
+            expect(revoked.cases[0].linkAssignments).toHaveLength(1);
+            expect(revoked.cases[1]).toMatchObject({ retired: false, linkAssignments: [] });
+            await db.client_baby.update({ where: { id: second!.record.babyId! }, data: { active: false } });
+            await db.employee_schedule.update({ where: { id: fixture.schedule.id }, data: { replaced: true } });
+
+            const { body } = await http.get(path(fixture)).query({ caseId: second!.record.id }).expect(200);
+            expect(body.record.id).toBe(second!.record.id);
+            expect(body.cases).toMatchObject([
+                { caseId: first!.record.id, retired: false, linkAssignments: [] },
+                { caseId: second!.record.id, retired: true, linkAssignments: [] },
+            ]);
+        });
+
+        it("a foreign branch cannot read caregiver reset targets", async () => {
+            const fixture = await seedFamily(db, { twins: true });
+            const outsider = await seedFamily(db, { twins: false, submit: false });
+            const http = await as(outsider);
+            const { body } = await http.get(path(fixture)).expect(200);
+            expect(body).toEqual({ record: null, assignments: [], legacyLinkAssignment: null });
+            const { body: denied } = await http.get(path(fixture)).query({ caseId: fixture.cases[1]!.record.id }).expect(404);
+            expect(denied).not.toHaveProperty("cases");
+            expect(denied).not.toHaveProperty("legacyLinkAssignment");
+        });
+
+        it("an older unreplaced schedule cannot expose active reset tuples", async () => {
+            const fixture = await seedFamily(db, { twins: true });
+            const scope = { branchId: fixture.branchId, clientId: fixture.clientId };
+            const newer = await db.employee_schedule.create({ data: {
+                ...scope, primaryEmployeeId: fixture.cases[0]!.employee.id,
+                startDate: START, endDate: END, workAddress: "QA-Newer schedule",
+            } });
+            expect(newer.id).toBeGreaterThan(fixture.schedule.id);
+            const secondId = fixture.cases[1]!.record.id;
+            const http = await as(fixture);
+            const { body } = await http.get(path(fixture)).query({ caseId: secondId }).expect(200);
+            expect(body.record.id).toBe(secondId);
+            expect(body.assignments).toMatchObject([{ scheduleId: fixture.schedule.id, replaced: false }]);
+            expect(body.cases.map(({ linkAssignments }: { linkAssignments: unknown }) => linkAssignments)).toEqual([[], []]);
+        });
+
+        it("a deleted employee and finalized case have no credential actions", async () => {
+            const fixture = await seedFamily(db, { twins: true });
+            const [first, second] = fixture.cases;
+            await db.employee.update({ where: { id: first!.employee.id }, data: { deletedAt: END } });
+            await db.service_record_case.update({ where: { id: second!.record.id }, data: { finalizedAt: END } });
+            expect(await db.service_record_baby_assignment.count({
+                where: { scheduleId: fixture.schedule.id, activeOwner: true },
+            })).toBe(2);
+            const http = await as(fixture);
+            const { body } = await http.get(path(fixture)).query({ caseId: second!.record.id }).expect(200);
+            expect(body.record.id).toBe(second!.record.id);
+            expect(body.cases).toMatchObject(fixture.cases.map(({ record, employee }) => ({
+                caseId: record.id, linkAssignments: [], assignees: [{ id: employee.id }],
             })));
         });
 
