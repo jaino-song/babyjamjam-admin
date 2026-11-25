@@ -6,12 +6,14 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { RECORD_LINK_GROUP_CHANGED } from "application/services/service-record-link-group-source";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
+import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { SmsCarrierCheckService } from "application/services/sms-carrier-check.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
-import { SERVICE_RECORD_LINK_RULE_ID, getServiceRecordLinkScheduledFor } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_RULE_ID, getServiceRecordLinkScheduledFor, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MESSAGE_LOG_REPOSITORY, type IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
@@ -22,6 +24,7 @@ import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pip
 import { TenantAlsMiddleware } from "infrastructure/tenant/tenant-als.middleware";
 import { TenantModule } from "infrastructure/tenant/tenant.module";
 import { ClientModule } from "module/client.module";
+import { EmployeeModule } from "module/employee.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { MessageDeliveryModule } from "module/message-delivery.module";
 import { SchedulerLeaseModule } from "module/scheduler-lease.module";
@@ -80,7 +83,7 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         const module = await Test.createTestingModule({
             imports: [
                 ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
-                TenantModule, ClientModule, EmployeeScheduleModule, MessageDeliveryModule, SchedulerLeaseModule,
+                TenantModule, ClientModule, EmployeeModule, EmployeeScheduleModule, MessageDeliveryModule, SchedulerLeaseModule,
             ],
         }).overrideGuard(JwtGuard).useValue({
             canActivate(context: ExecutionContext) {
@@ -398,6 +401,83 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
             expect((await dispatch(legacy.id)).status).toBe(family === one ? "sent" : "canceled");
         }
         expect(calls().length).toBe(1);
+    });
+
+    it("reschedules a pending v1 singleton in place when its start date changes", async () => {
+        const employee = { id: staff[0], branchId };
+        await db.employee.update({ where: employee, data: { smsAutomationEnabled: false } });
+        const family = await book([0], { auto: false });
+        await db.employee.update({ where: employee, data: { smsAutomationEnabled: true } });
+        const token = await app.get(ServiceRecordTokenService).issueLink({ branchId, scheduleId: family.schedule.id,
+            serviceRecordCaseId: family.cases[0]!.id, employeeId: staff[0]!, expectedPhone: phone(0),
+            expiresAt: getServiceRecordTokenExpiresAt(family.schedule.endDate) });
+        const url = `https://example.test/service-record/${token.linkToken}`;
+        const legacy = await db.message_trigger_job.create({ data: {
+            branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduledFor: getServiceRecordLinkScheduledFor(family.schedule.startDate),
+            clientId: family.clientId, employeeScheduleId: family.schedule.id, recipientPhone: phone(0),
+            recipientType: "PRIMARY_EMPLOYEE", templateKey: key,
+            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${family.schedule.id}:primary`,
+            payload: { employeeId: staff[0], recipientName: "QA-Caregiver 1", recipientPhone: phone(0),
+                memberId: `employee:${staff[0]}`, buttonUrl: url, templateVariables: {
+                    employeeName: "QA-Caregiver 1", clientName: "QA-Household", serviceStartDate: dateAt(0), serviceRecordUrl: url,
+                } },
+        } });
+        const newStart = dateAt(4);
+        await db.employee_schedule.update({ where: { id: family.schedule.id, branchId }, data: { startDate: new Date(newStart) } });
+        expect(await linkService.scheduleForServiceStart(family.schedule.id, { rescheduleAutomatic: true, branchId })).toBe(true);
+        const jobs = await getJobs(family.clientId);
+        expect(jobs).toHaveLength(1);
+        expect(jobs[0]).toMatchObject({ id: legacy.id, status: "pending", scheduledFor: getServiceRecordLinkScheduledFor(new Date(newStart)),
+            recipientEmployeeId: null, recordMembers: [], payload: { templateVariables: { serviceStartDate: newStart } } });
+        expect((await dispatch(legacy.id)).status).toBe("pending");
+        expect(await getLogs(legacy.id)).toHaveLength(0);
+        expect(stub.sendCalls).toHaveLength(0);
+    });
+
+    it("recomputes an automatic group after a source change at the provider boundary", async () => {
+        const family = await book([0, 0]);
+        const [job] = await getJobs(family.clientId);
+        const ledger = app.get(SmsProviderAcceptanceService);
+        const prepare = ledger.prepare.bind(ledger);
+        const renamed = "QA-Caregiver after preview";
+        const moved = jest.spyOn(ledger, "prepare").mockImplementationOnce(async (...args) => {
+            const log = await prepare(...args);
+            await db.employee.update({ where: { id: staff[0], branchId }, data: { name: renamed } });
+            return log;
+        });
+        try {
+            expect((await dispatch(job!.id)).cancelReason).toBe(RECORD_LINK_GROUP_CHANGED);
+        } finally {
+            moved.mockRestore();
+        }
+        expect(stub.sendCalls).toHaveLength(0);
+        expect(await getLogs(job!.id)).toMatchObject([{ status: "failed", providerAcceptanceState: "prepared", providerCallStartedAt: null }]);
+        const pending = (await getJobs(family.clientId)).filter(item => item.status === "pending");
+        expect(pending).toHaveLength(1);
+        expect(pending[0]!.id).not.toBe(job!.id);
+        expect((await dispatch(pending[0]!.id)).status).toBe("sent");
+        await assertCarrier(pending[0]!, renamed);
+        expect(stub.sendCalls).toHaveLength(1);
+    });
+
+    it("refreshes the edited caregiver's group without replacing another caregiver's job", async () => {
+        const family = await book([0, 1, 2, 3, 0]);
+        const before = await getJobs(family.clientId);
+        const original = before.find(job => job.recipientEmployeeId === staff[2]);
+        const renamed = "QA-Renamed third caregiver";
+        const newPhone = phone(5);
+        await http().patch(`/employees?id=${staff[2]}`).send({ name: renamed, phone: newPhone }).expect(200);
+        const jobs = await getJobs(family.clientId);
+        expect(jobs).toHaveLength(5);
+        for (const unaffected of before.filter(job => job.id !== original!.id)) {
+            expect(jobs.find(job => job.id === unaffected.id)).toMatchObject({ status: "pending", updatedAt: unaffected.updatedAt });
+        }
+        expect(jobs.find(job => job.id === original!.id)).toMatchObject({ status: "canceled" });
+        const pending = jobs.find(job => job.recipientEmployeeId === staff[2] && job.status === "pending");
+        expect(pending).toMatchObject({ recipientPhone: newPhone, recordMembers: [{ serviceRecordCaseId: family.cases[2]!.id }] });
+        expect((await dispatch(pending!.id)).status).toBe("sent");
+        await assertCarrier(pending!, renamed);
+        expect(stub.sendCalls.map(call => call.receiver)).toEqual([newPhone]);
     });
 
     it("failure before a message log creates no duplicate recipient", async () => {

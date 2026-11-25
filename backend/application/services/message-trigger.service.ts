@@ -1,4 +1,5 @@
-import { isRecordLinkGroup, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED } from "./service-record-link-group-source";
+import { isAutomaticRecordLinkGroup, isRecordLinkGroup, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED } from "./service-record-link-group-source";
+import type { ServiceRecordLinkGroupService } from "./service-record-link-group.service";
 import type { message_trigger_job } from "@prisma/client";
 import { lockClientForScheduleWrite } from "application/policies/employee-schedule-invariants.policy";
 import {
@@ -674,6 +675,7 @@ function revisionDocumentJobFacts(
 export class MessageTriggerService {
     private readonly logger = new Logger(MessageTriggerService.name);
     private readonly automationSources: ClientAutomationSourceReader;
+    private recordLinkGroups?: Pick<ServiceRecordLinkGroupService, "refreshForEmployee" | "schedule">;
 
     constructor(
         private readonly prisma: PrismaService,
@@ -714,6 +716,10 @@ export class MessageTriggerService {
         // implementation; the production module injects its registered reader.
         this.automationSources = automationSources ?? new ClientAutomationSourceReader(prisma, ruleRepository,
             overrideRepository, messageSenderApprovalService, systemSettingService, messageAutomationActivationService);
+    }
+
+    registerRecordLinkGroups(groups: Pick<ServiceRecordLinkGroupService, "refreshForEmployee" | "schedule">): void {
+        this.recordLinkGroups = groups;
     }
 
     async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
@@ -3448,6 +3454,8 @@ export class MessageTriggerService {
             return false;
         }
 
+        await this.recordLinkGroups?.refreshForEmployee(branchId, employeeId);
+
         const schedules = await this.prisma.employee_schedule.findMany({
             where: {
                 branchId,
@@ -4339,6 +4347,26 @@ export class MessageTriggerService {
     }
 
     private async dispatchClaimedJob(
+        job: MessageDispatchSelectedJob,
+        sentIds: ReadonlySet<string>,
+        approvedBranchIds: ReadonlySet<string>,
+        options: DispatchClaimedJobOptions = {},
+    ): Promise<boolean> {
+        const processed = await this.attemptDispatchClaimedJob(job, sentIds, approvedBranchIds, options);
+        const sourceHash = job.payload.recordLinkGroup?.sourceHash;
+        if (this.recordLinkGroups && job.branchId && job.employeeScheduleId !== null && sourceHash
+            && job.status === "canceled" && job.cancelReason === RECORD_LINK_GROUP_CHANGED && isAutomaticRecordLinkGroup(job)) {
+            try {
+                // Recompute under fresh household locks after the cancellation transaction commits.
+                await this.recordLinkGroups.schedule(job.branchId, job.employeeScheduleId, { supersededSourceHash: sourceHash });
+            } catch (error) {
+                if (!(error instanceof NotFoundException)) this.logger.warn(`Could not refresh the record link group for job ${job.id}`);
+            }
+        }
+        return processed;
+    }
+
+    private async attemptDispatchClaimedJob(
         job: MessageDispatchSelectedJob,
         sentIds: ReadonlySet<string>,
         approvedBranchIds: ReadonlySet<string>,

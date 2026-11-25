@@ -40,7 +40,7 @@ import {
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
-import { SmsAutomationSafeguardService } from "./sms-automation-safeguard.service";
+import { SmsAutomationSafeguardService, smsAutomationSafeguardReason } from "./sms-automation-safeguard.service";
 import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
@@ -843,10 +843,11 @@ export class SmsTriggerDeliveryService {
                 if (isRecordLinkGroup(job)) {
                     const group = await resolveRecordLinkGroup(transaction, job, true);
                     await lockRecordLinkSchedule(transaction, job.employeeScheduleId!);
+                    const senderApproved = await hasApprovedRecordLinkSender(transaction, job.branchId!);
+                    const manual = isManualMessageTriggerJob(job);
+                    const safeguard = manual ? undefined : await this.groupSafeguard?.check(job, transaction);
                     let allowed = false;
-                    const safeguard = isManualMessageTriggerJob(job)
-                        || (await this.groupSafeguard?.check(job, transaction))?.allowed === true;
-                    if (group && safeguard && await hasApprovedRecordLinkSender(transaction, job.branchId!)) {
+                    if (group && senderApproved && (manual || safeguard?.allowed === true)) {
                         try {
                             const latest = await this.resolveCanonicalDeliverySnapshot(job, transaction);
                             allowed = latest.snapshotHash === snapshot.snapshotHash;
@@ -855,18 +856,21 @@ export class SmsTriggerDeliveryService {
                         }
                     }
                     if (!allowed) {
+                        const reason = !senderApproved ? MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON
+                            : safeguard?.allowed === false && safeguard.level !== "recipient" ? smsAutomationSafeguardReason(safeguard.level)
+                                : RECORD_LINK_GROUP_CHANGED;
                         const canceled = await transaction.message_trigger_job.updateMany({
                             where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken },
-                            data: { status: "canceled", canceledAt: new Date(), cancelReason: RECORD_LINK_GROUP_CHANGED,
+                            data: { status: "canceled", canceledAt: new Date(), cancelReason: reason,
                                 claimToken: null, processingDeadlineAt: null, nextAttemptAt: null },
                         });
                         if (canceled.count !== 1) throw new AgentAutomationDispatchUncertainError();
                         const failed = await transaction.message_log.updateMany({
                             where: { id: current.id, branchId: job.branchId, providerAcceptanceState: "prepared", providerCallStartedAt: null },
-                            data: { status: "failed", errorMessage: RECORD_LINK_GROUP_CHANGED, nextRetryAt: null },
+                            data: { status: "failed", errorMessage: reason, nextRetryAt: null },
                         });
                         if (failed.count !== 1) throw new AgentAutomationDispatchUncertainError();
-                        return { kind: "standalone-denied", reason: RECORD_LINK_GROUP_CHANGED };
+                        return { kind: "standalone-denied", reason };
                     }
                 }
                 const variables = current.variables && typeof current.variables === "object" && !Array.isArray(current.variables)

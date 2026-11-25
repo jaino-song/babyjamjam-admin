@@ -16,12 +16,14 @@ import {
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import type { MessageTriggerJobPayload } from "domain/entities/message-trigger-job.entity";
 import { MESSAGE_AUTOMATION_DATABASE, type MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
-import { lockRecordLinkSchedule } from "infrastructure/database/repositories/record-link-recovery.repository";
+import { hasApprovedRecordLinkSender, lockRecordLinkSchedule } from "infrastructure/database/repositories/record-link-recovery.repository";
 
+import { MessageAutomationActivationService } from "./message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL } from "./service-record-link-automation-effect-recipe";
 import {
-    canSendRecordLinkGroup, readRecordLinkGroupSource, recordLinkGroupSourceHash, recordLinkGroupVariables,
+    canSendRecordLinkGroup, readRecordLinkGroupSource, recordLinkGroupCarrierEvidence, recordLinkGroupSourceHash,
+    recordLinkGroupSupersededReasons, recordLinkGroupVariables,
     recordLinkHash, recordLinkPhone, RECORD_LINK_GROUP_KEY_PREFIX,
     type RecordLinkGroupMember, type RecordLinkGroupSource, unreservedRecordLinkMembers,
 } from "./service-record-link-group-source";
@@ -60,6 +62,7 @@ export class ServiceRecordLinkGroupService {
         private readonly tokenService: ServiceRecordTokenService,
         private readonly templates: SystemTemplateService,
         private readonly config: ConfigService,
+        private readonly activation: MessageAutomationActivationService,
     ) {}
 
     private async withSource<T>(
@@ -147,14 +150,37 @@ export class ServiceRecordLinkGroupService {
         });
     }
 
-    async schedule(branchId: string, scheduleId: number): Promise<boolean> {
+    async refreshForEmployee(branchId: string, employeeId: number): Promise<void> {
+        const schedules = await this.prisma.employee_schedule.findMany({
+            where: { branchId, replaced: false, terminatedAt: null, client: { branchId, deletedAt: null, fetalConfirmation: "CONFIRMED" },
+                recordBabyAssignments: { some: { branchId, employeeId, activeOwner: true, endedAt: null, teamSlot: { active: true } } } },
+            select: { id: true }, orderBy: { id: "asc" },
+        });
+        for (const { id } of schedules) {
+            try {
+                await this.schedule(branchId, id, { employeeId });
+            } catch (error) {
+                if (!(error instanceof NotFoundException)) throw error;
+            }
+        }
+    }
+
+    async schedule(branchId: string, scheduleId: number,
+        options: { employeeId?: number; supersededSourceHash?: string } = {},
+    ): Promise<boolean> {
         return this.withSource(branchId, scheduleId, async (source, tx) => {
             if (!canSendRecordLinkGroup(source, false)) return false;
+            if (!(await hasApprovedRecordLinkSender(tx, branchId)) || !(await this.activation.getTriggerDispatchEnabled(branchId, tx))) return false;
             if (!await tx.message_trigger_rule.findFirst({
-                where: { id: SERVICE_RECORD_LINK_RULE_ID, deletedAt: null, isActive: true }, select: { id: true },
+                where: { id: SERVICE_RECORD_LINK_RULE_ID, branchId: null, deletedAt: null, isActive: true }, select: { id: true },
             })) return false;
+            const override = await tx.message_trigger_rule_branch_override.findUnique({
+                where: { branchId_ruleId: { branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID } }, select: { isActive: true },
+            });
+            if (override?.isActive === false) return false;
             const groups = new Map<number, RecordLinkGroupMember[]>();
             for (const member of source.members) {
+                if (options.employeeId !== undefined && options.employeeId !== member.employeeId) continue;
                 if (!member.employee.smsAutomationEnabled || !recordLinkPhone(member.employee.phone)) continue;
                 const group = groups.get(member.employeeId) ?? [];
                 group.push(member);
@@ -165,7 +191,7 @@ export class ServiceRecordLinkGroupService {
             }
             const jobs = await tx.message_trigger_job.findMany({
                 where: { ...source.scope, employeeScheduleId: scheduleId, ruleId: SERVICE_RECORD_LINK_RULE_ID,
-                    recipientEmployeeId: { not: null }, status: { in: pendingStatuses } },
+                    recipientEmployeeId: options.employeeId ?? { not: null }, status: { in: pendingStatuses } },
                 select: { id: true, recipientEmployeeId: true, payload: true, recordMembers: true },
             });
             for (const job of jobs) {
@@ -182,6 +208,9 @@ export class ServiceRecordLinkGroupService {
             let admitted = false;
             for (const members of groups.values()) {
                 if (!members.length) continue;
+                // A locked credential or a policy/template race can refuse a job with an otherwise
+                // current source. Dispatch recovery should not continually recreate that same job.
+                if (options.supersededSourceHash === recordLinkGroupSourceHash(source, members)) continue;
                 // A proven earlier singleton keeps its original job and delivery proof.
                 if (source.householdBabyCount === 1 && members[0]!.employeeId === source.schedule.primaryEmployeeId
                     && await this.hasLegacyOccurrence(tx, source, members[0]!.employeeId)) continue;
@@ -202,7 +231,7 @@ export class ServiceRecordLinkGroupService {
     private async hasLegacyOccurrence(tx: Prisma.TransactionClient, { scope, schedule }: RecordLinkGroupSource, employeeId: number) {
         return Boolean(await tx.message_trigger_job.findFirst({
             where: { ...scope, employeeScheduleId: schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID, recipientEmployeeId: null,
-                OR: [{ status: { in: ["pending", "processing", "dispatching", "sent"] } }, { canceledByUser: true }],
+                OR: [{ status: { in: [...pendingStatuses, "dispatching", "sent"] } }, { canceledByUser: true }],
                 payload: { path: ["employeeId"], equals: employeeId } },
             select: { id: true },
         }));
@@ -259,7 +288,7 @@ export class ServiceRecordLinkGroupService {
 
     private async cancel(tx: Prisma.TransactionClient, id: string) {
         await tx.message_trigger_job.updateMany({
-            where: { id, canceledByUser: false, status: { in: pendingStatuses } },
+            where: { id, canceledByUser: false, status: { in: pendingStatuses }, logs: { none: recordLinkGroupCarrierEvidence } },
             data: { status: "canceled", cancelReason: SERVICE_RECORD_LINK_RESCHEDULED_REASON, canceledAt: new Date(),
                 claimToken: null, nextAttemptAt: null, processingDeadlineAt: null },
         });
@@ -273,24 +302,23 @@ export class ServiceRecordLinkGroupService {
         const occurrence = { ...scope, employeeScheduleId: schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID, recipientEmployeeId: member.employeeId };
         const jobs = await tx.message_trigger_job.findMany({
             where: occurrence,
-            include: { recordMembers: true, logs: { select: { providerAcceptanceState: true, providerCallStartedAt: true } } },
+            include: { recordMembers: true, logs: { where: recordLinkGroupCarrierEvidence, take: 1, select: { id: true } } },
         });
         const exact = jobs.filter(job => {
             const payload = job.payload as unknown as MessageTriggerJobPayload;
             return payload.recordLinkGroup?.sourceHash === sourceHash;
         });
-        const carrierStarted = (job: typeof jobs[number]) => job.logs.some(log =>
-            log.providerCallStartedAt || (log.providerAcceptanceState && log.providerAcceptanceState !== "prepared"));
         const acceptedOrPending = exact.find(job => job.status === "sent" || job.status === "dispatching"
-            || carrierStarted(job) || job.canceledByUser
-            || (!manual && (pendingStatuses.includes(job.status) || (job.status === "canceled" && job.cancelReason !== SERVICE_RECORD_LINK_RESCHEDULED_REASON)))
+            || job.logs.length || job.canceledByUser
+            || (!manual && (pendingStatuses.includes(job.status) || (job.status === "canceled"
+                && (job.cancelReason === null || !recordLinkGroupSupersededReasons.includes(job.cancelReason)))))
             || (manual && (job.payload as unknown as MessageTriggerJobPayload).sentByUserId && pendingStatuses.includes(job.status)));
         if (acceptedOrPending) return { jobId: acceptedOrPending.id, scheduledFor: acceptedOrPending.scheduledFor, created: false };
 
         const targets = new Set(members.map(item => `${item.caseId}:${item.assignmentVersion}`));
         for (const job of jobs) {
             if (!job.recordMembers.some(item => targets.has(`${item.serviceRecordCaseId}:${item.assignmentVersion}`))) continue;
-            if (job.status === "dispatching" || job.status === "sent" || carrierStarted(job) || job.canceledByUser) {
+            if (job.status === "dispatching" || job.status === "sent" || job.logs.length || job.canceledByUser) {
                 if (manual) throw changed();
                 return { jobId: job.id, scheduledFor: job.scheduledFor, created: false };
             }
