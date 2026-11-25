@@ -10,6 +10,7 @@ import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/c
 import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
+    isServiceRecordLinkManualDedupeKey,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
 } from "domain/constants/service-record-link-message";
@@ -281,8 +282,10 @@ export class ServiceRecordLinkGroupService {
         });
         const carrierStarted = (job: typeof jobs[number]) => job.logs.some(log =>
             log.providerCallStartedAt || (log.providerAcceptanceState && log.providerAcceptanceState !== "prepared"));
-        const acceptedOrPending = exact.find(job => job.status === "sent" || job.status === "dispatching"
-            || carrierStarted(job) || job.canceledByUser
+        // 자동 발송을 취소한 뒤에는 명시적인 수동 발송만 새 작업을 만들 수 있다.
+        const blocksReplacement = (job: typeof jobs[number]) => job.status === "sent" || job.status === "dispatching"
+            || carrierStarted(job) || (job.canceledByUser && (!manual || isServiceRecordLinkManualDedupeKey(job.dedupeKey)));
+        const acceptedOrPending = exact.find(job => blocksReplacement(job)
             || (!manual && (pendingStatuses.includes(job.status) || (job.status === "canceled" && job.cancelReason !== SERVICE_RECORD_LINK_RESCHEDULED_REASON)))
             || (manual && (job.payload as unknown as MessageTriggerJobPayload).sentByUserId && pendingStatuses.includes(job.status)));
         if (acceptedOrPending) return { jobId: acceptedOrPending.id, scheduledFor: acceptedOrPending.scheduledFor, created: false };
@@ -290,7 +293,7 @@ export class ServiceRecordLinkGroupService {
         const targets = new Set(members.map(item => `${item.caseId}:${item.assignmentVersion}`));
         for (const job of jobs) {
             if (!job.recordMembers.some(item => targets.has(`${item.serviceRecordCaseId}:${item.assignmentVersion}`))) continue;
-            if (job.status === "dispatching" || job.status === "sent" || carrierStarted(job) || job.canceledByUser) {
+            if (blocksReplacement(job)) {
                 if (manual) throw changed();
                 return { jobId: job.id, scheduledFor: job.scheduledFor, created: false };
             }
