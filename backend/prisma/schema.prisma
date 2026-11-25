@@ -250,6 +250,9 @@ model client {
   suppressGreetingSms    Boolean                   @default(false) @map("suppress_greeting_sms")
   smsAutomationEnabled   Boolean                   @default(true) @map("sms_automation_enabled")
   type                   String?
+  fetalType              FetalType?                @map("fetal_type")
+  /// Legacy null is read as UNCONFIRMED.
+  fetalConfirmation      FetalConfirmation?        @map("fetal_confirmation")
   duration               Int?                      @db.SmallInt
   fullPrice              String?                   @map("full_price")
   grant                  String?
@@ -291,6 +294,10 @@ model client {
   endDateReviewItems     end_date_review_item[]
   serviceRecordRevisionDocumentStates service_record_revision_document_state[]
 
+  babies                 client_baby[]             @relation("ClientBabies")
+  recordTeamSlots        service_record_team_slot[] @relation("RecordSlotClient")
+
+  @@unique([branchId, id], map: "uq_client_baby_owner")
   @@unique([branchId, phoneNormalized], map: "client_branch_phone_normalized_key")
   @@index([areaId], map: "idx_client_area")
   @@index([branchId], map: "idx_client_branch")
@@ -577,6 +584,11 @@ model employee {
   serviceRecordAssignments   service_record_assignment[]
   serviceRecordDays          service_record_day[]
 
+  recordTeamSlots            service_record_team_slot[]       @relation("RecordSlotEmployee")
+  recordBabyAssignments      service_record_baby_assignment[] @relation("RecordAssignmentEmployee")
+  recordRecipientJobs        message_trigger_job[]      @relation("RecordJobRecipient")
+
+  @@unique([branchId, id], map: "uq_employee_record_owner")
   @@unique([branchId, phoneNormalized], map: "employee_branch_id_phone_normalized_key")
   @@index([branchId], map: "idx_employee_branch")
 }
@@ -609,6 +621,10 @@ model employee_schedule {
   messageTriggerJobs      message_trigger_job[]
   serviceRecordAssignment service_record_assignment?
 
+  recordTeamSlots         service_record_team_slot[]       @relation("RecordSlotSchedule")
+  recordBabyAssignments  service_record_baby_assignment[] @relation("RecordAssignmentSchedule")
+
+  @@unique([branchId, clientId, id], map: "uq_schedule_record_owner")
   @@index([branchId], map: "idx_employee_schedule_branch")
 }
 
@@ -1310,6 +1326,10 @@ model message_trigger_job {
   clientId           Int?                 @map("client_id")
   employeeScheduleId Int?                 @map("employee_schedule_id")
   recipientType      String               @map("recipient_type")
+  /// Set on per-baby record jobs. Employee identity distinguishes recipients who share a phone.
+  recipientEmployeeId Int?                @map("recipient_employee_id") @db.SmallInt
+  recordRecipient    employee?            @relation("RecordJobRecipient", fields: [branchId, recipientEmployeeId], references: [branchId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_job_recipient")
+  recordMembers      service_record_job_member[] @relation("RecordJobMembership")
   recipientPhone     String?              @map("recipient_phone")
   templateKey        String               @map("template_key")
   dedupeKey          String               @unique @map("dedupe_key")
@@ -1324,6 +1344,8 @@ model message_trigger_job {
   recoveryJob        message_trigger_job? @relation("CanceledJobRecovery")
   logs               message_log[]
 
+  @@unique([branchId, clientId, employeeScheduleId, recipientEmployeeId, id], map: "uq_record_job_member_scope")
+  @@index([branchId, recipientEmployeeId], map: "idx_record_job_recipient")
   @@index([branchId], map: "idx_message_trigger_job_branch")
   @@index([ruleId], map: "idx_message_trigger_job_rule_id")
   @@index([status, scheduledFor], map: "idx_message_trigger_job_status_scheduled_for")
@@ -1434,11 +1456,136 @@ model service_record_day {
   @@index([employeeId], map: "idx_service_record_day_employee")
 }
 
-/// Client-owned service record lifecycle. Assignment changes never replace this aggregate.
+enum FetalType {
+  SINGLETON
+  SEVERE_SINGLETON
+  TWINS
+  SEVERE_TWINS
+  TRIPLETS
+  SEVERE_TRIPLETS_PLUS
+  QUADRUPLETS_PLUS
+
+  @@map("client_fetal_type")
+}
+
+enum FetalConfirmation {
+  UNCONFIRMED
+  CONFIRMED
+
+  @@map("client_fetal_confirmation")
+}
+
+/// Ordinals are unique across active and inactive babies of a registration.
+/// Retire a row in place and allocate a new ordinal for a different child.
+model client_baby {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId         String   @map("branch_id") @db.Uuid
+  clientId         Int      @map("client_id")
+  ordinal          Int
+  active           Boolean  @default(true)
+  legacyBackfilled Boolean  @default(false) @map("legacy_backfilled")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  client              client                            @relation("ClientBabies", fields: [branchId, clientId], references: [branchId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_client_baby_owner")
+  recordCase          service_record_case?              @relation("BabyRecordCase")
+  assignments         service_record_baby_assignment[]  @relation("RecordAssignmentBaby")
+  currentAssignments  service_record_baby_assignment[]  @relation("RecordAssignmentActiveBaby")
+
+  @@unique([branchId, clientId, ordinal], map: "uq_client_baby_ordinal")
+  @@unique([branchId, clientId, id], map: "uq_client_baby_scope")
+  @@unique([id, active], map: "uq_client_baby_active")
+}
+
+/// Slot 0 is primary and slots 1–3 are assistants. Replacing staff retires
+/// the old row and inserts a new one on the same underlying schedule.
+/// Partial unique indexes in SQL reserve slots and staff among active rows.
+model service_record_team_slot {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId         String   @map("branch_id") @db.Uuid
+  clientId         Int      @map("client_id")
+  scheduleId       Int      @map("schedule_id")
+  employeeId       Int      @map("employee_id") @db.SmallInt
+  slot             Int      @db.SmallInt
+  active           Boolean  @default(true)
+  legacyBackfilled Boolean  @default(false) @map("legacy_backfilled")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  client              client                           @relation("RecordSlotClient", fields: [branchId, clientId], references: [branchId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_slot_client")
+  schedule            employee_schedule                @relation("RecordSlotSchedule", fields: [branchId, clientId, scheduleId], references: [branchId, clientId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_slot_schedule")
+  employee            employee                         @relation("RecordSlotEmployee", fields: [branchId, employeeId], references: [branchId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_slot_employee")
+  assignments         service_record_baby_assignment[] @relation("RecordAssignmentSlot")
+  currentAssignments  service_record_baby_assignment[] @relation("RecordAssignmentActiveSlot")
+
+  @@unique([branchId, clientId, scheduleId, employeeId, id], map: "uq_record_slot_scope")
+  @@unique([id, active], map: "uq_record_slot_active")
+  @@index([branchId, employeeId], map: "idx_record_slot_employee")
+}
+
+/// One open version per baby and schedule (partial unique index in SQL).
+/// Close once by setting endedAt and clearing activeOwner in the same update.
+/// Historical rows retain the staff and slot that actually owned that version.
+model service_record_baby_assignment {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId         String    @map("branch_id") @db.Uuid
+  clientId         Int       @map("client_id")
+  babyId           String    @map("baby_id") @db.Uuid
+  scheduleId       Int       @map("schedule_id")
+  teamSlotId       String    @map("team_slot_id") @db.Uuid
+  employeeId       Int       @map("employee_id") @db.SmallInt
+  version          Int       @default(1)
+  effectiveFrom    DateTime  @default(now()) @map("effective_from") @db.Timestamptz(6)
+  endedAt          DateTime? @map("ended_at") @db.Timestamptz(6)
+  activeOwner      Boolean?  @default(true) @map("active_owner")
+  legacyBackfilled Boolean   @default(false) @map("legacy_backfilled")
+
+  baby       client_baby              @relation("RecordAssignmentBaby", fields: [branchId, clientId, babyId], references: [branchId, clientId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_assignment_baby")
+  teamSlot   service_record_team_slot @relation("RecordAssignmentSlot", fields: [branchId, clientId, scheduleId, employeeId, teamSlotId], references: [branchId, clientId, scheduleId, employeeId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_assignment_slot")
+  schedule   employee_schedule        @relation("RecordAssignmentSchedule", fields: [branchId, clientId, scheduleId], references: [branchId, clientId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_assignment_schedule")
+  employee   employee                 @relation("RecordAssignmentEmployee", fields: [branchId, employeeId], references: [branchId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_assignment_employee")
+  /// Conditional FKs enforce active ownership even when retirement and assignment race.
+  activeBaby client_baby?              @relation("RecordAssignmentActiveBaby", fields: [babyId, activeOwner], references: [id, active], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_assignment_active_baby")
+  activeSlot service_record_team_slot? @relation("RecordAssignmentActiveSlot", fields: [teamSlotId, activeOwner], references: [id, active], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_assignment_active_slot")
+  jobMembers service_record_job_member[] @relation("RecordJobMemberAssignment")
+
+  @@unique([scheduleId, babyId, version], map: "uq_record_assignment_version")
+  @@unique([branchId, clientId, scheduleId, babyId, employeeId, version], map: "uq_record_assignment_member_scope")
+  @@index([babyId, activeOwner], map: "idx_record_assignment_active_baby")
+  @@index([teamSlotId, activeOwner], map: "idx_record_assignment_active_slot")
+  @@index([branchId, employeeId], map: "idx_record_assignment_employee")
+}
+
+/// Immutable recipient-job composition. The shared scope columns prove that
+/// the case, exact assignment version, and job belong to the same recipient.
+/// An assignment can close without erasing what the job originally contained.
+model service_record_job_member {
+  jobId               String   @map("job_id")
+  serviceRecordCaseId String   @map("service_record_case_id") @db.Uuid
+  branchId            String   @map("branch_id") @db.Uuid
+  clientId            Int      @map("client_id")
+  scheduleId          Int      @map("schedule_id")
+  babyId              String   @map("baby_id") @db.Uuid
+  employeeId          Int      @map("employee_id") @db.SmallInt
+  assignmentVersion   Int      @map("assignment_version")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  job        message_trigger_job           @relation("RecordJobMembership", fields: [branchId, clientId, scheduleId, employeeId, jobId], references: [branchId, clientId, employeeScheduleId, recipientEmployeeId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_member_job")
+  recordCase service_record_case           @relation("RecordJobMemberCase", fields: [branchId, clientId, babyId, serviceRecordCaseId], references: [branchId, clientId, babyId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_member_case")
+  assignment service_record_baby_assignment @relation("RecordJobMemberAssignment", fields: [branchId, clientId, scheduleId, babyId, employeeId, assignmentVersion], references: [branchId, clientId, scheduleId, babyId, employeeId, version], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_member_assignment")
+
+  @@id([jobId, serviceRecordCaseId])
+  @@index([branchId, clientId, babyId, serviceRecordCaseId], map: "idx_record_member_case")
+  @@index([branchId, clientId, scheduleId, babyId, employeeId, assignmentVersion], map: "idx_record_member_assignment")
+}
+
+/// Legacy cases remain client-owned until a baby is identified. Assignment
+/// changes never replace this aggregate.
 model service_record_case {
   id                    String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   branchId              String                          @map("branch_id") @db.Uuid
   clientId              Int?                            @unique @map("client_id")
+  babyId                String?                         @unique(map: "uq_service_record_case_baby") @map("baby_id") @db.Uuid
+  baby                  client_baby?                    @relation("BabyRecordCase", fields: [branchId, clientId, babyId], references: [branchId, clientId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_record_case_baby")
+  recipientJobMembers   service_record_job_member[]     @relation("RecordJobMemberCase")
   status                String                          @default("WAITING_FOR_DETAILS")
   startDate             DateTime?                       @map("start_date") @db.Date
   endDate               DateTime?                       @map("end_date") @db.Date
@@ -1483,6 +1630,8 @@ model service_record_case {
   currentRevision                 service_record_revision? @relation("service_record_case_current_revision", fields: [branchId, id, currentRevisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_case_current_revision_fkey")
   currentUsableRevision           service_record_revision? @relation("service_record_case_current_usable_revision", fields: [branchId, id, currentUsableRevisionId], references: [branchId, serviceRecordCaseId, id], onDelete: NoAction, onUpdate: NoAction, map: "service_record_case_current_usable_revision_fkey")
 
+  @@unique([branchId, clientId, babyId], map: "uq_record_case_baby_scope")
+  @@unique([branchId, clientId, babyId, id], map: "uq_record_case_member_scope")
   @@unique([branchId, id], map: "uniq_service_record_case_branch_id")
   @@unique([branchId, clientId, id], map: "uniq_service_record_case_branch_client_id")
   @@index([branchId, status], map: "idx_service_record_case_branch_status")
