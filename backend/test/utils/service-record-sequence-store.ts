@@ -25,7 +25,10 @@
  *    and every top-level single-column unique field it supplies must be such a literal (one valid key never
  *    excuses an object, list, null or wrong-kind value in another); other fields and nested AND / OR / NOT
  *    are ordinary filters. Every insert path (`create`, upsert-create, `insert`, seeding) enforces the modelled uniqueness;
- *  - `where` is evaluated by the shared prisma-where-evaluator (SQL NULL semantics included);
+ *  - scalar `where` predicates use the shared prisma-where-evaluator (SQL NULL semantics included);
+ *    to-one predicates follow the modelled relation keys. List reads use direct predicates at
+ *    the top level and support `is` inside boolean groups for finalization eligibility;
+ *  - `take` is supported only for the two-case lookup used to detect ambiguous targets;
  *  - `$transaction` snapshots every table first and restores the snapshot when the callback
  *    throws, so an injected failure leaves the store exactly as it was before the transaction.
  *
@@ -60,14 +63,16 @@ const now = (): Date => new Date();
 const uuid = (): string => randomUUID();
 const nul = (): null => null;
 const no = (): boolean => false;
+const CASE_TARGET_LIMIT = 2;
 
 /** Column defaults per table; a column missing here is "unknown" and every use of it throws. */
 const COLUMNS: Record<string, Record<string, () => unknown>> = {
     client: {
         id: nul, branchId: nul, name: nul, duration: nul, startDate: nul, endDate: nul, serviceStatus: nul,
-        bookingConfirmedAt: nul, birthDate: nul, eDocId: nul, deletedAt: nul,
+        bookingConfirmedAt: nul, birthDate: nul, eDocId: nul, deletedAt: nul, fetalConfirmation: nul,
         allowSaturdayService: no, allowSundayService: no, allowHolidayService: no,
     },
+    client_baby: { id: uuid, branchId: nul, clientId: nul, ordinal: nul, active: () => true },
     employee: { id: nul, branchId: nul, name: nul, phone: nul },
     branch: { id: nul, name: nul },
     employee_schedule: {
@@ -75,7 +80,7 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         startDate: nul, endDate: nul, replaced: no, terminatedAt: nul,
     },
     service_record_case: {
-        id: uuid, branchId: nul, clientId: nul, version: () => 1, formVersion: () => 1, status: nul,
+        id: uuid, branchId: nul, clientId: nul, babyId: nul, version: () => 1, formVersion: () => 1, status: nul,
         completedAt: nul, finalizationDueAt: nul, finalizationStartedAt: nul, finalizedAt: nul,
         documentsCompletedAt: nul, currentRevisionId: nul, currentUsableRevisionId: nul,
         currentUsableDocumentVersion: nul, requiredSessionCount: nul, startDate: nul, endDate: nul,
@@ -127,10 +132,11 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
  */
 const UNIQUES: Record<string, string[][]> = {
     client: [["id"], ["eDocId"]],
+    client_baby: [["id"], ["branchId", "clientId", "ordinal"]],
     employee: [["id"]],
     branch: [["id"]],
     employee_schedule: [["id"]],
-    service_record_case: [["id"], ["clientId"]],
+    service_record_case: [["id"], ["clientId"], ["babyId"]],
     service_record_assignment: [["id"], ["scheduleId"]],
     service_record_day: [["id"], ["scheduleId", "sessionIndex"], ["serviceRecordCaseId", "caseSessionIndex"]],
     service_record_token: [["id"]],
@@ -150,10 +156,11 @@ type Kind = "string" | "int" | "boolean" | "datetime" | "json";
 
 const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
     client: {
-        int: "id duration", string: "branchId name serviceStatus eDocId",
+        int: "id duration", string: "branchId name serviceStatus eDocId fetalConfirmation",
         datetime: "startDate endDate bookingConfirmedAt birthDate deletedAt",
         boolean: "allowSaturdayService allowSundayService allowHolidayService",
     },
+    client_baby: { int: "clientId ordinal", string: "id branchId", boolean: "active" },
     employee: { int: "id", string: "branchId name phone" },
     branch: { string: "id name" },
     employee_schedule: {
@@ -161,7 +168,7 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
         datetime: "startDate endDate terminatedAt", boolean: "replaced",
     },
     service_record_case: {
-        string: "id branchId status currentRevisionId currentUsableRevisionId momName momBirth babyName babyBirth deliveryType babyWeight lastError",
+        string: "id branchId babyId status currentRevisionId currentUsableRevisionId momName momBirth babyName babyBirth deliveryType babyWeight lastError",
         int: "clientId version formVersion currentUsableDocumentVersion requiredSessionCount finalizationAttempts",
         datetime: "completedAt finalizationDueAt finalizationStartedAt finalizedAt documentsCompletedAt startDate endDate nextAttemptAt",
         json: "plannedSessions",
@@ -224,6 +231,7 @@ interface Relation {
     many: boolean;
     local: string;
     foreign: string;
+    scope?: readonly string[];
 }
 
 const RELATIONS: Record<string, Record<string, Relation>> = {
@@ -239,11 +247,17 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
     service_record_case: {
         branch: { target: "branch", many: false, local: "branchId", foreign: "id" },
         client: { target: "client", many: false, local: "clientId", foreign: "id" },
+        baby: { target: "client_baby", many: false, local: "babyId", foreign: "id", scope: ["branchId", "clientId"] },
         days: { target: "service_record_day", many: true, local: "id", foreign: "serviceRecordCaseId" },
         assignments: { target: "service_record_assignment", many: true, local: "id", foreign: "serviceRecordCaseId" },
     },
     service_record_assignment: {
         schedule: { target: "employee_schedule", many: false, local: "scheduleId", foreign: "id" },
+    },
+    service_record_edit_draft: {
+        serviceRecordCase: {
+            target: "service_record_case", many: false, local: "serviceRecordCaseId", foreign: "id", scope: ["branchId"],
+        },
     },
 };
 
@@ -313,6 +327,7 @@ export class SequenceStore {
     private inTransaction = false;
 
     readonly client: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
+    readonly client_baby: Delegate<"findMany">;
     readonly employee: Delegate<"findMany">;
     readonly employee_schedule: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
     readonly service_record_case: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany" | "upsert">;
@@ -332,6 +347,7 @@ export class SequenceStore {
             for (const row of rows) this.insert(table, row);
         }
         this.client = this.delegate("client", ["findMany", "findFirst", "findUnique", "update", "updateMany"]);
+        this.client_baby = this.delegate("client_baby", ["findMany"]);
         this.employee = this.delegate("employee", ["findMany"]);
         this.employee_schedule = this.delegate("employee_schedule", [
             "findMany", "findFirst", "findUnique", "update", "updateMany",
@@ -375,7 +391,7 @@ export class SequenceStore {
 
     /** The single live row matching `where`; throws unless exactly one matches. */
     one(table: string, where: Row): Row {
-        const found = this.rows(table).filter((row) => matchesWhere(row, where));
+        const found = this.rows(table).filter((row) => this.matchesRow(table, row, where));
         if (found.length !== 1) fail(`expected exactly one ${table} row for ${JSON.stringify(where)}, found ${found.length}`);
         return found[0]!;
     }
@@ -446,7 +462,10 @@ export class SequenceStore {
     }
 
     private async call(table: string, method: Method, args: Row): Promise<unknown> {
+        const isCaseTargetLookup = table === "service_record_case" && method === "findMany"
+            && args["take"] === CASE_TARGET_LIMIT;
         for (const key of Object.keys(args)) {
+            if (key === "take" && isCaseTargetLookup) continue;
             if (!ALLOWED_ARGS[method].has(key)) fail(`${table}.${method}: unsupported argument "${key}"`);
         }
         // The whole request shape is checked before any row is matched or any injected failure is consumed.
@@ -458,7 +477,11 @@ export class SequenceStore {
             throw error;
         }
         switch (method) {
-            case "findMany": return this.matching(table, args).map((row) => this.project(table, row, args));
+            case "findMany": {
+                const rows = this.matching(table, args);
+                const page = isCaseTargetLookup ? rows.slice(0, CASE_TARGET_LIMIT) : rows;
+                return page.map((row) => this.project(table, row, args));
+            }
             case "findFirst": {
                 const row = this.matching(table, args)[0];
                 return row ? this.project(table, row, args) : null;
@@ -490,7 +513,7 @@ export class SequenceStore {
             require("create");
             require("update");
         }
-        this.assertWhere(table, args["where"]);
+        this.assertWhere(table, args["where"], method !== "findMany");
         if (args["orderBy"] !== undefined) this.parseOrderBy(table, args["orderBy"]);
         if (method === "create" || method === "update" || method === "updateMany") this.assertData(table, args["data"]);
         if (method === "upsert") {
@@ -501,7 +524,7 @@ export class SequenceStore {
     }
 
     /** Field names, operators and operand shapes of a `where`, whether or not any row would reach them. */
-    private assertWhere(table: string, where: unknown): void {
+    private assertWhere(table: string, where: unknown, allowRelationIs = true): void {
         if (where === undefined) return;
         if (!isPlainObject(where)) fail(`${table}: where must be an object`);
         const columns = COLUMNS[table]!;
@@ -510,8 +533,20 @@ export class SequenceStore {
                 for (const clause of Array.isArray(value) ? value : [value]) this.assertWhere(table, clause);
                 continue;
             }
-            if (!(key in columns)) fail(`${table}: unsupported where field "${key}"`);
-            this.assertFilter(`${table}.${key}`, KINDS[table]![key]!, value);
+            if (key in columns) {
+                this.assertFilter(`${table}.${key}`, KINDS[table]![key]!, value);
+                continue;
+            }
+            const relation = RELATIONS[table]?.[key];
+            if (!relation || relation.many || !isPlainObject(value)) {
+                fail(`${table}: unsupported where field "${key}"`);
+            }
+            const isWrapped = "is" in value;
+            const relatedWhere = isWrapped ? value["is"] : value;
+            if (isWrapped && (!allowRelationIs || Object.keys(value).length !== 1 || !isPlainObject(relatedWhere))) {
+                fail(`${table}: unsupported where field "${key}"`);
+            }
+            this.assertWhere(relation.target, relatedWhere);
         }
     }
 
@@ -648,8 +683,29 @@ export class SequenceStore {
 
     // ------------------------------------------------------------------ evaluation (the request is already valid)
 
+    private matchesRow(table: string, row: Row, where: Row | undefined): boolean {
+        return Object.entries(where ?? {}).every(([key, condition]) => {
+            if (key === "AND" || key === "OR" || key === "NOT") {
+                const clauses = (Array.isArray(condition) ? condition : [condition]) as Row[];
+                const matchesClause = (clause: Row) => this.matchesRow(table, row, clause);
+                if (key === "AND") return clauses.every(matchesClause);
+                if (key === "OR") return clauses.some(matchesClause);
+                return !clauses.some(matchesClause);
+            }
+            const relation = RELATIONS[table]?.[key];
+            if (!relation) return matchesWhere(row, { [key]: condition });
+            if (row[relation.local] == null) return false;
+            const predicate = condition as Row;
+            const relatedWhere = ("is" in predicate ? predicate["is"] : predicate) as Row;
+            return this.rows(relation.target).some((related) =>
+                related[relation.foreign] === row[relation.local]
+                && (relation.scope ?? []).every((column) => related[column] === row[column])
+                && this.matchesRow(relation.target, related, relatedWhere));
+        });
+    }
+
     private matching(table: string, args: Row): Row[] {
-        const rows = this.rows(table).filter((row) => matchesWhere(row, args["where"] as Row | undefined));
+        const rows = this.rows(table).filter((row) => this.matchesRow(table, row, args["where"] as Row | undefined));
         const orderBy = args["orderBy"];
         if (orderBy === undefined) return rows;
         const keys = this.parseOrderBy(table, orderBy);
@@ -711,7 +767,11 @@ export class SequenceStore {
             }
         }
         const related = this.matching(relation.target, {
-            where: { AND: [{ [relation.foreign]: row[relation.local] }, ...(nested["where"] ? [nested["where"]] : [])] },
+            where: { AND: [
+                { [relation.foreign]: row[relation.local] },
+                ...(relation.scope ?? []).map((column) => ({ [column]: row[column] })),
+                ...(nested["where"] ? [nested["where"]] : []),
+            ] },
             ...(nested["orderBy"] !== undefined ? { orderBy: nested["orderBy"] } : {}),
         });
         // A null local key matches nothing (the evaluator treats equality with null as "is null").
