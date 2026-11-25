@@ -51,7 +51,8 @@ export class EmployeeScheduleAgentCapabilitiesProvider implements AgentCapabilit
                 const filteredSchedules = schedules.filter((schedule) => (
                     (!dayStart || !dayEnd || (schedule.startDate <= dayEnd && schedule.endDate >= dayStart))
                     && (clientId === undefined || schedule.clientId === clientId)
-                    && (employeeId === undefined || schedule.primaryEmployeeId === employeeId || schedule.secondaryEmployeeId === employeeId)
+                    && (employeeId === undefined || schedule.primaryEmployeeId === employeeId || schedule.secondaryEmployeeId === employeeId
+                        || schedule.providers?.some((provider) => provider.employeeId === employeeId))
                 ));
                 const byStartAscending = (left: (typeof schedules)[number], right: (typeof schedules)[number]): number => {
                     const startDateOrder = left.startDate.getTime() - right.startDate.getTime();

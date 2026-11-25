@@ -5,6 +5,9 @@ import {
     EmployeeScheduleRoleError,
 } from "domain/entities/employee-schedule.entity";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
+import {
+    allocationConflict, loadClientAllocations, persistClientAllocation, planLegacyClientAllocation,
+} from "application/services/client-allocation.service";
 import { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { assertEmployeeAssignmentEligibility, type EmployeeAssignmentCandidate } from "application/policies/employee-assignment-eligibility.policy";
@@ -119,8 +122,16 @@ export class CreateEmployeeScheduleUsecase {
                 }
                 throw error;
             }
+            const snapshot = (await loadClientAllocations(tx, branchid, [params.clientId])).get(params.clientId);
+            const allocation = !schedule.replaced && await planLegacyClientAllocation(tx, snapshot, params);
+            if (allocation && snapshot?.employeeSchedules.length) allocationConflict("/clientId");
             await assertEmployeeScheduleWriteIsAvailable(tx, schedule, branchid);
-            return this.employeeScheduleRepository.create(branchid, schedule, tx);
+            const created = await this.employeeScheduleRepository.create(branchid, schedule, tx);
+            if (allocation) {
+                await persistClientAllocation(tx, { branchId: branchid, clientId: params.clientId }, allocation, created.id, null);
+                created.providers = allocation.providers;
+            }
+            return created;
         };
 
         return transaction ? persist(transaction) : this.prismaService.$transaction(persist);

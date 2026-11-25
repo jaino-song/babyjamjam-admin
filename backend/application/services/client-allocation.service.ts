@@ -1,0 +1,508 @@
+import {
+    admitVoucherCode,
+    resolveBabyRecordAllocation,
+    type BabyRecordAllocationIssue,
+    type BabyRecordAssignmentInput,
+    type FetalType,
+    type FetalTypeConfirmation,
+    type ProviderSlot,
+} from "@babyjamjam/shared/client/baby-record-allocation";
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { problemBody } from "application/utils/problem-bodies";
+import { createHash } from "node:crypto";
+
+export interface ClientAllocationInput {
+    fetalType?: FetalType;
+    babyCount?: number;
+    providers?: Provider[];
+    babyAssignments?: RequestedAssignment[];
+    voucherIssuanceYear?: number;
+    expectedAllocationVersion?: string;
+}
+
+interface Provider {
+    slot: ProviderSlot;
+    employeeId: number;
+}
+
+interface RequestedAssignment {
+    babyId?: string;
+    ordinal?: number;
+    providerSlot: ProviderSlot | null;
+}
+
+interface Baby {
+    babyId: string;
+    ordinal: number;
+}
+
+export interface ClientAllocationProjection {
+    fetalType: FetalType | null;
+    fetalConfirmation: FetalTypeConfirmation;
+    babyCount: number;
+    babies: Baby[];
+    historicalMaxOrdinal: number;
+    providers: Provider[];
+    babyAssignments: (Baby & { providerSlot: ProviderSlot | null })[];
+    allocationVersion: string;
+}
+
+const snapshotSelect = {
+    id: true,
+    type: true,
+    voucherClient: true,
+    fetalType: true,
+    fetalConfirmation: true,
+    babies: { select: { id: true, ordinal: true, active: true }, orderBy: { ordinal: "asc" } },
+    employeeSchedules: {
+        where: { replaced: false, terminatedAt: null },
+        orderBy: { id: "desc" },
+        take: 1,
+        select: {
+            id: true,
+            primaryEmployeeId: true,
+            secondaryEmployeeId: true,
+            recordTeamSlots: {
+                where: { active: true },
+                select: { id: true, slot: true, employeeId: true },
+                orderBy: { slot: "asc" },
+            },
+            recordBabyAssignments: {
+                where: { activeOwner: true },
+                select: { babyId: true, id: true, teamSlotId: true },
+                orderBy: { babyId: "asc" },
+            },
+        },
+    },
+} satisfies Prisma.clientSelect;
+
+export type ClientAllocationSnapshot = Prisma.clientGetPayload<{ select: typeof snapshotSelect }>;
+
+export async function loadClientAllocations(
+    db: Prisma.TransactionClient,
+    branchId: string,
+    clientIds: number[],
+): Promise<Map<number, ClientAllocationSnapshot>> {
+    if (!db.client_baby || clientIds.length === 0) return new Map();
+    const rows = await db.client.findMany({
+        where: { id: { in: clientIds }, branchId, deletedAt: null },
+        select: {
+            ...snapshotSelect,
+            babies: { ...snapshotSelect.babies, where: { branchId } },
+            employeeSchedules: {
+                ...snapshotSelect.employeeSchedules,
+                where: { ...snapshotSelect.employeeSchedules.where, branchId },
+            },
+        },
+    });
+    return new Map(rows.map((row) => [row.id, row]));
+}
+
+export function allocationProjection(snapshot: ClientAllocationSnapshot): ClientAllocationProjection {
+    const schedule = snapshot.employeeSchedules[0];
+    const slots = schedule?.recordTeamSlots ?? [];
+    const owners = new Map(schedule?.recordBabyAssignments.map((row) => [row.babyId, row.teamSlotId]));
+    const slotNumbers = new Map(slots.map((row) => [row.id, row.slot as ProviderSlot]));
+    const babies = snapshot.babies.filter((row) => row.active)
+        .map(({ id, ordinal }) => ({ babyId: id, ordinal }));
+    const providers: Provider[] = slots.filter((row) => row.slot > 1)
+        .map(({ slot, employeeId }) => ({ slot: slot as ProviderSlot, employeeId }));
+    if (schedule) {
+        providers.unshift({ slot: 0, employeeId: schedule.primaryEmployeeId });
+        if (schedule.secondaryEmployeeId !== null) {
+            providers.splice(1, 0, { slot: 1, employeeId: schedule.secondaryEmployeeId });
+        }
+    }
+    return {
+        fetalType: snapshot.fetalType,
+        fetalConfirmation: snapshot.fetalConfirmation ?? "UNCONFIRMED",
+        babyCount: babies.length,
+        babies,
+        historicalMaxOrdinal: snapshot.babies.at(-1)?.ordinal ?? 0,
+        providers,
+        babyAssignments: babies.map((baby) => ({
+            ...baby,
+            providerSlot: slotNumbers.get(owners.get(baby.babyId) ?? "") ?? null,
+        })),
+        allocationVersion: createHash("sha256").update(JSON.stringify(snapshot)).digest("base64url"),
+    };
+}
+
+export function assertAllocationStaffInput(
+    input: ClientAllocationInput & { primaryEmployeeId?: number | null; secondaryEmployeeId?: number | null },
+): void {
+    if (input.providers !== undefined && (input.primaryEmployeeId !== undefined || input.secondaryEmployeeId !== undefined)) {
+        invalid("/providers");
+    }
+}
+
+export function hasAllocationInput(input: ClientAllocationInput): boolean {
+    return input.fetalType !== undefined || input.babyCount !== undefined
+        || input.providers !== undefined || input.babyAssignments !== undefined
+        || input.voucherIssuanceYear !== undefined || input.expectedAllocationVersion !== undefined;
+}
+
+function invalid(pointer: string, code: "INVALID_VALUE" | "REQUIRED" = "INVALID_VALUE"): never {
+    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer, code, detail: "배정 정보를 확인해 주세요.", location: "body",
+    }));
+}
+
+export function allocationConflict(pointer: string): never {
+    throw new ConflictException(problemBody("REQUEST_CONFLICT", {
+        pointer, code: "INVALID_VALUE", detail: "현재 아기 및 담당자 배정을 확인해 주세요.", location: "body",
+    }));
+}
+
+function rejectIssue(issue: BabyRecordAllocationIssue, assignments: RequestedAssignment[]): never {
+    switch (issue.field) {
+        case "voucher":
+            return invalid(
+                ["missing-year", "invalid-year", "missing-catalog"].includes(issue.code) ? "/voucherIssuanceYear" : "/type",
+                issue.code === "missing-year" || issue.code === "missing-code" ? "REQUIRED" : "INVALID_VALUE",
+            );
+        case "providers":
+            return invalid(`/providers/${issue.index}/${["disabled-slot", "duplicate-slot"].includes(issue.code) ? "slot" : "employeeId"}`);
+        case "babyAssignments": {
+            const key = ["unavailable-slot", "fixed-primary"].includes(issue.code)
+                ? "providerSlot" : assignments[issue.index]?.babyId === undefined ? "ordinal" : "babyId";
+            return invalid(`/babyAssignments/${issue.index}/${key}`);
+        }
+        case "fetalType":
+            return invalid("/fetalType", issue.code === "required" ? "REQUIRED" : "INVALID_VALUE");
+        default:
+            return invalid("/babyCount");
+    }
+}
+
+export interface ClientAllocationPlan {
+    fetalType: FetalType;
+    providers: Provider[];
+    assignments: { babyId: string | null; ordinal: number; providerSlot: ProviderSlot | null }[];
+    retired: string[];
+    unchanged: boolean;
+}
+
+const maxPrismaInt = 2_147_483_647;
+const uuid = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+function validateInput(input: ClientAllocationInput): asserts input is Required<Omit<ClientAllocationInput, "expectedAllocationVersion">> & ClientAllocationInput {
+    for (const key of ["fetalType", "babyCount", "providers", "babyAssignments", "voucherIssuanceYear"] as const) {
+        if (input[key] == null) invalid(`/${key}`, "REQUIRED");
+    }
+    if (!Number.isSafeInteger(input.babyCount) || input.babyCount! < 1 || input.babyCount! > maxPrismaInt) {
+        invalid("/babyCount");
+    }
+    if (!Number.isSafeInteger(input.voucherIssuanceYear) || input.voucherIssuanceYear! < 1 || input.voucherIssuanceYear! > maxPrismaInt) {
+        invalid("/voucherIssuanceYear");
+    }
+    if (!Array.isArray(input.providers)) invalid("/providers");
+    if (!Array.isArray(input.babyAssignments)) invalid("/babyAssignments");
+    if (input.babyAssignments.length !== input.babyCount) invalid("/babyCount");
+    for (const [index, provider] of input.providers.entries()) {
+        if (!provider || ![0, 1, 2, 3].includes(provider.slot)) invalid(`/providers/${index}/slot`);
+        if (!Number.isSafeInteger(provider.employeeId) || provider.employeeId < 1 || provider.employeeId > maxPrismaInt) {
+            invalid(`/providers/${index}/employeeId`, provider.employeeId == null ? "REQUIRED" : "INVALID_VALUE");
+        }
+    }
+    if (input.providers.length && !input.providers.some(({ slot }) => slot === 0)) {
+        invalid("/providers/0/slot");
+    }
+    for (const [index, row] of input.babyAssignments.entries()) {
+        const pointer = `/babyAssignments/${index}`;
+        if (!row) invalid(pointer);
+        if (row.babyId !== undefined && (typeof row.babyId !== "string" || !uuid.test(row.babyId))) invalid(`${pointer}/babyId`);
+        if (row.ordinal !== undefined && (!Number.isSafeInteger(row.ordinal) || row.ordinal < 1 || row.ordinal > maxPrismaInt)) invalid(`${pointer}/ordinal`);
+        if (row.babyId === undefined && row.ordinal === undefined) invalid(`${pointer}/ordinal`, "REQUIRED");
+        if (row.babyId !== undefined && row.ordinal !== undefined) invalid(`${pointer}/ordinal`);
+        if (row.providerSlot === undefined) invalid(`${pointer}/providerSlot`, "REQUIRED");
+        if (row.providerSlot === null ? input.providers.length > 0 : ![0, 1, 2, 3].includes(row.providerSlot)) {
+            invalid(`${pointer}/providerSlot`);
+        }
+    }
+}
+
+async function assertBabiesCanRetire(
+    tx: Prisma.TransactionClient,
+    scope: { branchId: string; clientId: number },
+    retired: string[],
+): Promise<void> {
+    if (!retired.length) return;
+    const authored = await tx.service_record_case.findFirst({
+        where: {
+            ...scope,
+            babyId: { in: retired },
+            OR: [
+                { days: { some: {} } }, { currentRevisionId: { not: null } },
+                { eformsignDocs: { some: {} } }, { snapshotChunks: { some: {} } },
+                { legacyHeaders: { some: {} } }, { finalizedAt: { not: null } },
+                { editDrafts: { some: {} } }, { revisions: { some: {} } },
+                { babyName: { not: null } }, { babyBirth: { not: null } },
+                { deliveryType: { not: null } }, { babyWeight: { not: null } },
+            ],
+        },
+        select: { id: true },
+    });
+    if (authored) allocationConflict("/babyCount");
+}
+
+export async function planClientAllocation(
+    tx: Prisma.TransactionClient,
+    input: ClientAllocationInput,
+    voucher: { voucherClient: boolean; type: string | null },
+    current?: ClientAllocationSnapshot,
+    scope?: { branchId: string; clientId: number },
+): Promise<ClientAllocationPlan> {
+    validateInput(input);
+    if (!voucher.voucherClient) invalid("/type");
+    const projection = current && allocationProjection(current);
+    if (projection && (typeof input.expectedAllocationVersion !== "string" || !input.expectedAllocationVersion)) {
+        invalid("/expectedAllocationVersion", input.expectedAllocationVersion == null ? "REQUIRED" : "INVALID_VALUE");
+    }
+    const stale = projection && input.expectedAllocationVersion !== projection.allocationVersion;
+    const activeByOrdinal = new Map(projection?.babies.map((baby) => [baby.ordinal, baby]));
+    const known = new Set(projection?.babies.map((baby) => baby.babyId));
+    const requested = input.babyAssignments.map((row) => {
+        if (row.babyId !== undefined) return { babyId: row.babyId.toLowerCase(), providerSlot: row.providerSlot };
+        // A retried addition still uses its allocated ordinal. Only a stale request
+        // can use it, and only an identical final configuration will be accepted.
+        const existing = stale && row.ordinal !== undefined && activeByOrdinal.get(row.ordinal);
+        return existing
+            ? { babyId: existing.babyId, providerSlot: row.providerSlot }
+            : { ordinal: row.ordinal!, providerSlot: row.providerSlot };
+    });
+    const retained = new Set<string>();
+    const targets = new Set<string | number>();
+    for (const [index, row] of requested.entries()) {
+        const target = row.babyId ?? row.ordinal!;
+        const pointer = `/babyAssignments/${index}/${row.babyId === undefined ? "ordinal" : "babyId"}`;
+        if (row.babyId !== undefined) {
+            if (!known.has(row.babyId)) {
+                if (stale) allocationConflict("/expectedAllocationVersion");
+                invalid(pointer);
+            }
+            retained.add(row.babyId);
+        }
+        if (targets.has(target)) invalid(pointer);
+        targets.add(target);
+    }
+    const babies = projection?.babies.filter((baby) => retained.has(baby.babyId)) ?? [];
+    const historicalMaxOrdinal = projection?.historicalMaxOrdinal ?? 0;
+    const forms = await tx.voucher_price_info.findMany({
+        where: { year: input.voucherIssuanceYear },
+        select: { type: true },
+        distinct: ["type"],
+    });
+    const catalog = forms.length ? { [input.voucherIssuanceYear]: forms.flatMap(({ type }) => type ?? []) } : {};
+    const rules = resolveBabyRecordAllocation({
+        service: "voucher",
+        mode: "submission",
+        code: voucher.type,
+        issuanceYear: input.voucherIssuanceYear,
+        catalog,
+        fetalType: input.fetalType,
+        babyCount: input.babyCount,
+        providers: input.providers,
+        babies,
+        historicalMaxOrdinal,
+        babyAssignments: requested.flatMap((row): BabyRecordAssignmentInput[] => {
+            if (row.providerSlot === null) return [];
+            return [row.babyId === undefined
+                ? { ordinal: row.ordinal!, providerSlot: row.providerSlot }
+                : { babyId: row.babyId, providerSlot: row.providerSlot }];
+        }),
+    });
+    if (rules.status !== "resolved") {
+        if (stale) allocationConflict("/expectedAllocationVersion");
+        if (rules.status === "not-applicable") invalid("/type");
+        rejectIssue(rules.issue, requested);
+    }
+    for (const [index, row] of requested.entries()) {
+        if (row.ordinal !== undefined && !rules.assignmentFor(row.ordinal)) {
+            if (stale) allocationConflict("/expectedAllocationVersion");
+            invalid(`/babyAssignments/${index}/ordinal`);
+        }
+    }
+    if (historicalMaxOrdinal + input.babyCount - babies.length > maxPrismaInt) invalid("/babyCount");
+    const assignments = requested.map((_, index) => {
+        const { babyId, ordinal, providerSlot } = rules.assignmentAtRank(index + 1)!;
+        return { babyId, ordinal, providerSlot };
+    });
+    const providers = [...input.providers].sort((left, right) => left.slot - right.slot);
+    const unchanged = projection?.fetalConfirmation === "CONFIRMED"
+        && projection.fetalType === rules.fetalType
+        && current?.type === voucher.type
+        && sameProviders(providers, projection.providers)
+        && assignments.length === projection.babyCount
+        && assignments.every((row, index) => {
+            const previous = projection.babyAssignments[index]!;
+            return row.babyId === previous.babyId && row.providerSlot === previous.providerSlot;
+        });
+    if (stale && !unchanged) allocationConflict("/expectedAllocationVersion");
+    const retired = projection?.babies.filter((baby) => !retained.has(baby.babyId)).map((baby) => baby.babyId) ?? [];
+    if (scope) await assertBabiesCanRetire(tx, scope, retired);
+    return { fetalType: rules.fetalType, assignments, providers, retired, unchanged };
+}
+
+export function sameProviders(left: Provider[], right: Provider[]): boolean {
+    return left.length === right.length && left.every((row, index) =>
+        row.slot === right[index]?.slot && row.employeeId === right[index]?.employeeId);
+}
+
+export async function planLegacyClientAllocation(
+    tx: Prisma.TransactionClient,
+    snapshot: ClientAllocationSnapshot | undefined,
+    request: {
+        type?: string | null;
+        voucherClient?: boolean;
+        primaryEmployeeId?: number;
+        secondaryEmployeeId?: number | null;
+        primaryPointer?: string;
+        secondaryPointer?: string;
+    },
+): Promise<ClientAllocationPlan | null> {
+    if (!snapshot) return null;
+    const projection = allocationProjection(snapshot);
+    if (projection.fetalConfirmation !== "CONFIRMED" || !projection.fetalType) return null;
+    const primaryPointer = request.primaryPointer ?? "/primaryEmployeeId";
+    const secondaryPointer = request.secondaryPointer ?? "/secondaryEmployeeId";
+    const providers = projection.providers.filter(({ slot }) =>
+        slot === 0 ? request.primaryEmployeeId === undefined : slot !== 1 || request.secondaryEmployeeId === undefined);
+    if (request.primaryEmployeeId !== undefined) providers.push({ slot: 0, employeeId: request.primaryEmployeeId });
+    if (request.secondaryEmployeeId != null) providers.push({ slot: 1, employeeId: request.secondaryEmployeeId });
+    providers.sort((left, right) => left.slot - right.slot);
+    const occupied = new Set<number>();
+    for (const provider of providers) {
+        if (occupied.has(provider.employeeId)) {
+            allocationConflict(request.secondaryEmployeeId === provider.employeeId ? secondaryPointer : primaryPointer);
+        }
+        occupied.add(provider.employeeId);
+    }
+    if (providers.length && providers[0]?.slot !== 0) allocationConflict(secondaryPointer);
+    const type = request.type === undefined ? snapshot.type : request.type;
+    if (!(request.voucherClient ?? snapshot.voucherClient) || type === null) allocationConflict("/type");
+    // The legacy payload does not carry an issuance year. Use an actual catalog
+    // year admitting the unchanged or replacement code, without guessing a year
+    // from service dates or modifying price storage.
+    const prices = await tx.voucher_price_info.findMany({
+        select: { year: true, type: true },
+        distinct: ["year", "type"],
+        orderBy: { year: "desc" },
+    });
+    const price = prices.find((row) => row.type && admitVoucherCode(type, row.year, { [row.year]: [row.type] }).admitted);
+    if (!price?.type) allocationConflict("/type");
+    const assignments = projection.babyAssignments.map((row) => {
+        if (row.providerSlot !== null && !providers.some(({ slot }) => slot === row.providerSlot)) allocationConflict(secondaryPointer);
+        return row;
+    });
+    const rules = resolveBabyRecordAllocation({
+        service: "voucher", mode: "legacy", confirmation: "CONFIRMED",
+        code: type, issuanceYear: price.year, catalog: { [price.year]: [price.type] },
+        fetalType: projection.fetalType, babyCount: projection.babyCount,
+        babies: projection.babies, historicalMaxOrdinal: projection.historicalMaxOrdinal, providers,
+        babyAssignments: assignments.flatMap(({ babyId, providerSlot }) => providerSlot === null ? [] : [{ babyId, providerSlot }]),
+    });
+    if (rules.status !== "resolved") {
+        if (rules.status === "unconfirmed" && rules.issue.field === "providers" && request.type === undefined) {
+            allocationConflict(providers[rules.issue.index]?.slot === 0 ? primaryPointer : secondaryPointer);
+        }
+        allocationConflict("/type");
+    }
+    return {
+        fetalType: rules.fetalType, providers, retired: [],
+        unchanged: sameProviders(providers, projection.providers),
+        assignments: assignments.map((row) => ({
+            ...row, providerSlot: rules.assignmentFor(row.ordinal)!.providerSlot,
+        })),
+    };
+}
+
+export async function persistClientAllocation(
+    tx: Prisma.TransactionClient,
+    scope: { branchId: string; clientId: number },
+    plan: ClientAllocationPlan,
+    scheduleId: number | null,
+    previousScheduleId: number | null = scheduleId,
+): Promise<void> {
+    if (plan.unchanged && previousScheduleId === scheduleId) return;
+    if (plan.retired.length) {
+        // The database's conditional foreign key requires owners to close
+        // before retiring a baby, including an owner from an older schedule.
+        await tx.service_record_baby_assignment.updateMany({
+            where: { ...scope, babyId: { in: plan.retired }, activeOwner: true },
+            data: { activeOwner: null, endedAt: new Date() },
+        });
+        await tx.client_baby.updateMany({
+            where: { ...scope, id: { in: plan.retired }, active: true }, data: { active: false },
+        });
+    }
+    const newRows = plan.assignments.filter(({ babyId }) => babyId === null);
+    const inserted = newRows.length ? await tx.client_baby.createManyAndReturn({
+        data: newRows.map(({ ordinal }) => ({ ...scope, ordinal })),
+        select: { id: true, ordinal: true },
+    }) : [];
+    const insertedByOrdinal = new Map(inserted.map(({ id, ordinal }) => [ordinal, id]));
+    await tx.client.updateMany({
+        where: { id: scope.clientId, branchId: scope.branchId },
+        data: { fetalType: plan.fetalType, fetalConfirmation: "CONFIRMED" },
+    });
+
+    if (previousScheduleId !== null && previousScheduleId !== scheduleId) {
+        await closeScheduleAllocation(tx, scope, previousScheduleId);
+    }
+    if (scheduleId === null) return;
+    const scheduleScope = { ...scope, scheduleId };
+    const slots = await tx.service_record_team_slot.findMany({ where: { ...scheduleScope, active: true } });
+    const slotChanges = slots.filter((old) => !plan.providers.some(
+        ({ slot, employeeId }) => old.slot === slot && old.employeeId === employeeId,
+    ));
+    const retiredSlotIds = new Set(slotChanges.map(({ id }) => id));
+    const desired = new Map(plan.assignments.map((row) => [row.babyId ?? insertedByOrdinal.get(row.ordinal)!, row.providerSlot]));
+    const history = await tx.service_record_baby_assignment.findMany({
+        where: scheduleScope, orderBy: { version: "desc" },
+        select: { id: true, babyId: true, teamSlotId: true, activeOwner: true, version: true },
+    });
+    const slotById = new Map(slots.map((row) => [row.id, row.slot]));
+    const changed = history.filter((row) => row.activeOwner === true && (
+        retiredSlotIds.has(row.teamSlotId) || desired.get(row.babyId) !== slotById.get(row.teamSlotId)
+    ));
+    if (changed.length) await tx.service_record_baby_assignment.updateMany({
+        where: { ...scheduleScope, id: { in: changed.map(({ id }) => id) }, activeOwner: true },
+        data: { activeOwner: null, endedAt: new Date() },
+    });
+    if (slotChanges.length) await tx.service_record_team_slot.updateMany({
+        where: { ...scheduleScope, id: { in: [...retiredSlotIds] }, active: true }, data: { active: false },
+    });
+    const kept = slots.filter(({ id }) => !retiredSlotIds.has(id));
+    const toInsert = plan.providers.filter(({ slot }) => !kept.some((row) => row.slot === slot));
+    const created = toInsert.length ? await tx.service_record_team_slot.createManyAndReturn({
+        data: toInsert.map((provider) => ({ ...scheduleScope, ...provider })),
+    }) : [];
+    const bySlot = new Map([...kept, ...created].map((row) => [row.slot, row]));
+    const closed = new Set(changed.map(({ id }) => id));
+    const existingOwners = new Set(history.filter((row) => row.activeOwner && !closed.has(row.id)).map(({ babyId }) => babyId));
+    const versions = new Map(history.slice().reverse().map((row) => [row.babyId, row.version]));
+    const newOwners = [...desired].flatMap(([babyId, slot]) => {
+        if (slot === null || existingOwners.has(babyId)) return [];
+        const owner = bySlot.get(slot)!;
+        return [{
+            ...scheduleScope, babyId, teamSlotId: owner.id, employeeId: owner.employeeId,
+            version: (versions.get(babyId) ?? 0) + 1,
+        }];
+    });
+    if (newOwners.length) await tx.service_record_baby_assignment.createMany({ data: newOwners });
+}
+
+export async function closeScheduleAllocation(
+    tx: Prisma.TransactionClient,
+    scope: { branchId: string; clientId: number },
+    scheduleId: number,
+): Promise<void> {
+    if (!tx.service_record_baby_assignment) return;
+    await tx.service_record_baby_assignment.updateMany({
+        where: { ...scope, scheduleId, activeOwner: true },
+        data: { activeOwner: null, endedAt: new Date() },
+    });
+}
+

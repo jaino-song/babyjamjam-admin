@@ -1,3 +1,4 @@
+import { hasAllocationInput } from "application/services/client-allocation.service";
 import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import {
@@ -53,7 +54,7 @@ export class ClientController {
         return this.clientService.create(branchId, {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
-            secondaryEmployeeId: dto.secondaryEmployeeId ?? null,
+            secondaryEmployeeId: dto.providers === undefined ? dto.secondaryEmployeeId ?? null : dto.secondaryEmployeeId,
             address: dto.address ?? null,
             phone: dto.phone ?? null,
             type: dto.type ?? null,
@@ -81,6 +82,13 @@ export class ClientController {
             smsAutomationEnabled: dto.smsAutomationEnabled,
             reuseExistingClient: dto.reuseExistingClient,
             source: dto.source,
+            ...(hasAllocationInput(dto) ? {
+                fetalType: dto.fetalType,
+                babyCount: dto.babyCount,
+                providers: dto.providers,
+                babyAssignments: dto.babyAssignments,
+                voucherIssuanceYear: dto.voucherIssuanceYear,
+            } : {}),
         });
     }
 
@@ -199,6 +207,14 @@ export class ClientController {
             allowHolidayService: dto.allowHolidayService,
             areaId: dto.areaId,
             expectedEndDate: dto.expectedEndDate,
+            ...(hasAllocationInput(dto) ? {
+                fetalType: dto.fetalType,
+                babyCount: dto.babyCount,
+                providers: dto.providers,
+                babyAssignments: dto.babyAssignments,
+                voucherIssuanceYear: dto.voucherIssuanceYear,
+                expectedAllocationVersion: dto.expectedAllocationVersion,
+            } : {}),
             smsAutomationEnabled: dto.smsAutomationEnabled,
         });
     }

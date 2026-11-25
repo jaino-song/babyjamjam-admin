@@ -51,8 +51,8 @@ import {
     resolveSavedServiceStatus,
 } from "application/usecases/client/client-write-validation";
 import {
-    assertEmployeeAssignmentEligibility,
     assertEmployeeAssignmentShape,
+    assertStaffEligibility,
     type EmployeeAssignmentCandidate,
 } from "application/policies/employee-assignment-eligibility.policy";
 import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
@@ -114,11 +114,26 @@ import { permitsRecordLinkRecovery, recordLinkClientStatus, type RecordLinkStatu
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import {
     manualScheduleConflict,
+    persistReevaluationIntents,
 } from "./service-record-schedule-realignment.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import {
+    allocationConflict,
+    allocationProjection,
+    assertAllocationStaffInput,
+    closeScheduleAllocation,
+    hasAllocationInput,
+    loadClientAllocations,
+    persistClientAllocation,
+    planClientAllocation,
+    planLegacyClientAllocation,
+    sameProviders,
+    type ClientAllocationInput,
+    type ClientAllocationProjection,
+} from "./client-allocation.service";
 import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
@@ -183,7 +198,7 @@ export interface ClientBadge {
 }
 
 // Response type that includes employee information
-export interface ClientWithEmployees {
+export interface ClientWithEmployees extends Partial<ClientAllocationProjection> {
     id: number;
     name: string;
     createdAt: Date | null;
@@ -1083,11 +1098,12 @@ export class ClientService {
         transaction: Prisma.TransactionClient,
         retainedEmployeeIds?: ReadonlySet<number>,
         employeesAlreadyLocked = false,
+        configuredEmployeeIds?: number[],
     ): Promise<void> {
         assertEmployeeAssignmentShape(primaryEmployeeId, secondaryEmployeeId);
         if (primaryEmployeeId === null) return;
 
-        const employeeIds = [primaryEmployeeId, secondaryEmployeeId].filter(
+        const employeeIds = configuredEmployeeIds ?? [primaryEmployeeId, secondaryEmployeeId].filter(
             (employeeId): employeeId is number => employeeId !== null,
         );
         if (!employeesAlreadyLocked) {
@@ -1109,13 +1125,7 @@ export class ClientService {
                 openToNextWork: true,
             },
         });
-        assertEmployeeAssignmentEligibility(
-            branchid,
-            primaryEmployeeId,
-            secondaryEmployeeId,
-            employees,
-            retainedEmployeeIds,
-        );
+        assertStaffEligibility(branchid, employeeIds, employees, retainedEmployeeIds);
     }
 
     private async syncEmployeeAssignment(branchid: string, params: {
@@ -1160,6 +1170,11 @@ export class ClientService {
                 return null;
             }
 
+            const scope = { branchId: branchid, clientId: params.clientId };
+            const snapshot = (await loadClientAllocations(transaction, branchid, [params.clientId])).get(params.clientId);
+            const allocation = await planLegacyClientAllocation(transaction, snapshot, {
+                primaryEmployeeId: params.primaryEmployeeId, secondaryEmployeeId: params.secondaryEmployeeId,
+            });
             assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId);
             if (newPrimaryEmployeeId === null) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -1171,7 +1186,8 @@ export class ClientService {
             }
 
             const retainedEmployeeIds = new Set(
-                [currentPrimaryEmployeeId, currentSecondaryEmployeeId]
+                (snapshot ? allocationProjection(snapshot).providers.map(({ employeeId }) => employeeId)
+                    : [currentPrimaryEmployeeId, currentSecondaryEmployeeId])
                     .filter((employeeId): employeeId is number => employeeId !== null),
             );
             await this.assertAllowedEmployees(
@@ -1181,6 +1197,7 @@ export class ClientService {
                 transaction,
                 retainedEmployeeIds,
                 true,
+                allocation?.providers.map(({ employeeId }) => employeeId),
             );
             // One handover instant for the whole transaction. The outgoing row has to
             // end on exactly the day the incoming row starts, so the clock is read
@@ -1213,6 +1230,7 @@ export class ClientService {
                 endDate: incomingEndDate,
                 replaced: false,
                 excludeScheduleId: currentSchedule?.id,
+                additionalEmployeeIds: allocation?.providers.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId),
             });
             if (currentSchedule && handover) {
                 await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
@@ -1241,6 +1259,7 @@ export class ClientService {
                     replaced: false,
                 },
             });
+            if (allocation) await persistClientAllocation(transaction, scope, allocation, newSchedule.id, currentSchedule?.id ?? null);
             await this.serviceRecordLinkService?.observeAssignmentInTransaction?.(transaction, branchid, newSchedule.id);
             if (params.applyMessageAutomation) {
                 await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
@@ -1272,7 +1291,7 @@ export class ClientService {
         };
     }
 
-    async create(branchid: string, params: {
+    async create(branchid: string, params: ClientAllocationInput & {
         name: string;
         primaryEmployeeId?: number | null;
         secondaryEmployeeId?: number | null;
@@ -1310,6 +1329,8 @@ export class ClientService {
         // Reject malformed identity input before settings lookups, duplicate
         // checks, automation, or any other write/provider side effect.
         assertClientPhoneInput(params.phone);
+        const configured = hasAllocationInput(params);
+        assertAllocationStaffInput(params);
         const startDate = parseClientDate(params.startDate, "startDate") ?? null;
         const endDate = parseClientDate(params.endDate, "endDate") ?? null;
         const dueDate = parseClientDate(params.dueDate, "dueDate") ?? null;
@@ -1353,7 +1374,10 @@ export class ClientService {
         await assertAllowedClientArea(this.prismaService, branchid, params.areaId);
 
         let suppressGreetingSms = params.suppressGreetingSms ?? false;
-        const applyMessageAutomation = params.applyMessageAutomation ?? true;
+        const configuredPreBooking = configured && getEffectiveClientServiceStatus(
+            params.serviceStatus ?? null, startDate, endDate, confirmBookingOnCreate ? new Date() : null,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        const applyMessageAutomation = !configuredPreBooking && (params.applyMessageAutomation ?? true);
         // The create-time intent gating above stays keyed to applyMessageAutomation;
         // the persisted flag prefers the explicit field.
         const smsAutomationEnabled = params.smsAutomationEnabled ?? params.applyMessageAutomation ?? true;
@@ -1374,7 +1398,7 @@ export class ClientService {
             params.phone,
         );
         if (existing && normalizedPhone) {
-            if (params.reuseExistingClient !== true) {
+            if (params.reuseExistingClient !== true || configured) {
                 // 소비자는 공개 코드로 중복을 식별한다. 재사용 대상 id 페이로드는
                 // 의도적으로 제거된다(서버 재사용 분기는 그대로 유지).
                 throw new ConflictException(clientProblemBody("CLIENT_PHONE_ALREADY_REGISTERED", {
@@ -1449,7 +1473,7 @@ export class ClientService {
                 });
             }
             await this.linkContractDocumentsByPhone(branchid, existing, normalizedPhone);
-            return existing;
+            return this.attachAllocation(branchid, existing);
         }
 
         const normalizedPricing = normalizeClientPricing({
@@ -1489,22 +1513,28 @@ export class ClientService {
             smsAutomationEnabled,
         };
 
-        const primaryEmployeeId = params.primaryEmployeeId ?? null;
-        const secondaryEmployeeId = params.secondaryEmployeeId ?? null;
-        assertEmployeeAssignmentShape(primaryEmployeeId, secondaryEmployeeId);
+        const requestedProviders = Array.isArray(params.providers) ? params.providers : [];
+        const primaryEmployeeId = configured
+            ? requestedProviders.find((provider) => provider?.slot === 0)?.employeeId ?? null
+            : params.primaryEmployeeId ?? null;
+        const secondaryEmployeeId = configured
+            ? requestedProviders.find((provider) => provider?.slot === 1)?.employeeId ?? null
+            : params.secondaryEmployeeId ?? null;
+        if (!configured) assertEmployeeAssignmentShape(primaryEmployeeId, secondaryEmployeeId);
 
         let client: ClientEntity;
         let createdScheduleId: number | null = null;
         const automationIntentAt = new Date();
         if (primaryEmployeeId !== null) {
             const result = await this.withRecordLinkWrite(branchid, async (transaction) => {
+                const allocation = configured ? await planClientAllocation(transaction, params, createParams) : null;
                 const prelockedAuthorityOwnerIds = createParams.eDocId === null ? []
                     : await discoverAuthorityClientIds(transaction, branchid, [createParams.eDocId]);
                 if (prelockedAuthorityOwnerIds.length) await assertAuthorityPointerWrite(transaction, {
                     branchId: branchid, clientIds: prelockedAuthorityOwnerIds, documentIds: [createParams.eDocId!],
                 });
-                const employeeIds = [primaryEmployeeId, secondaryEmployeeId]
-                    .filter((employeeId): employeeId is number => employeeId !== null);
+                const employeeIds = allocation?.providers.map(({ employeeId }) => employeeId)
+                    ?? [primaryEmployeeId, secondaryEmployeeId].filter((employeeId): employeeId is number => employeeId !== null);
                 await lockEmployeesForScheduleWrite(transaction, branchid, employeeIds);
                 const selectedEmployees = await transaction.employee.findMany({
                     where: {
@@ -1524,12 +1554,7 @@ export class ClientService {
                     selectedEmployees.length !== uniqueEmployeeIds.size
                     || selectedEmployees.some((employee) => employee.deletedAt !== null)
                 ) {
-                    assertEmployeeAssignmentEligibility(
-                        branchid,
-                        primaryEmployeeId,
-                        secondaryEmployeeId,
-                        selectedEmployees,
-                    );
+                    assertStaffEligibility(branchid, employeeIds, selectedEmployees);
                 }
                 const unavailableEmployees = selectedEmployees
                     .filter((employee) => employee.openToNextWork === false)
@@ -1567,6 +1592,7 @@ export class ClientService {
                     transaction,
                     undefined,
                     true,
+                    allocation?.providers.map(({ employeeId }) => employeeId),
                 );
                 const initialScheduleStartDate = startDate ?? new Date();
                 const initialScheduleEndDate = endDate ?? new Date(Date.now() + DEFAULT_SERVICE_PERIOD_MS);
@@ -1577,6 +1603,7 @@ export class ClientService {
                     startDate: initialScheduleStartDate,
                     endDate: initialScheduleEndDate,
                     replaced: false,
+                    additionalEmployeeIds: allocation?.providers.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId),
                 });
                 const created = await this.createClientUsecase.executeWithInitialSchedule(branchid, createParams, {
                     primaryEmployeeId,
@@ -1585,7 +1612,10 @@ export class ClientService {
                     startDate: initialScheduleStartDate,
                     endDate: initialScheduleEndDate,
                 }, transaction, calendar, prelockedAuthorityOwnerIds);
-                await this.serviceRecordLinkService?.observeAssignmentInTransaction?.(transaction, branchid, created.scheduleId);
+                if (allocation) await persistClientAllocation(transaction, { branchId: branchid, clientId: created.client.id }, allocation, created.scheduleId);
+                if (!configuredPreBooking) {
+                    await this.serviceRecordLinkService?.observeAssignmentInTransaction?.(transaction, branchid, created.scheduleId);
+                }
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -1613,12 +1643,14 @@ export class ClientService {
             createdScheduleId = result.scheduleId;
         } else {
             client = await this.prismaService.$transaction(async (transaction) => {
+                const allocation = configured ? await planClientAllocation(transaction, params, createParams) : null;
                 const created = await this.createClientUsecase.execute(
                     branchid,
                     createParams,
                     transaction,
                     calendar,
                 );
+                if (allocation) await persistClientAllocation(transaction, { branchId: branchid, clientId: created.id }, allocation, null);
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -1664,7 +1696,12 @@ export class ClientService {
             await this.scheduleFreshRecordLink(createdScheduleId);
         }
 
-        return client;
+        return this.attachAllocation(branchid, client);
+    }
+
+    private async attachAllocation(branchId: string, client: ClientEntity): Promise<ClientEntity & Partial<ClientAllocationProjection>> {
+        const snapshot = (await loadClientAllocations(this.prismaService, branchId, [client.id])).get(client.id);
+        return snapshot ? Object.assign(client, allocationProjection(snapshot)) : client;
     }
 
     async findAll(branchid: string): Promise<ClientWithEmployees[]> {
@@ -1768,6 +1805,7 @@ export class ClientService {
         const schedules = await this.prismaService.employee_schedule.findMany({
             where: {
                 clientId: { in: clientIds },
+                branchId: branchid,
                 replaced: false,
             },
             include: {
@@ -1778,6 +1816,8 @@ export class ClientService {
 
         // Create a map of clientId to schedule
         const scheduleMap = new Map(schedules.map(s => [s.clientId, s]));
+        const schedulesById = new Map(schedules.map(s => [s.id, s]));
+        const allocations = await loadClientAllocations(this.prismaService, branchid, clientIds);
 
         // 확정 단계 서비스 기록은 계약 기간을 바꿀 수 없으니 고객 목록과 같은 조회 범위에서 한 번에 확인해요.
         const finalizedServiceRecordCases = await this.prismaService.service_record_case.findMany({
@@ -1800,7 +1840,10 @@ export class ClientService {
         }[] = [];
 
         const result = clients.map(client => {
-            const schedule = scheduleMap.get(client.id);
+            const allocation = allocations.get(client.id);
+            const projectedScheduleId = allocation?.employeeSchedules[0]?.id;
+            const schedule = projectedScheduleId === undefined
+                ? scheduleMap.get(client.id) : schedulesById.get(projectedScheduleId);
 
             // Compute current service status based on dates
             const computedStatus = getEffectiveClientServiceStatus(
@@ -1878,6 +1921,7 @@ export class ClientService {
                     badges,
                     actionRequired,
                     serviceRecordPeriodLocked: periodLockedClientIds.has(client.id),
+                    ...(allocation ? allocationProjection(allocation) : {}),
                     primaryEmployee: schedule?.primaryEmployee
                         ? {
                             id: schedule.primaryEmployee.id,
@@ -1998,7 +2042,7 @@ export class ClientService {
         return null;
     }
 
-    async update(branchid: string, id: number, params: {
+    async update(branchid: string, id: number, params: ClientAllocationInput & {
         name?: string;
         primaryEmployeeId?: number;
         secondaryEmployeeId?: number | null;
@@ -2050,6 +2094,8 @@ export class ClientService {
         // Keep invalid phone input from reaching lifecycle/provider work or a
         // transaction that could partially mutate schedule state.
         assertClientPhoneInput(params.phone);
+        const configured = hasAllocationInput(params);
+        assertAllocationStaffInput(params);
         // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(branchid, id);
         if (!existingClient) {
@@ -2082,7 +2128,7 @@ export class ClientService {
             if (existingPhone) {
                 await this.linkContractDocumentsByPhone(branchid, existingClient, existingPhone);
             }
-            return existingClient;
+            return this.attachAllocation(branchid, existingClient);
         }
 
         const hasPricingUpdate = params.voucherClient !== undefined
@@ -2185,6 +2231,9 @@ export class ClientService {
             endDate: Date | null;
         } | null = null;
         const ordinaryMutationId = randomUUID();
+        let finalAllocationIntent = false;
+        let identicalAllocationRetry = false;
+        let configuredPreBooking = false;
 
         const writeTransaction = async (transaction: Prisma.TransactionClient): Promise<void> => {
             if (params.eDocId !== undefined) await this.lockPointerWriteClients(transaction, branchid, id, [], [], params.eDocId);
@@ -2198,9 +2247,9 @@ export class ClientService {
             await lockServiceRecordWriteSet(transaction, {
                 branchId: branchid,
                 clientId: id,
-                employeeIds: employeeChanged
-                    ? [params.primaryEmployeeId, params.secondaryEmployeeId]
-                    : [],
+                employeeIds: configured && Array.isArray(params.providers)
+                    ? params.providers.flatMap((row) => Number.isSafeInteger(row?.employeeId) ? [row.employeeId] : [])
+                    : employeeChanged ? [params.primaryEmployeeId, params.secondaryEmployeeId] : [],
             });
 
             const completeWriteSurface = typeof transaction.$queryRaw === "function"
@@ -2224,6 +2273,9 @@ export class ClientService {
                         endDate: true,
                         careCenter: true,
                         voucherClient: true,
+                        fetalConfirmation: true,
+                        deletedAt: true,
+                        smsAutomationEnabled: true,
                         birthday: true,
                         dueDate: true,
                         birthDate: true,
@@ -2240,7 +2292,7 @@ export class ClientService {
                 : null;
             if (
                 completeWriteSurface
-                && (!lockedClient || (
+                && (!lockedClient || lockedClient.deletedAt || (
                     lockedClient.branchId !== null
                     && lockedClient.branchId !== branchid
                 ))
@@ -2356,6 +2408,51 @@ export class ClientService {
             const endDate = lockedMergedServicePeriod.endDate
                 ?? new Date(startDate.getTime() + DEFAULT_SERVICE_PERIOD_MS);
 
+            const legacyAllocationWrite = employeeChanged || params.type !== undefined || params.voucherClient !== undefined;
+            const snapshot = configured || (
+                lockedClient?.fetalConfirmation === "CONFIRMED" && (legacyAllocationWrite || lockedHasDateUpdate)
+            ) ? (await loadClientAllocations(transaction, branchid, [id])).get(id) : undefined;
+            const scope = { branchId: branchid, clientId: id };
+            const allocation = configured
+                ? await planClientAllocation(transaction, params, {
+                    voucherClient: params.voucherClient ?? currentClient.voucherClient,
+                    type: lockedPricing ? lockedPricing.type : currentClient.type,
+                }, snapshot, scope)
+                : legacyAllocationWrite ? await planLegacyClientAllocation(transaction, snapshot, params) : null;
+            const previousProjection = snapshot && allocationProjection(snapshot);
+            const teamChanged = !!allocation && !sameProviders(allocation.providers, previousProjection?.providers ?? []);
+            configuredPreBooking = (configured || lockedClient?.fetalConfirmation === "CONFIRMED") && getEffectiveClientServiceStatus(
+                savedServiceStatus ?? currentClient.serviceStatus ?? null,
+                lockedMergedServicePeriod.startDate,
+                lockedMergedServicePeriod.endDate,
+                currentClient.bookingConfirmedAt,
+            ) === SERVICE_STATUS.PRE_BOOKING;
+            if (allocation?.unchanged && configured && previousProjection
+                && params.expectedAllocationVersion !== previousProjection.allocationVersion) {
+                // Only the allocation is versioned. Reject a retry that would
+                // otherwise change the service period on a newer assignment.
+                const scalarEdits = {
+                    name: params.name, address: params.address, phone: params.phone,
+                    areaId: params.areaId, eDocId: params.eDocId, duration: params.duration,
+                    careCenter: params.careCenter, voucherClient: params.voucherClient,
+                    birthday: params.birthday, dueDate: dueDateUpdate, birthDate: birthDateUpdate,
+                    startDate: startDateUpdate, endDate: endDateUpdate, serviceStatus: validatedServiceStatus,
+                    breastPump: params.breastPump, smsAutomationEnabled: params.smsAutomationEnabled,
+                    allowSaturdayService: params.allowSaturdayService, allowSundayService: params.allowSundayService,
+                    allowHolidayService: params.allowHolidayService,
+                    fullPrice: lockedPricing?.fullPrice, grant: lockedPricing?.grant, actualPrice: lockedPricing?.actualPrice,
+                } satisfies Partial<typeof currentClient>;
+                for (const field of Object.keys(scalarEdits) as (keyof typeof scalarEdits)[]) {
+                    const requested = scalarEdits[field];
+                    if (requested === undefined) continue;
+                    const stored = currentClient[field];
+                    if (requested instanceof Date && stored instanceof Date && requested.getTime() === stored.getTime()) continue;
+                    if (requested !== stored) allocationConflict("/expectedAllocationVersion");
+                }
+                identicalAllocationRetry = true;
+                return;
+            }
+
             // Read the current automation source while the service-record and
             // branch locks are held. The planner is advisory for ordinary
             // writes: only a complete, available result can append an
@@ -2380,107 +2477,103 @@ export class ClientService {
                 })
                 : null;
 
-            if (employeeChanged) {
-                const currentSchedule = await transaction.employee_schedule.findFirst({
-                    where: { clientId: id, branchId: branchid, replaced: false },
+            const currentSchedule = employeeChanged || allocation || (snapshot && lockedHasDateUpdate)
+                ? await transaction.employee_schedule.findFirst({
+                    where: { clientId: id, branchId: branchid, replaced: false, ...(snapshot ? { terminatedAt: null } : {}) },
                     orderBy: { id: "desc" },
+                })
+                : null;
+            const currentPrimary = currentSchedule?.primaryEmployeeId ?? null;
+            const currentSecondary = currentSchedule?.secondaryEmployeeId ?? null;
+            const primary = allocation ? allocation.providers.find(({ slot }) => slot === 0)?.employeeId ?? null
+                : params.primaryEmployeeId ?? currentPrimary;
+            const secondary = allocation ? allocation.providers.find(({ slot }) => slot === 1)?.employeeId ?? null
+                : params.secondaryEmployeeId === undefined ? currentSecondary : params.secondaryEmployeeId;
+            const handoverNeeded = primary !== currentPrimary || secondary !== currentSecondary;
+            const employeeIds = allocation?.providers.map(({ employeeId }) => employeeId);
+            if (handoverNeeded || teamChanged || (configured && allocation && !allocation.unchanged && primary !== null)) {
+                if (startDateChangeDecision && handoverNeeded && !configured) throw manualScheduleConflict();
+                if (primary === null && (!configured || !configuredPreBooking)) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: configured ? "/providers" : "/primaryEmployeeId",
+                        code: "REQUIRED",
+                        detail: "배정을 만들려면 주 담당 인력이 필요해요.",
+                        location: "body",
+                    }));
+                }
+                const retainedEmployeeIds = new Set((previousProjection?.providers.map(({ employeeId }) => employeeId)
+                    ?? [currentPrimary, currentSecondary]).filter((employeeId): employeeId is number => employeeId !== null));
+                await this.assertAllowedEmployees(branchid, primary, secondary, transaction, retainedEmployeeIds, true, employeeIds);
+            }
+            const additionalEmployeeIds = (allocation?.providers ?? previousProjection?.providers)
+                ?.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId);
+            const handoverDay = handoverNeeded && currentSchedule ? this.kstCalendarDay(new Date()) : null;
+            const handoverPeriod = (scheduleStart: Date | undefined, contractStart: Date, contractEnd: Date) => {
+                const outgoingEndDate = handoverDay ? employeeScheduleReplacementEndDate(handoverDay, scheduleStart) : null;
+                return {
+                    outgoingEndDate,
+                    ...(outgoingEndDate ? employeeScheduleHandoverPeriod({
+                        replacementAt: outgoingEndDate, contractStartDate: contractStart, contractEndDate: contractEnd,
+                    }) : { startDate: contractStart, endDate: contractEnd }),
+                };
+            };
+            const validateSchedule = async (period: { startDate: Date; endDate: Date }) => {
+                if (primary === null) return;
+                await assertNoActiveEmployeeScheduleOverlap(transaction, {
+                    ...scope, ...period, primaryEmployeeId: primary, secondaryEmployeeId: secondary,
+                    replaced: false, excludeScheduleId: currentSchedule?.id, additionalEmployeeIds,
                 });
-                const currentPrimaryEmployeeId = currentSchedule?.primaryEmployeeId ?? null;
-                const currentSecondaryEmployeeId = currentSchedule?.secondaryEmployeeId ?? null;
-                const primaryEmployeeId = params.primaryEmployeeId ?? currentPrimaryEmployeeId;
-                const secondaryEmployeeId = params.secondaryEmployeeId !== undefined
-                    ? params.secondaryEmployeeId
-                    : currentSecondaryEmployeeId;
-                assertEmployeeAssignmentShape(primaryEmployeeId, secondaryEmployeeId);
-                const assignmentChanged = primaryEmployeeId !== currentPrimaryEmployeeId
-                    || secondaryEmployeeId !== currentSecondaryEmployeeId;
-                if (assignmentChanged) {
-                    if (startDateChangeDecision) throw manualScheduleConflict();
-                    if (primaryEmployeeId === null) {
-                        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                            pointer: "/primaryEmployeeId",
-                            code: "REQUIRED",
-                            detail: "배정을 만들려면 주 담당 인력이 필요해요.",
-                            location: "body",
-                        }));
-                    }
-                    const retainedEmployeeIds = new Set(
-                        [currentPrimaryEmployeeId, currentSecondaryEmployeeId]
-                            .filter((employeeId): employeeId is number => employeeId !== null),
-                    );
-                    await this.assertAllowedEmployees(
-                        branchid,
-                        primaryEmployeeId,
-                        secondaryEmployeeId,
-                        transaction,
-                        retainedEmployeeIds,
-                        true,
-                    );
-                    // One handover instant for the whole transaction. The outgoing row has to
-                    // end on exactly the day the incoming row starts, so the clock is read
-                    // once here rather than per write, where the two could straddle midnight.
-                    const handover = currentSchedule
-                        ? ((): { outgoingEndDate: Date; startDate: Date; endDate: Date } => {
-                            const outgoingEndDate = employeeScheduleReplacementEndDate(
-                                this.kstCalendarDay(new Date()),
-                                currentSchedule.startDate,
-                            );
-                            return {
-                                outgoingEndDate,
-                                ...employeeScheduleHandoverPeriod({
-                                    replacementAt: outgoingEndDate,
-                                    contractStartDate: startDate,
-                                    contractEndDate: endDate,
-                                }),
-                            };
-                        })()
-                        : null;
-                    // A first assignment keeps the contract period; only a handover moves the start.
-                    const incomingStartDate = handover?.startDate ?? startDate;
-                    const incomingEndDate = handover?.endDate ?? endDate;
-                    await assertNoActiveEmployeeScheduleOverlap(transaction, {
-                        branchId: branchid,
-                        clientId: id,
-                        primaryEmployeeId,
-                        secondaryEmployeeId,
-                        startDate: incomingStartDate,
-                        endDate: incomingEndDate,
-                        replaced: false,
-                        excludeScheduleId: currentSchedule?.id,
+            };
+            const alignPreBookingPeriod = configuredPreBooking && currentSchedule && !startDateChangeDecision
+                && lockedHasDateUpdate && lockedMergedServicePeriod.startDate && lockedMergedServicePeriod.endDate
+                && (currentSchedule.startDate.getTime() !== startDate.getTime() || currentSchedule.endDate.getTime() !== endDate.getTime());
+            const requestedPeriod = handoverPeriod(alignPreBookingPeriod ? startDate : currentSchedule?.startDate, startDate, endDate);
+            if ((handoverNeeded || teamChanged || alignPreBookingPeriod || (snapshot && lockedHasDateUpdate)) && !startDateChangeDecision) {
+                await validateSchedule(handoverNeeded || lockedHasDateUpdate || !currentSchedule ? requestedPeriod : currentSchedule);
+            }
+            if (alignPreBookingPeriod) {
+                // The original no-date registration used the normal fallback
+                // period. Use the real dates once entered, on that same row.
+                await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                    ...scope, mutationId: ordinaryMutationId, scheduleIds: [currentSchedule.id],
+                });
+                await transaction.employee_schedule.updateMany({
+                    where: { ...scope, id: currentSchedule.id }, data: { startDate, endDate },
+                });
+            }
+            const saveStaffing = async (period: ReturnType<typeof handoverPeriod>) => {
+                if (handoverNeeded && currentSchedule && period.outgoingEndDate) {
+                    await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
+                        ...scope, mutationId: ordinaryMutationId, scheduleIds: [currentSchedule.id],
                     });
-                    if (currentSchedule && handover) {
-                        await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
-                            branchId: branchid,
-                            clientId: id,
-                            mutationId: ordinaryMutationId,
-                            scheduleIds: [currentSchedule.id],
-                        });
-                        await transaction.employee_schedule.update({
-                            where: { id: currentSchedule.id },
-                            data: {
-                                replaced: true,
-                                endDate: handover.outgoingEndDate,
-                            },
-                        });
-                        replacedScheduleId = currentSchedule.id;
-                    }
+                    await transaction.employee_schedule.update({
+                        where: { id: currentSchedule.id },
+                        data: { replaced: true, endDate: period.outgoingEndDate },
+                    });
+                    replacedScheduleId = currentSchedule.id;
+                }
+                if (handoverNeeded && primary !== null) {
                     const schedule = await transaction.employee_schedule.create({
                         data: {
-                            clientId: id,
-                            branchId: branchid,
-                            primaryEmployeeId,
-                            secondaryEmployeeId,
+                            ...scope, primaryEmployeeId: primary, secondaryEmployeeId: secondary,
                             workAddress: params.address ?? currentClient.address ?? "",
-                            startDate: incomingStartDate,
-                            endDate: incomingEndDate,
-                            replaced: false,
+                            startDate: period.startDate, endDate: period.endDate, replaced: false,
                         },
                     });
                     createdScheduleId = schedule.id;
-                    createdWhilePreBooking = await this.serviceRecordLinkService
-                        ?.observeAssignmentInTransaction?.(transaction, branchid, schedule.id) ?? false;
                 }
-            }
+                if (allocation) await persistClientAllocation(
+                    transaction, scope, allocation,
+                    handoverNeeded ? createdScheduleId : currentSchedule?.id ?? null, currentSchedule?.id ?? null,
+                );
+                if (createdScheduleId !== null) {
+                    createdWhilePreBooking = configuredPreBooking || (await this.serviceRecordLinkService
+                        ?.observeAssignmentInTransaction?.(transaction, branchid, createdScheduleId) ?? false);
+                }
+            };
+            // Preserve the legacy write order. Explicit allocation saves wait
+            // for the period correction before handing over the active row.
+            if (!configured && (handoverNeeded || allocation)) await saveStaffing(requestedPeriod);
 
             const clientUpdateData = {
                 name: params.name,
@@ -2508,12 +2601,10 @@ export class ClientService {
                 areaId: params.areaId === undefined ? undefined : params.areaId,
                 smsAutomationEnabled: params.smsAutomationEnabled,
             };
-            // An employee-only edit still owns the client lock and may create
-            // a replacement schedule, but Prisma reports zero rows for an
-            // updateMany whose data is entirely undefined. Keep the target
-            // existence guard while avoiding a false NotFound after the
-            // schedule write.
-            if (Object.values(clientUpdateData).some((value) => value !== undefined)) {
+            const writeClientFields = async () => {
+                // A staff-only edit may create a successor without changing
+                // any scalar client field. Prisma reports zero for empty data.
+                if (!Object.values(clientUpdateData).some((value) => value !== undefined)) return;
                 const result = await transaction.client.updateMany({
                     where: { id, branchId: branchid },
                     data: clientUpdateData,
@@ -2521,19 +2612,50 @@ export class ClientService {
                 if (result.count === 0) {
                     throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
                 }
-            } else if (!currentClient) {
-                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
-            }
+            };
+            const reevaluationScheduleIds: (number | null)[] = [];
+            const deferDateIntents = !!startDateChangeDecision && configured && !!allocation && !allocation.unchanged;
+            const serviceDays = mergeServiceDayPolicy(currentClient, params);
+            let finalPeriod = requestedPeriod;
+            if (!deferDateIntents) await writeClientFields();
             const startDateChange = startDateChangeDecision
                 ? await this.serviceRecordStartDateChangeService?.applyInTransaction(transaction, {
-                    branchId: branchid,
-                    clientId: id,
+                    ...scope,
                     decision: startDateChangeDecision,
                     newStartDate: startDateUpdate ?? null,
                     actorUserId: params.actorUserId,
                     calendar,
+                    ...(deferDateIntents ? {
+                        allocationSave: {
+                            clientPeriod: {
+                                endDate: lockedMergedServicePeriod.endDate,
+                                allowSaturdayService: serviceDays.saturday,
+                                allowSundayService: serviceDays.sunday,
+                                allowHolidayService: serviceDays.holiday,
+                            },
+                            beforePeriodWrite: async (periods) => {
+                                const corrected = periods.find(({ scheduleId }) => scheduleId === currentSchedule?.id);
+                                if (corrected) finalPeriod = handoverPeriod(corrected.startDate, corrected.startDate, corrected.endDate);
+                                await validateSchedule(finalPeriod);
+                                await writeClientFields();
+                            },
+                            collectReevaluationSchedules: (ids) => reevaluationScheduleIds.push(...ids),
+                        },
+                    } : {}),
                 })
                 : null;
+            if (configured && allocation) await saveStaffing(finalPeriod);
+            if (configured && allocation && !allocation.unchanged && !configuredPreBooking) {
+                const finalScheduleId = handoverNeeded ? createdScheduleId : currentSchedule?.id ?? null;
+                const supersededScheduleIds = reevaluationScheduleIds.filter(
+                    (scheduleId): scheduleId is number => scheduleId !== null && scheduleId !== finalScheduleId,
+                );
+                if (replacedScheduleId !== null) supersededScheduleIds.push(replacedScheduleId);
+                await persistReevaluationIntents(transaction, {
+                    ...scope, scheduleIds: [finalScheduleId], supersededScheduleIds, intentAt: new Date(),
+                });
+                finalAllocationIntent = true;
+            }
             // Service-day flags follow the ordinary lifecycle sync; existing session
             // dates and any explicitly supplied end date are not re-laid.
             const syncedRecord = await this.serviceRecordLifecycleService?.ensureForClient(id, transaction, calendar);
@@ -2586,11 +2708,12 @@ export class ClientService {
         if (!updatedClient) {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
+        if (identicalAllocationRetry) return this.attachAllocation(branchid, updatedClient);
         const updatedPhone = normalizePhone(updatedClient.phone);
         if (updatedPhone) {
             await this.linkContractDocumentsByPhone(branchid, updatedClient, updatedPhone);
         }
-        if (this.triggerService) {
+        if (this.triggerService && !configuredPreBooking) {
             await this.triggerService.syncClientRulesForClient(branchid, id, false).catch((error) => {
                 this.logger.error(`Failed to sync client trigger rules: ${error}`);
             });
@@ -2606,7 +2729,7 @@ export class ClientService {
                 }
             }
         }
-        if (createdScheduleId !== null) {
+        if (createdScheduleId !== null && !finalAllocationIntent && !configuredPreBooking) {
             if (!clientNameSupplied) {
                 await this.triggerService
                     ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
@@ -2617,7 +2740,7 @@ export class ClientService {
             if (!createdWhilePreBooking) await this.scheduleFreshRecordLink(createdScheduleId);
         }
         await this.recheckRecordLinkTransition(branchid, id, priorStatusInputs, updatedClient);
-        return updatedClient;
+        return this.attachAllocation(branchid, updatedClient);
     }
 
     /**
@@ -2749,6 +2872,9 @@ export class ClientService {
                 endDate: terminationEndDate,
             }, transaction, calendar);
             if (before) await this.serviceRecordLinkService?.recordClientTransitionInTransaction(transaction, branchid, clientId, before);
+            const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
+            const currentSchedule = snapshot?.employeeSchedules[0];
+            if (currentSchedule) await closeScheduleAllocation(transaction, { branchId: branchid, clientId }, currentSchedule.id);
             await transaction.employee_schedule.updateMany({
                 where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },
                 data: { terminatedAt: terminationAt },
@@ -2775,7 +2901,7 @@ export class ClientService {
         for (const activeSchedule of activeSchedules) {
             await this.revokeServiceRecordLinkAfterCommit(clientId, activeSchedule.id);
         }
-        return updatedClient;
+        return this.attachAllocation(branchid, updatedClient);
     }
 
     /**
@@ -2795,12 +2921,6 @@ export class ClientService {
         if (!client) {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
-        // The replacement DTO spells its request-body fields with the `new`
-        // prefix, so the shape problems must carry those pointers for UIs.
-        assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null, {
-            primary: "/newPrimaryEmployeeId",
-            secondary: "/newSecondaryEmployeeId",
-        });
 
         // This preflight only validates the caller's snapshot. The actual
         // replacement period is derived again from the locked client below.
@@ -2886,8 +3006,20 @@ export class ClientService {
                 where: { clientId, branchId: branchid, replaced: false },
                 orderBy: { id: "desc" },
             });
+            const scope = { branchId: branchid, clientId };
+            const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
+            const allocation = await planLegacyClientAllocation(transaction, snapshot, {
+                primaryEmployeeId: newPrimaryEmployeeId,
+                secondaryEmployeeId: newSecondaryEmployeeId ?? null,
+                primaryPointer: "/newPrimaryEmployeeId",
+                secondaryPointer: "/newSecondaryEmployeeId",
+            });
+            assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null, {
+                primary: "/newPrimaryEmployeeId", secondary: "/newSecondaryEmployeeId",
+            });
             const retainedEmployeeIds = new Set(
-                [currentSchedule?.primaryEmployeeId ?? null, currentSchedule?.secondaryEmployeeId ?? null]
+                (snapshot ? allocationProjection(snapshot).providers.map(({ employeeId }) => employeeId)
+                    : [currentSchedule?.primaryEmployeeId ?? null, currentSchedule?.secondaryEmployeeId ?? null])
                     .filter((employeeId): employeeId is number => employeeId !== null),
             );
             await this.assertAllowedEmployees(
@@ -2897,6 +3029,7 @@ export class ClientService {
                 transaction,
                 retainedEmployeeIds,
                 true,
+                allocation?.providers.map(({ employeeId }) => employeeId),
             );
             await assertNoActiveEmployeeScheduleOverlap(transaction, {
                 branchId: branchid,
@@ -2907,6 +3040,7 @@ export class ClientService {
                 endDate: replacementEndDate,
                 replaced: false,
                 excludeScheduleId: currentSchedule?.id,
+                additionalEmployeeIds: allocation?.providers.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId),
             });
             const updateResult = await transaction.client.updateMany({
                 where: { id: clientId, branchId: branchid },
@@ -2945,6 +3079,7 @@ export class ClientService {
                     replaced: false,
                 },
             });
+            if (allocation) await persistClientAllocation(transaction, scope, allocation, createdSchedule.id, currentSchedule?.id ?? null);
             await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
             return createdSchedule;
         });
@@ -2966,7 +3101,7 @@ export class ClientService {
         if (!updatedClient) {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
-        return updatedClient;
+        return this.attachAllocation(branchid, updatedClient);
     }
 
     /**
@@ -3052,7 +3187,7 @@ export class ClientService {
             };
         });
         await this.recheckRecordLinkTransition(branchid, clientId, priorStatusInputs, updatedClient);
-        return updatedClient;
+        return this.attachAllocation(branchid, updatedClient);
     }
 
     /**
@@ -3081,6 +3216,8 @@ export class ClientService {
                 location: "path",
             }));
         };
+        let configuredScheduleId: number | null = null;
+        let intentAt: Date | undefined;
         const priorStatusInputs = await this.withRecordLinkWrite(branchid, async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
@@ -3148,8 +3285,19 @@ export class ClientService {
             if (updateResult.count === 0) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
-            await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);
+            const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
+            if (snapshot?.fetalConfirmation === "CONFIRMED") {
+                configuredScheduleId = snapshot.employeeSchedules[0]?.id ?? null;
+            } else {
+                await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);
+            }
             await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
+            if (configuredScheduleId !== null) {
+                intentAt = now;
+                await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+                    branchId: branchid, clientId, scheduleId: configuredScheduleId, includePast: true, intentAt: now,
+                });
+            }
             return {
                 serviceStatus: lockedClient.serviceStatus ?? null,
                 bookingConfirmedAt: lockedClient.bookingConfirmedAt ?? null,
@@ -3163,13 +3311,21 @@ export class ClientService {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
         // Already confirmed: nothing was written, so no follow-up may run.
-        if (!priorStatusInputs) return updatedClient;
+        if (!priorStatusInputs) return this.attachAllocation(branchid, updatedClient);
 
         await this.triggerService?.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
             this.logger.error(`Failed to sync client trigger rules: ${error}`);
         });
-        await this.recheckRecordLinkTransition(branchid, clientId, priorStatusInputs, updatedClient);
-        return updatedClient;
+        if (configuredScheduleId !== null) {
+            await this.messageAutomationIntentService.fulfillScheduleIntent({
+                branchId: branchid, scheduleId: configuredScheduleId, includePast: true, intentAt,
+            }).catch((error) => {
+                this.logger.error(`Failed to fulfill booking message intent: ${error}`);
+            });
+        } else {
+            await this.recheckRecordLinkTransition(branchid, clientId, priorStatusInputs, updatedClient);
+        }
+        return this.attachAllocation(branchid, updatedClient);
     }
 
     async delete(branchid: string, id: number): Promise<void> {

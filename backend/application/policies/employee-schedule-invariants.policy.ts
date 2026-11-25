@@ -60,6 +60,7 @@ type ScheduleOverlapParams = {
     endDate: Date;
     replaced: boolean;
     excludeScheduleId?: number;
+    additionalEmployeeIds?: number[];
 };
 
 /**
@@ -133,6 +134,34 @@ export async function assertNoActiveEmployeeScheduleOverlap(
     // absent so domain validation can still be exercised in isolation.
     if (!transaction.employee_schedule?.findFirst) return;
 
+    const extras = params.additionalEmployeeIds ?? [];
+    const legacyStaff = [params.primaryEmployeeId, params.secondaryEmployeeId]
+        .filter((id): id is number => id != null);
+    if (transaction.service_record_team_slot) {
+        const overlap = await transaction.employee_schedule.findFirst({
+            where: {
+                branchId: params.branchId,
+                replaced: false,
+                terminatedAt: null,
+                ...(params.excludeScheduleId === undefined ? {} : { id: { not: params.excludeScheduleId } }),
+                startDate: { lte: params.endDate },
+                endDate: { gte: params.startDate },
+                OR: [
+                    { recordTeamSlots: { some: {
+                        branchId: params.branchId, active: true, slot: { gte: 2 },
+                        employeeId: { in: [...legacyStaff, ...extras] },
+                    } } },
+                    ...(extras.length ? [
+                        { primaryEmployeeId: { in: extras } },
+                        { secondaryEmployeeId: { in: extras } },
+                    ] : []),
+                ],
+            },
+            select: { id: true },
+        });
+        if (overlap) throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
+    }
+
     // 제공인력은 다른 이용자의 일정과 기간이 겹쳐도 배정할 수 있다.
     // 신규 이용자 생성 전에는 중복 검사할 기존 이용자 일정이 없다.
     if (params.clientId === undefined) return;
@@ -174,6 +203,7 @@ export async function assertEmployeeScheduleWriteIsAvailable(
     >,
     branchId: string,
     excludeScheduleId?: number,
+    additionalEmployeeIds?: number[],
 ): Promise<void> {
     await assertNoActiveEmployeeScheduleOverlap(transaction, {
         branchId,
@@ -184,5 +214,6 @@ export async function assertEmployeeScheduleWriteIsAvailable(
         endDate: schedule.endDate,
         replaced: schedule.replaced,
         excludeScheduleId,
+        additionalEmployeeIds,
     });
 }

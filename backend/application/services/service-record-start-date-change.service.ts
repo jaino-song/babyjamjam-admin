@@ -24,6 +24,23 @@ interface StartDateChangeParams {
     newStartDate: Date | null;
     actorUserId?: string | null;
     calendar: KrBusinessDayCalendar;
+    /** The allocation save validates the corrected schedule and publishes its final membership. */
+    allocationSave?: {
+        clientPeriod: {
+            endDate: Date | null;
+            allowSaturdayService: boolean;
+            allowSundayService: boolean;
+            allowHolidayService: boolean;
+        };
+        beforePeriodWrite: (periods: readonly CorrectedSchedulePeriod[]) => Promise<void>;
+        collectReevaluationSchedules: (scheduleIds: ReadonlyArray<number | null>) => void;
+    };
+}
+
+interface CorrectedSchedulePeriod {
+    scheduleId: number;
+    startDate: Date;
+    endDate: Date;
 }
 
 interface OwnerPeriod {
@@ -66,31 +83,12 @@ export class ServiceRecordStartDateChangeService {
         }
         const caseWhere = { branchId, serviceRecordCaseId: record.id };
         const days = await tx.service_record_day.findMany({ where: caseWhere });
-        if (days.length > 0) {
-            const batchId = randomUUID();
-            await tx.service_record_day_archive.createMany({
-                data: days.map((day) => ({
-                    ...caseWhere,
-                    clientId,
-                    batchId,
-                    reason: decision.mode,
-                    originalDayId: day.id,
-                    caseSessionIndex: day.caseSessionIndex,
-                    serviceDate: day.serviceDate,
-                    previousStartDate: decision.previousStartDate,
-                    newStartDate,
-                    archivedByUserId: params.actorUserId ?? null,
-                    // JSON round-trip preserves every scalar/JSON field and serializes Date values as ISO strings.
-                    payload: JSON.parse(JSON.stringify(day)) as Prisma.InputJsonValue,
-                })),
-            });
-        }
-
         const total = record.requiredSessionCount;
         if (total === null && days.length > 0 && (decision.mode === "RESTART" || decision.mode === "MOVE")) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_DURATION_REQUIRED"));
         }
-        const calendar = withClientServiceDays(params.calendar, client);
+        const clientPeriod = params.allocationSave?.clientPeriod ?? client;
+        const calendar = withClientServiceDays(params.calendar, clientPeriod);
         const start = newStartDate.toISOString().slice(0, 10);
         // No old written slots or pauses seed this window: this is the read projection's no-record fallback.
         const dates = Array.from({ length: total ?? 0 }, (_, index) => calendar.calcEndDateBusinessDays(start, index + 1));
@@ -105,22 +103,6 @@ export class ServiceRecordStartDateChangeService {
         });
         const activeSchedule = schedules.find((schedule) => !schedule.replaced && !schedule.terminatedAt);
         const activeAssignment = assignments.find((assignment) => assignment.scheduleId === activeSchedule?.id);
-
-        if (decision.mode === "RESTART") {
-            await tx.service_record_day.deleteMany({ where: caseWhere });
-        } else if (decision.mode === "MOVE") {
-            for (const day of days) {
-                const date = dates[(day.caseSessionIndex ?? day.sessionIndex) - 1];
-                if (!date) continue;
-                await tx.service_record_day.updateMany({
-                    where: { ...caseWhere, id: day.id },
-                    data: {
-                        serviceDate: toDbDate(date),
-                        ...(day.serviceDate.toISOString().slice(0, 10) !== date ? { periodMismatchKeptAt: null } : {}),
-                    },
-                });
-            }
-        }
 
         let entries: ServiceRecordPlannedSession[] | null = null;
         if (record.plannedSessions !== null) {
@@ -140,20 +122,6 @@ export class ServiceRecordStartDateChangeService {
                 };
             }), total, calendar, { persisted: true });
         }
-        const endDate = dates.length > 0 ? toDbDate(dates[dates.length - 1]!) : client.endDate;
-        await tx.service_record_case.update({
-            where: { id: record.id, branchId },
-            data: {
-                startDate: newStartDate,
-                endDate,
-                ...(entries ? { plannedSessions: entries as unknown as Prisma.InputJsonValue } : {}),
-                version: { increment: 1 },
-            },
-        });
-        if (dates.length > 0) {
-            await tx.client.updateMany({ where: { id: clientId, branchId }, data: { endDate } });
-        }
-
         const periods = new Map<string, OwnerPeriod>();
         const addDate = (assignmentId: string | null, scheduleId: number | null, date: string): void => {
             if (!assignmentId && scheduleId === null) return;
@@ -186,6 +154,65 @@ export class ServiceRecordStartDateChangeService {
             addDate(activeAssignment?.id ?? null, activeSchedule.id, dates[0]!);
             addDate(activeAssignment?.id ?? null, activeSchedule.id, dates[dates.length - 1]!);
         }
+        if (params.allocationSave) {
+            await params.allocationSave.beforePeriodWrite([...periods.values()].flatMap((period) =>
+                period.scheduleId === null ? [] : [{
+                    scheduleId: period.scheduleId,
+                    startDate: toDbDate(period.startDate),
+                    endDate: toDbDate(period.endDate),
+                }],
+            ));
+        }
+        if (days.length > 0) {
+            const batchId = randomUUID();
+            await tx.service_record_day_archive.createMany({
+                data: days.map((day) => ({
+                    ...caseWhere,
+                    clientId,
+                    batchId,
+                    reason: decision.mode,
+                    originalDayId: day.id,
+                    caseSessionIndex: day.caseSessionIndex,
+                    serviceDate: day.serviceDate,
+                    previousStartDate: decision.previousStartDate,
+                    newStartDate,
+                    archivedByUserId: params.actorUserId ?? null,
+                    // JSON round-trip preserves every scalar/JSON field and serializes Date values as ISO strings.
+                    payload: JSON.parse(JSON.stringify(day)) as Prisma.InputJsonValue,
+                })),
+            });
+        }
+
+        if (decision.mode === "RESTART") {
+            await tx.service_record_day.deleteMany({ where: caseWhere });
+        } else if (decision.mode === "MOVE") {
+            for (const day of days) {
+                const date = dates[(day.caseSessionIndex ?? day.sessionIndex) - 1];
+                if (!date) continue;
+                await tx.service_record_day.updateMany({
+                    where: { ...caseWhere, id: day.id },
+                    data: {
+                        serviceDate: toDbDate(date),
+                        ...(day.serviceDate.toISOString().slice(0, 10) !== date ? { periodMismatchKeptAt: null } : {}),
+                    },
+                });
+            }
+        }
+
+        const endDate = dates.length > 0 ? toDbDate(dates[dates.length - 1]!) : clientPeriod.endDate;
+        await tx.service_record_case.update({
+            where: { id: record.id, branchId },
+            data: {
+                startDate: newStartDate,
+                endDate,
+                ...(entries ? { plannedSessions: entries as unknown as Prisma.InputJsonValue } : {}),
+                version: { increment: 1 },
+            },
+        });
+        if (dates.length > 0) {
+            await tx.client.updateMany({ where: { id: clientId, branchId }, data: { endDate } });
+        }
+
         for (const period of periods.values()) {
             if (period.scheduleId !== null) {
                 await this.agentAutomationRecordStore?.appendScheduleWriteFence(tx, {
@@ -202,9 +229,12 @@ export class ServiceRecordStartDateChangeService {
             }
         }
         if (endDate) await refreshTokenExpiry(tx, branchId, record.id, endDate);
-        await persistReevaluationIntents(tx, {
-            branchId, clientId, scheduleIds: [...periods.values()].map((period) => period.scheduleId), intentAt: new Date(),
-        });
+        const scheduleIds = [...periods.values()].map((period) => period.scheduleId);
+        if (params.allocationSave) {
+            params.allocationSave.collectReevaluationSchedules(scheduleIds);
+        } else {
+            await persistReevaluationIntents(tx, { branchId, clientId, scheduleIds, intentAt: new Date() });
+        }
         return { restoreRequiredSessionCount: total };
     }
 }

@@ -1,4 +1,5 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import {
     CreateEmployeeScheduleUsecase,
@@ -10,6 +11,8 @@ import {
     UpdateEmployeeScheduleUsecase,
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
+import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
@@ -35,6 +38,21 @@ export class EmployeeScheduleService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
     ) {}
 
+    private async isConfiguredPreBooking(
+        tx: Prisma.TransactionClient,
+        branchId: string,
+        clientId: number,
+    ): Promise<boolean> {
+        if (!tx?.client_baby) return false;
+        const client = await tx.client.findFirst({
+            where: { branchId, id: clientId },
+            select: { fetalConfirmation: true, serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+        });
+        return client?.fetalConfirmation === "CONFIRMED" && getEffectiveClientServiceStatus(
+            client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+    }
+
     async create(branchid: string, params: {
         clientId: number;
         primaryEmployeeId: number;
@@ -50,6 +68,7 @@ export class EmployeeScheduleService {
         // so it is resolved before the owning transaction takes a connection.
         const calendar = await this.serviceRecordLifecycleService
             ?.resolveCalendarBeforeTransaction(params.clientId);
+        let preBooking = false;
         const schedule = await this.prisma.$transaction(async (transaction) => {
             // Acquire the branch automation lock before the schedule write.
             // The zero-scope call intentionally performs no append; the second
@@ -76,7 +95,8 @@ export class EmployeeScheduleService {
                 mutationId: ordinaryMutationId,
                 scheduleIds: [created.id],
             });
-            await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+            preBooking = await this.isConfiguredPreBooking(transaction, branchid, created.clientId);
+            if (!preBooking) await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                 branchId: branchid,
                 clientId: created.clientId,
                 scheduleId: created.id,
@@ -94,7 +114,7 @@ export class EmployeeScheduleService {
             );
             return created;
         });
-        await this.messageAutomationIntentService
+        if (!preBooking) await this.messageAutomationIntentService
             .fulfillScheduleIntent({
                 branchId: branchid,
                 scheduleId: schedule.id,
@@ -152,6 +172,7 @@ export class EmployeeScheduleService {
         const calendar = preRead
             ? await this.serviceRecordLifecycleService?.resolveCalendarBeforeTransaction(preRead.clientId)
             : undefined;
+        let preBooking = false;
         const schedule = await this.prisma.$transaction(async (transaction) => {
             // Keep the same owning transaction and advisory lock for the
             // source fence and schedule mutation. The fence is intentionally
@@ -186,7 +207,8 @@ export class EmployeeScheduleService {
                 mutationId: ordinaryMutationId,
                 scheduleIds: [updated.id],
             });
-            await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+            preBooking = await this.isConfiguredPreBooking(transaction, branchid, updated.clientId);
+            if (!preBooking) await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                 branchId: branchid,
                 clientId: updated.clientId,
                 scheduleId: updated.id,
@@ -201,7 +223,7 @@ export class EmployeeScheduleService {
             );
             return updated;
         });
-        await this.messageAutomationIntentService
+        if (!preBooking) await this.messageAutomationIntentService
             .fulfillScheduleIntent({
                 branchId: branchid,
                 scheduleId: schedule.id,
@@ -215,7 +237,7 @@ export class EmployeeScheduleService {
                     error instanceof Error ? error.stack : String(error),
                 );
             });
-        if (params.endDate) {
+        if (params.endDate && !preBooking) {
             this.serviceRecordLinkService
                 ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
                 ?.catch((error) => {

@@ -251,7 +251,14 @@ export async function lockServiceRecordWriteSet(
         ...(params.scheduleIds ?? []),
         ...discoveredSchedules.map((schedule) => schedule.id),
     ]);
+    const additionalStaff = transaction.service_record_team_slot && scheduleIds.length
+        ? await transaction.service_record_team_slot.findMany({
+            where: { branchId: params.branchId, clientId: params.clientId, scheduleId: { in: scheduleIds }, slot: { gte: 2 } },
+            select: { employeeId: true },
+        })
+        : [];
     const employeeIds = sortedIds([
+        ...additionalStaff.map(({ employeeId }) => employeeId),
         ...(params.employeeIds ?? []),
         ...discoveredSchedules.flatMap((schedule) => [
             schedule.primaryEmployeeId,

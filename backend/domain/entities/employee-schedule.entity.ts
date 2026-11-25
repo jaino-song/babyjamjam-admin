@@ -35,6 +35,9 @@ export function employeeScheduleDatesOverlap(
 }
 
 export class EmployeeScheduleEntity {
+    /** Occupied slots, including the historical roster on replaced schedules. */
+    providers?: { slot: number; employeeId: number }[];
+
     constructor(
         public readonly id: number,
         public readonly clientId: number,

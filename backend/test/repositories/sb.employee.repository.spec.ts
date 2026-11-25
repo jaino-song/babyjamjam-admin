@@ -200,6 +200,7 @@ describe("SbEmployeeRepository", () => {
                     OR: [
                         { primaryEmployeeId: 7 },
                         { secondaryEmployeeId: 7 },
+                        { recordTeamSlots: { some: { branchId, active: true, slot: { gte: 2 }, employeeId: 7 } } },
                     ],
                 },
                 select: {
@@ -271,6 +272,7 @@ describe("SbEmployeeRepository", () => {
                     OR: [
                         { primaryEmployeeId: 7 },
                         { secondaryEmployeeId: 7 },
+                        { recordTeamSlots: { some: { branchId, active: true, slot: { gte: 2 }, employeeId: 7 } } },
                     ],
                     AND: [{ OR: [{ replaced: true }, { terminatedAt: { not: null } }, { endDate: { lt: expect.any(Date) } }] }],
                 },
@@ -448,6 +450,17 @@ describe("SbEmployeeRepository", () => {
                             },
                             take: 1,
                         },
+                        recordTeamSlots: {
+                            where: {
+                                branchId, active: true, slot: { gte: 2 },
+                                schedule: {
+                                    branchId, replaced: false, terminatedAt: null,
+                                    startDate: { lte: expect.any(Date) }, endDate: { gte: expect.any(Date) },
+                                },
+                            },
+                            take: 1,
+                            select: { id: true },
+                        },
                     },
                 });
                 expect(result.map((employee) => employee.id)).toEqual([activeRow.id]);
@@ -506,6 +519,17 @@ describe("SbEmployeeRepository", () => {
                         where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
                         take: 1,
                     },
+                    recordTeamSlots: {
+                        where: {
+                            branchId, active: true, slot: { gte: 2 },
+                            schedule: {
+                                branchId, replaced: false, terminatedAt: null,
+                                startDate: { lte: given }, endDate: { gte: given },
+                            },
+                        },
+                        take: 1,
+                        select: { id: true },
+                    },
                 },
             });
             expect(result[0]).toMatchObject({ id: 1, status: "working" });
@@ -542,6 +566,17 @@ describe("SbEmployeeRepository", () => {
                     primaryEmployeeSchedules: {
                         where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
                         take: 1,
+                    },
+                    recordTeamSlots: {
+                        where: {
+                            branchId, active: true, slot: { gte: 2 },
+                            schedule: {
+                                branchId, replaced: false, terminatedAt: null,
+                                startDate: { lte: given }, endDate: { gte: given },
+                            },
+                        },
+                        take: 1,
+                        select: { id: true },
                     },
                     secondaryEmployeeSchedules: {
                         where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
@@ -722,6 +757,7 @@ describe("SbEmployeeRepository", () => {
                     OR: [
                         { primaryEmployeeId: 3 },
                         { secondaryEmployeeId: 3 },
+                        { recordTeamSlots: { some: { branchId, active: true, slot: { gte: 2 }, employeeId: 3 } } },
                     ],
                 },
             });

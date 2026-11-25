@@ -1,6 +1,7 @@
+import type { FetalType, ProviderSlot } from "@babyjamjam/shared/client/baby-record-allocation";
 import { START_DATE_CHANGE_MODES, type StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
-import { ArrayNotEmpty, ArrayUnique, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, ValidateIf } from "class-validator";
-import { Transform } from "class-transformer";
+import { Allow, ValidateNested, ArrayNotEmpty, ArrayUnique, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, ValidateIf } from "class-validator";
+import { Transform, Type } from "class-transformer";
 import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
 import { IsCanonicalPhone, trimNullablePhone } from "./canonical-phone.validator";
@@ -35,7 +36,47 @@ function trimKoreanWonInput({ value }: { value: unknown }): unknown {
     return typeof value === "string" ? value.trim() : value;
 }
 
-export class CreateClientDto {
+class ClientAllocationProviderDto {
+    @Allow()
+    slot!: ProviderSlot;
+
+    @Allow()
+    employeeId!: number;
+}
+
+class ClientAllocationAssignmentDto {
+    @Allow()
+    babyId?: string;
+
+    @Allow()
+    ordinal?: number;
+
+    @Allow()
+    providerSlot!: ProviderSlot | null;
+}
+
+class ClientAllocationDto {
+    @Allow()
+    fetalType?: FetalType;
+
+    @Allow()
+    babyCount?: number;
+
+    @ValidateIf((_, value) => Array.isArray(value))
+    @ValidateNested({ each: true })
+    @Type(() => ClientAllocationProviderDto)
+    providers?: ClientAllocationProviderDto[];
+
+    @ValidateIf((_, value) => Array.isArray(value))
+    @ValidateNested({ each: true })
+    @Type(() => ClientAllocationAssignmentDto)
+    babyAssignments?: ClientAllocationAssignmentDto[];
+
+    @Allow()
+    voucherIssuanceYear?: number;
+}
+
+export class CreateClientDto extends ClientAllocationDto {
     @IsString()
     name!: string;
 
@@ -169,7 +210,10 @@ export class CreateClientWithEmployeeActivationDto extends CreateClientDto {
     confirmedUnavailableEmployeeIds!: number[];
 }
 
-export class UpdateClientDto {
+export class UpdateClientDto extends ClientAllocationDto {
+    @Allow()
+    expectedAllocationVersion?: string;
+
     @ValidateIf((_, value) => value !== undefined)
     @IsString()
     name?: string;
