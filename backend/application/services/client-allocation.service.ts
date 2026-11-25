@@ -11,6 +11,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { problemBody } from "application/utils/problem-bodies";
 import { createHash } from "node:crypto";
+import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
 
 export interface ClientAllocationInput {
     fetalType?: FetalType;
@@ -426,6 +427,10 @@ export async function persistClientAllocation(
     previousScheduleId: number | null = scheduleId,
 ): Promise<void> {
     if (plan.unchanged && previousScheduleId === scheduleId) return;
+    if (previousScheduleId !== null) await lockCredentialCases(tx, scope);
+    const previousOwners = previousScheduleId === null ? [] : await readCredentialOwners(tx, scope, previousScheduleId);
+    const previousSingleton = previousOwners.length === 1
+        ? await resolveServiceRecordCaseTarget(tx, scope) : null;
     if (plan.retired.length) {
         // The database's conditional foreign key requires owners to close
         // before retiring a baby, including an owner from an older schedule.
@@ -449,9 +454,12 @@ export async function persistClientAllocation(
     });
 
     if (previousScheduleId !== null && previousScheduleId !== scheduleId) {
-        await closeScheduleAllocation(tx, scope, previousScheduleId);
+        await endScheduleOwners(tx, scope, previousScheduleId);
     }
-    if (scheduleId === null) return;
+    if (scheduleId === null) {
+        if (previousScheduleId !== null) await revokeScheduleCredentials(tx, scope, previousScheduleId);
+        return;
+    }
     const scheduleScope = { ...scope, scheduleId };
     const slots = await tx.service_record_team_slot.findMany({ where: { ...scheduleScope, active: true } });
     const slotChanges = slots.filter((old) => !plan.providers.some(
@@ -492,17 +500,118 @@ export async function persistClientAllocation(
         }];
     });
     if (newOwners.length) await tx.service_record_baby_assignment.createMany({ data: newOwners });
+
+    if (previousScheduleId !== null) {
+        const currentOwners = await readCredentialOwners(tx, scope, scheduleId);
+        const legacyCaseId = previousSingleton?.kind === "resolved" ? previousSingleton.caseId : null;
+        await reconcileCaseCredentials(tx, scope, previousScheduleId, scheduleId, previousOwners, currentOwners, legacyCaseId);
+    }
 }
 
-export async function closeScheduleAllocation(
+type AllocationScope = { branchId: string; clientId: number };
+
+async function lockCredentialCases(tx: Prisma.TransactionClient, { branchId, clientId }: AllocationScope) {
+    if (typeof tx.$queryRaw !== "function") return;
+    // Callers hold the client lock. The finalizer locks its case before
+    // changing tokens, and lifecycle sync may still update these cases later
+    // in this transaction. Take all of the affected client's case locks first.
+    await tx.$queryRaw(Prisma.sql`
+        SELECT id FROM service_record_case
+        WHERE branch_id = ${branchId}::uuid AND client_id = ${clientId}
+        ORDER BY id FOR UPDATE
+    `);
+}
+
+function readCredentialOwners(tx: Prisma.TransactionClient, scope: AllocationScope, scheduleId: number) {
+    return tx.service_record_baby_assignment.findMany({
+        where: { ...scope, scheduleId, activeOwner: true, endedAt: null, teamSlot: { active: true } },
+        select: { babyId: true, employeeId: true, employee: { select: { phone: true, deletedAt: true } } },
+    });
+}
+
+type CredentialOwner = Awaited<ReturnType<typeof readCredentialOwners>>[number];
+
+function revokeCredentials(tx: Prisma.TransactionClient, where: Prisma.service_record_tokenWhereInput, now: Date) {
+    return tx.service_record_token.updateMany({
+        where: { ...where, revokedAt: null },
+        data: { active: false, revokedAt: now, accessTokenHash: null, verifiedAt: null },
+    });
+}
+
+async function reconcileCaseCredentials(
     tx: Prisma.TransactionClient,
-    scope: { branchId: string; clientId: number },
+    scope: AllocationScope,
+    previousScheduleId: number,
     scheduleId: number,
+    previousOwners: CredentialOwner[],
+    currentOwners: CredentialOwner[],
+    legacyCaseId: string | null,
 ): Promise<void> {
-    if (!tx.service_record_baby_assignment) return;
+    const handover = previousScheduleId !== scheduleId;
+    const now = new Date();
+    const tokenScope = { branchId: scope.branchId, scheduleId: previousScheduleId, schedule: scope };
+    const formerOwners = new Map(previousOwners.map((owner) => [owner.babyId, owner]));
+    const nextOwners = new Map(currentOwners.map((owner) => [owner.babyId, owner]));
+    const cases = await tx.service_record_case.findMany({
+        where: { ...scope, babyId: { in: [...formerOwners.keys()] } },
+        select: { id: true, babyId: true, finalizedAt: true },
+        orderBy: { id: "asc" },
+    });
+    const singleton = legacyCaseId && await resolveServiceRecordCaseTarget(tx, scope);
+
+    for (const record of cases) {
+        if (!record.babyId) continue;
+        const former = formerOwners.get(record.babyId);
+        const next = nextOwners.get(record.babyId);
+        const retained = former && next?.employeeId === former.employeeId && !next.employee.deletedAt;
+        const allowLegacy = record.id === legacyCaseId && singleton
+            && singleton.kind === "resolved" && singleton.caseId === record.id;
+        const caseScope = {
+            ...tokenScope,
+            OR: [{ serviceRecordCaseId: record.id }, ...(allowLegacy ? [{ serviceRecordCaseId: null }] : [])],
+        };
+        if (!retained) {
+            await revokeCredentials(tx, caseScope, now);
+        } else if (handover && !record.finalizedAt) {
+            if (!(next.employee.phone ?? "").replace(/\D/g, "")) continue;
+            // Shift only still-valid credentials before the existing post-commit
+            // old-schedule revoke runs. The token and its verified session stay intact.
+            await tx.service_record_token.updateMany({
+                where: {
+                    ...caseScope, employeeId: next.employeeId, active: true,
+                    revokedAt: null, expiresAt: { gt: now },
+                },
+                data: { scheduleId, serviceRecordCaseId: record.id },
+            });
+        }
+    }
+
+    if (handover) {
+        await revokeCredentials(tx, tokenScope, now);
+    } else if (previousOwners.length > 0 && currentOwners.length > 1) {
+        // An unscoped singleton credential cannot become usable again if this
+        // household later returns to one baby.
+        await revokeCredentials(tx, { ...tokenScope, serviceRecordCaseId: null }, now);
+    }
+}
+
+async function endScheduleOwners(tx: Prisma.TransactionClient, scope: AllocationScope, scheduleId: number) {
     await tx.service_record_baby_assignment.updateMany({
         where: { ...scope, scheduleId, activeOwner: true },
         data: { activeOwner: null, endedAt: new Date() },
     });
 }
 
+async function revokeScheduleCredentials(tx: Prisma.TransactionClient, scope: AllocationScope, scheduleId: number) {
+    await revokeCredentials(tx, { branchId: scope.branchId, scheduleId, schedule: scope }, new Date());
+}
+
+export async function closeScheduleAllocation(
+    tx: Prisma.TransactionClient,
+    scope: AllocationScope,
+    scheduleId: number,
+): Promise<void> {
+    await lockCredentialCases(tx, scope);
+    if (tx.service_record_baby_assignment) await endScheduleOwners(tx, scope, scheduleId);
+    if (tx.service_record_token) await revokeScheduleCredentials(tx, scope, scheduleId);
+}
