@@ -172,11 +172,14 @@ function manualController(f: ReturnType<typeof boundaryFixture>, quiet: MessageQ
         { read: () => ({ availability: "available", provider: "aligo", mode: "stub", version: 1, identityDigest: "a".repeat(64) }) } as never);
 }
 function manualJob(kind: "agent" | "admin" | "automatic") {
+    const serviceRecordUrl = "https://mobile.test/service-record/efl_token";
     const job = MessageTriggerJobEntity.create({ branchId: "branch-a", ruleId: kind === "agent" ? "agent-sms:test" : kind === "admin" ? "system:service_record_link" : "rule-auto",
         scheduledFor: new Date("2026-11-03T12:00:00Z"), clientId: 7, recipientType: MessageTriggerRecipientType.CLIENT, recipientPhone: PHONE,
         templateKey: kind === "admin" ? MessageTriggerTemplateKey.SERVICE_RECORD_LINK : MessageTriggerTemplateKey.SERVICE_INFO,
         dedupeKey: kind === "admin" ? "system:service_record_link:schedule:91:primary:manual:55000000-0000-4000-8000-000000000001" : "test-dedupe",
-        payload: { clientId: 7, memberId: "7", recipientName: "합성 고객", recipientPhone: PHONE, messageBody: "합성 본문",
+        payload: { clientId: 7, memberId: "7", recipientName: "합성 고객", recipientPhone: PHONE,
+            ...(kind === "admin" ? { buttonUrl: serviceRecordUrl, messageBody: `합성 제공기록지 안내\n${serviceRecordUrl}` }
+                : { messageBody: "합성 본문" }),
             templateVariables: { triggerType: "agent_scheduled" } } });
     Object.assign(job, { id: "55000000-0000-4000-8000-000000000099", status: "dispatching", claimToken: "claim-a",
         processingDeadlineAt: new Date(Date.now() + 600_000), updatedAt: new Date(Date.now()) }); return job;

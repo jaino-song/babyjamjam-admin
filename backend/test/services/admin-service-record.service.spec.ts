@@ -1350,6 +1350,7 @@ describe("AdminServiceRecordService", () => {
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10, clientId: 100 });
 
         await expect(service.resetLink(branchId, 10)).resolves.toEqual({
+            kind: "legacy",
             serviceRecordUrl: "https://mobile.test/service-record/efl_reset",
             expiresAt: new Date("2026-07-13T01:00:00.000Z"),
         });
@@ -1388,6 +1389,7 @@ describe("AdminServiceRecordService", () => {
             globalRole: "admin",
             branchRole: "admin",
         })).resolves.toEqual({
+            kind: "legacy",
             serviceRecordUrl: "https://mobile.test/service-record/efl_reset",
             expiresAt: new Date("2026-07-13T01:00:00.000Z"),
         });

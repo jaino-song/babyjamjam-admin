@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { FetalConfirmation, Prisma } from "@prisma/client";
 import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
 
 interface LegacyLinkSchedule {
@@ -6,7 +6,7 @@ interface LegacyLinkSchedule {
     branchId: string | null;
     clientId: number;
     primaryEmployeeId: number;
-    client: { fetalConfirmation?: "CONFIRMED" | "UNCONFIRMED" | null };
+    client: { fetalConfirmation: FetalConfirmation | null };
 }
 
 /** The single-link job format can only name the schedule's primary caregiver. */
@@ -16,12 +16,13 @@ export async function allowsLegacyServiceRecordLink(
 ): Promise<boolean> {
     if (!schedule.branchId) return false;
     const scope = { branchId: schedule.branchId, clientId: schedule.clientId };
-    if (schedule.client.fetalConfirmation !== "CONFIRMED") {
-        const legacyCases = typeof tx.service_record_case?.findMany === "function"
-            ? await tx.service_record_case.findMany({ where: scope, select: { id: true }, take: 2 })
-            : [];
+    const fetalConfirmation = schedule.client?.fetalConfirmation;
+    if (fetalConfirmation === null || fetalConfirmation === "UNCONFIRMED") {
+        const legacyCases = await tx.service_record_case.findMany({ where: scope, select: { id: true }, take: 2 });
         return legacyCases.length < 2;
     }
+    if (fetalConfirmation !== "CONFIRMED") return false;
+
     const target = await resolveServiceRecordCaseTarget(tx, scope);
     if (target.kind !== "resolved" || target.babyCount !== 1) return false;
 
