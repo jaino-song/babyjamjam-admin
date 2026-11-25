@@ -18,6 +18,7 @@ describe("missing service record consecutive progress", () => {
     ])("at %s counts through session %i", (now, expected) => {
         expect(progress([missingRecordCandidate()], now)).toEqual([{
             clientId: 10, clientName: "김산모", primaryEmployeeName: "이관리", scheduleId: 55,
+            caseId: "case-10", rank: null, babyCount: null, legacyName: null,
             unwrittenThroughSessionIndex: expected,
         }]);
     });
@@ -60,21 +61,38 @@ describe("missing service record consecutive progress", () => {
         expect(progress([row], "2026-09-10T18:00:00+09:00")[0]?.unwrittenThroughSessionIndex).toBe(3);
     });
 
-    it("preserves the exact legacy alert fields, client deduplication and order", () => {
-        const first = missingRecordCandidate(20, "나산모");
+    it("returns the exact case alert fields, deduplicates by case, and preserves order", () => {
+        const first = { ...missingRecordCandidate(20, "나산모"), rank: 1, babyCount: 2 };
         const invalid = missingRecordCandidate(30);
         invalid.source.client.branchId = "other-branch";
-        const replacement = missingRecordCandidate(20, "변경산모", 3);
-        const candidates = [first, invalid, missingRecordCandidate(10), replacement];
+        const singleton = { ...missingRecordCandidate(10), legacyName: "기존 아기" };
+        const sibling = { ...missingRecordCandidate(20, "변경산모", 2), rank: 2, babyCount: 2 };
+        sibling.source.caseId = "case-20-sibling";
+        sibling.source.assignments = sibling.source.assignments.map((assignment) => ({
+            ...assignment, serviceRecordCaseId: sibling.source.caseId,
+        }));
+        const replacement = { ...missingRecordCandidate(20, "변경산모", 3), rank: 1, babyCount: 2 };
+        const candidates = [first, invalid, singleton, sibling, replacement];
         const now = new Date("2026-09-10T18:00:00+09:00");
         const rows = findMissingServiceRecordAlertsWithProgress(candidates, MISSING_RECORD_BRANCH_ID, KR_BUILTIN_CALENDAR, now);
         const alerts = findMissingServiceRecordAlerts(candidates, MISSING_RECORD_BRANCH_ID, KR_BUILTIN_CALENDAR, now);
-        expect(alerts).toEqual([
-            { clientId: 20, clientName: "변경산모", primaryEmployeeName: "이관리", scheduleId: 55 },
-            { clientId: 10, clientName: "김산모", primaryEmployeeName: "이관리", scheduleId: 55 },
+        const firstAlert = {
+            clientId: 20, clientName: "변경산모", primaryEmployeeName: "이관리", scheduleId: 55,
+            caseId: "case-20", rank: 1, babyCount: 2, legacyName: null,
+        };
+        const singletonAlert = {
+            clientId: 10, clientName: "김산모", primaryEmployeeName: "이관리", scheduleId: 55,
+            caseId: "case-10", rank: null, babyCount: null, legacyName: "기존 아기",
+        };
+        const siblingAlert = {
+            clientId: 20, clientName: "변경산모", primaryEmployeeName: "이관리", scheduleId: 55,
+            caseId: "case-20-sibling", rank: 2, babyCount: 2, legacyName: null,
+        };
+        expect(alerts).toEqual([firstAlert, singletonAlert, siblingAlert]);
+        expect(rows).toEqual([
+            { ...firstAlert, unwrittenThroughSessionIndex: 3 },
+            { ...singletonAlert, unwrittenThroughSessionIndex: 4 },
+            { ...siblingAlert, unwrittenThroughSessionIndex: 2 },
         ]);
-        expect(alerts).toEqual(rows.map(({ clientId, clientName, primaryEmployeeName, scheduleId }) => ({
-            clientId, clientName, primaryEmployeeName, scheduleId,
-        })));
     });
 });
