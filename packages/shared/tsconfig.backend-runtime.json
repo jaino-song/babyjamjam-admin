@@ -28,6 +28,7 @@
         "src/types/service-record.ts",
         "src/types/start-date-change.ts",
         "src/errors/problem-details.ts",
+        "src/message/service-record-links.ts",
         "src/types/system-template.ts"
     ]
 }

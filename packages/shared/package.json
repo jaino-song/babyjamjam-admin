@@ -23,6 +23,7 @@
         "./types/message": "./src/types/message.ts",
         "./types/service-record": "./src/types/service-record.ts",
         "./types/system-template": "./src/types/system-template.ts",
+        "./message/service-record-links": "./src/message/service-record-links.ts",
         "./client/voucher-duration": "./src/client/voucher-duration.ts",
         "./constants/service-record-form-layout": "./src/constants/service-record-form-layout.ts",
         "./constants/eformsign-status-codes": "./src/constants/eformsign-status-codes.ts",
