@@ -90,7 +90,7 @@ describe("client duration confirmation", () => {
   it("cancels without saving and confirms the original 15 sessions and 14-weekday dates", async () => {
     const onClose = await openCreate();
     const modal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
-    expect(within(modal).getByText("평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?", { selector: "p:not(.sr-only)" })).toBeVisible();
+    expect(within(modal).getByText("평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?", { selector: "p:not(.sr-only)" })).toBeVisible();
     expect(mockCreateClient).not.toHaveBeenCalled();
     fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
     expect(screen.queryByRole("dialog", { name: "서비스 기간 확인" })).not.toBeInTheDocument();

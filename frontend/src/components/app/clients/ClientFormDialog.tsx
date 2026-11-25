@@ -2751,45 +2751,23 @@ function ClientFormContent({
     );
 
     const durationConfirmationDialog = (
-        <Dialog
+        <TwoButtonModal
+            data-component={`${base}_duration-confirmation`}
             open={open && pendingDurationConfirmation !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingDurationConfirmation(null); }}
-        >
-            <FormDialogShell
-                data-component={`${base}_duration-confirmation`}
-                size="compact"
-                title="서비스 기간 확인"
-                description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
-                footer={(
-                    <>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            data-component={`${base}_duration-confirmation_cancel`}
-                            onClick={() => setPendingDurationConfirmation(null)}
-                        >
-                            취소
-                        </Button>
-                        <Button
-                            type="button"
-                            data-component={`${base}_duration-confirmation_confirm`}
-                            disabled={isSubmitting || isUnknownOutcome}
-                            onClick={() => {
-                                if (pendingDurationConfirmation !== null) {
-                                    void handleSubmit(pendingDurationConfirmation);
-                                }
-                            }}
-                        >
-                            확인
-                        </Button>
-                    </>
-                )}
-            >
-                <p data-component={`${base}_duration-confirmation_message`}>
-                    평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?
-                </p>
-            </FormDialogShell>
-        </Dialog>
+            size="review"
+            title="서비스 기간 확인"
+            description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
+            isDescriptionVisuallyHidden={false}
+            cancelLabel="취소"
+            approvalLabel="확인"
+            approvalDisabled={isSubmitting || isUnknownOutcome}
+            onApprove={() => {
+                if (pendingDurationConfirmation !== null) {
+                    void handleSubmit(pendingDurationConfirmation);
+                }
+            }}
+        />
     );
 
     const contractInfoChangeConfirmationDialog = (
