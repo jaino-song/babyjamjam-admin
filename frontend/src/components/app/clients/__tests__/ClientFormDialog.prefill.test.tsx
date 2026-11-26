@@ -239,11 +239,6 @@ describe("ClientFormDialog prefill", () => {
     });
 
     it("keeps the voucher and eligible employee supplied as create-mode prefill", async () => {
-        document.cookie = "selected_branch_id=prefill-enabled-branch; path=/";
-        jest.mocked(api.get).mockImplementation(async (url) => {
-            if (url === "/clients/baby-record-capability") return { data: { enabled: true } };
-            throw new Error(`Unexpected fixture GET ${url}`);
-        });
         render(
             <ClientFormDialog
                 open
