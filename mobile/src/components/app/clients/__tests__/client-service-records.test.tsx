@@ -821,7 +821,8 @@ describe("ClientServiceRecords period mismatch", () => {
         expect(screen.getAllByText("기간 밖")).toHaveLength(1);
     });
 
-    it.each(["2026-10-26", "2026-11-24"])("includes the seven-day boundary %s", (date) => {
+    // Any distance counts: an end date moved before a submitted session can leave it far out.
+    it.each(["2026-10-26", "2026-11-24", "2026-10-25", "2026-11-25", "2026-12-31"])("counts a session any distance outside the period: %s", (date) => {
         renderComponent(overview([session(1, date)]));
         expect(screen.getByText(title)).toBeInTheDocument();
         expect(screen.getByText("기간 밖")).toBeInTheDocument();
@@ -841,7 +842,20 @@ describe("ClientServiceRecords period mismatch", () => {
         expect(screen.queryByText(/3회차 서비스 제공일/)).not.toBeInTheDocument();
     });
 
-    it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])(
+    it.each(["FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])(
+        "shows mismatch actions for a finalized %s case",
+        (status) => {
+            const data = overview([session(1, "2026-10-30")]);
+            data.record = { ...createRecord(status), startDate: "2026-11-02", endDate: "2026-11-17", totalSessions: 10 };
+            renderComponent(data);
+
+            expect(screen.getByText(title)).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "유지" })).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "변경" })).toBeInTheDocument();
+        },
+    );
+
+    it.each(["FINALIZING"])(
         "hides mismatch actions for %s while keeping the out-of-period mark",
         (status) => {
             const data = overview([session(1, "2026-10-30")]);
@@ -864,7 +878,7 @@ describe("ClientServiceRecords period mismatch", () => {
         expect(screen.queryByRole("button", { name: "유지" })).not.toBeInTheDocument();
     });
 
-    it.each(["2026-11-02", "2026-11-10", "2026-11-17", "2026-10-25", "2026-11-25"])("has no alert or badge for %s", (date) => {
+    it.each(["2026-11-02", "2026-11-10", "2026-11-17"])("has no alert or badge for %s", (date) => {
         renderComponent(overview([session(1, date)]));
         expect(screen.queryByText(title)).not.toBeInTheDocument();
         expect(screen.queryByText("기간 밖")).not.toBeInTheDocument();

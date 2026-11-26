@@ -1299,13 +1299,10 @@ function TokenVerificationValue({ assignment }: { assignment: ServiceRecordAssig
     return token?.verifiedAt ? "완료" : "미완료";
 }
 
-// Mirrors IMMUTABLE_FINALIZATION_STATUSES in backend/application/services/service-record-lifecycle.service.ts
-// used by service-record-period-mismatch.service.ts.
+// Mirrors service-record-period-mismatch.service.ts: a finalized case keeps or fits its
+// out-of-period sessions too, and only the seconds of document generation wait.
 const PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES = new Set<string>([
     "FINALIZING",
-    "FINALIZATION_FAILED",
-    "DOCUMENTS_CREATED",
-    "COMPLETED",
 ]);
 
 function ServiceSessionsCard({
@@ -2052,13 +2049,7 @@ function useIsThresholdReached(threshold: number | null): boolean {
     return isThresholdReached;
 }
 
-function shiftDatePart(value: string, days: number): string {
-    const date = new Date(`${value}T00:00:00.000Z`);
-    date.setUTCDate(date.getUTCDate() + days);
-    return date.toISOString().slice(0, 10);
-}
-
-// Called only for case sessions already partitioned into the configured ±7-day window.
+// Called only for case sessions already partitioned into the configured N.
 function isPeriodMismatch(session: ServiceRecordSession, start: string | null, end: string | null): boolean {
     const date = datePartOf(session.serviceDate);
     const first = datePartOf(start);
@@ -2094,16 +2085,10 @@ function partitionSessionsByPeriod(
 
     const activeSessions: ServiceRecordSession[] = [];
     const outsideSessions: ServiceRecordSession[] = [];
-    const windowStart = shiftDatePart(startDatePart, -7);
-    const windowEnd = shiftDatePart(endDatePart, 7);
     for (const session of sessions) {
-        const serviceDate = datePartOf(session.serviceDate);
-        const isWithinDates = Boolean(
-            serviceDate
-            && serviceDate >= windowStart
-            && serviceDate <= windowEnd,
-        );
-        if (isWithinDates && session.sessionIndex <= configuredSessions) {
+        // Any distance from the period counts as one of the N: an end date moved before a submitted
+        // session leaves it further out than a provider may pick, marked 기간 밖 with its actions.
+        if (datePartOf(session.serviceDate) && session.sessionIndex <= configuredSessions) {
             activeSessions.push(session);
         } else {
             outsideSessions.push(session);

@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
-import { IMMUTABLE_FINALIZATION_STATUSES } from "application/services/service-record-lifecycle.service";
+import { DATE_EDITABLE_FINALIZED_STATUSES } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordPeriodMismatchService } from "application/services/service-record-period-mismatch.service";
 import {
     persistClientMessageAutomationIntent,
@@ -114,6 +114,7 @@ function world(days = [day(1, "2026-11-06")]) {
             return clone(record);
         }),
         recompute: jest.fn().mockResolvedValue(undefined),
+        syncFinalizedPeriods: jest.fn(async () => { order.push("syncFinalized"); }),
     };
     const fence = { appendScheduleWriteFence: jest.fn(async () => { order.push("fence"); }) };
     const service = new ServiceRecordPeriodMismatchService(lifecycle as never, fence as never);
@@ -163,7 +164,7 @@ describe("ServiceRecordPeriodMismatchService", () => {
     });
 
     it.each([
-        day(1, "2026-11-09"), day(1, "2026-11-13"), day(1, "2026-11-01"), day(1, "2026-11-21"),
+        day(1, "2026-11-09"), day(1, "2026-11-13"),
         day(1, "2026-11-06", { locked: false }), day(0, "2026-11-06"), day(6, "2026-11-06"),
     ])("rejects an ineligible day atomically: %j", async (row) => {
         const w = world([row]);
@@ -184,7 +185,8 @@ describe("ServiceRecordPeriodMismatchService", () => {
         await expect(w.keep([3])).resolves.toEqual({ keptSessionIndexes: [3] });
     });
 
-    it.each(["2026-11-02", "2026-11-20"])("includes the seven-day calendar boundary: %s", async (iso) => {
+    // An end date moved before submitted sessions can leave them further out than a provider may pick.
+    it.each(["2026-11-02", "2026-11-20", "2026-11-01", "2026-12-21"])("counts a session any distance outside the period: %s", async (iso) => {
         await expect(world([day(1, iso)]).keep()).resolves.toEqual({ keptSessionIndexes: [1] });
     });
 
@@ -216,12 +218,36 @@ describe("ServiceRecordPeriodMismatchService", () => {
         }
     });
 
-    it.each([...IMMUTABLE_FINALIZATION_STATUSES])("refuses both writes on immutable %s cases", async (status) => {
+    it("refuses both writes while the documents are being generated", async () => {
         const w = world();
-        w.record.status = status;
+        w.record.status = "FINALIZING";
         await expect(w.keep()).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_FINALIZED" } });
         await expect(w.fit()).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_FINALIZED" } });
         noWrites(w);
+    });
+
+    it.each([...DATE_EDITABLE_FINALIZED_STATUSES])("keeps and fits out-of-period sessions on a %s case", async (status) => {
+        const kept = world();
+        kept.record.status = status;
+        await expect(kept.keep()).resolves.toEqual({ keptSessionIndexes: [1] });
+        expect(kept.record.status).toBe(status);
+
+        const fitted = world();
+        fitted.record.status = status;
+        await expect(fitted.fit()).resolves.toMatchObject({ startDate: "2026-11-06", endDate: "2026-11-13", changed: true });
+        expect(fitted.client).toMatchObject({ startDate: date("2026-11-06"), endDate: date("2026-11-13") });
+        expect(fitted.record).toMatchObject({
+            status, startDate: date("2026-11-06"), endDate: date("2026-11-13"), requiredSessionCount: 5,
+        });
+        // Lifecycle sync skips a finalized case, so its assignments follow the widened schedule here.
+        expect(fitted.lifecycle.syncFinalizedPeriods).toHaveBeenCalledWith(clientId, fitted.tx, branchId);
+        expect(fitted.order.indexOf("ensure")).toBeLessThan(fitted.order.indexOf("syncFinalized"));
+    });
+
+    it("does not run the finalized sync for a case that is still open", async () => {
+        const w = world();
+        await w.fit();
+        expect(w.lifecycle.syncFinalizedPeriods).not.toHaveBeenCalled();
     });
 
     it.each([

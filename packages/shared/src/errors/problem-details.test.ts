@@ -14,10 +14,17 @@ describe("problem details public contract", () => {
         { serviceStarted: true, recordedSessionCount: 3 },
         { serviceStarted: false, recordedSessionCount: 0 },
         { serviceStarted: true, recordedSessionCount: 10000 },
+        { serviceStarted: true, recordedSessionCount: 3, finalized: true },
     ])("keeps the bounded start-date lock extension %j", (startDateLock) => {
         const problem = createProblemDetails({ code: "SERVICE_RECORD_START_DATE_LOCKED", requestId: REQUEST_ID });
         expect(parseProblemDetails({ ...problem, startDateLock: { ...startDateLock, secret: "dropped" }, unknown: true }, 409))
             .toEqual({ ...problem, startDateLock });
+    });
+
+    it.each([false, "true", 1, null])("keeps the start-date lock but only a true finalized flag: %j", (finalized) => {
+        const problem = createProblemDetails({ code: "SERVICE_RECORD_START_DATE_LOCKED", requestId: REQUEST_ID });
+        expect(parseProblemDetails({ ...problem, startDateLock: { serviceStarted: true, recordedSessionCount: 3, finalized } }, 409))
+            .toEqual({ ...problem, startDateLock: { serviceStarted: true, recordedSessionCount: 3 } });
     });
 
     it.each([

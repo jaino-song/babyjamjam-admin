@@ -67,6 +67,16 @@ export const IMMUTABLE_FINALIZATION_STATUSES = new Set<string>([
     SERVICE_RECORD_CASE_STATUS.COMPLETED,
 ]);
 
+/**
+ * Finalized cases whose period still follows a client date edit. FINALIZING is
+ * generating its documents for a few seconds, so a date edit waits for it.
+ */
+export const DATE_EDITABLE_FINALIZED_STATUSES = new Set<string>([
+    SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+    SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+    SERVICE_RECORD_CASE_STATUS.COMPLETED,
+]);
+
 type DbClient = Prisma.TransactionClient | PrismaService;
 type InitialSnapshotTerminalOutcomeInput = {
     branchId: string;
@@ -706,8 +716,10 @@ export class ServiceRecordLifecycleService {
             include: { days: { select: { serviceDate: true, locked: true, caseSessionIndex: true, sessionIndex: true } } },
             orderBy: { id: "asc" },
         });
+        // One start-date mode covers the household, so a finalized sibling makes MOVE the only choice.
+        const householdFinalized = records.some((record) => DATE_EDITABLE_FINALIZED_STATUSES.has(record.status));
         const decisions = records.flatMap((record) => {
-            const decision = this.validateCasePeriodChange(record, params);
+            const decision = this.validateCasePeriodChange(record, { ...params, householdFinalized });
             return decision ? [{ caseId: record.id, ...decision }] : [];
         });
         const first = decisions[0];
@@ -726,61 +738,46 @@ export class ServiceRecordLifecycleService {
         },
         params: {
             startDate?: Date | null; endDate?: Date | null; duration?: number | null;
-            now?: Date; startDateChangeMode?: StartDateChangeMode;
+            now?: Date; startDateChangeMode?: StartDateChangeMode; householdFinalized?: boolean;
         },
     ): StartDateChangeDecision | null {
         const now = params.now ?? new Date();
+        const startChanged = params.startDate !== undefined && isoDate(params.startDate) !== isoDate(record.startDate);
+        const endChanged = params.endDate !== undefined && isoDate(params.endDate) !== isoDate(record.endDate);
+        const durationChanged = params.duration !== undefined && params.duration !== record.requiredSessionCount;
 
-        if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status)) {
-            const dateChanged = (
-                params.startDate !== undefined && isoDate(params.startDate) !== isoDate(record.startDate)
-            ) || (
-                params.endDate !== undefined && isoDate(params.endDate) !== isoDate(record.endDate)
-            ) || (
-                params.duration !== undefined && params.duration !== record.requiredSessionCount
-            );
-            if (dateChanged) {
-                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_FINALIZED"));
-            }
+        // Documents being generated wait for their few seconds. A finalized case keeps its N,
+        // since the session count stays the same when only the dates move.
+        if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status) && (durationChanged
+            || ((startChanged || endChanged) && record.status === SERVICE_RECORD_CASE_STATUS.FINALIZING))) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_FINALIZED"));
         }
 
         let decision: StartDateChangeDecision | null = null;
         const serviceStarted = record.startDate != null && todayKst(now) >= isoDate(record.startDate)!;
         const recordedSessionCount = record.days.length;
-        if (
-            params.startDate !== undefined
-            && isoDate(params.startDate) !== isoDate(record.startDate)
-            && (recordedSessionCount > 0 || serviceStarted)
-        ) {
+        if (startChanged && (recordedSessionCount > 0 || serviceStarted)) {
             const mode = params.startDateChangeMode;
-            if (!mode || (recordedSessionCount > 0 && mode !== "RESTART" && mode !== "MOVE")) {
+            // A finalized household moves its submitted and signed sessions with the new start.
+            // Starting over would delete them, so MOVE is the only way through.
+            const finalized = params.householdFinalized === true || DATE_EDITABLE_FINALIZED_STATUSES.has(record.status);
+            const allowed = finalized
+                ? mode === "MOVE"
+                : !!mode && (recordedSessionCount === 0 || mode === "RESTART" || mode === "MOVE");
+            if (!allowed) {
                 throw new ConflictException({
                     ...codeOnlyProblemBody("SERVICE_RECORD_START_DATE_LOCKED"),
-                    startDateLock: { serviceStarted, recordedSessionCount },
+                    startDateLock: { serviceStarted, recordedSessionCount, ...(finalized ? { finalized: true } : {}) },
                 });
             }
-            decision = { mode, previousStartDate: record.startDate, recordedSessionCount };
+            decision = { mode: mode!, previousStartDate: record.startDate, recordedSessionCount };
         }
 
         if (params.endDate === null && record.days.length > 0) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_END_DATE_REQUIRED"));
         }
-        if (
-            params.endDate !== undefined
-            && params.endDate !== null
-            && isoDate(params.endDate) !== isoDate(record.endDate)
-            && decision?.mode !== "RESTART"
-            && record.days.some((day) => {
-                // MOVE가 재배치하는 회차는 기존 날짜로 종료일을 제한하지 않는다.
-                if (decision?.mode === "MOVE" && record.requiredSessionCount !== null && record.requiredSessionCount > 0) {
-                    const sessionIndex = day.caseSessionIndex ?? day.sessionIndex;
-                    if (sessionIndex != null && sessionIndex <= record.requiredSessionCount) return false;
-                }
-                return day.locked && isoDate(day.serviceDate)! > isoDate(params.endDate)!;
-            })
-        ) {
-            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION"));
-        }
+        // An end date before a submitted session keeps that session. It shows as out of the
+        // period on the service-record tab, where it can be kept or the period fitted to it.
         if (params.duration === null && record.days.length > 0) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_DURATION_REQUIRED"));
         }
@@ -1958,6 +1955,59 @@ export class ServiceRecordLifecycleService {
                 version: { increment: 1 },
             },
         });
+    }
+
+    /**
+     * Moves the client's finalized cases to the period the client now has. Lifecycle sync leaves
+     * finalized cases alone, so a client date edit calls this after it. The status, the session
+     * count and the documents stay as they are; assignments follow their schedules and record
+     * links stay open until the new end date.
+     */
+    async syncFinalizedPeriods(clientId: number, tx: Prisma.TransactionClient, branchId: string): Promise<void> {
+        const client = await tx.client.findFirst({
+            where: { id: clientId, branchId },
+            select: { startDate: true, endDate: true },
+        });
+        if (!client?.startDate || !client.endDate) return;
+        const records = await tx.service_record_case.findMany({
+            where: { branchId, clientId, status: { in: [...DATE_EDITABLE_FINALIZED_STATUSES] } },
+            include: { assignments: { include: { schedule: { select: { startDate: true, endDate: true } } } } },
+            orderBy: { id: "asc" },
+        });
+        for (const record of records) {
+            const caseScope = { branchId, serviceRecordCaseId: record.id };
+            let assignmentChanged = false;
+            for (const assignment of record.assignments) {
+                const schedule = assignment.schedule;
+                if (!schedule || (isoDate(assignment.startDate) === isoDate(schedule.startDate)
+                    && isoDate(assignment.endDate) === isoDate(schedule.endDate))) continue;
+                await tx.service_record_assignment.update({
+                    where: { id: assignment.id, ...caseScope },
+                    data: { startDate: schedule.startDate, endDate: schedule.endDate },
+                });
+                assignmentChanged = true;
+            }
+            const periodChanged = isoDate(record.startDate) !== isoDate(client.startDate)
+                || isoDate(record.endDate) !== isoDate(client.endDate);
+            if (periodChanged || assignmentChanged) {
+                await tx.service_record_case.update({
+                    where: { id: record.id, branchId },
+                    data: {
+                        ...(periodChanged ? {
+                            startDate: client.startDate,
+                            endDate: client.endDate,
+                            finalizationDueAt: getServiceRecordFinalizationDueAt(client.endDate),
+                        } : {}),
+                        version: { increment: 1 },
+                    },
+                });
+            }
+            const tokenExpiresAt = getServiceRecordTokenExpiresAt(client.endDate);
+            await tx.service_record_token.updateMany({
+                where: { ...caseScope, active: true, revokedAt: null, expiresAt: { lt: tokenExpiresAt } },
+                data: { expiresAt: tokenExpiresAt },
+            });
+        }
     }
 
     private deriveBaseStatus(params: {

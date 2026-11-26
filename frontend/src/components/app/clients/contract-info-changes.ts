@@ -88,6 +88,18 @@ export function getContractInfoChanges(baseline: ClientFormData, current: Client
     });
 }
 
+/**
+ * The client fields a service-record document carries. Once the document is completed it keeps
+ * the old values, so editing one of these is confirmed separately from the contract.
+ */
+export const SERVICE_RECORD_DOCUMENT_FIELDS: readonly ContractInfoField[] = ["name", "startDate", "endDate"];
+
+/** The service-record document fields a save over `baseline` would change, in form order. */
+export function getServiceRecordDocumentChanges(baseline: ClientFormData, current: ClientFormData): ContractInfoChangeRow[] {
+    return getContractInfoChanges(baseline, current)
+        .filter((change) => SERVICE_RECORD_DOCUMENT_FIELDS.includes(change.field));
+}
+
 /** Whether the client's current contract is completed, so its fields can no longer change. */
 export function isContractLocked(documentStatus: DocumentStatus | undefined): boolean {
     return documentStatus === "completed";

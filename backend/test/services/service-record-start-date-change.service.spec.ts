@@ -201,6 +201,21 @@ describe("ServiceRecordStartDateChangeService", () => {
         expect(w.tx.service_record_day.updateMany.mock.calls[0]![0].data).not.toHaveProperty("periodMismatchKeptAt");
     });
 
+    it("MOVE on a finalized case shifts each signature and submission by the days its session moved", async () => {
+        const w = world();
+        Object.assign(w.record, { status: "COMPLETED" });
+        const original = structuredClone(w.days);
+        await w.apply("MOVE");
+        // 12-14 -> 12-21, 12-16 -> 12-22 and 12-18 -> 12-23 move 7, 6 and 5 days.
+        expect(w.days.map(({ serviceDate, clientSignedAt, submittedAt }) => ({ serviceDate, clientSignedAt, submittedAt }))).toEqual([
+            { serviceDate: date(newDates[0]!), clientSignedAt: date("2026-12-25"), submittedAt: date("2026-12-25") },
+            { serviceDate: date(newDates[1]!), clientSignedAt: date("2026-12-24"), submittedAt: date("2026-12-24") },
+            { serviceDate: date(newDates[2]!), clientSignedAt: date("2026-12-23"), submittedAt: null },
+        ]);
+        const archived = w.tx.service_record_day_archive.createMany.mock.calls[0]![0].data as Array<Record<string, unknown>>;
+        expect(archived.map((row) => row["payload"])).toEqual(original.map((day) => JSON.parse(JSON.stringify(day))));
+    });
+
     it("RESTART archives every full row in one batch before deleting, then resets dates and keeps N", async () => {
         const w = world();
         const original = structuredClone(w.days);

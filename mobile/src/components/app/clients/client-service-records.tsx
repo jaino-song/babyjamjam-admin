@@ -127,13 +127,10 @@ export function ClientServiceRecords({
     );
 }
 
-// Mirrors IMMUTABLE_FINALIZATION_STATUSES in backend/application/services/service-record-lifecycle.service.ts
-// used by service-record-period-mismatch.service.ts.
+// Mirrors service-record-period-mismatch.service.ts: a finalized case keeps or fits its
+// out-of-period sessions too, and only the seconds of document generation wait.
 const PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES = new Set<string>([
     "FINALIZING",
-    "FINALIZATION_FAILED",
-    "DOCUMENTS_CREATED",
-    "COMPLETED",
 ]);
 
 function ClientServiceRecordsContent({

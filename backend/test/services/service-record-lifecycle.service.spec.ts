@@ -221,8 +221,37 @@ describe("ServiceRecordLifecycleService", () => {
             });
         });
 
-        it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("never bypasses finalized state with %s", async (mode) => {
-            const { service } = setup(3, SERVICE_RECORD_CASE_STATUS.COMPLETED);
+        it.each([
+            SERVICE_RECORD_CASE_STATUS.COMPLETED,
+            SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+            SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+        ])("moves a %s case's start only with MOVE", async (status) => {
+            const { service, record } = setup(3, status);
+            await expect(service.validatePeriodChange({ ...change, startDateChangeMode: "MOVE" })).resolves.toEqual({
+                mode: "MOVE", previousStartDate: record.startDate, recordedSessionCount: 3,
+            });
+            for (const mode of [undefined, "CONFIRM_STARTED", "RESTART"] as const) {
+                await expect(service.validatePeriodChange({ ...change, startDateChangeMode: mode }))
+                    .rejects.toMatchObject({ response: {
+                        code: "SERVICE_RECORD_START_DATE_LOCKED",
+                        startDateLock: { serviceStarted: true, recordedSessionCount: 3, finalized: true },
+                    } });
+            }
+        });
+
+        it("asks a household with a finalized sibling to move every case", async () => {
+            const { service, record } = setup(3);
+            const sibling = { ...record, status: SERVICE_RECORD_CASE_STATUS.COMPLETED };
+            const db = { service_record_case: { findMany: jest.fn(async () => [record, sibling]) } };
+            const household = new ServiceRecordLifecycleService(db as unknown as PrismaService, createHolidayCalendarStub());
+            await expect(household.validatePeriodChange({ ...change, startDateChangeMode: "RESTART" }))
+                .rejects.toMatchObject({ response: { startDateLock: { finalized: true } } });
+            await expect(household.validatePeriodChange({ ...change, startDateChangeMode: "MOVE" }))
+                .resolves.toMatchObject({ mode: "MOVE", recordedSessionCount: 6 });
+        });
+
+        it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("waits for documents being generated with %s", async (mode) => {
+            const { service } = setup(3, SERVICE_RECORD_CASE_STATUS.FINALIZING);
             await expect(service.validatePeriodChange({ ...change, startDateChangeMode: mode }))
                 .rejects.toMatchObject({ response: { code: "SERVICE_RECORD_FINALIZED" } });
         });
@@ -268,21 +297,31 @@ describe("ServiceRecordLifecycleService", () => {
             { requiredSessionCount: 10, caseSessionIndex: null, sessionIndex: null },
             { requiredSessionCount: 0, caseSessionIndex: 1, sessionIndex: 1 },
             { requiredSessionCount: null, caseSessionIndex: 1, sessionIndex: 1 },
-        ])("guards locked rows MOVE will not re-date: %j", async ({ requiredSessionCount, caseSessionIndex, sessionIndex }) => {
+        ])("keeps locked rows MOVE will not re-date as out-of-period sessions: %j", async ({ requiredSessionCount, caseSessionIndex, sessionIndex }) => {
             const { service, record } = setup(3, SERVICE_RECORD_CASE_STATUS.IN_PROGRESS, requiredSessionCount);
             record.days = record.days.map((day, index) => index === 0 ? { ...day, caseSessionIndex, sessionIndex } : day);
             const params = { ...change, endDate: date("2026-07-02") };
             await expect(service.validatePeriodChange({ ...params, startDateChangeMode: "MOVE" }))
-                .rejects.toMatchObject({ response: { code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" } });
+                .resolves.toEqual({ mode: "MOVE", previousStartDate: record.startDate, recordedSessionCount: 3 });
             await expect(service.validatePeriodChange({ ...params, startDateChangeMode: "RESTART" }))
                 .resolves.toEqual({ mode: "RESTART", previousStartDate: record.startDate, recordedSessionCount: 3 });
         });
 
-        it.each([undefined, "MOVE", "RESTART", "CONFIRM_STARTED"] as const)("keeps the locked end-date guard with an unchanged start and mode %s", async (mode) => {
+        it.each([undefined, "MOVE", "RESTART", "CONFIRM_STARTED"] as const)("allows an end date before a locked session with an unchanged start and mode %s", async (mode) => {
             const { service, record } = setup(3);
             await expect(service.validatePeriodChange({
                 ...change, startDate: record.startDate, endDate: date("2026-07-02"), startDateChangeMode: mode,
-            })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" } });
+            })).resolves.toBeNull();
+        });
+
+        it("allows an end date before a finalized case's locked session and keeps its N", async () => {
+            const { service, record } = setup(3, SERVICE_RECORD_CASE_STATUS.COMPLETED);
+            await expect(service.validatePeriodChange({
+                ...change, startDate: record.startDate, endDate: date("2026-07-02"),
+            })).resolves.toBeNull();
+            await expect(service.validatePeriodChange({
+                ...change, startDate: record.startDate, endDate: date("2026-07-02"), duration: 11,
+            })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_FINALIZED" } });
         });
 
         it("allows an unchanged end date with a kept locked session after it", async () => {
@@ -301,12 +340,12 @@ describe("ServiceRecordLifecycleService", () => {
             })).resolves.toBeNull();
         });
 
-        it("rejects a changed end date that remains before a kept locked session", async () => {
+        it("allows a changed end date that remains before a kept locked session", async () => {
             const { service, record } = setup(3);
             record.days.push({ serviceDate: date("2026-07-23"), locked: true, caseSessionIndex: 4, sessionIndex: 4 });
             await expect(service.validatePeriodChange({
                 clientId: 1, startDate: record.startDate, endDate: date("2026-07-21"), now: change.now,
-            })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" } });
+            })).resolves.toBeNull();
         });
 
         it("allows changing the end date to the kept locked session date", async () => {
@@ -1872,7 +1911,7 @@ describe("ServiceRecordLifecycleService", () => {
         })).resolves.toBeNull();
     });
 
-    it("rejects shortening the period before a locked service day", async () => {
+    it("allows shortening the period before a locked service day", async () => {
         const prisma = {
             service_record_case: {
                 findMany: jest.fn().mockResolvedValue([{ babyId: null,
@@ -1893,10 +1932,7 @@ describe("ServiceRecordLifecycleService", () => {
         };
         const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
-        await expectConflict(
-            service.validatePeriodChange({ clientId: 1, endDate: date("2026-07-11") }),
-            "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION",
-        );
+        await expect(service.validatePeriodChange({ clientId: 1, endDate: date("2026-07-11") })).resolves.toBeNull();
     });
 
     it("does not allow clearing or reducing the contracted session count after recording starts", async () => {
@@ -1957,7 +1993,7 @@ describe("ServiceRecordLifecycleService", () => {
         );
     });
 
-    it("rejects any period change for a finalized service record with its own code", async () => {
+    it("allows a finalized record's dates to change but keeps its session count", async () => {
         const prisma = {
             service_record_case: {
                 findMany: jest.fn().mockResolvedValue([{ babyId: null,
@@ -1978,8 +2014,9 @@ describe("ServiceRecordLifecycleService", () => {
         };
         const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
+        await expect(service.validatePeriodChange({ clientId: 1, endDate: date("2026-09-29") })).resolves.toBeNull();
         await expectConflict(
-            service.validatePeriodChange({ clientId: 1, endDate: date("2026-09-29") }),
+            service.validatePeriodChange({ clientId: 1, endDate: date("2026-09-29"), duration: 16 }),
             "SERVICE_RECORD_FINALIZED",
         );
         await expect(service.validatePeriodChange({
@@ -3186,5 +3223,58 @@ describe("INITIAL completion-only pointer promotion", () => {
         const f = setup(options);
         await expect(complete(f)).rejects.toBeInstanceOf(ConflictException);
         expect(f.tx.service_record_case.updateMany).not.toHaveBeenCalled();
+    });
+});
+
+describe("ServiceRecordLifecycleService.syncFinalizedPeriods", () => {
+    const branchId = "11111111-1111-4111-8111-111111111111";
+    const setup = (status: string = SERVICE_RECORD_CASE_STATUS.COMPLETED) => {
+        const assignment = {
+            id: "assignment-1", startDate: date("2026-07-01"), endDate: date("2026-07-20"),
+            schedule: { startDate: date("2026-07-01"), endDate: date("2026-07-16") },
+        };
+        const record = {
+            id: "case-1", status, startDate: date("2026-07-01"), endDate: date("2026-07-20"), assignments: [assignment],
+        };
+        const tx = {
+            client: { findFirst: jest.fn(async () => ({ startDate: date("2026-07-01"), endDate: date("2026-07-16") })) },
+            service_record_case: {
+                findMany: jest.fn(async ({ where }: { where: { status: { in: string[] } } }) =>
+                    where.status.in.includes(record.status) ? [record] : []),
+                update: jest.fn(async () => record),
+            },
+            service_record_assignment: { update: jest.fn(async () => assignment) },
+            service_record_token: { updateMany: jest.fn(async () => ({ count: 0 })) },
+        };
+        const service = new ServiceRecordLifecycleService({} as unknown as PrismaService, createHolidayCalendarStub());
+        return { tx, service };
+    };
+
+    it("moves a completed case, its assignments and its links to the client's new end date and keeps its status and N", async () => {
+        const { tx, service } = setup();
+        await service.syncFinalizedPeriods(1, tx as unknown as Prisma.TransactionClient, branchId);
+        expect(tx.service_record_assignment.update).toHaveBeenCalledWith({
+            where: { id: "assignment-1", branchId, serviceRecordCaseId: "case-1" },
+            data: { startDate: date("2026-07-01"), endDate: date("2026-07-16") },
+        });
+        expect(tx.service_record_case.update).toHaveBeenCalledWith({
+            where: { id: "case-1", branchId },
+            data: {
+                startDate: date("2026-07-01"),
+                endDate: date("2026-07-16"),
+                finalizationDueAt: expect.any(Date),
+                version: { increment: 1 },
+            },
+        });
+        expect(tx.service_record_token.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ branchId, serviceRecordCaseId: "case-1", active: true, revokedAt: null }),
+        }));
+    });
+
+    it("leaves a case whose documents are still being generated alone", async () => {
+        const { tx, service } = setup(SERVICE_RECORD_CASE_STATUS.FINALIZING);
+        await service.syncFinalizedPeriods(1, tx as unknown as Prisma.TransactionClient, branchId);
+        expect(tx.service_record_case.update).not.toHaveBeenCalled();
+        expect(tx.service_record_assignment.update).not.toHaveBeenCalled();
     });
 });

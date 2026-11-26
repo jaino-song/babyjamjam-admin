@@ -45,10 +45,11 @@ import {
     type ClientBabyField, type ClientProviderField, type ClientProviderIds,
 } from "./client-baby-allocation";
 import { ClientBabyRecordOwners, ClientBabyRetirementList, ClientSavedProviderInput } from "./ClientBabyRecordOwners";
-import { getStartDateLock } from "./start-date-lock";
+import { getStartDateLock, type StartDateLock } from "./start-date-lock";
 import {
     getContractInfoChangeKey,
     getContractInfoChanges,
+    getServiceRecordDocumentChanges,
     isContractLocked,
     type ContractInfoChangeRow,
 } from "./contract-info-changes";
@@ -139,6 +140,25 @@ export type { ClientFormData };
 
 /** Static guidance shown in a field's label-row slot while nothing more urgent applies. */
 const AREA_FIELD_GUIDANCE = "자동문자 입금 계좌에 쓰여요";
+const SERVICE_RECORD_DOCUMENT_CHANGE_CONFIRM_DESCRIPTION =
+    "제공기록지 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?";
+const START_DATE_STARTED_TITLE = "서비스 시작 후 변경";
+const START_DATE_STARTED_DESCRIPTION = "서비스가 이미 시작되었어요. 그래도 변경할까요?";
+const START_DATE_RECORDS_TITLE = "제공기록지 회차 처리";
+const START_DATE_RECORDS_DESCRIPTION =
+    "이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?";
+const START_DATE_SHIFT_DESCRIPTION = "새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?";
+// Mirrors DATE_EDITABLE_FINALIZED_STATUSES in service-record-lifecycle.service.ts: such a case only
+// moves its sessions with the new start, since starting over would delete the signed ones.
+const FINALIZED_SERVICE_RECORD_STATUSES = new Set<string>(["FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"]);
+
+type StartDateChangeStep = "started" | "records" | "shift";
+
+/** A finalized household only moves its sessions, so it skips the started and records questions. */
+function startDateChangeStep(lock: StartDateLock): StartDateChangeStep {
+    if (lock.finalized) return "shift";
+    return lock.serviceStarted ? "started" : "records";
+}
 const OUT_OF_POCKET_PRICE_ERROR = "자부담 요금을 불러오지 못했어요";
 const CLIENT_END_DATE_CHANGED_MESSAGE =
     "그동안 서비스 종료일이 바뀌어 저장하지 않았어요. 창을 닫고 다시 열어 최신 정보로 수정해 주세요.";
@@ -646,11 +666,18 @@ function ClientFormContent({
         key: string;
         rows: ContractInfoChangeRow[];
     } | null>(null);
+    // A completed service-record document keeps the old name and dates, so a save that changes
+    // them asks once more after the contract question, remembering both answers given so far.
+    const [pendingRecordDocumentChange, setPendingRecordDocumentChange] = useState<{
+        confirmedPeriod?: string;
+        contractInfoChangeKey?: string;
+        key: string;
+    } | null>(null);
     const [pendingStartDateChange, setPendingStartDateChange] = useState<{
         id: number;
         dto: UpdateClientDto;
-        lock: { serviceStarted: boolean; recordedSessionCount: number };
-        step: "started" | "records";
+        lock: StartDateLock;
+        step: StartDateChangeStep;
     } | null>(null);
     const submissionInFlightRef = useRef(false);
     const summaryRef = useRef<HTMLDivElement>(null);
@@ -1181,6 +1208,7 @@ function ClientFormContent({
                 pendingFieldFocusRef.current = null;
                 setPendingDurationConfirmation(null);
                 setPendingContractInfoChange(null);
+                setPendingRecordDocumentChange(null);
                 setPendingStartDateChange(null);
             });
         }
@@ -1799,7 +1827,11 @@ function ClientFormContent({
             && !current.isInvalidated && current.data === false;
     };
 
-    const handleSubmit = async (confirmedPeriod?: string, confirmedContractInfoChangeKey?: string) => {
+    const handleSubmit = async (
+        confirmedPeriod?: string,
+        confirmedContractInfoChangeKey?: string,
+        confirmedRecordDocumentChangeKey?: string,
+    ) => {
         const session = formSessionRef.current;
         if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit
             || !canWriteInSession(session, shouldWriteAllocation)) return;
@@ -1890,6 +1922,7 @@ function ClientFormContent({
             if (fresh.changed || recalculated) {
                 setPendingDurationConfirmation(null);
                 setPendingContractInfoChange(null);
+                setPendingRecordDocumentChange(null);
                 setErrorAndScroll(t(locale, "common.calendar-changed-before-save"));
                 return;
             }
@@ -1934,6 +1967,22 @@ function ClientFormContent({
                     }
                 }
                 setPendingContractInfoChange(null);
+                // A completed service-record document keeps its name and dates as well. Ask about it
+                // on its own, after the contract, bound to these exact values.
+                if (client.serviceRecordCompleted === true) {
+                    const recordDocumentChangeKey = getContractInfoChangeKey(
+                        getServiceRecordDocumentChanges(getEffectiveBaseline(), formData),
+                    );
+                    if (recordDocumentChangeKey !== "[]" && confirmedRecordDocumentChangeKey !== recordDocumentChangeKey) {
+                        setPendingRecordDocumentChange({
+                            confirmedPeriod,
+                            contractInfoChangeKey: confirmedContractInfoChangeKey,
+                            key: recordDocumentChangeKey,
+                        });
+                        return;
+                    }
+                }
+                setPendingRecordDocumentChange(null);
                 // Send only what the user changed since the form was opened. The backend moves the
                 // end date by itself (a delayed session extends it), so a full snapshot would roll
                 // that back. A save that touches the service period carries the end date this form
@@ -1962,16 +2011,19 @@ function ClientFormContent({
                     }
                     const { record } = overview;
                     if (record && Array.isArray(record.sessions) && (record.startDate ?? "") !== (updateDto.startDate ?? "")) {
-                        const lock = {
+                        const finalized = client.serviceRecordFinalized === true
+                            || FINALIZED_SERVICE_RECORD_STATUSES.has(record.status);
+                        const lock: StartDateLock = {
                             serviceStarted: Boolean(record.startDate && isoDateInKorea() >= record.startDate),
                             recordedSessionCount: record.sessions.length,
+                            ...(finalized ? { finalized: true as const } : {}),
                         };
                         if (lock.serviceStarted || lock.recordedSessionCount > 0) {
                             setPendingStartDateChange({
                                 id: client.id,
                                 dto: updateDto,
                                 lock,
-                                step: lock.serviceStarted ? "started" : "records",
+                                step: startDateChangeStep(lock),
                             });
                             return;
                         }
@@ -1984,7 +2036,7 @@ function ClientFormContent({
                     if (!session.open || session !== formSessionRef.current) return;
                     const lock = getStartDateLock(cause);
                     if (!lock) throw cause;
-                    if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
+                    if (!lock.finalized && !lock.serviceStarted && lock.recordedSessionCount === 0) {
                         await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED", session);
                         return;
                     }
@@ -1992,7 +2044,7 @@ function ClientFormContent({
                         id: client.id,
                         dto: updateDto,
                         lock,
-                        step: lock.serviceStarted ? "started" : "records",
+                        step: startDateChangeStep(lock),
                     });
                     return;
                 }
@@ -2163,6 +2215,7 @@ function ClientFormContent({
 
         setPendingDurationConfirmation(null);
         setPendingContractInfoChange(null);
+        setPendingRecordDocumentChange(null);
         setPendingStartDateChange(null);
         setPendingBabyRetirement(null);
         if (searchParams.get("openClientForm") === "1") {
@@ -3273,89 +3326,94 @@ function ClientFormContent({
         </Dialog>
     );
 
+    const recordDocumentChangeConfirmationDialog = (
+        <TwoButtonModal
+            data-component={`${base}_record-document-change-confirmation`}
+            open={open && !isAllocationBlockingSubmit && pendingRecordDocumentChange !== null}
+            onOpenChange={(isOpen) => { if (!isOpen) setPendingRecordDocumentChange(null); }}
+            size="review"
+            layout="question"
+            title={CONTRACT_INFO_CHANGE_CONFIRM_TITLE}
+            description={SERVICE_RECORD_DOCUMENT_CHANGE_CONFIRM_DESCRIPTION}
+            cancelLabel="취소"
+            approvalLabel="수정"
+            approvalDisabled={isSubmitting || isUnknownOutcome}
+            onApprove={() => {
+                if (pendingRecordDocumentChange !== null) {
+                    void handleSubmit(
+                        pendingRecordDocumentChange.confirmedPeriod,
+                        pendingRecordDocumentChange.contractInfoChangeKey,
+                        pendingRecordDocumentChange.key,
+                    );
+                }
+            }}
+        />
+    );
+
     const startDateStartedConfirmationDialog = (
-        <Dialog
+        <TwoButtonModal
+            data-component={`${base}_start-date-started-confirmation`}
             open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "started"}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
-        >
-            <FormDialogShell
-                data-component={`${base}_start-date-started-confirmation`}
-                size="compact"
-                title="서비스 시작 후 변경"
-                description="서비스가 이미 시작되었어요. 그래도 변경할까요?"
-                footer={(
-                    <>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            data-component={`${base}_start-date-started-confirmation_cancel`}
-                            disabled={isSubmitting}
-                            onClick={() => setPendingStartDateChange(null)}
-                        >
-                            취소
-                        </Button>
-                        <Button
-                            type="button"
-                            data-component={`${base}_start-date-started-confirmation_proceed`}
-                            disabled={isSubmitting}
-                            onClick={() => {
-                                if (!pendingStartDateChange) return;
-                                if (pendingStartDateChange.lock.recordedSessionCount > 0) {
-                                    setPendingStartDateChange({ ...pendingStartDateChange, step: "records" });
-                                } else {
-                                    void retryStartDateChange("CONFIRM_STARTED");
-                                }
-                            }}
-                        >
-                            진행
-                        </Button>
-                    </>
-                )}
-            >
-                <p data-component={`${base}_start-date-started-confirmation_message`}>
-                    서비스가 이미 시작되었어요. 그래도 변경할까요?
-                </p>
-            </FormDialogShell>
-        </Dialog>
+            size="review"
+            layout="question"
+            title={START_DATE_STARTED_TITLE}
+            description={START_DATE_STARTED_DESCRIPTION}
+            cancelLabel="취소"
+            cancelDisabled={isSubmitting}
+            cancelButtonDataComponent={`${base}_start-date-started-confirmation_cancel`}
+            approvalLabel="진행"
+            approvalDisabled={isSubmitting}
+            approvalButtonDataComponent={`${base}_start-date-started-confirmation_proceed`}
+            onApprove={() => {
+                if (!pendingStartDateChange) return;
+                if (pendingStartDateChange.lock.recordedSessionCount > 0) {
+                    setPendingStartDateChange({ ...pendingStartDateChange, step: "records" });
+                } else {
+                    void retryStartDateChange("CONFIRM_STARTED");
+                }
+            }}
+        />
     );
 
     const startDateRecordsConfirmationDialog = (
-        <Dialog
+        <TwoButtonModal
+            data-component={`${base}_start-date-records-confirmation`}
             open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "records"}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
-        >
-            <FormDialogShell
-                data-component={`${base}_start-date-records-confirmation`}
-                size="compact"
-                title="제공기록지 회차 처리"
-                description="이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?"
-                footer={(
-                    <>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            data-component={`${base}_start-date-records-confirmation_restart`}
-                            disabled={isSubmitting}
-                            onClick={() => void retryStartDateChange("RESTART")}
-                        >
-                            처음부터 시작
-                        </Button>
-                        <Button
-                            type="button"
-                            data-component={`${base}_start-date-records-confirmation_move`}
-                            disabled={isSubmitting}
-                            onClick={() => void retryStartDateChange("MOVE")}
-                        >
-                            모두 옮기기
-                        </Button>
-                    </>
-                )}
-            >
-                <p data-component={`${base}_start-date-records-confirmation_message`}>
-                    이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?
-                </p>
-            </FormDialogShell>
-        </Dialog>
+            size="review"
+            layout="question"
+            title={START_DATE_RECORDS_TITLE}
+            description={START_DATE_RECORDS_DESCRIPTION}
+            cancelLabel="처음부터 시작"
+            onCancel={() => void retryStartDateChange("RESTART")}
+            cancelDisabled={isSubmitting}
+            cancelButtonDataComponent={`${base}_start-date-records-confirmation_restart`}
+            approvalLabel="모두 옮기기"
+            approvalDisabled={isSubmitting}
+            approvalButtonDataComponent={`${base}_start-date-records-confirmation_move`}
+            onApprove={() => void retryStartDateChange("MOVE")}
+        />
+    );
+
+    // A finalized household only moves its submitted and signed sessions with the new start.
+    const startDateShiftConfirmationDialog = (
+        <TwoButtonModal
+            data-component={`${base}_start-date-shift-confirmation`}
+            open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "shift"}
+            onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
+            size="review"
+            layout="question"
+            title={START_DATE_RECORDS_TITLE}
+            description={START_DATE_SHIFT_DESCRIPTION}
+            cancelLabel="취소"
+            cancelDisabled={isSubmitting}
+            cancelButtonDataComponent={`${base}_start-date-shift-confirmation_cancel`}
+            approvalLabel="진행"
+            approvalDisabled={isSubmitting}
+            approvalButtonDataComponent={`${base}_start-date-shift-confirmation_proceed`}
+            onApprove={() => void retryStartDateChange("MOVE")}
+        />
     );
 
     const panelFooter = panelFormActions;
@@ -3388,8 +3446,10 @@ function ClientFormContent({
                 {durationConfirmationDialog}
                 {babyRetirementDialog}
                 {contractInfoChangeConfirmationDialog}
+                {recordDocumentChangeConfirmationDialog}
                 {startDateStartedConfirmationDialog}
                 {startDateRecordsConfirmationDialog}
+                {startDateShiftConfirmationDialog}
             </>
         );
     }
@@ -3415,8 +3475,10 @@ function ClientFormContent({
             {durationConfirmationDialog}
             {babyRetirementDialog}
             {contractInfoChangeConfirmationDialog}
+            {recordDocumentChangeConfirmationDialog}
             {startDateStartedConfirmationDialog}
             {startDateRecordsConfirmationDialog}
+            {startDateShiftConfirmationDialog}
         </>
     );
 }

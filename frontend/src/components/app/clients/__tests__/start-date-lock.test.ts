@@ -16,6 +16,13 @@ describe("getStartDateLock", () => {
     expect(getStartDateLock(responseError(lock))).toEqual(lock);
   });
 
+  it("keeps the finalized mark only when it is exactly true", () => {
+    expect(getStartDateLock(responseError({ serviceStarted: true, recordedSessionCount: 3, finalized: true })))
+      .toEqual({ serviceStarted: true, recordedSessionCount: 3, finalized: true });
+    expect(getStartDateLock(responseError({ serviceStarted: true, recordedSessionCount: 3, finalized: "true" })))
+      .toEqual({ serviceStarted: true, recordedSessionCount: 3 });
+  });
+
   it("returns only whitelisted fields", () => {
     expect(getStartDateLock(responseError({ serviceStarted: true, recordedSessionCount: 3, secret: "dropped" })))
       .toEqual({ serviceStarted: true, recordedSessionCount: 3 });

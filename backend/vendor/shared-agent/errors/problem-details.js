@@ -1365,10 +1365,11 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
         if (isRecord(startDateLock)) {
             const serviceStarted = readOwn(startDateLock, "serviceStarted").value;
             const recordedSessionCount = readOwn(startDateLock, "recordedSessionCount").value;
+            const finalized = readOwn(startDateLock, "finalized").value;
             if (typeof serviceStarted === "boolean"
                 && typeof recordedSessionCount === "number" && Number.isSafeInteger(recordedSessionCount)
                 && recordedSessionCount >= 0 && recordedSessionCount <= MAX_START_DATE_LOCK_SESSION_COUNT) {
-                parsed.startDateLock = { serviceStarted, recordedSessionCount };
+                parsed.startDateLock = { serviceStarted, recordedSessionCount, ...(finalized === true ? { finalized } : {}) };
             }
         }
     }

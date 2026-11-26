@@ -211,6 +211,45 @@ describe("ClientFormDialog start-date confirmation", () => {
         expectKeptForm(props);
     });
 
+    it("asks a finalized household only whether to move its sessions, and 진행 sends MOVE once", async () => {
+        updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
+        const { props } = await renderDialog();
+        await submitChangedDate();
+        const confirmation = await screen.findByRole("dialog", { name: recordsTitle });
+        expect(confirmation).toHaveAttribute("data-component", `${base}_start-date-shift-confirmation`);
+        expect(confirmation).toHaveTextContent("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?");
+        expect(within(confirmation).getAllByRole("button").map((item) => item.textContent)).toEqual(["취소", "진행"]);
+        expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+        expectKeptForm(props);
+        await userEvent.setup().click(button("진행"));
+        await waitFor(() => expect(props.onClose).toHaveBeenCalledTimes(1));
+        expect(updateMutateAsync).toHaveBeenCalledTimes(2);
+        expect(updateMutateAsync.mock.calls[1][0]).toEqual({
+            id: client.id,
+            dto: { ...updateMutateAsync.mock.calls[0][0].dto, startDateChangeMode: "MOVE" },
+        });
+    });
+
+    it("asks a finalized household before service starts instead of retrying silently", async () => {
+        updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: false, recordedSessionCount: 0, finalized: true }));
+        const { props } = await renderDialog();
+        await submitChangedDate();
+        await screen.findByRole("dialog", { name: recordsTitle });
+        expectKeptForm(props);
+    });
+
+    it.each(["cancel", "escape"])("%s on the finalized move question sends nothing more and keeps edits", async (action) => {
+        updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
+        const { props } = await renderDialog();
+        await submitChangedDate();
+        await screen.findByRole("dialog", { name: recordsTitle });
+        const user = userEvent.setup();
+        if (action === "cancel") await user.click(button("취소"));
+        else await user.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument());
+        expectKeptForm(props);
+    });
+
     it.each(["escape", "backdrop"])("dismissing records via %s sends no RESTART request", async (action) => {
         updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: false, recordedSessionCount: 2 }));
         const { props } = await renderDialog();

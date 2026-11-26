@@ -224,6 +224,7 @@ describe("ClientService", () => {
     const createMockServiceRecordLifecycleService = () => ({
         validatePeriodChange: jest.fn().mockResolvedValue(undefined),
         ensureAllForClient: jest.fn().mockResolvedValue([]),
+        syncFinalizedPeriods: jest.fn().mockResolvedValue(undefined),
         recompute: jest.fn().mockResolvedValue(undefined),
         resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         markTerminated: jest.fn().mockResolvedValue(undefined),
@@ -3077,6 +3078,25 @@ describe("ClientService", () => {
                 expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
             });
 
+            it("moves the finalized cases after a date edit, and leaves them alone otherwise", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                await service.update(branchId, existingClient.id, { address: "Somewhere" });
+                expect(serviceRecordLifecycleService.syncFinalizedPeriods).not.toHaveBeenCalled();
+
+                await service.update(branchId, existingClient.id, { endDate: "2024-05-30" });
+
+                expect(serviceRecordLifecycleService.syncFinalizedPeriods).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLifecycleService.syncFinalizedPeriods).toHaveBeenCalledWith(
+                    existingClient.id, prismaService, branchId,
+                );
+                // Lifecycle sync skips finalized cases, so the finalized pass comes after it.
+                const syncOrder = serviceRecordLifecycleService.ensureAllForClient.mock.invocationCallOrder;
+                expect(syncOrder[syncOrder.length - 1]!)
+                    .toBeLessThan(serviceRecordLifecycleService.syncFinalizedPeriods.mock.invocationCallOrder[0]!);
+            });
+
             it("does not write client state when the internal claim rejects", async () => {
                 findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
                 const beforeWrite = jest.fn(async () => { throw new ConflictException({ code: "ITEM_NOT_OPEN" }); });
@@ -4834,24 +4854,37 @@ describe("ClientService", () => {
             });
         });
 
-        it("flags serviceRecordPeriodLocked from one batched finalized-case lookup", async () => {
-            const lockedClient = createClientEntity();
-            const openClient = createClientEntity();
-            Object.assign(lockedClient, { id: 1 });
-            Object.assign(openClient, { id: 2 });
-            listClientsUsecase.execute.mockResolvedValue([lockedClient, openClient]);
-            prismaService.service_record_case.findMany.mockResolvedValue([{ clientId: 1 }]);
+        it("flags each finalized stage from one batched finalized-case lookup", async () => {
+            const clients = [1, 2, 3, 4].map((id) => Object.assign(createClientEntity(), { id }));
+            listClientsUsecase.execute.mockResolvedValue(clients);
+            prismaService.service_record_case.findMany.mockResolvedValue([
+                { clientId: 1, status: "FINALIZING" },
+                { clientId: 2, status: "DOCUMENTS_CREATED" },
+                { clientId: 3, status: "COMPLETED" },
+            ]);
 
             const result = await service.findAll(branchId);
 
-            expect(result.map((client) => [client.id, client.serviceRecordPeriodLocked])).toEqual([[1, true], [2, false]]);
+            // Only document generation locks the period. Every finalized stage asks to move the
+            // sessions with a new start, and only a completed one warns about its documents.
+            expect(result.map((client) => [
+                client.id,
+                client.serviceRecordPeriodLocked,
+                client.serviceRecordFinalized,
+                client.serviceRecordCompleted,
+            ])).toEqual([
+                [1, true, true, false],
+                [2, false, true, false],
+                [3, false, true, true],
+                [4, false, false, false],
+            ]);
             expect(prismaService.service_record_case.findMany).toHaveBeenCalledTimes(1);
             expect(prismaService.service_record_case.findMany).toHaveBeenCalledWith({
                 where: {
-                    clientId: { in: [1, 2] },
+                    clientId: { in: [1, 2, 3, 4] },
                     status: { in: ["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"] },
                 },
-                select: { clientId: true },
+                select: { clientId: true, status: true },
             });
         });
 

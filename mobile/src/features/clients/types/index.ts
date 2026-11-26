@@ -74,8 +74,12 @@ export interface Client {
     latestContractDocumentId?: string | null;
     badges?: ClientBadge[];
     actionRequired?: ClientActionRequired | null;
-    /** 서비스 기록이 확정 단계라 시작일·종료일·서비스 기간을 바꿀 수 없어요. */
+    /** 제공기록지 문서를 만드는 몇 초 동안이라 시작일·종료일·서비스 기간을 잠시 바꿀 수 없어요. */
     serviceRecordPeriodLocked?: boolean;
+    /** 제공기록지가 확정 단계예요. 시작일을 옮기면 제출·서명된 회차도 새 시작일로 함께 옮겨요. */
+    serviceRecordFinalized?: boolean;
+    /** 제공기록지 전자문서가 완료됐어요. 이름·시작일·종료일을 고쳐도 그 문서는 바뀌지 않아요. */
+    serviceRecordCompleted?: boolean;
 }
 
 // Create client DTO - Frontend sends employeeId, backend converts to scheduleId

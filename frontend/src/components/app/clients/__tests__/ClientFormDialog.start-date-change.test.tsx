@@ -86,7 +86,7 @@ const client: Client = {
 const startedTitle = "서비스 시작 후 변경";
 const recordsTitle = "제공기록지 회차 처리";
 
-function lockError(lock?: { serviceStarted: boolean; recordedSessionCount: number }) {
+function lockError(lock?: { serviceStarted: boolean; recordedSessionCount: number; finalized?: true }) {
   return {
     response: {
       status: 409,
@@ -213,7 +213,7 @@ describe("client start-date change confirmation", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it.each(["취소", "Close", "Escape", "overlay"])("%s cancels the started confirmation without losing form values", async (action) => {
+  it.each(["취소", "Escape", "overlay"])("%s cancels the started confirmation without losing form values", async (action) => {
     mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 0 }));
     const { onClose, onSuccess } = await submitChangedStartDate();
     const modal = await screen.findByRole("dialog", { name: startedTitle });
@@ -233,7 +233,7 @@ describe("client start-date change confirmation", () => {
     expectNoInlineError();
   });
 
-  it.each(["Close", "Escape", "overlay"])("%s cancels the records confirmation with no retry or error", async (action) => {
+  it.each(["Escape", "overlay"])("%s cancels the records confirmation with no retry or error", async (action) => {
     mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: false, recordedSessionCount: 2 }));
     const { onClose } = await submitChangedStartDate();
     const modal = await screen.findByRole("dialog", { name: recordsTitle });
@@ -249,6 +249,43 @@ describe("client start-date change confirmation", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument());
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("시작일")).toHaveValue("2026-08-27");
+    expectNoInlineError();
+  });
+
+  it("asks a finalized household only whether to move its sessions, and 진행 moves them", async () => {
+    mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
+    const { onSuccess, onClose } = await submitChangedStartDate("dialog");
+    const modal = await screen.findByRole("dialog", { name: recordsTitle });
+    expect(modal).toHaveAttribute("data-component", "desktop_clients_form-dialog_start-date-shift-confirmation");
+    expect(within(modal).getByText("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?", { selector: "p:not(.sr-only)" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+    expect(within(modal).queryByRole("button", { name: "처음부터 시작" })).not.toBeInTheDocument();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expectNoInlineError();
+    fireEvent.click(within(modal).getByRole("button", { name: "진행" }));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(client));
+    expectRetry("MOVE");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the silent retry for a finalized household even before service starts", async () => {
+    mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: false, recordedSessionCount: 0, finalized: true }));
+    await submitChangedStartDate();
+    expect(await screen.findByRole("dialog", { name: recordsTitle })).toHaveTextContent("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?");
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["취소", "Escape"])("%s leaves a finalized household's start date unsaved and the form as typed", async (action) => {
+    mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
+    const { onClose, onSuccess } = await submitChangedStartDate();
+    const modal = await screen.findByRole("dialog", { name: recordsTitle });
+    if (action === "Escape") fireEvent.keyDown(modal, { key: "Escape" });
+    else fireEvent.click(within(modal).getByRole("button", { name: action }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument());
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSuccess).not.toHaveBeenCalled();
     expect(screen.getByLabelText("시작일")).toHaveValue("2026-08-27");
     expectNoInlineError();
   });

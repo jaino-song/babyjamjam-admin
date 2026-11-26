@@ -18,8 +18,6 @@ export function outOfPeriodSessions(
     if (!record?.startDate || !record.endDate) return [];
     const start = record.startDate.slice(0, 10);
     const end = record.endDate.slice(0, 10);
-    const windowStart = new Date(`${start}T00:00:00Z`).getTime() - 7 * 86400000;
-    const windowEnd = new Date(`${end}T00:00:00Z`).getTime() + 7 * 86400000;
     const sessions = new Map<number, PeriodMismatchSession>();
     for (const assignment of assignments) {
         for (const session of assignment.sessions) {
@@ -27,11 +25,12 @@ export function outOfPeriodSessions(
             if (!sessions.has(session.sessionIndex)) sessions.set(session.sessionIndex, session);
         }
     }
+    // Any distance counts, as on the server: an end date moved before a submitted session can
+    // leave it further out than the seven days a provider may pick.
     return [...sessions.values()].filter((session) => {
         const date = session.serviceDate.slice(0, 10);
-        const time = new Date(`${date}T00:00:00Z`).getTime();
         return session.locked && session.sessionIndex >= 1 && session.sessionIndex <= record.totalSessions
-            && time >= windowStart && time <= windowEnd && (date < start || date > end);
+            && (date < start || date > end);
     }).sort((a, b) => a.sessionIndex - b.sessionIndex);
 }
 

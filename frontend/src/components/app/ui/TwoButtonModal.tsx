@@ -56,6 +56,12 @@ export interface TwoButtonModalProps {
   description: ReactNode;
   children?: ReactNode;
   cancelLabel?: ReactNode;
+  /**
+   * Runs on the left button in place of closing, when that button is the other choice
+   * rather than a way out. Escape and the overlay still close.
+   */
+  onCancel?: () => void;
+  cancelDisabled?: boolean;
   approvalLabel: ReactNode;
   pendingLabel?: ReactNode;
   onApprove: () => void;
@@ -88,6 +94,8 @@ export function TwoButtonModal({
   description,
   children,
   cancelLabel = "취소",
+  onCancel,
+  cancelDisabled = false,
   approvalLabel,
   pendingLabel,
   onApprove,
@@ -200,8 +208,8 @@ export function TwoButtonModal({
             size="sm"
             className="w-1/2"
             data-component={cancelButtonDataComponent ?? sub("cancel")}
-            disabled={isPending}
-            onClick={() => handleOpenChange(false)}
+            disabled={isPending || cancelDisabled}
+            onClick={() => (onCancel ? onCancel() : handleOpenChange(false))}
           >
             {cancelLabel}
           </Button>

@@ -1713,8 +1713,10 @@ describe("ClientServiceRecordsTab", () => {
             ["2026-08-20", 1, false, false],
             ["2026-08-03", 1, true, false],
             ["2026-08-27", 1, true, false],
-            ["2026-08-02", 1, false, true],
-            ["2026-08-28", 1, false, true],
+            // Any distance counts: an end date moved before a submitted session can leave it far out.
+            ["2026-08-02", 1, true, false],
+            ["2026-08-28", 1, true, false],
+            ["2026-07-01", 1, true, false],
             ["2026-08-15", 7, false, true],
         ])("partitions %s index %s (badge=%s legacy=%s)", (date, index, badge, legacy) => {
             const { container } = render(tab(overviewFor([session(index, date)])));
@@ -1741,7 +1743,20 @@ describe("ClientServiceRecordsTab", () => {
             }
         });
 
-        it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])(
+        it.each(["FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])(
+            "shows mismatch actions for a finalized %s case",
+            (status) => {
+                const overview = overviewFor([session(1, "2026-08-07")]);
+                overview.record!.status = status;
+                render(tab(overview));
+
+                expect(screen.getByText(title)).toBeInTheDocument();
+                expect(screen.getByRole("button", { name: "유지" })).toBeInTheDocument();
+                expect(screen.getByRole("button", { name: "변경" })).toBeInTheDocument();
+            },
+        );
+
+        it.each(["FINALIZING"])(
             "hides mismatch actions for %s while keeping the out-of-period mark",
             (status) => {
                 const overview = overviewFor([session(1, "2026-08-07")]);

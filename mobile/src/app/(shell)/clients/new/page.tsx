@@ -174,7 +174,8 @@ interface StartDateConfirmation {
   id: number;
   dto: UpdateClientDto;
   lock: NonNullable<NonNullable<NormalizedApiError["problem"]>["startDateLock"]>;
-  step: "started" | "records";
+  /** A finalized household only moves its sessions, so it gets the "shift" question alone. */
+  step: "started" | "records" | "shift";
 }
 
 const formatPrice = (price: number | string): string => {
@@ -1117,14 +1118,14 @@ export default function NewClientPage() {
     ) {
       if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
       setErrorState(null);
-      if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
+      if (!lock.finalized && !lock.serviceStarted && lock.recordedSessionCount === 0) {
         await retryStartDateChange("CONFIRM_STARTED", { id: editingClientId, dto: updateDto });
       } else {
         setStartDateConfirmation({
           id: editingClientId,
           dto: updateDto,
           lock,
-          step: lock.serviceStarted ? "started" : "records",
+          step: lock.finalized ? "shift" : lock.serviceStarted ? "started" : "records",
         });
       }
       return;
@@ -2063,6 +2064,20 @@ export default function NewClientPage() {
         loading={isSaving}
         onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
         onCancel={() => { void retryStartDateChange("RESTART"); }}
+        onConfirm={() => retryStartDateChange("MOVE")}
+      />
+      <MobileTwoButtonModal
+        data-component="mobile_clients-new_screen_root_start-date-shift-confirmation"
+        open={startDateConfirmation?.step === "shift"}
+        title="제공기록지 회차 처리"
+        description="새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?"
+        cancelLabel="취소"
+        confirmLabel="진행"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isSaving}
+        onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
+        onCancel={dismissStartDateConfirmation}
         onConfirm={() => retryStartDateChange("MOVE")}
       />
       <MobileTwoButtonModal

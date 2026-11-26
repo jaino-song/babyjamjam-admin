@@ -163,7 +163,8 @@ export interface ProblemDetails {
     recovery?: ProblemRecovery;
     /** Plain text only: consumers must never render this name as HTML. */
     deletedEmployee?: { id: number; name: string };
-    startDateLock?: { serviceStarted: boolean; recordedSessionCount: number };
+    /** finalized: the household has a finalized case, so its sessions can only move with the new start. */
+    startDateLock?: { serviceStarted: boolean; recordedSessionCount: number; finalized?: true };
     serviceDateReason?: "OUT_OF_RANGE" | "NOT_SERVICE_DAY" | "TAKEN" | "BEFORE_PREVIOUS" | "AFTER_NEXT" | "NO_ROOM_FOR_GAP";
 }
 
@@ -1636,10 +1637,11 @@ function parseProblemDetailsInternal(
         if (isRecord(startDateLock)) {
             const serviceStarted = readOwn(startDateLock, "serviceStarted").value;
             const recordedSessionCount = readOwn(startDateLock, "recordedSessionCount").value;
+            const finalized = readOwn(startDateLock, "finalized").value;
             if (typeof serviceStarted === "boolean"
                 && typeof recordedSessionCount === "number" && Number.isSafeInteger(recordedSessionCount)
                 && recordedSessionCount >= 0 && recordedSessionCount <= MAX_START_DATE_LOCK_SESSION_COUNT) {
-                parsed.startDateLock = { serviceStarted, recordedSessionCount };
+                parsed.startDateLock = { serviceStarted, recordedSessionCount, ...(finalized === true ? { finalized } : {}) };
             }
         }
     }

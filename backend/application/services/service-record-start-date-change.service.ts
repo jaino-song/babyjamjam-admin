@@ -7,7 +7,10 @@ import {
 } from "@babyjamjam/shared/utils/service-record-schedule";
 
 import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
-import type { StartDateChangeDecision } from "application/services/service-record-lifecycle.service";
+import {
+    DATE_EDITABLE_FINALIZED_STATUSES,
+    type StartDateChangeDecision,
+} from "application/services/service-record-lifecycle.service";
 import {
     parsePlannedVector,
     persistReevaluationIntents,
@@ -51,6 +54,10 @@ interface OwnerPeriod {
 }
 
 const toDbDate = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Moves a timestamp by the whole days its session moved, keeping its time of day. */
+const shiftByDays = (value: Date | null, days: number): Date | null =>
+    value && days !== 0 ? new Date(value.getTime() + days * DAY_MS) : value;
 
 /** Applies an explicitly confirmed start change under the caller's service-record write locks. */
 @Injectable()
@@ -72,7 +79,7 @@ export class ServiceRecordStartDateChangeService {
         }
         const records = await tx.service_record_case.findMany({
             where: { branchId, clientId, ...(decision.cases ? { id: { in: decision.cases.map(({ caseId }) => caseId) } } : {}) },
-            select: { id: true, requiredSessionCount: true, plannedSessions: true },
+            select: { id: true, status: true, requiredSessionCount: true, plannedSessions: true },
             orderBy: { id: "asc" },
         });
         if (records.length !== (decision.cases?.length ?? 1)) {
@@ -122,7 +129,7 @@ export class ServiceRecordStartDateChangeService {
     private async applyCase(
         tx: Prisma.TransactionClient,
         params: StartDateChangeParams & { newStartDate: Date },
-        record: { id: string; requiredSessionCount: number | null; plannedSessions: Prisma.JsonValue },
+        record: { id: string; status: string; requiredSessionCount: number | null; plannedSessions: Prisma.JsonValue },
     ): Promise<{ endDate: Date | null; periods: CorrectedSchedulePeriod[] }> {
         const { branchId, clientId, decision, newStartDate } = params;
         const client = await tx.client.findFirst({
@@ -228,14 +235,22 @@ export class ServiceRecordStartDateChangeService {
         if (decision.mode === "RESTART") {
             await tx.service_record_day.deleteMany({ where: caseWhere });
         } else if (decision.mode === "MOVE") {
+            // A finalized session keeps its signature and submission on the day it was done,
+            // so those times move with it. The archive above keeps the times before the move.
+            const finalized = DATE_EDITABLE_FINALIZED_STATUSES.has(record.status);
             for (const day of days) {
                 const date = dates[(day.caseSessionIndex ?? day.sessionIndex) - 1];
                 if (!date) continue;
+                const movedDays = Math.round((toDbDate(date).getTime() - toDbDate(day.serviceDate.toISOString().slice(0, 10)).getTime()) / DAY_MS);
                 await tx.service_record_day.updateMany({
                     where: { ...caseWhere, id: day.id },
                     data: {
                         serviceDate: toDbDate(date),
-                        ...(day.serviceDate.toISOString().slice(0, 10) !== date ? { periodMismatchKeptAt: null } : {}),
+                        ...(movedDays !== 0 ? { periodMismatchKeptAt: null } : {}),
+                        ...(finalized && movedDays !== 0 ? {
+                            clientSignedAt: shiftByDays(day.clientSignedAt, movedDays),
+                            submittedAt: shiftByDays(day.submittedAt, movedDays),
+                        } : {}),
                     },
                 });
             }

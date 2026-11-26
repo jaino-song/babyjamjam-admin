@@ -109,7 +109,11 @@ import {
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
-import { IMMUTABLE_FINALIZATION_STATUSES, ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import {
+    IMMUTABLE_FINALIZATION_STATUSES,
+    SERVICE_RECORD_CASE_STATUS,
+    ServiceRecordLifecycleService,
+} from "./service-record-lifecycle.service";
 import { ServiceRecordStartDateChangeService } from "./service-record-start-date-change.service";
 import { SystemSettingService } from "./system-setting.service";
 import { permitsRecordLinkRecovery, recordLinkClientStatus, type RecordLinkStatusInputs } from "infrastructure/database/repositories/record-link-recovery.repository";
@@ -240,8 +244,12 @@ export interface ClientWithEmployees extends Partial<ClientAllocationProjection>
     latestContractDocumentId?: string | null;
     badges: ClientBadge[];
     actionRequired: ClientActionRequired | null;
-    /** 서비스 기록이 확정 단계라 시작일·종료일·서비스 기간을 바꿀 수 없어요. */
+    /** 제공기록지 문서를 만드는 몇 초 동안이라 시작일·종료일·서비스 기간을 잠시 바꿀 수 없어요. */
     serviceRecordPeriodLocked?: boolean;
+    /** 제공기록지가 확정 단계예요. 시작일을 옮기면 제출·서명된 회차도 새 시작일로 함께 옮겨요. */
+    serviceRecordFinalized?: boolean;
+    /** 제공기록지 전자문서가 완료됐어요. 이름·시작일·종료일을 고쳐도 그 문서는 바뀌지 않아요. */
+    serviceRecordCompleted?: boolean;
     primaryEmployee: { id: number; name: string; phone: string | null } | null;
     secondaryEmployee: { id: number; name: string; phone: string | null } | null;
 }
@@ -1904,12 +1912,17 @@ export class ClientService {
         const schedulesById = new Map(schedules.map(s => [s.id, s]));
         const allocations = await loadClientAllocations(this.prismaService, branchid, clientIds);
 
-        // 확정 단계 서비스 기록은 계약 기간을 바꿀 수 없으니 고객 목록과 같은 조회 범위에서 한 번에 확인해요.
+        // 확정 단계 서비스 기록은 고객 폼이 묻는 창을 바꾸니 고객 목록과 같은 조회 범위에서 한 번에 확인해요.
         const finalizedServiceRecordCases = await this.prismaService.service_record_case.findMany({
             where: { clientId: { in: clientIds }, status: { in: [...IMMUTABLE_FINALIZATION_STATUSES] } },
-            select: { clientId: true },
+            select: { clientId: true, status: true },
         });
-        const periodLockedClientIds = new Set(finalizedServiceRecordCases.map(record => record.clientId));
+        const clientIdsWithCaseStatus = (status?: string) => new Set(finalizedServiceRecordCases
+            .filter(record => status === undefined || record.status === status)
+            .map(record => record.clientId));
+        const periodLockedClientIds = clientIdsWithCaseStatus(SERVICE_RECORD_CASE_STATUS.FINALIZING);
+        const finalizedClientIds = clientIdsWithCaseStatus();
+        const completedClientIds = clientIdsWithCaseStatus(SERVICE_RECORD_CASE_STATUS.COMPLETED);
 
         // 현재 페이지 고객의 계약 문서만 한 번에 조회하고, 고객별 최신 상태를 사용한다.
         const latestContractMap = await this.findLatestContractByClientId(clientIds);
@@ -2010,6 +2023,8 @@ export class ClientService {
                     badges,
                     actionRequired,
                     serviceRecordPeriodLocked: periodLockedClientIds.has(client.id),
+                    serviceRecordFinalized: finalizedClientIds.has(client.id),
+                    serviceRecordCompleted: completedClientIds.has(client.id),
                     ...(allocation ? allocationProjection(allocation) : {}),
                     primaryEmployee: schedule?.primaryEmployee
                         ? {
@@ -2781,6 +2796,10 @@ export class ClientService {
             // Service-day flags follow the ordinary lifecycle sync; existing session
             // dates and any explicitly supplied end date are not re-laid.
             const syncedRecords = await this.serviceRecordLifecycleService?.ensureAllForClient(id, transaction, calendar) ?? [];
+            // Lifecycle sync leaves finalized cases alone, so a date edit moves them here.
+            if (lockedHasDateUpdate) {
+                await this.serviceRecordLifecycleService?.syncFinalizedPeriods?.(id, transaction, branchid);
+            }
             for (const record of syncedRecords) {
                 const required = startDateChange?.restoreByCase?.get(record.id)
                     ?? (syncedRecords.length === 1 ? startDateChange?.restoreRequiredSessionCount : null);

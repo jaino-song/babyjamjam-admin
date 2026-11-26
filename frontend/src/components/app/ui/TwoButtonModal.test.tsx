@@ -60,6 +60,50 @@ describe("TwoButtonModal", () => {
     expect(handleApprove).toHaveBeenCalledTimes(1);
   });
 
+  it("makes the left button the other choice with onCancel, while Escape still closes", () => {
+    const handleOpenChange = jest.fn();
+    const handleCancel = jest.fn();
+
+    const { rerender } = render(
+      <TwoButtonModal
+        open
+        onOpenChange={handleOpenChange}
+        layout="question"
+        title="제공기록지 회차 처리"
+        description="이미 제출된 제공기록지 기록이 있어요."
+        cancelLabel="처음부터 시작"
+        onCancel={handleCancel}
+        approvalLabel="모두 옮기기"
+        onApprove={jest.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "처음부터 시작" }));
+    expect(handleCancel).toHaveBeenCalledTimes(1);
+    expect(handleOpenChange).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(handleOpenChange).toHaveBeenCalledWith(false);
+    expect(handleCancel).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <TwoButtonModal
+        open
+        onOpenChange={handleOpenChange}
+        layout="question"
+        title="제공기록지 회차 처리"
+        description="이미 제출된 제공기록지 기록이 있어요."
+        cancelLabel="처음부터 시작"
+        onCancel={handleCancel}
+        cancelDisabled
+        approvalLabel="모두 옮기기"
+        onApprove={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "처음부터 시작" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "모두 옮기기" })).toBeEnabled();
+  });
+
   it("locks both actions and shows the pending label while approving", () => {
     const handleOpenChange = jest.fn();
     const handleApprove = jest.fn();

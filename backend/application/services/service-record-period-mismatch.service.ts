@@ -11,15 +11,14 @@ import { type KrBusinessDayCalendar, UnsupportedKoreanHolidayYearError } from "d
 import { withClientServiceDays } from "domain/utils/client-service-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { computeServiceStatus } from "domain/value-objects/service-status.vo";
-import { IMMUTABLE_FINALIZATION_STATUSES, ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import {
+    DATE_EDITABLE_FINALIZED_STATUSES,
+    IMMUTABLE_FINALIZATION_STATUSES,
+    ServiceRecordLifecycleService,
+} from "./service-record-lifecycle.service";
 import { persistReevaluationIntents, refreshTokenExpiry } from "./service-record-schedule-realignment.service";
 
 const isoDate = (date: Date | null | undefined): string | null => date ? date.toISOString().slice(0, 10) : null;
-const offset = (date: Date, days: number): string => {
-    const copy = new Date(date);
-    copy.setUTCDate(copy.getUTCDate() + days);
-    return isoDate(copy)!;
-};
 
 interface PeriodParams {
     branchId: string;
@@ -104,7 +103,9 @@ export class ServiceRecordPeriodMismatchService {
         if (!record || record.id !== discovered.id || current.kind !== "resolved" || current.caseId !== discovered.id || !client) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
-        if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status)) {
+        // A finalized case keeps or fits its out-of-period sessions like any other. Only the few
+        // seconds of document generation wait.
+        if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status) && !DATE_EDITABLE_FINALIZED_STATUSES.has(record.status)) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_FINALIZED"));
         }
         const currentSchedules = await tx.employee_schedule.findMany({ where, orderBy: { id: "asc" } });
@@ -115,12 +116,13 @@ export class ServiceRecordPeriodMismatchService {
             where: { branchId, serviceRecordCaseId: record.id, locked: true },
             orderBy: { caseSessionIndex: "asc" },
         });
+        // Any distance counts: an end date moved before submitted sessions can leave them
+        // further out than the seven days a provider may pick.
         const outOfPeriod = days.filter((day) => {
             if (!record.startDate || !record.endDate || !day.locked) return false;
             const index = day.caseSessionIndex ?? day.sessionIndex;
             const date = isoDate(day.serviceDate)!;
             return index >= 1 && index <= total
-                && date >= offset(record.startDate, -7) && date <= offset(record.endDate, 7)
                 && (date < isoDate(record.startDate)! || date > isoDate(record.endDate)!);
         });
         return { record, client, schedules: currentSchedules, outOfPeriod, calendar, total };
@@ -206,6 +208,10 @@ export class ServiceRecordPeriodMismatchService {
                 where: { id: record.id, branchId }, data: { requiredSessionCount: total },
             });
             await this.lifecycleService.recompute(record.id, tx, calendar);
+        }
+        // Lifecycle sync leaves a finalized case alone, so its assignments follow the schedules here.
+        if (DATE_EDITABLE_FINALIZED_STATUSES.has(record.status)) {
+            await this.lifecycleService.syncFinalizedPeriods(clientId, tx, branchId);
         }
         await tx.service_record_case.update({
             where: { id: record.id, branchId }, data: { startDate: newStart, endDate: newEnd },

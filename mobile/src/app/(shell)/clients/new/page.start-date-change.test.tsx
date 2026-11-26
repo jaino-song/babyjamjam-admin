@@ -277,6 +277,32 @@ describe("mobile edit page start-date confirmation", () => {
     expectKeptForm();
   });
 
+  it("asks a finalized household only whether to move its sessions, and 진행 sends MOVE", async () => {
+    mockUpdateClient.mockRejectedValueOnce(lockedError({ ...lock, finalized: true }));
+    await openEdit();
+    await saveChangedDate();
+    const shift = await screen.findByRole("dialog", { name: recordsTitle });
+    expect(shift).toHaveAttribute("data-component", `${base}_start-date-shift-confirmation`);
+    expect(shift).toHaveTextContent("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?");
+    expect(within(shift).getAllByRole("button").map((item) => item.textContent)).toEqual(["취소", "진행"]);
+    expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+    expectKeptForm();
+    fireEvent.click(button("진행"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/clients?id=7"));
+    expect(mockUpdateClient.mock.calls[1][0]).toEqual({ id: 7, dto: { ...mockUpdateClient.mock.calls[0][0].dto, startDateChangeMode: "MOVE" } });
+    expectNoConfirmation();
+  });
+
+  it("cancels the finalized move question without another request", async () => {
+    mockUpdateClient.mockRejectedValueOnce(lockedError({ serviceStarted: false, recordedSessionCount: 0, finalized: true }));
+    await openEdit();
+    await saveChangedDate();
+    const shift = await screen.findByRole("dialog", { name: recordsTitle });
+    fireEvent.click(within(shift).getByRole("button", { name: "취소" }));
+    await waitFor(() => expectNoConfirmation());
+    expectKeptForm();
+  });
+
   it("silently retries an unstarted service with no records and never renders a modal", async () => {
     let finishRetry!: () => void;
     mockUpdateClient.mockRejectedValueOnce(lockedError({ serviceStarted: false, recordedSessionCount: 0 }))
