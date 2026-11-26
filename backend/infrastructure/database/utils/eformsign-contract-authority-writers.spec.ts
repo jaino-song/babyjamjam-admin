@@ -72,7 +72,7 @@ function fixture(activeClient?: number, phase = "reserved") {
         eformsign_doc: { findMany: jest.fn().mockResolvedValue([document]), findFirst: jest.fn().mockResolvedValue(null),
             findUnique: jest.fn().mockResolvedValue(document), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         eformsign_doc_file: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        employee_schedule: { findMany: jest.fn().mockResolvedValue([]) }, service_record_case: { findUnique: jest.fn().mockResolvedValue(null) },
+        employee_schedule: { findMany: jest.fn().mockResolvedValue([]) }, service_record_case: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) },
     };
     const savepoints = new Map<string, { clients: Array<readonly [number, ReturnType<typeof row>]>; schedules: number[] }>();
     db.$executeRaw.mockImplementation(async (input: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {

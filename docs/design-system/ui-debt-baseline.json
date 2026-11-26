@@ -157,13 +157,13 @@
         "136:10-136:33|pageLocalComponent"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "801:39-805:30|visualTailwindInPage",
-        "863:198-863:360|visualTailwindInPage",
-        "864:78-864:180|visualTailwindInPage",
-        "867:78-867:174|visualTailwindInPage",
-        "868:78-868:213|visualTailwindInPage",
-        "870:74-870:182|visualTailwindInPage",
-        "990:69-990:97|visualTailwindInPage"
+        "1012:69-1012:97|visualTailwindInPage",
+        "823:39-827:30|visualTailwindInPage",
+        "885:198-885:360|visualTailwindInPage",
+        "886:78-886:180|visualTailwindInPage",
+        "889:78-889:174|visualTailwindInPage",
+        "890:78-890:213|visualTailwindInPage",
+        "892:74-892:182|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/consultations/page.tsx": {

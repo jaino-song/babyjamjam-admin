@@ -45,11 +45,7 @@ describe("DeleteEmployeeScheduleUsecase", () => {
                 }]),
             },
             service_record_case: {
-                findUnique: jest.fn().mockResolvedValue({
-                    id: "case-1",
-                    branchId,
-                    clientId: schedule.clientId,
-                }),
+                findMany: jest.fn().mockResolvedValue([{ id: "case-1" }]),
             },
         };
         const repository = {
@@ -88,7 +84,7 @@ describe("DeleteEmployeeScheduleUsecase", () => {
                 }]),
             },
             service_record_case: {
-                findUnique: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([]),
             },
         };
         const changed = new EmployeeScheduleEntity(

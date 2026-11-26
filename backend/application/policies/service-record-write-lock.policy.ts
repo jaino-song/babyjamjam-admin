@@ -59,9 +59,10 @@ export async function lockServiceRecordCaseForClientWrite(
         FROM "service_record_case"
         WHERE "client_id" = ${clientId}
           AND "branch_id" = ${branchId}::uuid
+        ORDER BY "id"
         FOR UPDATE
     `);
-    return rows[0]?.id ?? null;
+    return rows.length === 1 ? rows[0]!.id : null;
 }
 
 export async function lockEmployeeSchedulesForWrite(
@@ -196,35 +197,13 @@ export async function lockServiceRecordWriteSet(
         throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
     }
 
-    // Resolve the case only after the owning client row is locked. A case can
-    // be created or rebound by a concurrent writer while the initial discovery
-    // read is in flight; taking the client lock first makes this reread the
-    // linearization point and prevents a later case lock from inverting the
-    // client -> employee -> case order.
-    let effectiveCaseId = params.caseId ?? null;
-    const caseDelegate = transaction.service_record_case as unknown as {
-        findUnique?: (args: unknown) => Promise<{ id?: string; branchId?: string; clientId?: number } | null>;
-    } | undefined;
-    if (typeof caseDelegate?.findUnique === "function") {
-        const discoveredCase = await caseDelegate.findUnique({
-            where: { clientId: params.clientId },
-            select: { id: true, branchId: true, clientId: true },
-        });
-        if (
-            discoveredCase
-            && (discoveredCase.branchId !== undefined && discoveredCase.branchId !== params.branchId
-                || discoveredCase.clientId !== undefined && discoveredCase.clientId !== params.clientId)
-        ) {
-            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
-        }
-        if (params.caseId !== undefined && params.caseId !== null) {
-            if (!discoveredCase || discoveredCase.id !== params.caseId) {
-                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
-            }
-        } else {
-            effectiveCaseId = discoveredCase?.id ?? null;
-        }
-    }
+    // The client lock serializes case creation and makes this the authoritative
+    // household set. Explicit writers lock only their own case.
+    const scope = { branchId: params.branchId, clientId: params.clientId };
+    const cases = !params.caseId && transaction.service_record_case?.findMany
+        ? await transaction.service_record_case.findMany({ where: scope, select: { id: true } })
+        : [];
+    const caseIds = params.caseId ? [params.caseId] : sortedStringIds(cases.map(({ id }) => id));
 
     const discoveredSchedules = transaction.employee_schedule?.findMany
         ? await transaction.employee_schedule.findMany({
@@ -251,7 +230,21 @@ export async function lockServiceRecordWriteSet(
         ...(params.scheduleIds ?? []),
         ...discoveredSchedules.map((schedule) => schedule.id),
     ]);
+    const additionalStaff = transaction.service_record_team_slot && scheduleIds.length
+        ? await transaction.service_record_team_slot.findMany({
+            where: { branchId: params.branchId, clientId: params.clientId, scheduleId: { in: scheduleIds }, slot: { gte: 2 } },
+            select: { employeeId: true },
+        })
+        : [];
+    const recordStaff = caseIds.length > 0 && transaction.service_record_assignment?.findMany
+        ? await transaction.service_record_assignment.findMany({
+            where: { branchId: params.branchId, serviceRecordCaseId: { in: caseIds } },
+            select: { employeeId: true },
+        })
+        : [];
     const employeeIds = sortedIds([
+        ...additionalStaff.map(({ employeeId }) => employeeId),
+        ...recordStaff.map(({ employeeId }) => employeeId),
         ...(params.employeeIds ?? []),
         ...discoveredSchedules.flatMap((schedule) => [
             schedule.primaryEmployeeId,
@@ -260,11 +253,11 @@ export async function lockServiceRecordWriteSet(
     ]);
 
     await lockEmployeesForScheduleWrite(transaction, params.branchId, employeeIds);
-    if (effectiveCaseId) {
+    for (const caseId of caseIds) {
         const caseLocked = await lockServiceRecordCaseForWrite(
             transaction,
             params.branchId,
-            effectiveCaseId,
+            caseId,
             params.clientId,
         );
         if (typeof transaction.$queryRaw === "function" && !caseLocked) {
@@ -272,17 +265,17 @@ export async function lockServiceRecordWriteSet(
         }
     }
     await lockEmployeeSchedulesForWrite(transaction, params.branchId, scheduleIds);
-    if (effectiveCaseId) {
+    for (const caseId of caseIds) {
         await lockServiceRecordAssignmentsForWrite(
             transaction,
             params.branchId,
-            effectiveCaseId,
+            caseId,
             scheduleIds,
         );
         await lockServiceRecordDaysForWrite(
             transaction,
             params.branchId,
-            effectiveCaseId,
+            caseId,
             params.sessionIndexes,
         );
     }

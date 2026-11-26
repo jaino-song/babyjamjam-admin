@@ -149,6 +149,7 @@ export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
     "serviceEndDate",
     "buttonUrl",
     "serviceRecordUrl",
+    "serviceRecordLinks",
   ],
   CLIENT_GREETING: ["name", "clientName", "phone"],
   PRICE_INFO: [

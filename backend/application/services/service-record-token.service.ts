@@ -1,3 +1,6 @@
+import {
+    BACKFILLED_SCALAR_LINK_PREFIX, GROUP_RECORD_LINK_PREFIX, readBackfilledLinkPolicy, requireBabyRecordRollout,
+} from "application/policies/baby-record-rollout.policy";
 import { BadRequestException, ConflictException, Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
@@ -6,6 +9,7 @@ import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
+import { resolveServiceRecordCaseTarget, type ServiceRecordCaseTarget } from "./service-record-case-target";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 export const SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS = 5;
@@ -42,6 +46,12 @@ export interface ServiceRecordTokenContext {
     scheduleId: number;
     employeeId: number;
     serviceRecordCaseId?: string | null;
+    babyId?: string | null;
+    babyRank?: number | null;
+    babyCount?: number | null;
+    employeeName?: string;
+    /** Internal proof that the verified session did not rotate before a write. */
+    accessTokenHash?: string;
 }
 
 export type VerifyPhoneResult =
@@ -57,6 +67,29 @@ interface ServiceRecordLinkTokenParams {
     expectedPhone: string;
     expiresAt: Date;
     resetChallenge?: boolean;
+    grouped?: boolean;
+    requireRollout?: boolean;
+}
+
+/** A change in caregiver history leaves an unbound case for explicit adoption. */
+export async function hasConflictingUnboundCaseHistory(
+    db: Prisma.TransactionClient,
+    { branchId, clientId, scheduleId, employeeId, babyId }: {
+        branchId: string; clientId: number; scheduleId: number; employeeId: number; babyId: string;
+    },
+): Promise<boolean> {
+    const conflictingAssignment = await db.service_record_baby_assignment.findFirst({
+        where: { branchId, clientId, OR: [{ employeeId: { not: employeeId } }, { babyId: { not: babyId } }] },
+        select: { id: true },
+    });
+    if (conflictingAssignment) return true;
+
+    // The first configured allocation may have no outgoing baby owners.
+    // Other schedules still carry that legacy caregiver history.
+    return Boolean(await db.employee_schedule.findFirst({
+        where: { branchId, clientId, id: { not: scheduleId }, primaryEmployeeId: { not: employeeId } },
+        select: { id: true },
+    }));
 }
 
 /**
@@ -86,28 +119,51 @@ export class ServiceRecordTokenService {
     }
 
     private async currentProvider(
-        record: { scheduleId: number; branchId: string },
-        db: Prisma.TransactionClient | PrismaService,
+        record: Pick<ServiceRecordLinkTokenParams, "branchId" | "scheduleId" | "employeeId" | "serviceRecordCaseId">,
+        db: Prisma.TransactionClient,
         options: { lockCase?: boolean; throwOnFinalized?: boolean } = {},
     ) {
-        // Public token requests have no tenant context; both lookups are pinned to the token's branch.
         return tenantContextStore.run({ origin: "http", branchId: record.branchId }, async () => {
-            const original = await db.employee_schedule.findUnique({ where: { id: record.scheduleId }, select: { clientId: true, branchId: true } });
-            if (!original || original.branchId !== record.branchId) return null;
-            // Lock the case before token rows, matching the finalizer's write order.
-            // Looking up by client also covers legacy tokens without a case ID.
+            const { branchId, scheduleId, employeeId } = record;
+            const original = await db.employee_schedule.findFirst({
+                where: { id: scheduleId, branchId },
+                select: { clientId: true },
+            });
+            if (!original) return null;
+            const { clientId } = original;
+            // Allocation and entry writes take the client lock before the case
+            // and token. Re-read the authority after waiting on these locks.
+            if (options.lockCase) {
+                await db.$executeRaw(Prisma.sql`
+                    SELECT id FROM client WHERE id = ${clientId} AND branch_id = ${branchId}::uuid FOR UPDATE
+                `);
+                await db.$executeRaw(Prisma.sql`
+                    SELECT id FROM employee WHERE id = ${employeeId} AND branch_id = ${branchId}::uuid FOR SHARE
+                `);
+            }
+            const target = await resolveServiceRecordCaseTarget(db, {
+                branchId, clientId, caseId: record.serviceRecordCaseId ?? undefined,
+            });
+            if (target.kind !== "resolved") return null;
+            const { caseId, babyId } = target;
+            if (babyId === null && record.serviceRecordCaseId) {
+                const singleton = await resolveServiceRecordCaseTarget(db, { branchId, clientId });
+                if (singleton.kind !== "resolved" || singleton.caseId !== caseId) return null;
+            }
+
             if (options.lockCase) {
                 await db.$executeRaw(Prisma.sql`
                     SELECT id FROM service_record_case
-                    WHERE branch_id = ${record.branchId}::uuid AND client_id = ${original.clientId}
+                    WHERE branch_id = ${branchId}::uuid AND client_id = ${clientId} AND id = ${caseId}::uuid
                     FOR SHARE
                 `);
             }
             const serviceCase = await db.service_record_case.findFirst({
-                where: { branchId: record.branchId, clientId: original.clientId },
+                where: { id: caseId, branchId, clientId },
                 select: { finalizedAt: true },
             });
-            if (serviceCase?.finalizedAt) {
+            if (!serviceCase) return null;
+            if (serviceCase.finalizedAt) {
                 if (options.throwOnFinalized) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                         pointer: "/scheduleId",
@@ -118,180 +174,261 @@ export class ServiceRecordTokenService {
                 }
                 return null;
             }
+
             const current = await db.employee_schedule.findFirst({
-                where: { clientId: original.clientId, branchId: record.branchId, replaced: false },
+                where: {
+                    clientId, branchId, replaced: false, terminatedAt: null,
+                    client: { branchId, deletedAt: null },
+                },
                 orderBy: { id: "desc" },
-                include: { primaryEmployee: true, client: { select: { serviceStatus: true, deletedAt: true } } },
+                select: { id: true, primaryEmployeeId: true, client: { select: { serviceStatus: true, fetalConfirmation: true } } },
             });
-            // The client tombstone is authoritative: a deleted client's links must never
-            // resolve or be (re)issued, whether or not post-commit revocation succeeded.
-            if (!current || current.client.deletedAt || current.client.serviceStatus === "terminated" || current.primaryEmployee.deletedAt) return null;
-            return current;
+            if (!current || current.id !== scheduleId || current.client.serviceStatus === "terminated") return null;
+
+            let employee: { name: string; phone: string | null } | null;
+            if (babyId) {
+                employee = (await db.service_record_baby_assignment.findFirst({
+                    where: {
+                        branchId, clientId, scheduleId, babyId, employeeId,
+                        activeOwner: true, endedAt: null, teamSlot: { active: true },
+                        employee: { branchId, deletedAt: null },
+                    },
+                    select: { employee: { select: { name: true, phone: true } } },
+                }))?.employee ?? null;
+            } else {
+                if (current.primaryEmployeeId !== employeeId) return null;
+                const { babyCount } = target;
+                if (babyCount !== null) {
+                    if (babyCount !== 1) return null;
+                    const [owner, otherOwner] = await db.service_record_baby_assignment.findMany({
+                        where: {
+                            branchId, clientId, scheduleId, activeOwner: true, endedAt: null,
+                            baby: { active: true }, teamSlot: { active: true },
+                        },
+                        select: { babyId: true, employeeId: true },
+                        take: 2,
+                    });
+                    if (!owner || otherOwner || owner.employeeId !== employeeId
+                        || await hasConflictingUnboundCaseHistory(db, { branchId, clientId, scheduleId, employeeId, babyId: owner.babyId })) {
+                        return null;
+                    }
+                }
+                employee = await db.employee.findFirst({
+                    where: { id: employeeId, branchId, deletedAt: null },
+                    select: { name: true, phone: true },
+                });
+            }
+            const phone = this.normalizePhone(employee?.phone ?? "");
+            return employee && phone ? {
+                target, clientId, employeeName: employee.name, phoneHash: this.hash(phone),
+                configured: current.client.fetalConfirmation === "CONFIRMED",
+            } : null;
         });
     }
 
-    /** Reuse the contract URL, changing authentication only when its provider changes. */
-    async issueLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
-        return this.persistLink(params, true);
+    private async credentialScope(
+        tx: Prisma.TransactionClient,
+        params: ServiceRecordLinkTokenParams,
+        current: { clientId: number; target: Extract<ServiceRecordCaseTarget, { kind: "resolved" }>; configured: boolean },
+    ): Promise<Prisma.service_record_tokenWhereInput> {
+        const { branchId, scheduleId, employeeId } = params;
+        const explicitCase = { serviceRecordCaseId: current.target.caseId };
+        const singleton = params.serviceRecordCaseId
+            ? await resolveServiceRecordCaseTarget(tx, { branchId, clientId: current.clientId })
+            : current.target;
+        return {
+            branchId, scheduleId, employeeId, revokedAt: null,
+            ...(params.grouped
+                ? { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } }
+                : current.configured ? { NOT: { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } } } : {}),
+            ...(singleton.kind === "resolved" && singleton.caseId === current.target.caseId
+                ? { OR: [explicitCase, { serviceRecordCaseId: null }] }
+                : explicitCase),
+        };
     }
 
-    private async persistLink(params: ServiceRecordLinkTokenParams, activate: boolean): Promise<{ linkToken: string }> {
-        return this.prismaService.$transaction(async (tx) => {
-            await tx.$executeRaw(Prisma.sql`
-                SELECT pg_advisory_xact_lock(hashtextextended(${`service-record-link:${params.branchId}:${params.serviceRecordCaseId ?? params.scheduleId}`}, 0))
-            `);
-            const current = await this.currentProvider(params, tx, { lockCase: true, throwOnFinalized: true });
-            if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
-                || !this.normalizePhone(current.primaryEmployee.phone ?? "")) {
+    private async authorizeLinkWrite(
+        tx: Prisma.TransactionClient,
+        params: ServiceRecordLinkTokenParams,
+        current: NonNullable<Awaited<ReturnType<ServiceRecordTokenService["currentProvider"]>>>,
+    ) {
+        if (!current.configured) return false;
+        if (!params.grouped && !params.requireRollout) {
+            const historical = await readBackfilledLinkPolicy(tx, { branchId: params.branchId, clientId: current.clientId });
+            if (historical?.caseId === current.target.caseId
+                && historical.scheduleId === params.scheduleId && historical.employeeId === params.employeeId) {
+                if (!historical.scalarAllowed) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+                return true;
+            }
+        }
+        await requireBabyRecordRollout(tx, params.branchId);
+        return false;
+    }
+
+    private async retireBackfilledScalarLinks(
+        tx: Prisma.TransactionClient,
+        params: ServiceRecordLinkTokenParams,
+        current: { clientId: number; target: Extract<ServiceRecordCaseTarget, { kind: "resolved" }> },
+        groupScope: Prisma.service_record_tokenWhereInput,
+        checkChallenge = false,
+    ) {
+        const { branchId, scheduleId, employeeId } = params;
+        const historical = await readBackfilledLinkPolicy(tx, { branchId, clientId: current.clientId });
+        if (historical?.caseId !== current.target.caseId
+            || historical.scheduleId !== scheduleId || historical.employeeId !== employeeId) return;
+
+        // A grouped prepare already leaves durable group provenance. Use the
+        // historical tuple and token provenance even when scalar writes are fenced.
+        const where: Prisma.service_record_tokenWhereInput = {
+            ...groupScope,
+            linkTokenHash: { not: { startsWith: GROUP_RECORD_LINK_PREFIX } },
+            AND: [{ OR: [
+                { createdAt: { lt: historical.backfilledAt } },
+                { linkTokenHash: { startsWith: BACKFILLED_SCALAR_LINK_PREFIX } },
+            ] }],
+        };
+        if (checkChallenge && await tx.service_record_token.findFirst({ where: { ...where, active: true }, select: { id: true } })) {
+            const activeRows = await this.lockActiveRowsForAssignment(tx, params, current.target.caseId, Boolean(groupScope.OR));
+            if (activeRows.some(row => row.lockedAt || row.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS)) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
-            const scope = {
-                branchId: params.branchId,
-                OR: [
-                    { scheduleId: params.scheduleId },
-                    ...(params.serviceRecordCaseId ? [{ serviceRecordCaseId: params.serviceRecordCaseId }] : []),
-                ],
-            };
-            const previous = await tx.service_record_token.findMany({ where: scope, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-            const expectedPhoneHash = this.hash(this.normalizePhone(current.primaryEmployee.phone ?? ""));
-            for (const row of previous) {
-                const authenticationChanged = row.employeeId !== params.employeeId
-                    || row.scheduleId !== params.scheduleId
-                    || row.expectedPhoneHash !== expectedPhoneHash
-                    || row.revokedAt !== null;
-                await tx.service_record_token.update({
-                    where: { id: row.id, branchId: params.branchId },
+        }
+        // Retire the previous URL and its verified session before promotion.
+        // The database also permits just one active token bound to each case.
+        await tx.service_record_token.updateMany({
+            where,
+            data: { active: false, revokedAt: new Date(), accessTokenHash: null, verifiedAt: null },
+        });
+    }
+
+    /** A link stays with its case and employee for the lifetime of the credential. */
+    async issueLink(params: ServiceRecordLinkTokenParams, transaction?: Prisma.TransactionClient): Promise<{ linkToken: string }> {
+        return this.persistLink(params, true, transaction);
+    }
+
+    private async persistLink(params: ServiceRecordLinkTokenParams, activate: boolean, transaction?: Prisma.TransactionClient): Promise<{ linkToken: string }> {
+        const persist = async (tx: Prisma.TransactionClient) => {
+            const current = await this.currentProvider(params, tx, { lockCase: true, throwOnFinalized: true });
+            if (!current || current.phoneHash !== this.hash(this.normalizePhone(params.expectedPhone))) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
+
+            const historical = await this.authorizeLinkWrite(tx, params, current);
+            const scope = await this.credentialScope(tx, params, current);
+            if (params.grouped && current.configured && activate) {
+                await this.retireBackfilledScalarLinks(tx, params, current, scope, !params.resetChallenge);
+            }
+            const row = await tx.service_record_token.findFirst({
+                where: scope,
+                orderBy: [{ active: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+            });
+            if (row) {
+                const authenticationChanged = row.expectedPhoneHash !== current.phoneHash;
+                const updated = await tx.service_record_token.updateMany({
+                    where: { ...scope, id: row.id },
                     data: {
-                        scheduleId: params.scheduleId,
-                        employeeId: params.employeeId,
-                        serviceRecordCaseId: params.serviceRecordCaseId,
-                        expectedPhoneHash,
+                        expectedPhoneHash: current.phoneHash,
                         expiresAt: params.expiresAt,
-                        ...(activate || row.active || row.revokedAt ? { active: true, revokedAt: null } : {}),
+                        ...(activate ? { active: true } : {}),
                         ...(authenticationChanged || params.resetChallenge ? {
                             accessTokenHash: null, verifiedAt: null, failedAttempts: 0,
                             challengeWindowStartedAt: null, lockedAt: null,
                         } : {}),
                     },
                 });
+                if (updated.count === 1) return { linkToken: row.linkTokenHash };
             }
-            if (previous[0]) return { linkToken: previous[0].linkTokenHash };
-            const linkToken = `efl_${randomBytes(32).toString("base64url")}`;
+
+            const prefix = params.grouped ? GROUP_RECORD_LINK_PREFIX : historical ? BACKFILLED_SCALAR_LINK_PREFIX : "efl_";
+            const linkToken = `${prefix}${randomBytes(prefix === "efl_" ? 32 : 26).toString("base64url")}`;
             await tx.service_record_token.create({
                 data: {
                     branchId: params.branchId, scheduleId: params.scheduleId, employeeId: params.employeeId,
-                    serviceRecordCaseId: params.serviceRecordCaseId, linkTokenHash: linkToken,
-                    expectedPhoneHash, expiresAt: params.expiresAt, active: activate,
+                    serviceRecordCaseId: current.target.caseId, linkTokenHash: linkToken,
+                    expectedPhoneHash: current.phoneHash, expiresAt: params.expiresAt, active: activate,
                 },
             });
             return { linkToken };
-        });
+        };
+        return transaction ? persist(transaction) : this.prismaService.$transaction(persist);
     }
 
-    /**
-     * Reuse the current provider's active link and only extend its expiry.
-     * Provider replacement changes the schedule/employee and revokes the old row,
-     * so only an unchanged assignment can match this lookup.
-     */
     async reuseActiveLink(
         params: ServiceRecordLinkTokenParams,
         options: { includeLocked?: boolean } = {},
+        transaction?: Prisma.TransactionClient,
     ): Promise<{ linkToken: string } | null> {
-        const current = await this.currentProvider(params, this.prismaService);
-        if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId) return null;
-        const includeLocked = options.includeLocked ?? true;
-        const record = await this.prismaService.service_record_token.findFirst({
-            where: {
-                branchId: params.branchId,
-                scheduleId: params.scheduleId,
-                employeeId: params.employeeId,
-                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
+        const reuse = async (tx: Prisma.TransactionClient) => {
+            const current = await this.currentProvider(params, tx, { lockCase: true });
+            if (!current || current.phoneHash !== this.hash(this.normalizePhone(params.expectedPhone))) return null;
+            await this.authorizeLinkWrite(tx, params, current);
+            const where = {
+                ...await this.credentialScope(tx, params, current),
+                expectedPhoneHash: current.phoneHash,
                 active: true,
-                revokedAt: null,
-                ...(includeLocked ? {} : { lockedAt: null }),
-            },
-            orderBy: { createdAt: "desc" },
-        });
-        if (!record) return null;
+                ...(options.includeLocked === false ? { lockedAt: null } : {}),
+            };
+            const record = await tx.service_record_token.findFirst({
+                where, orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            });
+            if (!record) return null;
 
-        const updated = await this.prismaService.service_record_token.updateMany({
-            where: {
-                id: record.id,
-                branchId: params.branchId,
-                scheduleId: params.scheduleId,
-                employeeId: params.employeeId,
-                expectedPhoneHash: this.hash(this.normalizePhone(params.expectedPhone)),
-                active: true,
-                revokedAt: null,
-                ...(includeLocked ? {} : { lockedAt: null }),
-            },
-            data: { expiresAt: params.expiresAt },
-        });
-        if (updated.count === 0) return null;
-        return { linkToken: record.linkTokenHash };
+            const updated = await tx.service_record_token.updateMany({
+                where: { ...where, id: record.id },
+                data: { expiresAt: params.expiresAt },
+            });
+            return updated.count === 1 ? { linkToken: record.linkTokenHash } : null;
+        };
+        return transaction ? reuse(transaction) : this.prismaService.$transaction(reuse);
     }
 
-    /**
-     * Prepare the exact link shown in the admin preview without making it usable yet.
-     * Repeated previews reuse the same row; send activates it without rotating the URL.
-     */
-    async prepareLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
-        return this.persistLink(params, false);
+    /** Prepare the exact URL shown in the composer without activating it. */
+    async prepareLink(params: ServiceRecordLinkTokenParams, transaction?: Prisma.TransactionClient): Promise<{ linkToken: string }> {
+        return this.persistLink(params, false, transaction);
     }
 
-    /** Activate a prepared link only when it still matches the tenant assignment and phone. */
-    async activatePreparedLink(params: ServiceRecordLinkTokenParams & { linkToken: string }): Promise<boolean> {
+    async activatePreparedLink(params: ServiceRecordLinkTokenParams & { linkToken: string }, transaction?: Prisma.TransactionClient): Promise<boolean> {
         const expectedPhoneHash = this.hash(this.normalizePhone(params.expectedPhone));
 
-        return this.prismaService.$transaction(async (tx) => {
-            const record = await this.findByLinkToken(params.linkToken, tx);
-            if (
-                !record
-                || record.expiresAt.getTime() <= Date.now()
-                || record.branchId !== params.branchId
-                || record.scheduleId !== params.scheduleId
-                || record.employeeId !== params.employeeId
-                || record.expectedPhoneHash !== expectedPhoneHash
-            ) {
-                return false;
+        const activate = async (tx: Prisma.TransactionClient) => {
+            const candidate = await this.findByLinkToken(params.linkToken, tx);
+            if (!candidate || candidate.branchId !== params.branchId
+                || candidate.scheduleId !== params.scheduleId || candidate.employeeId !== params.employeeId) return false;
+
+            const current = await this.currentProvider(params, tx, { lockCase: true });
+            if (!current || current.phoneHash !== expectedPhoneHash) return false;
+            await this.authorizeLinkWrite(tx, params, current);
+            const scope = await this.credentialScope(tx, params, current);
+            const record = await tx.service_record_token.findFirst({
+                where: { ...scope, id: candidate.id },
+            });
+            if (!record || record.expectedPhoneHash !== expectedPhoneHash || record.expiresAt.getTime() <= Date.now()) return false;
+
+            // Serialize activation with the active challenge without clearing a lock.
+            const activeRows = await this.lockActiveRowsForAssignment(tx, record, current.target.caseId, Boolean(scope.OR));
+            if (activeRows.some((row) => row.lockedAt || row.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS)) return false;
+            if (params.grouped && current.configured) {
+                await this.retireBackfilledScalarLinks(tx, params, current, scope);
             }
-
-            const current = await this.currentProvider(record, tx, { lockCase: true });
-            if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId
-                || this.hash(this.normalizePhone(current.primaryEmployee.phone ?? "")) !== expectedPhoneHash) return false;
-
-            // A prepared token may have been created before the currently active
-            // challenge exhausted its budget. Do not let a later send activate that
-            // token and silently replace the locked record; only the explicit
-            // owner/admin reset path may clear a lock.
-            const activeRows = await this.lockActiveRowsForAssignment(tx, {
-                branchId: params.branchId,
-                scheduleId: params.scheduleId,
-                serviceRecordCaseId: record.serviceRecordCaseId,
+            const updated = await tx.service_record_token.updateMany({
+                where: { ...scope, id: record.id, expectedPhoneHash },
+                data: { active: true, expiresAt: params.expiresAt },
             });
-            if (activeRows.some((row) => row.lockedAt !== null)) return false;
-
-            await tx.service_record_token.update({
-                where: { id: record.id, branchId: record.branchId },
-                data: {
-                    active: true,
-                    revokedAt: null,
-                    expiresAt: params.expiresAt,
-                },
-            });
-            return true;
-        });
+            if (params.grouped && updated.count !== 1) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
+            return updated.count === 1;
+        };
+        return transaction ? activate(transaction) : this.prismaService.$transaction(activate);
     }
 
-    /** Resolve a usable (active, not revoked, not expired, not locked) link-token row, else null. */
     async resolveLink(linkToken: string) {
         const record = await this.findByLinkToken(linkToken, this.prismaService);
-        if (!record || (!record.active && !record.revokedAt) || record.expiresAt.getTime() <= Date.now()) return null;
+        if (!record?.active || record.revokedAt || record.expiresAt.getTime() <= Date.now()) return null;
         const current = await this.currentProvider(record, this.prismaService);
-        if (!current || (record.revokedAt && record.scheduleId === current.id)) return null;
-        const changed = record.scheduleId !== current.id || record.employeeId !== current.primaryEmployeeId
-            || record.expectedPhoneHash !== this.hash(this.normalizePhone(current.primaryEmployee.phone ?? ""));
-        if (!changed && (record.lockedAt || record.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS)) return null;
+        if (!current) return null;
+        const unchangedPhone = record.expectedPhoneHash === current.phoneHash;
+        if (unchangedPhone && (record.lockedAt || record.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS)) return null;
         return record;
     }
 
@@ -332,53 +469,31 @@ export class ServiceRecordTokenService {
             : null;
     }
 
-    /**
-     * Lock every currently active token for an assignment before checking lockout
-     * state. This gives activation the same serialization boundary as the phone
-     * challenge: if the fifth failed guess wins the row lock first, activation
-     * waits and observes the committed lock. Activation never resets challenge state.
-     *
-     * The fallback keeps lightweight test doubles compatible; production Prisma
-     * always exposes `$queryRaw` on its transaction client.
-     */
     private async lockActiveRowsForAssignment(
         tx: Prisma.TransactionClient,
-        params: Pick<ServiceRecordLinkTokenParams, "branchId" | "scheduleId" | "serviceRecordCaseId">,
-    ): Promise<Array<{ lockedAt: Date | null }>> {
-        const transaction = tx as Prisma.TransactionClient & {
-            $queryRaw?: <T>(query: Prisma.Sql) => Promise<T>;
-        };
-        if (typeof transaction.$queryRaw !== "function") {
-            const locked = await tx.service_record_token.findFirst({
+        record: { branchId: string; scheduleId: number; employeeId: number },
+        caseId: string,
+        allowLegacy: boolean,
+    ) {
+        const { branchId, scheduleId, employeeId } = record;
+        if (typeof tx.$queryRaw !== "function") {
+            return tx.service_record_token.findMany({
                 where: {
-                    branchId: params.branchId,
-                    active: true,
-                    revokedAt: null,
-                    lockedAt: { not: null },
-                    OR: [
-                        { scheduleId: params.scheduleId },
-                        ...(params.serviceRecordCaseId
-                            ? [{ serviceRecordCaseId: params.serviceRecordCaseId }]
-                            : []),
-                    ],
+                    branchId, scheduleId, employeeId, active: true, revokedAt: null,
+                    OR: [{ serviceRecordCaseId: caseId }, ...(allowLegacy ? [{ serviceRecordCaseId: null }] : [])],
                 },
-                select: { lockedAt: true },
+                select: { lockedAt: true, failedAttempts: true },
             });
-            return locked ? [{ lockedAt: locked.lockedAt }] : [];
         }
 
-        const serviceRecordCaseId = params.serviceRecordCaseId ?? null;
-        return transaction.$queryRaw<Array<{ lockedAt: Date | null }>>(Prisma.sql`
-            SELECT "locked_at" AS "lockedAt"
-            FROM "service_record_token"
-            WHERE "branch_id" = ${params.branchId}::uuid
-              AND (
-                  "schedule_id" = ${params.scheduleId}
-                  OR "service_record_case_id" = ${serviceRecordCaseId}::uuid
-              )
-              AND "active" = TRUE
-              AND "revoked_at" IS NULL
-            FOR UPDATE
+        return tx.$queryRaw<Array<{ lockedAt: Date | null; failedAttempts: number }>>(Prisma.sql`
+            SELECT locked_at AS "lockedAt", failed_attempts AS "failedAttempts"
+            FROM service_record_token
+            WHERE branch_id = ${branchId}::uuid AND schedule_id = ${scheduleId} AND employee_id = ${employeeId}
+              AND (service_record_case_id = ${caseId}::uuid
+                   ${allowLegacy ? Prisma.sql`OR service_record_case_id IS NULL` : Prisma.empty})
+              AND active = TRUE AND revoked_at IS NULL
+            ORDER BY id FOR UPDATE
         `);
     }
 
@@ -429,24 +544,21 @@ export class ServiceRecordTokenService {
             if (!record) return this.unavailable("invalid_token");
             return tenantContextStore.run({ origin: "http", branchId: record.branchId }, async (): Promise<VerifyPhoneResult> => {
                 const now = new Date();
-                if (!record.active && !record.revokedAt) return this.unavailable("invalid_token");
-                const currentPhone = this.normalizePhone(current?.primaryEmployee.phone ?? "");
-                if (!current || !currentPhone) return this.unavailable("invalid_token");
-                const currentPhoneHash = this.hash(currentPhone);
-                if (record.scheduleId !== current.id || record.employeeId !== current.primaryEmployeeId || record.expectedPhoneHash !== currentPhoneHash) {
-                    const rebound = await tx.service_record_token.update({
+                if (!record.active || record.revokedAt
+                    || record.scheduleId !== candidate.scheduleId || record.employeeId !== candidate.employeeId
+                    || record.serviceRecordCaseId !== candidate.serviceRecordCaseId) return this.unavailable("invalid_token");
+                if (record.expiresAt.getTime() <= now.getTime()) return this.unavailable("expired");
+                const currentPhoneHash = current.phoneHash;
+                if (record.expectedPhoneHash !== currentPhoneHash) {
+                    const healed = await tx.service_record_token.update({
                         where: { id: record.id, branchId: record.branchId },
                         data: {
-                            scheduleId: current.id, employeeId: current.primaryEmployeeId,
-                            expectedPhoneHash: currentPhoneHash, active: true, revokedAt: null,
-                            accessTokenHash: null, verifiedAt: null, failedAttempts: 0,
-                            challengeWindowStartedAt: null, lockedAt: null,
+                            expectedPhoneHash: currentPhoneHash, accessTokenHash: null, verifiedAt: null,
+                            failedAttempts: 0, challengeWindowStartedAt: null, lockedAt: null,
                         },
                     });
-                    Object.assign(record, rebound);
+                    Object.assign(record, healed);
                 }
-                if (!record.active || record.revokedAt) return this.unavailable("invalid_token");
-                if (record.expiresAt.getTime() <= now.getTime()) return this.unavailable("expired");
                 if (record.lockedAt) return this.unavailable("locked");
 
                 let failedAttempts = record.failedAttempts;
@@ -558,17 +670,30 @@ export class ServiceRecordTokenService {
             return null;
         }
         const current = await this.currentProvider(record, this.prismaService);
-        if (!current || current.id !== record.scheduleId || current.primaryEmployeeId !== record.employeeId
-            || this.hash(this.normalizePhone(current.primaryEmployee.phone ?? "")) !== record.expectedPhoneHash) return null;
+        if (!current || current.phoneHash !== record.expectedPhoneHash) return null;
         return {
             tokenId: record.id,
             branchId: record.branchId,
             scheduleId: record.scheduleId,
             employeeId: record.employeeId,
-            ...(record.serviceRecordCaseId
-                ? { serviceRecordCaseId: record.serviceRecordCaseId }
-                : {}),
+            serviceRecordCaseId: current.target.caseId,
+            babyId: current.target.babyId,
+            babyRank: current.target.rank,
+            babyCount: current.target.babyCount,
+            employeeName: current.employeeName,
+            accessTokenHash: record.accessTokenHash ?? undefined,
         };
+    }
+
+    /** Called after the entry service has acquired the owning write set. */
+    async currentEmployeeForWrite(tx: Prisma.TransactionClient, ctx: ServiceRecordTokenContext, caseId: string) {
+        const token = await this.lockAccessTokenForWrite(tx, ctx.tokenId);
+        if (!token || !isServiceRecordAccessTokenUsable(token)
+            || token.branchId !== ctx.branchId || token.scheduleId !== ctx.scheduleId
+            || token.employeeId !== ctx.employeeId || token.accessTokenHash !== ctx.accessTokenHash) return null;
+        const current = await this.currentProvider(token, tx);
+        return current?.target.caseId === caseId && current.phoneHash === token.expectedPhoneHash
+            ? { name: current.employeeName } : null;
     }
 
     async extendExpiryForSchedule(scheduleId: number, newExpiresAt: Date, tx?: Prisma.TransactionClient): Promise<void> {
@@ -607,7 +732,7 @@ export class ServiceRecordTokenService {
      * Revoke every active token for an assignment (replacement / termination).
      * `tx` lets a caller that already holds the schedule fence revoke on its own
      * connection: opening another transaction from inside it would wait on
-     * locks (`service-record-link:` advisory, case row) that this connection
+     * client/case locks that this connection
      * cannot see.
      */
     async revokeForSchedule(scheduleId: number, tx?: Prisma.TransactionClient): Promise<void> {
@@ -615,7 +740,7 @@ export class ServiceRecordTokenService {
         const schedule = await db.employee_schedule.findUnique({ where: { id: scheduleId }, select: { branchId: true } });
         if (!schedule?.branchId) return;
         await db.service_record_token.updateMany({
-            where: { scheduleId, branchId: schedule.branchId, active: true },
+            where: { scheduleId, branchId: schedule.branchId, revokedAt: null },
             data: { active: false, revokedAt: new Date(), accessTokenHash: null, verifiedAt: null },
         });
     }

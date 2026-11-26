@@ -348,13 +348,15 @@ describe("SbEformsignDocumentJobRepository", () => {
             expectedContext: dispatchContext,
         })).resolves.toEqual({ kind: "allow" });
 
-        expect(transaction.service_record_case.findUnique).toHaveBeenCalledTimes(2);
+        expect(transaction.service_record_case.findUnique).toHaveBeenCalledTimes(1);
         const statements = queryRaw.mock.calls.map(([query]) => sqlText(query));
         const markerIndex = statements.findIndex((statement) => statement.includes("SET progress_step = ")
             && statement.includes("NOT IN ('creating', 'sent')"));
-        expect(markerIndex).toBeGreaterThan(
-            statements.findIndex((statement) => statement.includes("FROM \"service_record_case\"")),
-        );
+        const caseLockIndex = statements.findIndex((statement) => statement.includes("FROM \"service_record_case\""));
+        expect(caseLockIndex).toBeGreaterThanOrEqual(0);
+        expect(markerIndex).toBeGreaterThan(caseLockIndex);
+        expect(transaction.service_record_case.findUnique.mock.invocationCallOrder[0])
+            .toBeGreaterThan(queryRaw.mock.invocationCallOrder[caseLockIndex]!);
     });
 
     it("fails closed before the marker when a legacy finalize document has no client owner", async () => {

@@ -36,7 +36,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         const transaction = { agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
         const serviceRecordLifecycle = {
             validatePeriodChange: jest.fn().mockResolvedValue(undefined),
-            ensureForClient: jest.fn().mockResolvedValue(undefined),
+            ensureAllForClient: jest.fn().mockResolvedValue([]),
         };
         const triggerService = {
             syncEmployeeAssignmentRulesForClient: jest.fn().mockResolvedValue(undefined),
@@ -196,7 +196,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
                 .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
             expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.any(Object), transaction, calendar);
-            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, calendar);
+            expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(1, transaction, calendar);
         });
 
         it("an approved update loads the calendar before the transaction and hands it to the usecase and the lifecycle repair", async () => {
@@ -213,7 +213,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             expect(updateClient.executeApprovedTarget).toHaveBeenCalledWith(
                 "branch-a", 1, expect.objectContaining({ name: "새 이름" }), "approved-target", transaction, calendar,
             );
-            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, calendar);
+            expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(1, transaction, calendar);
         });
 
         it("a direct update hands the loaded calendar to the usecase and the lifecycle repair", async () => {
@@ -228,7 +228,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             expect(updateClient.execute).toHaveBeenCalledWith(
                 "branch-a", 1, expect.objectContaining({ name: "새 이름" }), expect.anything(), calendar,
             );
-            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
+            expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
         });
     });
 
@@ -367,7 +367,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             grant: "0",
             actualPrice: "120000",
         }), transaction, KR_BUILTIN_CALENDAR);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(1, transaction, KR_BUILTIN_CALENDAR);
     });
 
     it("preserves voucher pricing when creating a voucher client", async () => {
@@ -492,7 +492,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             startDate: new Date("2024-02-29T00:00:00.000Z"),
             endDate: new Date("2024-03-01T00:00:00.000Z"),
         }), transaction);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(1, transaction, KR_BUILTIN_CALENDAR);
         expect(transaction.agent_action.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ capability: "clients.update" }),
         }));
@@ -713,7 +713,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             actualPrice: "50000",
         }), expect.anything(), KR_BUILTIN_CALENDAR);
         expect(serviceRecordLifecycle.validatePeriodChange).toHaveBeenCalledWith(expect.objectContaining({ clientId: 1 }), undefined);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(1, expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("normalizes a voucher toggle to canonical non-voucher pricing", async () => {
@@ -1125,7 +1125,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
     it("rolls approval-bound lifecycle synchronization back before recording an effect", async () => {
         const { capabilities, updateClient, transaction, serviceRecordLifecycle } = setup();
-        serviceRecordLifecycle.ensureForClient.mockRejectedValue(new Error("service record sync failed"));
+        serviceRecordLifecycle.ensureAllForClient.mockRejectedValue(new Error("service record sync failed"));
         const update = capabilities.find((entry) => entry.meta.name === "clients.update")!;
         const context = {
             principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
@@ -1204,7 +1204,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         };
         const serviceRecordLifecycle = {
             validatePeriodChange: jest.fn().mockResolvedValue(undefined),
-            ensureForClient: jest.fn().mockResolvedValue(undefined),
+            ensureAllForClient: jest.fn().mockResolvedValue([]),
         };
         const intent = { persistClientIntent: jest.fn().mockResolvedValue(undefined), persistScheduleIntent: jest.fn() };
         const effect = {
@@ -1314,7 +1314,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect((taskHolidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
             .toBeLessThan(automationRecords.runTaskMutation.mock.invocationCallOrder[0]!);
         expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.any(Object), transaction, taskCalendar);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(7, transaction, taskCalendar);
+        expect(serviceRecordLifecycle.ensureAllForClient).toHaveBeenCalledWith(7, transaction, taskCalendar);
         expect(intent.persistClientIntent).toHaveBeenCalledWith(
             transaction,
             expect.objectContaining({ branchId: "branch-a", clientId: 7, taskOrigin: true }),
@@ -1469,7 +1469,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         };
         const serviceRecordLifecycle = {
             validatePeriodChange: jest.fn().mockResolvedValue(undefined),
-            ensureForClient: jest.fn().mockResolvedValue(undefined),
+            ensureAllForClient: jest.fn().mockResolvedValue([]),
         };
         const intent = { persistClientIntent: jest.fn().mockResolvedValue(undefined), persistScheduleIntent: jest.fn().mockResolvedValue(undefined) };
         function digest(character: string): string { return character.repeat(64); }

@@ -26,6 +26,10 @@ export interface ServiceRecordContext {
     org?: { name: string };
     employee?: { id: number; name: string };
     client?: { id: number; name: string };
+    babyId?: string | null;
+    /** Current one-based rank, independent of the baby's immutable ordinal. */
+    babyRank?: number | null;
+    babyCount?: number | null;
     totalSessions: number;
     startDate: string | null;
     header: Record<string, unknown> | null;

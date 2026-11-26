@@ -196,6 +196,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                 OR: [
                     { primaryEmployeeId: id },
                     { secondaryEmployeeId: id },
+                    { recordTeamSlots: { some: { branchId: branchid, active: true, slot: { gte: 2 }, employeeId: id } } },
                 ],
             },
         });
@@ -214,6 +215,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                 OR: [
                     { primaryEmployeeId: id },
                     { secondaryEmployeeId: id },
+                    { recordTeamSlots: { some: { branchId: branchid, active: true, slot: { gte: 2 }, employeeId: id } } },
                 ],
             },
             select: {
@@ -256,6 +258,7 @@ export class SbEmployeeRepository implements IEmployeeRepository {
             OR: [
                 { primaryEmployeeId: id },
                 { secondaryEmployeeId: id },
+                    { recordTeamSlots: { some: { branchId: branchid, active: true, slot: { gte: 2 }, employeeId: id } } },
             ],
             // A terminated assignment is finished work even when its contracted
             // end date is still in the future, so it belongs in work history.
@@ -327,6 +330,17 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                     },
                     take: 1,
                 },
+                recordTeamSlots: {
+                    where: {
+                        branchId: branchid, active: true, slot: { gte: 2 },
+                        schedule: {
+                            branchId: branchid, replaced: false, terminatedAt: null,
+                            startDate: { lte: today }, endDate: { gte: today },
+                        },
+                    },
+                    take: 1,
+                    select: { id: true },
+                },
             },
         });
 
@@ -335,7 +349,8 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
             const hasActiveAssignment =
                 emp.primaryEmployeeSchedules.length > 0 ||
-                emp.secondaryEmployeeSchedules.length > 0;
+                emp.secondaryEmployeeSchedules.length > 0 ||
+                (emp.recordTeamSlots?.length ?? 0) > 0;
             entity.status = deriveEmployeeStatus(
                 hasActiveAssignment,
                 entity.openToNextWork,
@@ -367,6 +382,17 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                     },
                     take: 1,
                 },
+                recordTeamSlots: {
+                    where: {
+                        branchId: branchid, active: true, slot: { gte: 2 },
+                        schedule: {
+                            branchId: branchid, replaced: false, terminatedAt: null,
+                            startDate: { lte: date }, endDate: { gte: date },
+                        },
+                    },
+                    take: 1,
+                    select: { id: true },
+                },
             },
         });
 
@@ -375,7 +401,8 @@ export class SbEmployeeRepository implements IEmployeeRepository {
 
             const hasActiveAssignment =
                 emp.primaryEmployeeSchedules.length > 0 ||
-                emp.secondaryEmployeeSchedules.length > 0;
+                emp.secondaryEmployeeSchedules.length > 0 ||
+                (emp.recordTeamSlots?.length ?? 0) > 0;
             entity.status = deriveEmployeeStatus(
                 hasActiveAssignment,
                 entity.openToNextWork,
@@ -407,6 +434,17 @@ export class SbEmployeeRepository implements IEmployeeRepository {
                     },
                     take: 1,
                 },
+                recordTeamSlots: {
+                    where: {
+                        branchId: branchid, active: true, slot: { gte: 2 },
+                        schedule: {
+                            branchId: branchid, replaced: false, terminatedAt: null,
+                            startDate: { lte: date }, endDate: { gte: date },
+                        },
+                    },
+                    take: 1,
+                    select: { id: true },
+                },
             },
         });
         if (!employee) return null;
@@ -414,7 +452,8 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         const entity = EmployeeMapper.toDomain(employee);
         const hasActiveAssignment =
             employee.primaryEmployeeSchedules.length > 0 ||
-            employee.secondaryEmployeeSchedules.length > 0;
+            employee.secondaryEmployeeSchedules.length > 0 ||
+            (employee.recordTeamSlots?.length ?? 0) > 0;
         entity.status = deriveEmployeeStatus(hasActiveAssignment, entity.openToNextWork);
         return entity;
     }

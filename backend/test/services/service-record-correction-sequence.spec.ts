@@ -1323,10 +1323,10 @@ describe("service-record correction sequences (real services over one persisted 
 
         it("throws on an unsupported where field, select key, data column, argument and orderBy", async () => {
             const store = seedGoldenIncident();
-            await expect(store.service_record_case.findMany({ where: { client: { is: { deletedAt: null } } } })).rejects.toThrow(/unsupported where field "client"/);
+            await expect(store.service_record_case.findMany({ where: { client: { some: { deletedAt: null } } } })).rejects.toThrow(/unsupported where field "some"/);
             await expect(store.service_record_case.findMany({ select: { notAColumn: true } })).rejects.toThrow(/unsupported select\/include "notAColumn"/);
             await expect(store.service_record_case.updateMany({ where: { id: CASE_ID }, data: { notAColumn: 1 } })).rejects.toThrow(/unknown data column/);
-            await expect(store.service_record_case.findMany({ where: { id: CASE_ID }, take: 1 } as never)).rejects.toThrow(/unsupported argument "take"/);
+            await expect(store.service_record_case.findMany({ where: { id: CASE_ID }, skip: 1 })).rejects.toThrow(/unsupported argument "skip"/);
             await expect(store.service_record_case.findMany({ orderBy: { version: "sideways" } } as never)).rejects.toThrow(/orderBy direction/);
             await expect(store.service_record_case.findMany({ where: { version: { between: [1, 2] } } })).rejects.toThrow(/unsupported operator/);
         });
@@ -1381,14 +1381,14 @@ describe("service-record correction sequences (real services over one persisted 
             await expect(store.service_record_day.update({ where: { serviceRecordCaseId: CASE_ID, caseSessionIndex: 1 }, data: { notes: "x" } })).rejects.toThrow(/names none of the unique keys/);
             // A null, list, `{ equals }` or other object value does not identify a row (Prisma's WhereUniqueInput types reject them).
             await expect(store.service_record_case.update({ where: { id: { equals: CASE_ID }, branchId: BRANCH_ID }, data: { formVersion: 4 } })).rejects.toThrow(/unique key "id" must be a string literal/);
-            await expect(store.service_record_case.findUnique({ where: { clientId: { equals: CLIENT_ID } } })).rejects.toThrow(/unique key "clientId" must be a int literal/);
+            await expect(store.service_record_case.findUnique({ where: { clientId: { equals: CLIENT_ID } } })).rejects.toThrow(/names none of the unique keys/);
             await expect(store.service_record_case.findUnique({ where: { id: null } })).rejects.toThrow(/unique key "id" must be a string literal/);
             await expect(store.service_record_case.findUnique({ where: { id: { in: [CASE_ID] } } })).rejects.toThrow(/unique key "id" must be a string literal/);
             expect(store.snapshot()).toEqual(snapshot);
 
-            // The primary key (alone, or with extra filters as Prisma allows) and a modelled @unique work.
+            // The primary key works alone or with the client as an additional filter.
             expect(await store.service_record_case.findUnique({ where: { id: CASE_ID }, select: { id: true } })).toEqual({ id: CASE_ID });
-            expect(await store.service_record_case.findUnique({ where: { clientId: CLIENT_ID }, select: { id: true } })).toEqual({ id: CASE_ID });
+            expect(await store.service_record_case.findUnique({ where: { id: CASE_ID, clientId: CLIENT_ID }, select: { id: true } })).toEqual({ id: CASE_ID });
             await store.service_record_case.update({ where: { id: CASE_ID, branchId: BRANCH_ID }, data: { formVersion: 4 } });
             expect(store.one("service_record_case", { id: CASE_ID })["formVersion"]).toBe(4);
             // Extra filters that match nothing still fail like Prisma's "record not found".
@@ -1407,11 +1407,11 @@ describe("service-record correction sequences (real services over one persisted 
                 data: Row;
                 create: Row;
             }
-            const ASSIGNMENT_ID = "eeeeeeee-eeee-4eee-8eee-000000000001";
+            const BABY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000001";
             const MODELS: UniqueModel[] = [
                 {
                     table: "service_record_case", methods: ["findUnique", "update", "upsert"],
-                    keys: [{ column: "id", value: CASE_ID, wrongKind: 7 }, { column: "clientId", value: CLIENT_ID, wrongKind: "5" }],
+                    keys: [{ column: "id", value: CASE_ID, wrongKind: 7 }, { column: "babyId", value: BABY_ID, wrongKind: 5 }],
                     data: { formVersion: 4 }, create: { branchId: BRANCH_ID },
                 },
                 // A second multi-key model, with the string key and the int key the other way round.
@@ -1419,11 +1419,6 @@ describe("service-record correction sequences (real services over one persisted 
                     table: "client", methods: ["findUnique", "update"],
                     keys: [{ column: "id", value: CLIENT_ID, wrongKind: "5" }, { column: "eDocId", value: "edoc-1", wrongKind: 9 }],
                     data: { name: "x" }, create: { branchId: BRANCH_ID },
-                },
-                {
-                    table: "service_record_assignment", methods: ["upsert"],
-                    keys: [{ column: "id", value: ASSIGNMENT_ID, wrongKind: 1 }, { column: "scheduleId", value: SCHEDULE_A, wrongKind: "126" }],
-                    data: { employeeNameSnapshot: "x" }, create: { branchId: BRANCH_ID },
                 },
             ];
             type RowCall = (args: Row) => Promise<unknown>;
@@ -1474,17 +1469,34 @@ describe("service-record correction sequences (real services over one persisted 
                 }
             }
 
+            for (const [variant, makeStore] of [["an empty store", () => new SequenceStore()], ["a populated store", seedGoldenIncident]] as const) {
+                it(`service_record_assignment.upsert on ${variant}: a schedule filter cannot stand in for the case assignment ID`, async () => {
+                    const store = makeStore();
+                    const snapshot = store.snapshot();
+                    const mark = store.mark();
+                    const shape = { create: { branchId: BRANCH_ID }, update: { employeeNameSnapshot: "x" } };
+                    await expect(store.service_record_assignment.upsert({ ...shape, where: { scheduleId: SCHEDULE_A } }))
+                        .rejects.toThrow(/names none of the unique keys/);
+                    for (const id of [{ equals: CASE_ID }, { in: [CASE_ID] }, null, [CASE_ID], 1, {}]) {
+                        await expect(store.service_record_assignment.upsert({ ...shape, where: { id, scheduleId: SCHEDULE_A } }))
+                            .rejects.toThrow(/unique key "id" must be a string literal/);
+                    }
+                    expect(store.writesSince(mark)).toEqual([]);
+                    expect(store.snapshot()).toEqual(snapshot);
+                });
+            }
+
             it("accepts a literal unique key beside other keys: both literal keys, a non-unique filter, nested predicates", async () => {
                 const store = seedGoldenIncident();
                 const only = { select: { id: true } };
                 // Both literal unique keys.
-                expect(await store.service_record_case.findUnique({ where: { id: CASE_ID, clientId: CLIENT_ID }, ...only })).toEqual({ id: CASE_ID });
-                await store.service_record_case.update({ where: { id: CASE_ID, clientId: CLIENT_ID }, data: { formVersion: 4 } });
-                await store.service_record_case.upsert({ where: { id: CASE_ID, clientId: CLIENT_ID }, create: { branchId: BRANCH_ID }, update: { formVersion: 5 } });
+                await store.service_record_case.update({ where: { id: CASE_ID, clientId: CLIENT_ID }, data: { babyId: BABY_ID, formVersion: 4 } });
+                expect(await store.service_record_case.findUnique({ where: { id: CASE_ID, babyId: BABY_ID }, ...only })).toEqual({ id: CASE_ID });
+                await store.service_record_case.upsert({ where: { id: CASE_ID, babyId: BABY_ID }, create: { branchId: BRANCH_ID }, update: { formVersion: 5 } });
                 expect(store.one("service_record_case", { id: CASE_ID })["formVersion"]).toBe(5);
                 expect(store.rows("service_record_case")).toHaveLength(1);
                 // A literal key plus a non-unique filter (even an operator object on the non-unique field).
-                expect(await store.service_record_case.findUnique({ where: { clientId: CLIENT_ID, branchId: BRANCH_ID }, ...only })).toEqual({ id: CASE_ID });
+                expect(await store.service_record_case.findUnique({ where: { babyId: BABY_ID, clientId: { equals: CLIENT_ID } }, ...only })).toEqual({ id: CASE_ID });
                 expect(await store.service_record_case.findUnique({ where: { id: CASE_ID, version: { gte: 1 } }, ...only })).toEqual({ id: CASE_ID });
                 // A literal key plus ordinary nested predicates: AND / OR / NOT follow ordinary `where` rules, so an
                 // `{ equals }` on a unique column inside them is a plain filter, not a unique selector.
@@ -1492,9 +1504,9 @@ describe("service-record correction sequences (real services over one persisted 
                     where: { id: CASE_ID, AND: [{ id: { equals: CASE_ID } }, { branchId: { not: "other" } }], OR: [{ version: { gte: 1 } }], NOT: { clientId: { in: [99] } } },
                     ...only,
                 })).toEqual({ id: CASE_ID });
-                // The second model: both literal keys of an assignment, on the upsert path.
-                const assignmentId = store.one("service_record_assignment", { scheduleId: SCHEDULE_A })["id"] as string;
-                await store.service_record_assignment.upsert({ where: { id: assignmentId, scheduleId: SCHEDULE_A }, create: { branchId: BRANCH_ID }, update: { employeeNameSnapshot: "x" } });
+                // An assignment ID can be constrained with an ordinary schedule filter.
+                const assignmentId = store.one("service_record_assignment", { scheduleId: SCHEDULE_A, serviceRecordCaseId: CASE_ID })["id"];
+                await store.service_record_assignment.upsert({ where: { id: assignmentId, scheduleId: { equals: SCHEDULE_A } }, create: { branchId: BRANCH_ID }, update: { employeeNameSnapshot: "x" } });
                 expect(store.one("service_record_assignment", { id: assignmentId })["employeeNameSnapshot"]).toBe("x");
                 expect(store.rows("service_record_assignment")).toHaveLength(2);
             });
@@ -1581,18 +1593,23 @@ describe("service-record correction sequences (real services over one persisted 
             await expect(store.service_record_day.create({ data: { id: "dddddddd-dddd-4ddd-8ddd-000000000001", branchId: BRANCH_ID } })).rejects.toThrow(/unique constraint \(id\)/);
             await expect(store.service_record_day.create({ data: { branchId: BRANCH_ID, serviceRecordCaseId: CASE_ID, caseSessionIndex: 1 } })).rejects.toThrow(/unique constraint \(serviceRecordCaseId, caseSessionIndex\)/);
             // upsert-create: the where matches no row, so the create branch runs and must not duplicate a key.
-            await expect(store.service_record_case.upsert({ where: { clientId: 777 }, create: { id: CASE_ID, branchId: BRANCH_ID, clientId: 777 }, update: {} })).rejects.toThrow(/unique constraint \(id\)/);
+            const otherCaseId = "00000000-0000-4000-8000-0000000000c3";
+            await expect(store.service_record_case.upsert({ where: { id: otherCaseId }, create: { id: CASE_ID, branchId: BRANCH_ID, clientId: 777 }, update: {} })).rejects.toThrow(/unique constraint \(id\)/);
             await expect(store.service_record_case.upsert({ where: { id: "00000000-0000-4000-8000-0000000000c2" }, create: { branchId: BRANCH_ID, clientId: CLIENT_ID }, update: {} })).rejects.toThrow(/unique constraint \(clientId\)/);
-            await expect(store.service_record_assignment.upsert({ where: { scheduleId: 4242 }, create: { branchId: BRANCH_ID, scheduleId: SCHEDULE_A }, update: {} })).rejects.toThrow(/unique constraint \(scheduleId\)/);
+            await expect(store.service_record_assignment.upsert({
+                where: { id: "eeeeeeee-eeee-4eee-8eee-000000000099" },
+                create: { branchId: BRANCH_ID, scheduleId: SCHEDULE_A, serviceRecordCaseId: CASE_ID },
+                update: {},
+            })).rejects.toThrow(/unique constraint \(scheduleId, serviceRecordCaseId\)/);
             // test-facing insert and seeding.
             expect(() => store.insert("service_record_case", { id: CASE_ID })).toThrow(/unique constraint/);
             expect(() => new SequenceStore({ tables: { client: [{ id: 1 }, { id: 1 }] } })).toThrow(/unique constraint/);
             expect(store.snapshot()).toEqual(snapshot);
 
             // A fresh key is created, and an upsert whose where matches updates instead of inserting.
-            await store.service_record_case.upsert({ where: { clientId: 777 }, create: { branchId: BRANCH_ID, clientId: 777 }, update: {} });
+            await store.service_record_case.upsert({ where: { id: otherCaseId }, create: { id: otherCaseId, branchId: BRANCH_ID, clientId: 777 }, update: {} });
             expect(store.rows("service_record_case")).toHaveLength(2);
-            await store.service_record_case.upsert({ where: { clientId: CLIENT_ID }, create: { branchId: BRANCH_ID, clientId: CLIENT_ID }, update: { formVersion: 9 } });
+            await store.service_record_case.upsert({ where: { id: CASE_ID }, create: { branchId: BRANCH_ID, clientId: CLIENT_ID }, update: { formVersion: 9 } });
             expect(store.rows("service_record_case")).toHaveLength(2);
             expect(store.one("service_record_case", { id: CASE_ID })["formVersion"]).toBe(9);
         });

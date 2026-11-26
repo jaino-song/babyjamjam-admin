@@ -1,7 +1,7 @@
 "use client";
 
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isAxiosError } from "axios";
 import dynamic from "next/dynamic";
@@ -28,7 +28,7 @@ import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
-import { useConfirmBooking } from "@/features/clients/hooks/use-clients";
+import { useClient, useConfirmBooking } from "@/features/clients/hooks/use-clients";
 import type { Client } from "@/lib/client/types";
 import { formatVoucherDurationLabel } from "@/lib/client/voucher-duration-label";
 import {
@@ -42,6 +42,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
+import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 import { canRetryFailedHistory, canResendSetupJob, resendMessageTriggerJob, retryMessageHistory } from "@/features/message-triggers/retry-history";
 import {
     useClientMessageHistory,
@@ -94,6 +95,7 @@ import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/sta
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { eformsignApi, type EformsignLinkConfirmation, type LocalEformsignDocRecord } from "@/services/api";
+import { ServiceRecordLinkResetDialog, type ServiceRecordLinkResetSelection } from "@/components/app/clients/ServiceRecordLinkResetDialog";
 import { ContractLinkConfirmDialog } from "@/components/app/clients/ContractLinkConfirmDialog";
 import {
     clientContractDocsQueryKey,
@@ -1108,7 +1110,7 @@ function ClientMessageDetailSlide({
 export interface ClientDetailPanelProps {
     /** The currently selected client to render detail for. */
     client: Client;
-    tabRequest?: { clientId: number; tab: ClientDetailTabKey; nonce: number } | null;
+    tabRequest?: { clientId: number; tab: ClientDetailTabKey; nonce: number; caseId?: string } | null;
     /** Page-specific trailing action (e.g. edit/delete menu, or a link-only menu). */
     trailing: ReactNode;
     /** Stack basic information when embedded in a narrow detail pane. */
@@ -1158,6 +1160,7 @@ function ClientDetailPanelBody({
 }: ClientDetailPanelProps) {
     const locale = useLocale();
     const queryClient = useQueryClient();
+    const recordBranchId = useActiveBranchId();
     const { toast } = useToast();
     const confirmBooking = useConfirmBooking();
     const [confirmedBooking, setConfirmedBooking] = useState<Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus"> | null>(null);
@@ -1232,29 +1235,111 @@ function ClientDetailPanelBody({
         limit: CLIENT_UPCOMING_MESSAGE_LIMIT,
     });
 
-    const serviceRecordsQuery = useClientServiceRecords(clientId, {
-        enabled: activeDetailTab === "service-records",
+    const [resetLinkSelection, setResetLinkSelection] = useState<ServiceRecordLinkResetSelection | null>(null);
+    const [recordSelection, setRecordSelection] = useState<{ clientId: number; caseId: string; branchId: string | null } | undefined>(
+        () => tabRequest?.caseId
+            ? { clientId: tabRequest.clientId, caseId: tabRequest.caseId, branchId: recordBranchId }
+            : undefined,
+    );
+    const selectedRecordCaseId = recordSelection?.clientId === clientId && recordSelection.branchId === recordBranchId
+        ? recordSelection.caseId : undefined;
+    const recordsActive = activeDetailTab === "service-records" && isBranchContextAligned(recordBranchId);
+    const recordClientQuery = useClient(recordsActive && layout === "desktop" ? clientId : 0);
+    const recordClient = recordClientQuery.data;
+    const recordClientConfirmed = recordClientQuery.isBranchContextReady && recordClientQuery.isSuccess
+        && !recordClientQuery.isFetching && !recordClientQuery.isPaused && !recordClientQuery.isPlaceholderData;
+    const householdQuery = useClientServiceRecords(clientId, {
+        enabled: recordsActive,
+        branchId: recordBranchId,
+        refreshOnFocus: true,
     });
+    const selectedRecordQuery = useClientServiceRecords(clientId, {
+        enabled: recordsActive && selectedRecordCaseId !== undefined,
+        caseId: selectedRecordCaseId,
+        branchId: recordBranchId,
+    });
+    const serviceRecordsQuery = selectedRecordCaseId ? selectedRecordQuery : householdQuery;
+    const householdOverview = isBranchContextAligned(recordBranchId) && !householdQuery.isPlaceholderData
+        ? householdQuery.data : undefined;
+    const knownCaseList = householdOverview?.cases;
+    // 예약 전 사례가 없으면 고객 정보에서 확정된 아기 수를 확인한다.
+    const householdClient = recordClient?.fetalConfirmation == null ? client : recordClient;
+    const confirmedBabyCount = householdClient.fetalConfirmation === "CONFIRMED"
+        ? householdClient.babyCount ?? householdClient.babies?.length ?? 0
+        : 0;
+    const needsCustomerCount = knownCaseList?.length === 0 && layout === "desktop";
+    const customerCountUnknown = needsCustomerCount
+        && (recordClientQuery.isPending || recordClientQuery.isError || recordClientQuery.isPlaceholderData);
+    const revisionHistoryKnown = recordsActive && knownCaseList !== undefined && !householdQuery.isError
+        && (selectedRecordCaseId
+            ? knownCaseList.some(({ caseId }) => caseId === selectedRecordCaseId)
+            : knownCaseList.length <= 1 && confirmedBabyCount <= 1 && !customerCountUnknown
+                && (knownCaseList[0]?.babyCount ?? 0) <= 1);
+    const revisionHistoryEnabled = revisionHistoryKnown
+        && (selectedRecordCaseId !== undefined || (!householdQuery.isFetching && !householdQuery.isPaused
+            && (!needsCustomerCount || (!recordClientQuery.isFetching && !recordClientQuery.isPaused))));
     const revisionHistoryQuery = useClientServiceRecordRevisionHistory(clientId, {
-        enabled: activeDetailTab === "service-records",
+        enabled: revisionHistoryEnabled,
+        caseId: selectedRecordCaseId,
+        branchId: recordBranchId,
     });
     const retryRevisionDocumentMutation = useRetryServiceRecordDocument();
     const knownServiceRecordCaseId = serviceRecordsQuery.data?.record?.id
-        ?? revisionHistoryQuery.data?.caseId
-        ?? null;
+        ?? (revisionHistoryKnown ? revisionHistoryQuery.data?.caseId : undefined);
+    const selectRecordCase = (caseId: string) => setRecordSelection({ clientId, caseId, branchId: recordBranchId });
+    const refreshRecords = async () => {
+        if (!isBranchContextAligned(recordBranchId)) return;
+        await Promise.all([
+            householdQuery.refetch(),
+            ...(selectedRecordCaseId ? [selectedRecordQuery.refetch()] : []),
+        ]);
+    };
+    const refreshAfterReconciliation = async (adoptedCaseId?: string) => {
+        if (!isBranchContextAligned(recordBranchId)) return;
+        if (adoptedCaseId) selectRecordCase(adoptedCaseId);
+        await Promise.all([
+            refreshRecords(),
+            ...(adoptedCaseId && adoptedCaseId !== selectedRecordCaseId ? [queryClient.invalidateQueries({
+                queryKey: serviceRecordKeys.clientOverview(clientId, adoptedCaseId, recordBranchId),
+                exact: true,
+            })] : []),
+            queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId, recordBranchId) }),
+            queryClient.invalidateQueries({ queryKey: clientKeys.lists() }),
+        ]);
+    };
+    const canReconcileNow = () => {
+        if (!recordsActive || !isBranchContextAligned(recordBranchId) || !recordClientConfirmed) return false;
+        // A refetch or subscription can change the cache before React renders the new controls.
+        const household = queryClient.getQueryState(serviceRecordKeys.clientOverview(clientId, undefined, recordBranchId));
+        const customer = queryClient.getQueryState(clientKeys.detail(clientId, recordBranchId));
+        const selected = selectedRecordCaseId
+            ? queryClient.getQueryState(serviceRecordKeys.clientOverview(clientId, selectedRecordCaseId, recordBranchId))
+            : undefined;
+        return household?.status === "success" && household.fetchStatus === "idle"
+            && !household.isInvalidated && household.data === householdOverview
+            && customer?.status === "success" && customer.fetchStatus === "idle"
+            && !customer.isInvalidated && customer.data === recordClient
+            && (!selected || (selected.status !== "error" && selected.fetchStatus !== "paused"
+                && (selected.status === "pending" || (selected.fetchStatus === "idle" && !selected.isInvalidated
+                    && selected.data === serviceRecordsQuery.data))));
+    };
 
     useEffect(() => {
         if (clientId === null) return undefined;
 
         return subscribeServiceRecordRevisionSync((event) => {
-            if (knownServiceRecordCaseId && event.caseId !== knownServiceRecordCaseId) return;
+            const known = knownCaseList?.some(({ caseId }) => caseId === event.caseId)
+                || knownServiceRecordCaseId === event.caseId;
+            if ((knownCaseList?.length || knownServiceRecordCaseId) && !known) return;
             void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
-            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId) });
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId, event.caseId) });
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId), exact: true });
+            void queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(clientId, undefined, recordBranchId), exact: true });
             void queryClient.invalidateQueries({ queryKey: clientKeys.all });
             void queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
             void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
         });
-    }, [clientId, knownServiceRecordCaseId, queryClient]);
+    }, [clientId, knownCaseList, knownServiceRecordCaseId, queryClient, recordBranchId]);
 
     useEffect(() => {
         if (clientId === null) return undefined;
@@ -1387,7 +1472,7 @@ function ClientDetailPanelBody({
         };
     }, []);
 
-    const clearClientMessageHistoryDetail = () => {
+    const clearClientMessageHistoryDetail = useCallback(() => {
         if (clearMessageHistorySelectionTimeoutRef.current) {
             clearTimeout(clearMessageHistorySelectionTimeoutRef.current);
             clearMessageHistorySelectionTimeoutRef.current = null;
@@ -1395,7 +1480,7 @@ function ClientDetailPanelBody({
 
         setIsMessageHistoryDetailVisible(false);
         setSelectedMessageHistoryId(null);
-    };
+    }, []);
 
     const handleSelectClientMessageHistoryRecord = (record: MessageLogRecord) => {
         if (clearMessageHistorySelectionTimeoutRef.current) {
@@ -1419,7 +1504,7 @@ function ClientDetailPanelBody({
         }, CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS);
     };
 
-    const handleDetailTabChange = (nextTab: string) => {
+    const handleDetailTabChange = useCallback((nextTab: string) => {
         const nextDetailTab = CLIENT_DETAIL_TABS.find((tab) => tab.key === nextTab)?.key;
 
         if (!nextDetailTab) return;
@@ -1429,14 +1514,18 @@ function ClientDetailPanelBody({
         if (nextDetailTab !== "messages") {
             clearClientMessageHistoryDetail();
         }
-    };
+    }, [activeDetailTab, clearClientMessageHistoryDetail]);
 
     const appliedTabRequest = useRef<number | undefined>(undefined);
     useEffect(() => {
         if (!tabRequest || tabRequest.clientId !== selectedClient.id || appliedTabRequest.current === tabRequest.nonce) return;
+        if (tabRequest.caseId && !recordBranchId) return;
         appliedTabRequest.current = tabRequest.nonce;
+        setRecordSelection(tabRequest.caseId
+            ? { clientId: tabRequest.clientId, caseId: tabRequest.caseId, branchId: recordBranchId }
+            : undefined);
         handleDetailTabChange(tabRequest.tab);
-    });
+    }, [tabRequest, selectedClient.id, handleDetailTabChange, recordBranchId]);
 
     const handleConfirmBooking = async () => {
         if (bookingConfirmationInFlightRef.current || !canConfirmBooking || !hasBookingDates) return;
@@ -1790,7 +1879,17 @@ function ClientDetailPanelBody({
                                 <ClientServiceRecordsTab
                                     data-component={`${dataComponentPrefix}_service-records`}
                                     layout={layout}
-                                    overview={serviceRecordsQuery.data}
+                                    key={JSON.stringify([recordBranchId, clientId, selectedRecordCaseId])}
+                                    overview={isBranchContextAligned(recordBranchId) ? serviceRecordsQuery.data : undefined}
+                                    householdOverview={householdOverview}
+                                    client={recordClient}
+                                    reconciliationConfirmed={recordsActive && recordClientConfirmed && householdQuery.isSuccess
+                                        && !householdQuery.isFetching && !householdQuery.isPaused && !householdQuery.isPlaceholderData}
+                                    canReconcileNow={canReconcileNow}
+                                    onReconcileRefresh={refreshAfterReconciliation}
+                                    selectedCaseId={selectedRecordCaseId}
+                                    onResetServiceRecordLink={setResetLinkSelection}
+                                    onSelectCase={selectRecordCase}
                                     clientId={clientId}
                                     serviceDays={serviceDayPolicyOfClient(client)}
                                     isLoading={isQueryLoadPending(serviceRecordsQuery)}
@@ -1800,13 +1899,14 @@ function ClientDetailPanelBody({
                                         && !isQueryLoadPending(serviceRecordsQuery)
                                     }
                                     isTextRefreshing={serviceRecordsQuery.isRefetching}
-                                    onRefresh={() => void serviceRecordsQuery.refetch()}
-                                    revisionHistory={revisionHistoryQuery.data}
-                                    isRevisionHistoryLoading={isQueryLoadPending(revisionHistoryQuery)}
-                                    isRevisionHistoryError={revisionHistoryQuery.isError}
+                                    onRefresh={() => void refreshRecords()}
+                                    revisionHistory={revisionHistoryKnown ? revisionHistoryQuery.data : undefined}
+                                    isRevisionHistoryLoading={isQueryLoadPending(serviceRecordsQuery)
+                                        || (revisionHistoryEnabled && isQueryLoadPending(revisionHistoryQuery))}
+                                    isRevisionHistoryError={revisionHistoryKnown && revisionHistoryQuery.isError}
                                     revisionHistoryErrorStatus={getErrorResponseStatus(revisionHistoryQuery.error)}
-                                    isRevisionHistoryRefreshing={revisionHistoryQuery.isFetching && !isQueryLoadPending(revisionHistoryQuery)}
-                                    onRefreshRevisionHistory={() => void revisionHistoryQuery.refetch()}
+                                    isRevisionHistoryRefreshing={revisionHistoryEnabled && revisionHistoryQuery.isFetching && !isQueryLoadPending(revisionHistoryQuery)}
+                                    onRefreshRevisionHistory={revisionHistoryEnabled ? () => void revisionHistoryQuery.refetch() : undefined}
                                     onRetryRevisionDocument={(revisionId, documentStateId, expectedGeneration) =>
                                         retryRevisionDocumentMutation.mutateAsync({
                                             revisionId,
@@ -1822,6 +1922,11 @@ function ClientDetailPanelBody({
                     ]}
                 />
             </DetailPanel>
+            <ServiceRecordLinkResetDialog
+                target={resetLinkSelection ? { clientId: client.id, ...resetLinkSelection } : null}
+                onClose={() => setResetLinkSelection(null)}
+                dataComponent={`${dataComponentPrefix}_reset-service-record-link`}
+            />
             <TwoButtonModal
                 data-component={`${dataComponentPrefix}_confirm-booking-modal`}
                 open={isBookingConfirmationOpen}

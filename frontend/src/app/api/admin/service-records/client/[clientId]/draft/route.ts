@@ -21,7 +21,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     try {
         const response = await serverAPIClient.get(
-            `/admin/service-records/client/${encodeURIComponent(clientId)}/draft`,
+            `/admin/service-records/client/${encodeURIComponent(clientId)}/draft${new URL(request.url).search}`,
             { headers: getAuthHeaders(token) },
         );
         return jsonResponse(response.data ?? {}, response.status);
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
         const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post(
-            `/admin/service-records/client/${encodeURIComponent(clientId)}/draft`,
+            `/admin/service-records/client/${encodeURIComponent(clientId)}/draft${new URL(request.url).search}`,
             body,
             { headers: getAuthHeaders(token) },
         );

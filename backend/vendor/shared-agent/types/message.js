@@ -110,6 +110,7 @@ exports.MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS = {
         "serviceEndDate",
         "buttonUrl",
         "serviceRecordUrl",
+        "serviceRecordLinks",
     ],
     CLIENT_GREETING: ["name", "clientName", "phone"],
     PRICE_INFO: [

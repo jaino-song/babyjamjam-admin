@@ -9,11 +9,12 @@ type EmployeeScheduleRow = {
     startDate: Date;
     endDate: Date;
     replaced: boolean;
+    recordTeamSlots?: { slot: number; employeeId: number }[];
 };
 
 export class EmployeeScheduleMapper {
     static toDomain(row: EmployeeScheduleRow): EmployeeScheduleEntity {
-        return new EmployeeScheduleEntity(
+        const entity = new EmployeeScheduleEntity(
             row.id,
             row.clientId,
             row.primaryEmployeeId,
@@ -23,6 +24,14 @@ export class EmployeeScheduleMapper {
             row.endDate,
             row.replaced,
         );
+        if (row.recordTeamSlots?.length) {
+            entity.providers = [
+                { slot: 0, employeeId: row.primaryEmployeeId },
+                ...(row.secondaryEmployeeId === null ? [] : [{ slot: 1, employeeId: row.secondaryEmployeeId }]),
+                ...row.recordTeamSlots.filter(({ slot }) => slot > 1),
+            ];
+        }
+        return entity;
     }
 
     static toPrismaCreate(entity: EmployeeScheduleEntity) {

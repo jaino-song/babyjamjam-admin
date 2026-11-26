@@ -15,7 +15,7 @@ interface ServiceRecordMissingModalProps {
   items: ServiceRecordMissingClients["items"];
   error?: unknown;
   onRetry: () => void;
-  onSelectClient: (clientId: number) => void;
+  onSelectClient: (clientId: number, caseId?: string) => void;
   "data-component": string;
 }
 

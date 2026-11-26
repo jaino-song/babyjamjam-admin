@@ -93,23 +93,25 @@ jest.mock("@/lib/client/badges", () => ({
 jest.mock("@/components/app/clients/ClientFormDialog", () => ({
   CLIENT_FORM_STEPPER_STEPS: [
     { label: "이용자 정보" },
-    { label: "제공인력 정보" },
     { label: "바우처 정보" },
+    { label: "제공인력 정보" },
     { label: "계약 정보" },
   ],
   ClientFormDialog: () => null,
   ClientFormPanel: ({
+    client,
     onBeforeClose,
     onClose,
     onDirtyChange,
     onSuccess,
   }: {
+    client?: { allocationVersion?: string };
     onBeforeClose?: () => boolean;
     onClose: () => void;
     onDirtyChange?: (dirty: boolean) => void;
     onSuccess?: (client: typeof mockCreatedClient) => void;
   }) => (
-    <div data-testid="client-form-panel">
+    <div data-testid="client-form-panel" data-allocation-version={client?.allocationVersion}>
       <button type="button" onClick={() => onDirtyChange?.(true)}>
         입력 시작
       </button>
@@ -666,6 +668,24 @@ describe("ClientsPage directory subtitle behavior", () => {
     });
 
     expect(screen.getByTestId("client-detail")).toHaveTextContent("지점 A 고객 2");
+  });
+
+  it("reopens the split-panel editor using a fresh allocation projection", async () => {
+    mockSearchParams = new URLSearchParams("id=8");
+    mockClientFromParam = { id: 8, name: "지점 A 고객 2" };
+    mockClientRefetch.mockResolvedValueOnce({
+      isSuccess: true, data: { ...mockClientFromParam, allocationVersion: "opened-version" },
+    }).mockResolvedValueOnce({
+      isSuccess: true, data: { ...mockClientFromParam, allocationVersion: "latest-version" },
+    });
+    renderClientsPage({ clients: [], data: { pages: [{ data: [], total: 0 }] } });
+
+    fireEvent.click(screen.getByRole("button", { name: "common.edit" }));
+    expect(await screen.findByTestId("client-form-panel")).toHaveAttribute("data-allocation-version", "opened-version");
+    fireEvent.click(screen.getByRole("button", { name: "고객 추가 취소" }));
+    expect(screen.getByTestId("client-detail")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "common.edit" }));
+    expect(await screen.findByTestId("client-form-panel")).toHaveAttribute("data-allocation-version", "latest-version");
   });
 
   describe("service-record schedule menu item", () => {

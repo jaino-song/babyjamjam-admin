@@ -251,11 +251,13 @@ describe("SbMessageTriggerJobRepository", () => {
                 clientId: row.clientId, primaryEmployeeId: payload.employeeId, replaced: false, terminatedAt: null,
                 startDate: serviceStart, endDate: serviceEnd,
                 client: { branchId: row.branchId, deletedAt: null, serviceStatus: successor ? "waiting" : "pre_booking",
+                    fetalConfirmation: null,
                     startDate: serviceStart, endDate: serviceEnd, bookingConfirmedAt: successor ? epoch : null },
                 primaryEmployee: { branchId: row.branchId, deletedAt: null, phone: row.recipientPhone } };
             const tx = {
                 $queryRaw: jest.fn().mockResolvedValue([{ approved: true }]),
                 employee_schedule: { findFirst: jest.fn().mockResolvedValue(schedule) },
+                service_record_case: { findMany: jest.fn().mockResolvedValue([{ id: "case-1" }]) },
                 message_log: { findFirst: jest.fn().mockResolvedValue(null) },
                 message_trigger_rule_branch_override: { findUnique: jest.fn() },
                 message_trigger_job: {

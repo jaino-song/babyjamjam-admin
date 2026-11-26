@@ -18,20 +18,24 @@
  *    that does not exist);
  *  - nested shapes are checked too, against each column's kind from prisma/schema.prisma: a `where` field
  *    takes a literal, null or supported operators over literals (`not` recursively, `in` / `notIn` over
- *    literal lists), a Json column takes no filter, and a scalar `data` value is a literal, null or
+ *    literal lists), singular relations accept nested predicates, a Json column takes no filter, and a scalar `data` value is a literal, null or
  *    `{ increment: <int> }` on an int column; any other object is what Prisma's generated types reject;
  *  - single-row operations (`findUnique`, `update`, `upsert`) require a `where` that names a modelled
  *    single-column unique key with a scalar literal value (`{ equals }` is refused, as Prisma refuses it),
  *    and every top-level single-column unique field it supplies must be such a literal (one valid key never
  *    excuses an object, list, null or wrong-kind value in another); other fields and nested AND / OR / NOT
  *    are ordinary filters. Every insert path (`create`, upsert-create, `insert`, seeding) enforces the modelled uniqueness;
- *  - `where` is evaluated by the shared prisma-where-evaluator (SQL NULL semantics included);
+ *  - scalar `where` predicates use the shared prisma-where-evaluator (SQL NULL semantics included);
+ *    to-one predicates follow the modelled relation keys. List reads use direct predicates at
+ *    the top level and support `is` inside boolean groups for finalization eligibility;
+ *  - `findMany` accepts a positive integer `take`;
  *  - `$transaction` snapshots every table first and restores the snapshot when the callback
  *    throws, so an injected failure leaves the store exactly as it was before the transaction.
  *
- * `service_record` and `eformsign_doc` are modelled as empty tables with `updateMany` only: the
+ * `service_record` and `eformsign_doc` are modelled as empty tables: the
  * lifecycle sync issues a blind `updateMany` on both, and with no rows it matches nothing.
- * They have no `findMany`, so the editor's document-scope read keeps its "unverified" fallback.
+ * `service_record.findMany` supports header lookups during lifecycle sync. `eformsign_doc` has
+ * no `findMany`, so the editor's document-scope read keeps its "unverified" fallback.
  */
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -65,9 +69,10 @@ const no = (): boolean => false;
 const COLUMNS: Record<string, Record<string, () => unknown>> = {
     client: {
         id: nul, branchId: nul, name: nul, duration: nul, startDate: nul, endDate: nul, serviceStatus: nul,
-        bookingConfirmedAt: nul, birthDate: nul, eDocId: nul, deletedAt: nul,
+        bookingConfirmedAt: nul, birthDate: nul, eDocId: nul, deletedAt: nul, fetalConfirmation: nul,
         allowSaturdayService: no, allowSundayService: no, allowHolidayService: no,
     },
+    client_baby: { id: uuid, branchId: nul, clientId: nul, ordinal: nul, active: () => true },
     employee: { id: nul, branchId: nul, name: nul, phone: nul },
     branch: { id: nul, name: nul },
     employee_schedule: {
@@ -75,7 +80,7 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         startDate: nul, endDate: nul, replaced: no, terminatedAt: nul,
     },
     service_record_case: {
-        id: uuid, branchId: nul, clientId: nul, version: () => 1, formVersion: () => 1, status: nul,
+        id: uuid, branchId: nul, clientId: nul, babyId: nul, version: () => 1, formVersion: () => 1, status: nul,
         completedAt: nul, finalizationDueAt: nul, finalizationStartedAt: nul, finalizedAt: nul,
         documentsCompletedAt: nul, currentRevisionId: nul, currentUsableRevisionId: nul,
         currentUsableDocumentVersion: nul, requiredSessionCount: nul, startDate: nul, endDate: nul,
@@ -111,7 +116,7 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         formVersionAtConfirm: nul, snapshotReference: nul,
     },
     service_record: { id: nul, scheduleId: nul, branchId: nul, serviceRecordCaseId: nul },
-    eformsign_doc: { id: nul, branchId: nul, employeeScheduleId: nul, documentKind: nul, serviceRecordCaseId: nul },
+    eformsign_doc: { id: nul, branchId: nul, employeeScheduleId: nul, documentKind: nul, serviceRecordCaseId: nul, revisionId: nul },
     eformsign_document_job: {
         id: uuid, branchId: nul, clientId: nul, jobType: nul, source: nul, requestKey: nul,
         payload: nul, payloadFingerprint: nul,
@@ -127,18 +132,26 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
  */
 const UNIQUES: Record<string, string[][]> = {
     client: [["id"], ["eDocId"]],
+    client_baby: [["id"], ["branchId", "clientId", "ordinal"]],
     employee: [["id"]],
     branch: [["id"]],
     employee_schedule: [["id"]],
-    service_record_case: [["id"], ["clientId"]],
-    service_record_assignment: [["id"], ["scheduleId"]],
-    service_record_day: [["id"], ["scheduleId", "sessionIndex"], ["serviceRecordCaseId", "caseSessionIndex"]],
+    service_record_case: [["id"], ["babyId"], ["branchId", "clientId", "babyId"]],
+    service_record_assignment: [["id"], ["scheduleId", "serviceRecordCaseId"]],
+    service_record_day: [["id"], ["scheduleId", "serviceRecordCaseId", "sessionIndex"], ["serviceRecordCaseId", "caseSessionIndex"]],
     service_record_token: [["id"]],
     service_record_edit_draft: [["id"]],
     service_record_revision: [["id"], ["serviceRecordCaseId", "revisionNumber"]],
-    service_record: [["id"], ["scheduleId"]],
+    service_record: [["id"], ["scheduleId", "serviceRecordCaseId"]],
     eformsign_doc: [["id"]],
     eformsign_document_job: [["id"], ["requestKey"]],
+};
+
+// Partial unique indexes protect legacy rows without exposing Prisma unique selectors.
+const UNBOUND_UNIQUES: Partial<Record<string, { columns: string[]; unboundField: string }>> = {
+    service_record_case: { columns: ["clientId"], unboundField: "babyId" },
+    service_record: { columns: ["scheduleId"], unboundField: "serviceRecordCaseId" },
+    service_record_day: { columns: ["scheduleId", "sessionIndex"], unboundField: "serviceRecordCaseId" },
 };
 
 /**
@@ -150,10 +163,11 @@ type Kind = "string" | "int" | "boolean" | "datetime" | "json";
 
 const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
     client: {
-        int: "id duration", string: "branchId name serviceStatus eDocId",
+        int: "id duration", string: "branchId name serviceStatus eDocId fetalConfirmation",
         datetime: "startDate endDate bookingConfirmedAt birthDate deletedAt",
         boolean: "allowSaturdayService allowSundayService allowHolidayService",
     },
+    client_baby: { int: "clientId ordinal", string: "id branchId", boolean: "active" },
     employee: { int: "id", string: "branchId name phone" },
     branch: { string: "id name" },
     employee_schedule: {
@@ -161,7 +175,7 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
         datetime: "startDate endDate terminatedAt", boolean: "replaced",
     },
     service_record_case: {
-        string: "id branchId status currentRevisionId currentUsableRevisionId momName momBirth babyName babyBirth deliveryType babyWeight lastError",
+        string: "id branchId babyId status currentRevisionId currentUsableRevisionId momName momBirth babyName babyBirth deliveryType babyWeight lastError",
         int: "clientId version formVersion currentUsableDocumentVersion requiredSessionCount finalizationAttempts",
         datetime: "completedAt finalizationDueAt finalizationStartedAt finalizedAt documentsCompletedAt startDate endDate nextAttemptAt",
         json: "plannedSessions",
@@ -190,7 +204,7 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
         json: "payload beforeSnapshot plannedSessions provenance",
     },
     service_record: { string: "id branchId serviceRecordCaseId", int: "scheduleId" },
-    eformsign_doc: { int: "id employeeScheduleId", string: "branchId documentKind serviceRecordCaseId" },
+    eformsign_doc: { int: "id employeeScheduleId", string: "branchId documentKind serviceRecordCaseId revisionId" },
     eformsign_document_job: {
         string: "id branchId jobType source requestKey payloadFingerprint documentId status progressStep", int: "clientId", json: "payload",
     },
@@ -224,6 +238,7 @@ interface Relation {
     many: boolean;
     local: string;
     foreign: string;
+    scope?: readonly string[];
 }
 
 const RELATIONS: Record<string, Record<string, Relation>> = {
@@ -234,21 +249,30 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
         client: { target: "client", many: false, local: "clientId", foreign: "id" },
         primaryEmployee: { target: "employee", many: false, local: "primaryEmployeeId", foreign: "id" },
         secondaryEmployee: { target: "employee", many: false, local: "secondaryEmployeeId", foreign: "id" },
-        serviceRecordAssignment: { target: "service_record_assignment", many: false, local: "id", foreign: "scheduleId" },
+        serviceRecordAssignments: { target: "service_record_assignment", many: true, local: "id", foreign: "scheduleId" },
     },
     service_record_case: {
         branch: { target: "branch", many: false, local: "branchId", foreign: "id" },
         client: { target: "client", many: false, local: "clientId", foreign: "id" },
+        baby: { target: "client_baby", many: false, local: "babyId", foreign: "id", scope: ["branchId", "clientId"] },
         days: { target: "service_record_day", many: true, local: "id", foreign: "serviceRecordCaseId" },
         assignments: { target: "service_record_assignment", many: true, local: "id", foreign: "serviceRecordCaseId" },
     },
     service_record_assignment: {
         schedule: { target: "employee_schedule", many: false, local: "scheduleId", foreign: "id" },
     },
+    service_record_edit_draft: {
+        serviceRecordCase: {
+            target: "service_record_case", many: false, local: "serviceRecordCaseId", foreign: "id", scope: ["branchId"],
+        },
+    },
+    service_record_revision: {
+        serviceRecordCase: { target: "service_record_case", many: false, local: "serviceRecordCaseId", foreign: "id" },
+    },
 };
 
 const ALLOWED_ARGS: Record<Method, ReadonlySet<string>> = {
-    findMany: new Set(["where", "select", "include", "orderBy"]),
+    findMany: new Set(["where", "select", "include", "orderBy", "take"]),
     findFirst: new Set(["where", "select", "include", "orderBy"]),
     findUnique: new Set(["where", "select", "include"]),
     create: new Set(["data", "select", "include"]),
@@ -313,15 +337,16 @@ export class SequenceStore {
     private inTransaction = false;
 
     readonly client: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
+    readonly client_baby: Delegate<"findMany">;
     readonly employee: Delegate<"findMany">;
     readonly employee_schedule: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany">;
-    readonly service_record_case: Delegate<"findMany" | "findFirst" | "findUnique" | "update" | "updateMany" | "upsert">;
-    readonly service_record_assignment: Delegate<"findMany" | "updateMany" | "upsert">;
+    readonly service_record_case: Delegate<"findMany" | "findFirst" | "findUnique" | "create" | "update" | "updateMany" | "upsert">;
+    readonly service_record_assignment: Delegate<"findMany" | "create" | "update" | "updateMany" | "upsert">;
     readonly service_record_day: Delegate<"findMany" | "update" | "updateMany" | "create">;
     readonly service_record_token: Delegate<"updateMany">;
     readonly service_record_edit_draft: Delegate<"findMany" | "findFirst" | "create" | "updateMany">;
     readonly service_record_revision: Delegate<"findMany" | "findFirst" | "findUnique" | "create">;
-    readonly service_record: Delegate<"updateMany">;
+    readonly service_record: Delegate<"findMany" | "updateMany">;
     readonly eformsign_doc: Delegate<"updateMany">;
     readonly eformsign_document_job: Delegate<"findMany">;
 
@@ -332,14 +357,15 @@ export class SequenceStore {
             for (const row of rows) this.insert(table, row);
         }
         this.client = this.delegate("client", ["findMany", "findFirst", "findUnique", "update", "updateMany"]);
+        this.client_baby = this.delegate("client_baby", ["findMany"]);
         this.employee = this.delegate("employee", ["findMany"]);
         this.employee_schedule = this.delegate("employee_schedule", [
             "findMany", "findFirst", "findUnique", "update", "updateMany",
         ]);
         this.service_record_case = this.delegate("service_record_case", [
-            "findMany", "findFirst", "findUnique", "update", "updateMany", "upsert",
+            "findMany", "findFirst", "findUnique", "create", "update", "updateMany", "upsert",
         ]);
-        this.service_record_assignment = this.delegate("service_record_assignment", ["findMany", "updateMany", "upsert"]);
+        this.service_record_assignment = this.delegate("service_record_assignment", ["findMany", "create", "update", "updateMany", "upsert"]);
         this.service_record_day = this.delegate("service_record_day", [
             "findMany", "update", "updateMany", "create",
         ]);
@@ -350,7 +376,7 @@ export class SequenceStore {
         this.service_record_revision = this.delegate("service_record_revision", [
             "findMany", "findFirst", "findUnique", "create",
         ]);
-        this.service_record = this.delegate("service_record", ["updateMany"]);
+        this.service_record = this.delegate("service_record", ["findMany", "updateMany"]);
         this.eformsign_doc = this.delegate("eformsign_doc", ["updateMany"]);
         this.eformsign_document_job = this.delegate("eformsign_document_job", ["findMany"]);
     }
@@ -375,7 +401,7 @@ export class SequenceStore {
 
     /** The single live row matching `where`; throws unless exactly one matches. */
     one(table: string, where: Row): Row {
-        const found = this.rows(table).filter((row) => matchesWhere(row, where));
+        const found = this.rows(table).filter((row) => this.matchesRow(table, row, where));
         if (found.length !== 1) fail(`expected exactly one ${table} row for ${JSON.stringify(where)}, found ${found.length}`);
         return found[0]!;
     }
@@ -458,7 +484,11 @@ export class SequenceStore {
             throw error;
         }
         switch (method) {
-            case "findMany": return this.matching(table, args).map((row) => this.project(table, row, args));
+            case "findMany": {
+                const take = args["take"];
+                return this.matching(table, args).slice(0, typeof take === "number" ? take : undefined)
+                    .map((row) => this.project(table, row, args));
+            }
             case "findFirst": {
                 const row = this.matching(table, args)[0];
                 return row ? this.project(table, row, args) : null;
@@ -490,7 +520,11 @@ export class SequenceStore {
             require("create");
             require("update");
         }
-        this.assertWhere(table, args["where"]);
+        this.assertWhere(table, args["where"], method !== "findMany");
+        const take = args["take"];
+        if (take !== undefined && (typeof take !== "number" || !Number.isInteger(take) || take <= 0)) {
+            fail(`${label}: take must be a positive integer`);
+        }
         if (args["orderBy"] !== undefined) this.parseOrderBy(table, args["orderBy"]);
         if (method === "create" || method === "update" || method === "updateMany") this.assertData(table, args["data"]);
         if (method === "upsert") {
@@ -501,7 +535,7 @@ export class SequenceStore {
     }
 
     /** Field names, operators and operand shapes of a `where`, whether or not any row would reach them. */
-    private assertWhere(table: string, where: unknown): void {
+    private assertWhere(table: string, where: unknown, allowRelationIs = true): void {
         if (where === undefined) return;
         if (!isPlainObject(where)) fail(`${table}: where must be an object`);
         const columns = COLUMNS[table]!;
@@ -510,8 +544,20 @@ export class SequenceStore {
                 for (const clause of Array.isArray(value) ? value : [value]) this.assertWhere(table, clause);
                 continue;
             }
-            if (!(key in columns)) fail(`${table}: unsupported where field "${key}"`);
-            this.assertFilter(`${table}.${key}`, KINDS[table]![key]!, value);
+            if (key in columns) {
+                this.assertFilter(`${table}.${key}`, KINDS[table]![key]!, value);
+                continue;
+            }
+            const relation = RELATIONS[table]?.[key];
+            if (!relation || relation.many || !isPlainObject(value)) {
+                fail(`${table}: unsupported where field "${key}"`);
+            }
+            const isWrapped = "is" in value;
+            const relatedWhere = isWrapped ? value["is"] : value;
+            if (isWrapped && (!allowRelationIs || Object.keys(value).length !== 1 || !isPlainObject(relatedWhere))) {
+                fail(`${table}: unsupported where field "${key}"`);
+            }
+            this.assertWhere(relation.target, relatedWhere);
         }
     }
 
@@ -638,9 +684,14 @@ export class SequenceStore {
 
     /** Throws when `row` would collide with an existing row on a modelled unique key. */
     private assertUnique(table: string, row: Row): void {
-        for (const columns of UNIQUES[table]!) {
+        const constraints: Array<{ columns: string[]; unboundField?: string }> = UNIQUES[table]!.map((columns) => ({ columns }));
+        const unbound = UNBOUND_UNIQUES[table];
+        if (unbound) constraints.push(unbound);
+        for (const { columns, unboundField } of constraints) {
+            if (unboundField && row[unboundField] !== null) continue;
             if (columns.some((column) => row[column] === null || row[column] === undefined)) continue;
             const clash = this.tables[table]!.some((existing) => existing !== row
+                && (!unboundField || existing[unboundField] === null)
                 && columns.every((column) => compareValues(existing[column], row[column]) === 0));
             if (clash) fail(`${table}: unique constraint (${columns.join(", ")}) violated`);
         }
@@ -648,8 +699,29 @@ export class SequenceStore {
 
     // ------------------------------------------------------------------ evaluation (the request is already valid)
 
+    private matchesRow(table: string, row: Row, where: Row | undefined): boolean {
+        return Object.entries(where ?? {}).every(([key, condition]) => {
+            if (key === "AND" || key === "OR" || key === "NOT") {
+                const clauses = (Array.isArray(condition) ? condition : [condition]) as Row[];
+                const matchesClause = (clause: Row) => this.matchesRow(table, row, clause);
+                if (key === "AND") return clauses.every(matchesClause);
+                if (key === "OR") return clauses.some(matchesClause);
+                return !clauses.some(matchesClause);
+            }
+            const relation = RELATIONS[table]?.[key];
+            if (!relation) return matchesWhere(row, { [key]: condition });
+            if (row[relation.local] == null) return false;
+            const predicate = condition as Row;
+            const relatedWhere = ("is" in predicate ? predicate["is"] : predicate) as Row;
+            return this.rows(relation.target).some((related) =>
+                related[relation.foreign] === row[relation.local]
+                && (relation.scope ?? []).every((column) => related[column] === row[column])
+                && this.matchesRow(relation.target, related, relatedWhere));
+        });
+    }
+
     private matching(table: string, args: Row): Row[] {
-        const rows = this.rows(table).filter((row) => matchesWhere(row, args["where"] as Row | undefined));
+        const rows = this.rows(table).filter((row) => this.matchesRow(table, row, args["where"] as Row | undefined));
         const orderBy = args["orderBy"];
         if (orderBy === undefined) return rows;
         const keys = this.parseOrderBy(table, orderBy);
@@ -711,7 +783,11 @@ export class SequenceStore {
             }
         }
         const related = this.matching(relation.target, {
-            where: { AND: [{ [relation.foreign]: row[relation.local] }, ...(nested["where"] ? [nested["where"]] : [])] },
+            where: { AND: [
+                { [relation.foreign]: row[relation.local] },
+                ...(relation.scope ?? []).map((column) => ({ [column]: row[column] })),
+                ...(nested["where"] ? [nested["where"]] : []),
+            ] },
             ...(nested["orderBy"] !== undefined ? { orderBy: nested["orderBy"] } : {}),
         });
         // A null local key matches nothing (the evaluator treats equality with null as "is null").

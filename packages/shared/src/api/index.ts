@@ -26,3 +26,5 @@ export {
     upstreamStreamTransportErrorResponse,
     withNoStore,
 } from "./route-utils";
+
+export { allowServiceRecordLinkRequest } from "./service-record-link-request";

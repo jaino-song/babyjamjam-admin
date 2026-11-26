@@ -1096,6 +1096,8 @@ pull_release_image() {
 run_release_migrations() {
     local requested_sha="$1"
 
+    # The image contents select the preflight. Older images run the original
+    # Prisma command, and both commands use the same protected datasource.
     run_as_root /usr/bin/env \
         BACKEND_ENV_FILE="$STATE_DIRECTORY/backend.env" \
         BACKEND_IMAGE="$LOCAL_IMAGE_REPOSITORY" \
@@ -1108,9 +1110,16 @@ run_release_migrations() {
         VALKEY_DATA_VOLUME="$VALKEY_DATA_VOLUME" \
         /usr/bin/docker compose --env-file "$ROOT_COMPOSE_ENV_FILE" \
         --project-directory "$ROOT_ARTIFACT_DIRECTORY" -f "$ROOT_COMPOSE_ARTIFACT" \
-        run --rm --no-deps --entrypoint /usr/local/bin/node api \
-        node_modules/prisma/build/index.js migrate deploy \
-        --schema prisma/schema.prisma \
+        run --rm --no-deps --entrypoint /bin/sh api -c '
+            if [ -e prisma/migrations/20261126010000_baby_case_keys ]; then
+                guard=prisma/scripts/verify-baby-case-stage-before-release.sql
+                [ -f "$guard" ] && [ -s "$guard" ] || exit 1
+                /usr/local/bin/node node_modules/prisma/build/index.js db execute \
+                    --schema prisma/schema.prisma --file "$guard" || exit 1
+            fi
+            exec /usr/local/bin/node node_modules/prisma/build/index.js migrate deploy \
+                --schema prisma/schema.prisma
+        ' \
         >/dev/null 2>&1
 }
 

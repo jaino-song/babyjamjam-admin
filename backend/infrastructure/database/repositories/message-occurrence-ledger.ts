@@ -1,3 +1,5 @@
+import { isRecordLinkGroup, recordLinkHash, resolveRecordLinkGroup } from "application/services/service-record-link-group-source";
+import type { MessageTriggerJobPayload } from "domain/entities/message-trigger-job.entity";
 import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { message_log, message_trigger_job } from "@prisma/client";
@@ -53,7 +55,8 @@ function serviceRecordLinkPath(payload: Prisma.JsonValue): string | undefined {
 
 async function resolveJobOccurrence(
     tx: Tx,
-    job: Pick<message_trigger_job, "branchId" | "ruleId" | "clientId" | "employeeScheduleId" | "recipientType" | "templateKey" | "payload" | "dedupeKey">,
+    job: Pick<message_trigger_job, "branchId" | "ruleId" | "clientId" | "employeeScheduleId" | "recipientType" | "templateKey" | "payload" | "dedupeKey">
+        & Partial<Pick<message_trigger_job, "id" | "recipientEmployeeId" | "recipientPhone">>,
     receiver?: string,
     requireLinkProof = false,
 ): Promise<OccurrenceTarget | undefined> {
@@ -75,6 +78,19 @@ async function resolveJobOccurrence(
         branchId, serviceClientId: clientId, recipientKind: "client", recipientId: clientId,
         template: { kind: "system", key: templateKey }, event: rule.eventType, slot,
     };
+    if (isRecordLinkGroup(job)) {
+        const payload = record(job.payload) as unknown as MessageTriggerJobPayload;
+        if (!job.id || !job.recipientPhone || templateKey !== "SERVICE_RECORD_LINK"
+            || (receiver !== undefined && normalizePhone(receiver) !== job.recipientPhone)) {
+            throw new StaleMessageOccurrenceRecipient();
+        }
+        const membership = await resolveRecordLinkGroup(tx, { ...job, id: job.id, recipientPhone: job.recipientPhone, payload });
+        if (!membership) throw new StaleMessageOccurrenceRecipient();
+        occurrence.recipientKind = "employee";
+        occurrence.recipientId = membership.employeeId;
+        occurrence.slot = `schedule:${employeeScheduleId}:group:${recordLinkHash(JSON.stringify(payload.recordLinkGroup?.members))}`;
+        return { occurrence, manual };
+    }
     if (job.recipientType === MessageTriggerRecipientType.CLIENT) {
         if (receiver !== undefined && (!normalizePhone(receiver) || normalizePhone(client.phone) !== normalizePhone(receiver))) throw new StaleMessageOccurrenceRecipient();
         if (job.ruleId === SERVICE_END_NOTICE_RULE_ID) delete occurrence.slot;

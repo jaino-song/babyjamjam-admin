@@ -6,3 +6,5 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export { isSameOriginPath } from "./is-same-origin-path";
+
+export * from "./service-record-link-selection";

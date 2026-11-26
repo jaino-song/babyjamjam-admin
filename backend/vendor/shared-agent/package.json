@@ -10,6 +10,14 @@
       "types": "./agent/index.d.ts",
       "require": "./agent/index.js"
     },
+    "./client/baby-record-allocation": {
+      "types": "./client/baby-record-allocation.d.ts",
+      "require": "./client/baby-record-allocation.js"
+    },
+    "./message/service-record-links": {
+      "types": "./message/service-record-links.d.ts",
+      "require": "./message/service-record-links.js"
+    },
     "./utils/business-days": {
       "types": "./utils/business-days.d.ts",
       "require": "./utils/business-days.js"

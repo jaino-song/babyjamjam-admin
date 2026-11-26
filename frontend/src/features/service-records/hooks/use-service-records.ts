@@ -1,8 +1,11 @@
 "use client";
 
+import { preparedServiceRecordMembers } from "@babyjamjam/shared/utils";
+import type { ResetServiceRecordLinkRequest } from "@babyjamjam/shared/types/service-record";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { clientKeys } from "@/features/clients/hooks/keys";
+import { isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { dashboardQueryKeys } from "@/hooks/useDashboardStats";
 
 import { serviceRecordsApi } from "../api/service-records.api";
@@ -17,33 +20,48 @@ import { serviceRecordKeys } from "./keys";
 
 export function useClientServiceRecords(
     clientId: number | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string; branchId?: string | null; refreshOnFocus?: boolean },
 ) {
+    const { caseId, branchId } = options ?? {};
+    const isInScope = () => branchId === undefined || isBranchContextAligned(branchId);
     return useQuery<ServiceRecordOverview>({
-        queryKey: serviceRecordKeys.clientOverview(clientId),
-        queryFn: () => {
+        queryKey: serviceRecordKeys.clientOverview(clientId, caseId, branchId),
+        queryFn: async () => {
             if (clientId === null) {
                 throw new Error("clientId is required");
             }
-            return serviceRecordsApi.getClientOverview(clientId).then((response) => response.data);
+            if (!isInScope()) throw new Error("Active branch changed");
+            const { data } = await serviceRecordsApi.getClientOverview(clientId, ...(caseId ? [caseId] : []));
+            if (!isInScope()) throw new Error("Active branch changed");
+            return data;
         },
-        enabled: clientId !== null && (options?.enabled ?? true),
+        enabled: clientId !== null && isInScope() && (options?.enabled ?? true),
+        ...(options?.refreshOnFocus ? {
+            staleTime: 0,
+            refetchOnWindowFocus: "always",
+            refetchOnReconnect: "always",
+        } as const : {}),
     });
 }
 
 export function useClientServiceRecordRevisionHistory(
     clientId: number | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string; branchId?: string | null },
 ) {
+    const { caseId, branchId } = options ?? {};
+    const isInScope = () => branchId === undefined || isBranchContextAligned(branchId);
     return useQuery<ServiceRecordRevisionHistoryResponse>({
-        queryKey: serviceRecordKeys.revisionHistory(clientId),
-        queryFn: () => {
+        queryKey: serviceRecordKeys.revisionHistory(clientId, caseId, branchId),
+        queryFn: async () => {
             if (clientId === null) {
                 throw new Error("clientId is required");
             }
-            return serviceRecordsApi.getClientRevisionHistory(clientId).then((response) => response.data);
+            if (!isInScope()) throw new Error("Active branch changed");
+            const { data } = await serviceRecordsApi.getClientRevisionHistory(clientId, ...(caseId ? [caseId] : []));
+            if (!isInScope()) throw new Error("Active branch changed");
+            return data;
         },
-        enabled: clientId !== null && (options?.enabled ?? true),
+        enabled: clientId !== null && isInScope() && (options?.enabled ?? true),
         staleTime: 0,
         refetchOnWindowFocus: true,
         refetchOnReconnect: true,
@@ -54,15 +72,15 @@ export function useClientServiceRecordRevisionHistory(
 export function useClientServiceRecordRevisionChanges(
     clientId: number | null,
     revisionId: string | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string },
 ) {
     return useQuery<ServiceRecordRevisionChangesResponse>({
-        queryKey: serviceRecordKeys.revisionChanges(clientId, revisionId),
+        queryKey: serviceRecordKeys.revisionChanges(clientId, revisionId, options?.caseId),
         queryFn: () => {
             if (clientId === null || revisionId === null) {
                 throw new Error("clientId and revisionId are required");
             }
-            return serviceRecordsApi.getClientRevisionChanges(clientId, revisionId).then((response) => response.data);
+            return serviceRecordsApi.getClientRevisionChanges(clientId, revisionId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
         },
         enabled: clientId !== null && revisionId !== null && (options?.enabled ?? true),
     });
@@ -72,15 +90,15 @@ export function useClientServiceRecordRevisionChanges(
 export function useClientServiceRecordCaregiverEditChanges(
     clientId: number | null,
     editId: string | null,
-    options?: { enabled?: boolean },
+    options?: { enabled?: boolean; caseId?: string },
 ) {
     return useQuery<ServiceRecordCaregiverEditChangesResponse>({
-        queryKey: serviceRecordKeys.caregiverEditChanges(clientId, editId),
+        queryKey: serviceRecordKeys.caregiverEditChanges(clientId, editId, options?.caseId),
         queryFn: () => {
             if (clientId === null || editId === null) {
                 throw new Error("clientId and editId are required");
             }
-            return serviceRecordsApi.getClientCaregiverEditChanges(clientId, editId).then((response) => response.data);
+            return serviceRecordsApi.getClientCaregiverEditChanges(clientId, editId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
         },
         enabled: clientId !== null && editId !== null && (options?.enabled ?? true),
     });
@@ -103,9 +121,23 @@ export function useSendServiceRecordLink() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ scheduleId, preparedLinkToken }: { scheduleId: number; clientId?: number; preparedLinkToken?: string }) =>
-            serviceRecordsApi.sendLink(scheduleId, preparedLinkToken ? { preparedLinkToken } : {})
-                .then((response) => response.data),
+        mutationFn: async ({ scheduleId, preparedLinkToken, caseId, target }: {
+            scheduleId: number;
+            clientId?: number;
+            preparedLinkToken?: string;
+            caseId?: string;
+            target?: Extract<ResetServiceRecordLinkRequest, { members: unknown }>;
+        }) => {
+            if (target) {
+                const { data } = await serviceRecordsApi.prepareLink(scheduleId, {
+                    employeeId: target.employeeId, caseIds: target.members.map((member) => member.caseId),
+                });
+                const members = preparedServiceRecordMembers(data, target.employeeId, target.members);
+                if (!members) throw new Error("제공기록지 배정이 변경되었어요.");
+                return serviceRecordsApi.sendLink(scheduleId, { employeeId: target.employeeId, members }).then(({ data }) => data);
+            }
+            return serviceRecordsApi.sendLink(scheduleId, { ...(preparedLinkToken ? { preparedLinkToken } : {}), ...(caseId ? { caseId } : {}) }).then(({ data }) => data);
+        },
         onSuccess: async (_, variables) => {
             if (variables.clientId !== undefined) {
                 await queryClient.invalidateQueries({
@@ -122,8 +154,8 @@ export function useSendServiceRecordLink() {
 export function useKeepPeriodMismatch() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ clientId, sessionIndexes }: { clientId: number; sessionIndexes: number[] }) =>
-            serviceRecordsApi.keepPeriodMismatch(clientId, sessionIndexes).then((response) => response.data),
+        mutationFn: ({ clientId, sessionIndexes, caseId }: { clientId: number; sessionIndexes: number[]; caseId?: string }) =>
+            serviceRecordsApi.keepPeriodMismatch(clientId, sessionIndexes, ...(caseId ? [caseId] : [])).then((response) => response.data),
         onSuccess: async (_, { clientId }) => {
             await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
         },
@@ -133,8 +165,8 @@ export function useKeepPeriodMismatch() {
 export function useFitPeriodMismatch() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ clientId }: { clientId: number }) =>
-            serviceRecordsApi.fitPeriodMismatch(clientId).then((response) => response.data),
+        mutationFn: ({ clientId, caseId }: { clientId: number; caseId?: string }) =>
+            serviceRecordsApi.fitPeriodMismatch(clientId, ...(caseId ? [caseId] : [])).then((response) => response.data),
         onSuccess: async (_, { clientId }) => {
             await Promise.all([
                 queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) }),

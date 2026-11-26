@@ -137,6 +137,8 @@ describeReal("branch admin transfer serialization (real PostgreSQL)", () => {
             const actor = ownerActor(approver.id);
             const paused = signal();
             const release = signal();
+            const admissionHasUser = signal();
+            const releaseAdmission = signal();
             const errors: unknown[] = [];
             let firstLock = true;
             const repair = makeUserService(withHooks(handle.service, {
@@ -153,6 +155,12 @@ describeReal("branch admin transfer serialization (real PostgreSQL)", () => {
                 await withDeadline(paused.promise, 5_000, "repair did not lock the branch");
                 const service = makeUserService(withHooks(handle.service, {
                     beforeTransaction: async (tx) => { await tx.$executeRaw`SET LOCAL deadlock_timeout = '50ms'`; },
+                    afterLock: async (query) => {
+                        if (query.text.includes('FROM "user"') && query.values[0] === old.id) {
+                            admissionHasUser.resolve();
+                            await releaseAdmission.promise;
+                        }
+                    },
                     onTransactionError: (error) => { errors.push(error); },
                 }));
                 const mutation = action === "reject" ? service.reject(old.id, actor) : service.approve(old.id, {
@@ -160,11 +168,13 @@ describeReal("branch admin transfer serialization (real PostgreSQL)", () => {
                 });
                 outcomes.push(mutation);
                 void mutation.catch(() => {});
-                // The admission transaction holds user FOR UPDATE and waits for
-                // repair's branch. Repair's FK check then closes the lock cycle.
-                await waitUntilBlocked(handle.raw, action === "reject" ? /UPDATE "public"\."branch"/ : /INSERT INTO "public"\."user_branch"/);
+                await withDeadline(admissionHasUser.promise, 5_000, "admission did not lock the target user");
+                release.resolve();
+                // Repair must already be waiting on admission's user before admission requests the branch.
+                await waitUntilBlocked(handle.raw, /INSERT INTO "public"\."user_branch"/);
             } finally {
                 release.resolve();
+                releaseAdmission.resolve();
                 await Promise.allSettled(outcomes);
             }
             expect(errors.some(isTransactionConflict)).toBe(true);

@@ -428,9 +428,9 @@ describe("ClientDueDateSchedulerService", () => {
         expect(probe.state.forBranchWhileOpen).toEqual([false]);
         expect((probe.holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
             .toBeLessThan(probe.prisma.$transaction.mock.invocationCallOrder[0]!);
-        expect(probe.tables.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        expect(probe.tables.service_record_case.create).toHaveBeenCalledWith(expect.objectContaining({
             // 09-07..09-18 is ten business days; the branch closing on 09-14 leaves nine.
-            create: expect.objectContaining({ requiredSessionCount: 9 }),
+            data: expect.objectContaining({ requiredSessionCount: 9 }),
         }));
     });
 });
