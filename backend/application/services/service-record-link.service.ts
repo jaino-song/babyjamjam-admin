@@ -1,6 +1,4 @@
-import {
-    BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold, requireBabyRecordRollout,
-} from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
 import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { randomUUID } from "node:crypto";
@@ -358,12 +356,10 @@ export class ServiceRecordLinkService implements OnModuleInit {
                         client: { select: { fetalConfirmation: true } } },
                 });
                 if (schedule?.branchId) {
-                    historicalOnly = !await this.scalarLinkNeedsRollout(this.prisma, schedule);
+                    historicalOnly = await this.isBackfilledScalarSchedule(this.prisma, schedule);
                     if (!historicalOnly && !(options.rescheduleAutomatic
                         && await this.hasLegacyAutomaticReservation({ ...schedule, branchId: schedule.branchId }))) {
-                        if (!await this.ensureSystemRule(schedule.branchId, false, true)) {
-                            throw new BabyRecordRolloutPausedException();
-                        }
+                        await this.ensureSystemRule(schedule.branchId, false);
                         return await this.linkGroups.schedule(schedule.branchId, scheduleId);
                     }
                 }
@@ -386,7 +382,6 @@ export class ServiceRecordLinkService implements OnModuleInit {
         } catch (error) {
             // Missing/legacy no-branch schedules were a silent no-op before the refactor; keep them log-free.
             if (error instanceof NotFoundException) return false;
-            if (error instanceof BabyRecordRolloutPausedException) throw error;
             captureServiceRecordError(error, {
                 operation: "link-schedule",
                 handled: false,
@@ -397,21 +392,18 @@ export class ServiceRecordLinkService implements OnModuleInit {
         }
     }
 
-    private async scalarLinkNeedsRollout(
+    private async isBackfilledScalarSchedule(
         db: Prisma.TransactionClient,
         schedule: Parameters<typeof allowsLegacyServiceRecordLink>[1],
-        taskAutomation = false,
     ) {
-        if (schedule.client.fetalConfirmation !== "CONFIRMED") return false;
-        if (taskAutomation || !schedule.branchId) return true;
+        if (schedule.client.fetalConfirmation !== "CONFIRMED" || !schedule.branchId) return false;
         const source = await readBackfilledScalarHousehold(db, { branchId: schedule.branchId, clientId: schedule.clientId });
-        return source?.scheduleId !== schedule.id || source.employeeId !== schedule.primaryEmployeeId;
+        return source?.scheduleId === schedule.id && source.employeeId === schedule.primaryEmployeeId;
     }
 
     private async lockScalarLinkSource(
         tx: Prisma.TransactionClient,
         expected: { branchId: string; clientId: number; id: number; primaryEmployeeId: number },
-        taskAutomation = false,
         wasHistorical = false,
     ) {
         const { branchId, clientId, id } = expected;
@@ -424,9 +416,8 @@ export class ServiceRecordLinkService implements OnModuleInit {
             || !await allowsLegacyServiceRecordLink(tx, current)) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
-        if (await this.scalarLinkNeedsRollout(tx, current, taskAutomation)) {
-            if (wasHistorical) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
-            await requireBabyRecordRollout(tx, branchId);
+        if (wasHistorical && !await this.isBackfilledScalarSchedule(tx, current)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         return current;
     }
@@ -479,7 +470,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
     }
 
     async sendGroupNow(branchId: string, scheduleId: number, selection: RecordLinkSendSelection, actorUserId: string) {
-        await this.ensureSystemRule(branchId, true, true);
+        await this.ensureSystemRule(branchId);
         return this.linkGroups!.send(branchId, scheduleId, selection, actorUserId);
     }
 
@@ -777,16 +768,12 @@ export class ServiceRecordLinkService implements OnModuleInit {
             };
         }
         const confirmed = schedule.client.fetalConfirmation === "CONFIRMED";
-        const configured = await this.scalarLinkNeedsRollout(this.prisma, schedule, !!options.taskAutomationReference);
-        if (options.historicalOnly && (!confirmed || configured)) {
+        const backfilledScalar = confirmed && !options.taskAutomationReference
+            && await this.isBackfilledScalarSchedule(this.prisma, schedule);
+        if (options.historicalOnly && !backfilledScalar) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
-        if (configured && !await isBabyRecordRolloutEnabled(this.prisma, schedule.branchId)) {
-            if (options.isManualSend) throw new BabyRecordRolloutPausedException();
-            return { scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
-                employeeId: schedule.primaryEmployeeId, jobEnqueued: false, jobId: null };
-        }
-        await this.ensureSystemRule(schedule.branchId, options.isManualSend, configured);
+        await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
         const normalizedPhone = this.resolveRecipientPhone(employee.phone, options.recipientPhone);
         // Keep the byte-for-byte v1 automatic effect used by existing consent.
@@ -840,7 +827,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     serviceStartDate: this.formatDate(schedule.startDate),
                     serviceEndDate: this.formatDate(schedule.endDate),
                 }, confirmed ? tx => this.lockScalarLinkSource(tx, { ...schedule, branchId: schedule.branchId! },
-                    !!options.taskAutomationReference, !configured) : undefined);
+                    backfilledScalar) : undefined);
                 if (!automaticSchedulingClaim) {
                     return {
                         scheduledFor,
@@ -878,7 +865,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                         serviceRecordCase?.endDate ?? schedule.endDate,
                         options.allowLateReissue === true,
                     ),
-                    ...(options.taskAutomationReference ? { requireRollout: true } : {}),
+                    ...(options.taskAutomationReference ? { taskAutomation: true } : {}),
                 });
                 if (!activated) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -945,7 +932,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
                     expectedPhone: employee.phone,
                     expiresAt,
-                    ...(options.taskAutomationReference ? { requireRollout: true } : {}),
+                    ...(options.taskAutomationReference ? { taskAutomation: true } : {}),
                 };
                 ({ linkToken } = await this.tokenService.reuseActiveLink(tokenParams)
                     ?? await this.tokenService.issueLink(tokenParams));
@@ -1030,10 +1017,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     }
                     if (!await allowsLegacyServiceRecordLink(transaction, current)
                         || !(await this.automationActivationService!.getTriggerDispatchEnabled(schedule.branchId!, transaction))) return null;
-                    if (await this.scalarLinkNeedsRollout(transaction, current, !!options.taskAutomationReference)) {
-                        if (!configured) return null;
-                        await requireBabyRecordRollout(transaction, schedule.branchId!);
-                    }
+                    if (backfilledScalar && !await this.isBackfilledScalarSchedule(transaction, current)) return null;
                     const override = await transaction.message_trigger_rule_branch_override.findUnique({
                         where: { branchId_ruleId: { branchId: schedule.branchId!, ruleId: SERVICE_RECORD_LINK_RULE_ID } },
                     });
@@ -1049,7 +1033,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     schedule.branchId,
                     async (transaction) => {
                         if (confirmed) await this.lockScalarLinkSource(transaction, { ...schedule, branchId: schedule.branchId! },
-                            !!options.taskAutomationReference, !configured);
+                            backfilledScalar);
                         return promote(transaction);
                     },
                 );
@@ -1070,7 +1054,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                 );
                 const replaced = confirmed && this.branchLock
                     ? await this.branchLock.runExclusive(schedule.branchId, async transaction => {
-                        const current = await this.lockScalarLinkSource(transaction, { ...schedule, branchId: schedule.branchId! }, false, !configured);
+                        const current = await this.lockScalarLinkSource(transaction, { ...schedule, branchId: schedule.branchId! }, backfilledScalar);
                         this.assertClientCanReceiveLink(current.client);
                         if (current.primaryEmployee.phone !== employee.phone) {
                             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
@@ -1278,7 +1262,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
         `);
     }
 
-    private async ensureSystemRule(branchId?: string, allowParentDisabled = true, configured = false): Promise<boolean> {
+    private async ensureSystemRule(branchId?: string, allowParentDisabled = true): Promise<void> {
         const ensure = (transaction?: Prisma.TransactionClient) => this.automationLock.runExclusive(
             SystemTemplateKey.SERVICE_RECORD_LINK,
             async (writeTransaction) => {
@@ -1337,18 +1321,14 @@ export class ServiceRecordLinkService implements OnModuleInit {
             },
             transaction,
         );
-        if (branchId && (!allowParentDisabled || configured)) {
-            if (!this.branchLock || (!allowParentDisabled && !this.automationActivationService)) {
+        if (branchId && !allowParentDisabled) {
+            if (!this.branchLock || !this.automationActivationService) {
                 throw new ServiceUnavailableException("Message automation activation is not configured");
             }
-            return this.branchLock.runExclusive(branchId, async transaction => {
-                if (configured && !await isBabyRecordRolloutEnabled(transaction, branchId)) return false;
-                await ensure(transaction);
-                return true;
-            });
+            await this.branchLock.runExclusive(branchId, ensure);
+            return;
         }
         await ensure();
-        return true;
     }
 
     private async recordPermanentFailure(params: {

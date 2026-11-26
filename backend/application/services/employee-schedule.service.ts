@@ -1,4 +1,4 @@
-import { readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
@@ -91,7 +91,6 @@ export class EmployeeScheduleService {
                 });
                 if ((await this.readClientBooking(transaction, branchid, params.clientId))?.fetalConfirmation === "CONFIRMED") {
                     historical = await readBackfilledScalarHousehold(transaction, scope);
-                    if (!historical) await requireBabyRecordRollout(transaction, branchid);
                 }
             }
             const created = await this.createEmployeeScheduleUsecase.execute(branchid, {
@@ -216,10 +215,6 @@ export class EmployeeScheduleService {
                     mutationId: ordinaryMutationId,
                     scheduleIds: [existing.id],
                 });
-            }
-            if (existing?.replaced && params.replaced === false
-                && (await this.readClientBooking(transaction, branchid, existing.clientId))?.fetalConfirmation === "CONFIRMED") {
-                await requireBabyRecordRollout(transaction, branchid);
             }
             const updated = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
                 workAddress: params.workAddress,
