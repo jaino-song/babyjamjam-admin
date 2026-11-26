@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { serviceRecordCaseLabel } from "@babyjamjam/shared/constants/service-record-display";
 import type { AdminServiceRecordCaseSummary, ServiceRecordOverview } from "@babyjamjam/shared/types/service-record";
@@ -10,8 +10,8 @@ import { FormField, FormNativeSelect } from "@/components/app/ui/form-section";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { Client } from "@/features/clients/types";
-import { useBabyRecordCapability } from "@/features/clients/hooks/use-baby-record-capability";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
+import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 import { useGetAuthUser, type AuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
@@ -30,46 +30,49 @@ interface LegacyCaseReconciliationProps {
 export function LegacyCaseReconciliation(props: LegacyCaseReconciliationProps) {
     const auth = useGetAuthUser();
     const queryClient = useQueryClient();
-    const hasAuthQuery = queryClient.getQueryState(AUTH_USER_QUERY_KEY) !== undefined;
+    const branchId = useActiveBranchId();
     const hasManagerRole = canManageBranchFromAuthQuery(auth)
         && !auth.isPaused && !auth.isPlaceholderData && auth.data?.branchRole != null;
-    const capability = useBabyRecordCapability(props.confirmed && hasManagerRole
-        && props.record.babyId === null && !props.record.retired && props.record.submittedSessions > 0);
-    const canManage = hasManagerRole
-        && (auth.data?.branchId === undefined || auth.data.branchId === capability.branchId);
+    const canManage = hasManagerRole && Boolean(branchId?.trim())
+        && auth.data?.branchId?.trim() === branchId?.trim();
 
+    const readAuth = () => queryClient.getQueryState<AuthUser | null>(AUTH_USER_QUERY_KEY);
+    const isCurrentSession = () => {
+        const user = readAuth()?.data;
+        return isBranchContextAligned(branchId) && user?.id === auth.data?.id
+            && user?.branchId?.trim() === branchId?.trim();
+    };
     const isEnabledNow = () => {
-        if (!canManage || !capability.isEnabledNow()) return false;
-        if (!hasAuthQuery) return true;
+        if (!canManage || !isBranchContextAligned(branchId)) return false;
         // A branch or authority refresh can invalidate the query before React updates the form.
-        const current = queryClient.getQueryState<AuthUser | null>(AUTH_USER_QUERY_KEY);
+        const current = readAuth();
         return current?.status === "success" && current.fetchStatus === "idle"
             && !current.isInvalidated && current.data === auth.data;
     };
 
     return <LegacyCaseReconciliationForm
-        key={JSON.stringify([capability.branchId, props.client.id, props.record.caseId])}
+        key={JSON.stringify([branchId, auth.data?.id, props.client.id, props.record.caseId])}
         {...props}
-        enabled={Boolean(capability.branchId && capability.status === "enabled" && canManage)}
+        enabled={canManage}
         isEnabledNow={isEnabledNow}
-        retryCapability={capability.retry}
+        isCurrentSession={isCurrentSession}
     />;
 }
 
 function LegacyCaseReconciliationForm({
     "data-component": base, client, record, householdCases, detail, confirmed, canReconcileNow,
-    onRefresh, enabled, isEnabledNow, retryCapability,
+    onRefresh, enabled, isEnabledNow, isCurrentSession,
 }: LegacyCaseReconciliationProps & {
     enabled: boolean;
     isEnabledNow: () => boolean;
-    retryCapability: () => unknown;
+    isCurrentSession: () => boolean;
 }) {
     const [babyId, setBabyId] = useState("");
     const [pending, setPending] = useState(false);
     const [result, setResult] = useState<"linked" | "conflict" | "error">();
     const inFlight = useRef(false);
     const mounted = useRef(false);
-    useEffect(() => {
+    useLayoutEffect(() => {
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
@@ -114,7 +117,7 @@ function LegacyCaseReconciliationForm({
         setBabyId("");
         try {
             const { data } = await serviceRecordsApi.adoptLegacyCase(client.id, record.caseId, selected);
-            if (!mounted.current) return;
+            if (!mounted.current || !isCurrentSession()) return;
             if (data?.caseId !== record.caseId || data.babyId !== selected) {
                 setResult("error");
                 await onRefresh?.();
@@ -123,11 +126,11 @@ function LegacyCaseReconciliationForm({
             setResult("linked");
             await onRefresh?.(record.caseId);
         } catch (error) {
-            if (!mounted.current) return;
+            if (!mounted.current || !isCurrentSession()) return;
             const status = normalizeApiError(error).status;
             if (status === 409 || status === 404) {
                 setResult("conflict");
-                await Promise.allSettled([onRefresh?.(), retryCapability()]);
+                await Promise.allSettled([onRefresh?.()]);
             } else {
                 setResult("error");
             }
