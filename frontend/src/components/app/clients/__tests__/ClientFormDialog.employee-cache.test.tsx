@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
 import { employeeQueryKeys, type Employee } from "@/hooks/useEmployees";
 
 import { ClientFormDialog } from "../ClientFormDialog";
@@ -85,11 +86,16 @@ describe("ClientFormDialog employee cache refresh", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        document.cookie = "selected_branch_id=qa-branch; path=/";
+        queryClient.setQueryData(AUTH_USER_QUERY_KEY, { id: "qa-user", branchId: "qa-branch" });
         queryClient.setQueryData(employeeQueryKeys.lists(), []);
         jest.mocked(api.get).mockResolvedValue({ data: [primary, secondary] });
     });
 
-    afterEach(() => queryClient.clear());
+    afterEach(() => {
+        queryClient.clear();
+        document.cookie = "selected_branch_id=; max-age=0; path=/";
+    });
 
     function form(open = true) {
         return (

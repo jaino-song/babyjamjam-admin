@@ -5,6 +5,7 @@ import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
 import type { Client, ClientFormData, UpdateClientDto } from "@/features/clients/types";
 import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
+import { REGISTRATION_BRANCH_HEADER, REGISTRATION_USER_HEADER } from "@/features/clients/api/registration-scope";
 import { useBusinessDayCalendar, type RefreshForSaveResult } from "@/hooks/useBusinessDayCalendar";
 import { employeeQueryKeys, type Employee } from "@/hooks/useEmployees";
 import { DetailPanel } from "@/components/app/v3/DetailPanel";
@@ -38,7 +39,10 @@ const originalUserId = "qa-user";
 const authSessionChanges = [
   { change: "the authenticated branch changes", branchId: secondBranch, userId: originalUserId },
   { change: "the authenticated user changes", branchId: firstBranch, userId: "qa-other-user" },
-];
+].flatMap((change) => [
+  { ...change, selection: "explicit" },
+  { ...change, selection: "automatic" },
+]);
 const grades = ["A가1형", "B가1형", "B가2형", "C가1형", "C가2형", "D가1형", "D가2형"];
 const baby1 = { babyId: "c3a70030-e4a1-4dc0-976f-7d483fb4c4f1", ordinal: 1 };
 const baby2 = { babyId: "cd19b5cd-e4c9-4f04-81e8-ad0a065db5ad", ordinal: 3 };
@@ -124,6 +128,7 @@ const selectBranch = (branchId: string) => {
   document.cookie = `selected_branch_id=${branchId}; path=/`;
   window.dispatchEvent(new Event("focus"));
 };
+const clearBranchSelection = () => { document.cookie = "selected_branch_id=; max-age=0; path=/"; };
 const next = () => click("다음");
 const previous = () => click("이전");
 const select = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
@@ -211,7 +216,7 @@ describe("desktop client service-record allocation", () => {
   afterEach(() => {
     calendarHook.mockImplementation(defaultCalendar);
     queries.clear();
-    document.cookie = "selected_branch_id=; max-age=0; path=/";
+    clearBranchSelection();
   });
 
   function alignAuth(branchId: string, userId = originalUserId) {
@@ -695,6 +700,58 @@ describe("desktop client service-record allocation", () => {
     expect(get.mock.calls.map(([url]) => url)).not.toContain("/clients/baby-record-capability");
   });
 
+  it.each([
+    ["A가1형", "SINGLETON", 1],
+    ["B가1형", "SEVERE_SINGLETON", 1],
+    ["C가1형", "SEVERE_TWINS", 2],
+    ["D가1형", "SEVERE_TRIPLETS_PLUS", 3],
+  ] as const)("registers %s in an authenticated branch without selection cookies", async (grade, fetalType, count) => {
+    clearBranchSelection();
+    queries.setQueryData(employeeQueryKeys.lists(), [{ ...providers[0], name: "다른 지점 제공인력" }]);
+    await open();
+    await chooseGrade(grade);
+    if (fetalType !== "SINGLETON") select("태아 유형", fetalType);
+    if (fetalType === "SEVERE_TRIPLETS_PLUS") {
+      fireEvent.change(screen.getByRole("spinbutton", { name: "실제 아기 수" }), { target: { value: String(count) } });
+    }
+    next();
+    const owners = screen.getByRole("heading", { name: "서비스 제공기록지 담당" }).closest("section")!;
+    await selectProvider(0, providers[0]);
+    expect(within(owners).getAllByText("주 제공인력 · 김봄")).toHaveLength(count);
+    next();
+    await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
+    click("생성");
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    const headers = { [REGISTRATION_BRANCH_HEADER]: firstBranch, [REGISTRATION_USER_HEADER]: originalUserId };
+    expect(get).toHaveBeenCalledWith("/employees", { headers });
+    expect(get.mock.calls.filter(([url]) => url === "/employees").every(([, config]) => config?.headers != null)).toBe(true);
+    expect(post).toHaveBeenCalledWith("/clients", expect.objectContaining({
+      type: grade, fetalType, babyCount: count,
+      providers: [{ slot: 0, employeeId: 11 }],
+      babyAssignments: Array.from({ length: count }, (_, index) => ({ ordinal: index + 1, providerSlot: 0 })),
+    }), { headers });
+    expect(document.cookie).not.toMatch(/selected_(branch|organization)_id/);
+  });
+
+  it("binds the open registration when automatic branch authority first resolves", async () => {
+    clearBranchSelection();
+    queries.removeQueries({ queryKey: AUTH_USER_QUERY_KEY });
+    await open();
+    next();
+    fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
+    select("바우처 유형", "A가1형");
+    expect(screen.queryByLabelText("태아 유형")).not.toBeInTheDocument();
+
+    await act(async () => alignAuth(firstBranch));
+    await within(fetusSelect()).findByRole("option", { name: "단태아" });
+    expect(fetusSelect()).toHaveValue("SINGLETON");
+    next();
+    await selectProvider(0, providers[0]);
+    next();
+    click("생성");
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  });
+
   it.each<Surface>(["panel", "dialog"])("saves a voucher consultation without a type in the %s", async (surface) => {
     await open({ surface });
     if (surface === "panel") {
@@ -738,7 +795,8 @@ describe("desktop client service-record allocation", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it.each(authSessionChanges)("requires reopening the registration form when $change without a cookie change", async ({ branchId, userId }) => {
+  it.each(authSessionChanges)("requires reopening when $change during $selection selection", async ({ branchId, userId, selection }) => {
+    if (selection === "automatic") clearBranchSelection();
     const { submit } = await openSingletonRegistrationAtSave();
     expect(submit).toBeEnabled();
 
@@ -754,7 +812,8 @@ describe("desktop client service-record allocation", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
-  it.each(authSessionChanges)("refuses a pending registration when $change before the form observes it", async ({ branchId, userId }) => {
+  it.each(authSessionChanges)("refuses a pending $selection registration when $change before the form observes it", async ({ branchId, userId, selection }) => {
+    if (selection === "automatic") clearBranchSelection();
     const calendar = defaultCalendar().calendar;
     let finishRefresh!: (result: RefreshForSaveResult) => void;
     const refreshForSave = jest.fn(() => new Promise<RefreshForSaveResult>((resolve) => { finishRefresh = resolve; }));
@@ -775,6 +834,24 @@ describe("desktop client service-record allocation", () => {
       finishRefresh({ ok: true, changed: false, calendar });
     });
 
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("discards a pending automatic registration when an explicit branch choice takes over", async () => {
+    const calendar = defaultCalendar().calendar;
+    let finishRefresh!: (result: RefreshForSaveResult) => void;
+    const refreshForSave = jest.fn(() => new Promise<RefreshForSaveResult>((resolve) => { finishRefresh = resolve; }));
+    calendarHook.mockReturnValue({ ...defaultCalendar(), refreshForSave });
+    clearBranchSelection();
+    const { submit } = await openSingletonRegistrationAtSave();
+    fireEvent.click(submit);
+    expect(refreshForSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      selectBranch(firstBranch);
+      finishRefresh({ ok: true, changed: false, calendar });
+    });
+    expect(submit).toBeDisabled();
     expect(post).not.toHaveBeenCalled();
   });
 

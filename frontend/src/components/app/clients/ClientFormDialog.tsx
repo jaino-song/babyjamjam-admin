@@ -2,7 +2,7 @@
 
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryState } from "@tanstack/react-query";
 import {
     FETAL_TYPE_LABELS,
     findOutOfPocketPriceInfo,
@@ -33,6 +33,7 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientAllocationWrite, ClientFormData, UpdateClientDto } from "@/features/clients/types";
+import type { ClientRegistrationScope } from "@/features/clients/api/registration-scope";
 import { getActiveBranchId, useActiveBranchId } from "@/features/system-templates/branch-context";
 import type { AuthUser } from "@/hooks/useGetAuthUser";
 import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
@@ -212,6 +213,7 @@ interface ClientFormErrorState {
 interface ClientFormSession {
     open: boolean;
     clientId: number | null;
+    selectedBranchId: string | null;
     branchId: string | null;
     userId: string | null;
     branchChanged: boolean;
@@ -219,6 +221,10 @@ interface ClientFormSession {
 
 function normalizedBranchId(branchId: string | null | undefined): string | null {
     return branchId?.trim() || null;
+}
+
+function isSettledAuth(auth: QueryState<AuthUser | null> | undefined): boolean {
+    return auth?.status === "success" && auth.fetchStatus === "idle" && !auth.isInvalidated;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -540,12 +546,17 @@ function ClientFormContent({
     const locale = useLocale();
     const isEditMode = !!client;
     const queryClient = useQueryClient();
-    const activeBranchId = normalizedBranchId(useActiveBranchId());
+    const selectedBranchId = normalizedBranchId(useActiveBranchId());
     // The directory and calendar already load the authenticated branch. Observe
     // that authority without starting a second request or trusting the cookie alone.
     const readAuth = useCallback(() => queryClient.getQueryState<AuthUser | null>(AUTH_USER_QUERY_KEY), [queryClient]);
     const subscribeToAuth = useCallback((onChange: () => void) => queryClient.getQueryCache().subscribe(onChange), [queryClient]);
     const auth = useSyncExternalStore(subscribeToAuth, readAuth, () => undefined);
+    const authBranchId = normalizedBranchId(auth?.data?.branchId);
+    const isAutomaticBranch = !isEditMode && selectedBranchId === null;
+    const authReady = isSettledAuth(auth);
+    const automaticBranchId = authReady && auth?.data?.id ? authBranchId : null;
+    const activeBranchId = isAutomaticBranch ? automaticBranchId : selectedBranchId;
     const prefillRef = useRef(prefill);
     const appliedPrefillRef = useRef(prefill);
     useEffect(() => {
@@ -663,6 +674,7 @@ function ClientFormContent({
     const formSessionRef = useRef<ClientFormSession>({
         open: false,
         clientId: null,
+        selectedBranchId: null,
         branchId: null,
         userId: null,
         branchChanged: false,
@@ -1059,11 +1071,15 @@ function ClientFormContent({
         }
         const sessionClientId = client?.id ?? null;
         if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
-        const branchId = normalizedBranchId(getActiveBranchId());
-        const user = readAuth()?.data;
+        const selectedBranchId = normalizedBranchId(getActiveBranchId());
+        const currentAuth = readAuth();
+        const user = currentAuth?.data;
+        const userBranchId = normalizedBranchId(user?.branchId);
+        const branchId = selectedBranchId ?? (sessionClientId === null && user?.id && isSettledAuth(currentAuth)
+            ? userBranchId : null);
         formSessionRef.current = {
-            open: true, clientId: sessionClientId, branchId,
-            userId: branchId && normalizedBranchId(user?.branchId) === branchId ? user?.id ?? null : null,
+            open: true, clientId: sessionClientId, selectedBranchId, branchId,
+            userId: branchId && userBranchId === branchId ? user?.id ?? null : null,
             branchChanged: false,
         };
         if (open) {
@@ -1183,14 +1199,21 @@ function ClientFormContent({
     useLayoutEffect(() => {
         const session = formSessionRef.current;
         if (!session.open) return;
-        if (normalizedBranchId(getActiveBranchId()) !== session.branchId) session.branchChanged = true;
+        if (normalizedBranchId(getActiveBranchId()) !== session.selectedBranchId) session.branchChanged = true;
+        // A new registration can open while /auth/me is still resolving. Bind
+        // it once to the settled identity and keep the original mirror state.
+        if (!session.branchChanged && session.clientId === null && session.selectedBranchId === null
+            && session.branchId === null && automaticBranchId) {
+            session.branchId = automaticBranchId;
+            session.userId = auth?.data?.id ?? null;
+        }
         if (auth?.status !== "success") return;
         if (session.userId && (auth.data?.id !== session.userId || normalizedBranchId(auth.data?.branchId) !== session.branchId)) {
             session.branchChanged = true;
         } else if (session.branchId && normalizedBranchId(auth.data?.branchId) === session.branchId) {
             session.userId = auth.data?.id ?? null;
         }
-    }, [activeBranchId, auth, client?.id, open]);
+    }, [selectedBranchId, automaticBranchId, auth, client?.id, open]);
 
     // The contract candidate request can finish after the dialog has opened.
     // Apply that first late result while the create form is still untouched.
@@ -1294,11 +1317,13 @@ function ClientFormContent({
     });
     const allocationRules = allocationDraft.rules;
     const session = formSessionRef.current;
-    const authBranchId = normalizedBranchId(auth?.data?.branchId);
-    const branchChanged = session.open && (session.branchChanged || activeBranchId !== session.branchId
+    const branchChanged = session.open && (session.branchChanged || selectedBranchId !== session.selectedBranchId
         || (session.userId !== null && auth?.status === "success"
             && (auth.data?.id !== session.userId || authBranchId !== session.branchId)));
     const canEditAllocation = Boolean(activeBranchId && !branchChanged && (!auth || authBranchId === activeBranchId));
+    const registrationScope = isAutomaticBranch && canEditAllocation && activeBranchId && auth?.data?.id
+        ? { branchId: activeBranchId, userId: auth.data.id } : undefined;
+    const isProviderSearchBlocked = branchChanged || (isAutomaticBranch && !registrationScope);
     const hasSavedAllocation = allocationSnapshot?.fetalConfirmation === "CONFIRMED";
     const savedAllocation = hasSavedAllocation ? allocationSnapshot : null;
     const readOnlyAllocation = canEditAllocation ? null : savedAllocation;
@@ -1569,11 +1594,12 @@ function ClientFormContent({
                 const savedExtraProvider = slot >= 2 ? readOnlyAllocation?.providers?.find((provider) => provider.slot === slot) : undefined;
                 const manualTarget = !formData.voucherClient && (slot === 0 || slot === 1)
                     ? slot === 0 ? "primary" : "secondary" : null;
-                return slot < providerCapacity && !historicalEmployee && (!readOnlyAllocation || slot < 2) ? (
+                return !isProviderSearchBlocked && slot < providerCapacity && !historicalEmployee && (!readOnlyAllocation || slot < 2) ? (
                     <EmployeeAutocomplete
                         key={slot}
                         data-component={fieldBase}
                         refreshOnMount
+                        registrationScope={registrationScope}
                         value={providerIds[slot]}
                         onChange={(id) => changeProvider(slot, id)}
                         label={label}
@@ -1604,6 +1630,7 @@ function ClientFormContent({
             })}
             {(showsRecordOwners || readOnlyAllocation?.babies?.length) ? (
                     <ClientBabyRecordOwners
+                        registrationScope={registrationScope}
                         base={`${sectionBase}_records`}
                         idPrefix={formId}
                         locale={locale}
@@ -1774,22 +1801,24 @@ function ClientFormContent({
     // 종료일을 계산하지 못한 채(지원하지 않는 연도)로도 저장하지 않아요. 직접 입력하거나 기간을 바꾸면 풀려요.
     const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
-    const isCurrentSession = (session: ClientFormSession) => {
+    const isCurrentSession = (session: ClientFormSession): session is ClientFormSession & ClientRegistrationScope => {
         if (!session.open || session !== formSessionRef.current || !session.branchId || session.branchChanged) return false;
-        if (session.branchId !== normalizedBranchId(getActiveBranchId())) {
+        if (session.selectedBranchId !== normalizedBranchId(getActiveBranchId())) {
             session.branchChanged = true;
             return false;
         }
-        const user = readAuth()?.data;
-        return Boolean(session.userId) && user?.id === session.userId
+        const current = readAuth();
+        const user = current?.data;
+        if (current?.status === "success" && session.userId
+            && (user?.id !== session.userId || normalizedBranchId(user?.branchId) !== session.branchId)) {
+            session.branchChanged = true;
+        }
+        return !session.branchChanged && Boolean(session.userId) && user?.id === session.userId
             && normalizedBranchId(user?.branchId) === session.branchId;
     };
 
-    const canWriteInSession = (session: ClientFormSession) => {
-        if (!isCurrentSession(session)) return false;
-        const current = readAuth();
-        return current?.status === "success" && current.fetchStatus === "idle"
-            && !current.isInvalidated;
+    const canWriteInSession = (session: ClientFormSession): session is ClientFormSession & ClientRegistrationScope => {
+        return isCurrentSession(session) && isSettledAuth(readAuth());
     };
 
     const handleSubmit = async (confirmedPeriod?: string) => {
@@ -2013,7 +2042,10 @@ function ClientFormContent({
                     smsAutomationEnabled: formData.applyMessageAutomation,
                     areaId: formData.areaId || null,
                 };
-                const newClient = await createClient.mutateAsync(createDto);
+                const { branchId, userId } = session;
+                const newClient = await createClient.mutateAsync(session.selectedBranchId === null
+                    ? { dto: createDto, registrationScope: { branchId, userId } }
+                    : createDto);
                 if (!isCurrentSession(session)) return;
                 onSuccess?.(newClient);
             }
@@ -2106,7 +2138,7 @@ function ClientFormContent({
     // stale edit form or a phone check that has not finished block them.
     const isAwaitingEditInit = Boolean(isEditMode && client && initializedEditClientId !== client.id);
     const isBranchBlockingSubmit = branchChanged || !activeBranchId || authBranchId !== activeBranchId || !auth?.data?.id
-        || auth?.status !== "success" || auth.fetchStatus !== "idle" || auth.isInvalidated;
+        || !authReady;
     const isPanelActionBlocked = isSubmitting
         || isUnknownOutcome
         || isAwaitingEditInit
