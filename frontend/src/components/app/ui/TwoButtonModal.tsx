@@ -131,7 +131,7 @@ export function TwoButtonModal({
           <DialogDescription
             data-component={descriptionDataComponent ?? sub("description")}
             className={cn(
-              "mt-0 break-keep [overflow-wrap:anywhere] text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
+              "mt-0 break-keep [overflow-wrap:anywhere] text-center text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
               isDescriptionVisuallyHidden && "sr-only",
             )}
           >

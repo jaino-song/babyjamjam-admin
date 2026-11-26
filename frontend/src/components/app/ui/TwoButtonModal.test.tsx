@@ -43,7 +43,7 @@ describe("TwoButtonModal", () => {
       "text-[calc(12px*var(--v3-ui-scale,1))]",
       "leading-[calc(20px*var(--v3-ui-scale,1))]",
     );
-    expect(description).toHaveClass("mt-0");
+    expect(description).toHaveClass("mt-0", "text-center");
     expect(title).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
     expect(description).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
     expect(description).not.toHaveClass("mt-[calc(6px*var(--glint-ui-scale,1))]");
@@ -128,7 +128,7 @@ describe("TwoButtonModal", () => {
     expect(dialog.querySelector('[data-slot="dialog-header"]')).not.toHaveClass("flex-1");
     const description = screen.getByText("계약서가 완료된 상태여서 계약서는 변경할 수 없어요. 그래도 수정할까요?");
     expect(description).not.toHaveClass("sr-only");
-    expect(description).toHaveClass("text-[calc(12px*var(--v3-ui-scale,1))]", "text-v3-text-muted");
+    expect(description).toHaveClass("text-[calc(12px*var(--v3-ui-scale,1))]", "text-v3-text-muted", "text-center");
     expect(screen.getByTestId("review-body").parentElement).toHaveClass("overflow-y-auto");
   });
 });
