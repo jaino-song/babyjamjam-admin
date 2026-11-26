@@ -366,8 +366,6 @@
         "primary-provider": "Primary provider",
         "secondary-provider": "Secondary provider {slot}",
         "title": "Service record owners",
-        "edit": "Change owners",
-        "done": "Done",
         "single-record": "Baby's record",
         "record-1": "First baby's record",
         "record-2": "Second baby's record",
@@ -391,12 +389,7 @@
         "confirm-retirement": "Confirm",
         "retirement-message": "Reducing the number of babies removes the assignments listed below. Continue?",
         "branch-changed": "The active branch changed. Close and reopen the form to save in the current branch.",
-        "branch-required": "Select a branch to check whether per-baby records can be set up.",
-        "enrollment-paused": "New per-baby record setup is paused for this branch. Standard voucher registration is available.",
-        "capability-loading": "Checking whether this branch can set up per-baby records.",
-        "capability-unavailable": "We couldn't check whether per-baby record setup is available. You can check again.",
-        "draft-unavailable": "Your per-baby draft can't be saved right now. Check availability again or close and reopen the form.",
-        "capability-retry": "Check again"
+        "branch-required": "Select a branch and open the form again."
       },
       "duration": "Service Duration",
       "full-price": "Total Service Amount",

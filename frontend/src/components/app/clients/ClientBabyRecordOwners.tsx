@@ -1,17 +1,15 @@
 "use client";
 
-import { useState } from "react";
 import type { ExistingBaby, ProviderSlot } from "@babyjamjam/shared";
 import type { Client, ClientProvider, EmployeeSummary } from "@/features/clients/types";
 import { useEmployees } from "@/hooks/useEmployees";
 import { type Locale, t } from "@/lib/i18n/translations";
 import { FormField, FormNativeSelect, FormTextInput } from "@/components/app/ui/form-section";
 import { FieldMessageText } from "@/components/app/ui/field-message";
-import { Button } from "@/components/ui/button";
 import { clientProviderLabel, clientRecordRankLabel, type ClientBabyField, type ClientBabyRow } from "./client-baby-allocation";
 
 type OwnerRow = Pick<ClientBabyRow, "field" | "providerSlot">
-    & Partial<Pick<ClientBabyRow, "availableProviderSlots" | "needsReplacement">>;
+    & Partial<Pick<ClientBabyRow, "availableProviderSlots" | "canChangeProvider" | "needsReplacement">>;
 
 export function ClientBabyRecordOwners({
     base, idPrefix, locale, rows, providers, knownEmployees, messages, onChange,
@@ -25,7 +23,6 @@ export function ClientBabyRecordOwners({
     messages: Partial<Record<ClientBabyField, { text: string }>>;
     onChange?: (field: ClientBabyField, slot: ProviderSlot) => void;
 }) {
-    const [editing, setEditing] = useState(false);
     const { data: employees = [] } = useEmployees();
     const labels = new Map(providers.map(({ slot, employeeId }) => {
         const name = employees.find((employee) => employee.id === employeeId)?.name
@@ -34,21 +31,11 @@ export function ClientBabyRecordOwners({
         return [slot, name ? `${label} · ${name}` : label];
     }));
     const copy = (key: string) => t(locale, `clients.form.baby-record.${key}`);
-    const canEdit = onChange && rows.some(({ availableProviderSlots = [], needsReplacement }) =>
-        availableProviderSlots.length > 1 || (needsReplacement && availableProviderSlots.length > 0));
 
     return (
         <section data-component={base} data-slot="baby-record-owners" data-source-component="ClientBabyRecordOwners"
             className="col-span-full grid gap-2">
-            <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-v3-dark">{copy("title")}</h3>
-                {canEdit && (
-                    <Button data-component={`${base}_edit`} type="button" variant="ghost" size="sm"
-                        onClick={() => setEditing(!editing)}>
-                        {copy(editing ? "done" : "edit")}
-                    </Button>
-                )}
-            </div>
+            <h3 className="text-sm font-semibold text-v3-dark">{copy("title")}</h3>
             {rows.map((row, index) => {
                 const rank = index + 1;
                 const label = rows.length === 1 ? copy("single-record") : clientRecordRankLabel(rank, locale);
@@ -56,8 +43,8 @@ export function ClientBabyRecordOwners({
                 const id = `${idPrefix}-${row.field}`;
                 const message = messages[row.field]?.text ?? (row.needsReplacement ? copy("choose-replacement") : undefined);
                 const availableSlots = row.availableProviderSlots ?? [];
-                const showSelect = onChange && ((editing && availableSlots.length > 1)
-                    || (Boolean(message) && availableSlots.length > 0));
+                const showSelect = onChange && row.canChangeProvider
+                    && (row.providerSlot === null || availableSlots.length > 1 || Boolean(message));
                 return (
                     <FormField key={row.field} data-component={rowBase} htmlFor={showSelect ? id : undefined} label={label}
                         className="min-h-8 grid-cols-2 items-center"
@@ -73,8 +60,9 @@ export function ClientBabyRecordOwners({
                                 aria-label={copy("recipient-label").replace("{record}", label)}
                                 aria-invalid={message ? true : undefined}
                                 aria-describedby={message ? `${id}-error` : undefined}
+                                disabled={availableSlots.length === 0}
                                 value={row.providerSlot === null ? "" : String(row.providerSlot)}
-                                placeholder={copy("select-owner")}
+                                placeholder={copy(availableSlots.length === 0 ? "unassigned" : "select-owner")}
                                 options={availableSlots.map((slot) => ({
                                     value: String(slot),
                                     label: labels.get(slot) ?? clientProviderLabel(slot, locale),
