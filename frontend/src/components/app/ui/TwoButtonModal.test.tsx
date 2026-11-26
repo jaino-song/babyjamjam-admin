@@ -116,7 +116,7 @@ describe("TwoButtonModal", () => {
         size="review"
         onOpenChange={jest.fn()}
         title="확인이 필요해요"
-        description="계약서가 완료된 상태여서 계약서는 변경할 수 없어요. 그래도 수정할까요?"
+        description="계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?"
         isDescriptionVisuallyHidden={false}
         approvalLabel="수정"
         onApprove={jest.fn()}
@@ -130,7 +130,7 @@ describe("TwoButtonModal", () => {
     expect(dialog).not.toHaveClass("aspect-[5/3]");
     expect(dialog.querySelector('[data-slot="dialog-header"]')).not.toHaveClass("flex-1");
     expect(dialog.querySelector('[data-slot="dialog-header"]')).toHaveClass("pb-3");
-    const description = screen.getByText("계약서가 완료된 상태여서 계약서는 변경할 수 없어요. 그래도 수정할까요?");
+    const description = screen.getByText("계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?");
     expect(description).not.toHaveClass("sr-only", "text-center");
     expect(description).toHaveClass(
       "text-[calc(12px*var(--v3-ui-scale,1))]",

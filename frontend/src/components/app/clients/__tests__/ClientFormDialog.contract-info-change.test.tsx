@@ -111,7 +111,7 @@ describe("ClientFormDialog confirmation before changing a completed contract's f
 
     const modal = await screen.findByRole("dialog", { name: "확인이 필요해요" });
     expect(mockUpdateClient).not.toHaveBeenCalled();
-    expect(within(modal).getByText("계약서가 완료된 상태여서 계약서는 변경할 수 없어요. 그래도 수정할까요?")).toBeVisible();
+    expect(within(modal).getByText("계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?")).toBeVisible();
     expect(within(modal).getByText("계약서와 달라지는 수정 사항")).toBeInTheDocument();
     const row = within(modal).getByText("주소").closest("[data-field]");
     expect(row).toHaveAttribute("data-field", "address");

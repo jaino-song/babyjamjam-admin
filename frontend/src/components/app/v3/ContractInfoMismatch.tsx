@@ -18,7 +18,7 @@ export const CONTRACT_INFO_MISMATCH_NOTICE_TEXT =
 /** Title and description of the confirmation shown before saving such a change. */
 export const CONTRACT_INFO_CHANGE_CONFIRM_TITLE = "확인이 필요해요";
 export const CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION =
-  "계약서가 완료된 상태여서 계약서는 변경할 수 없어요.\n그래도 수정할까요?";
+  "계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요.\n그래도 수정할까요?";
 export const CONTRACT_INFO_CHANGE_LIST_TITLE = "계약서와 달라지는 수정 사항";
 
 const ICON_STROKE_WIDTH = 2.25;
