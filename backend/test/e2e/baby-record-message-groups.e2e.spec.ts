@@ -445,7 +445,7 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
             where: { branchId, scheduleId: family.schedule.id }, orderBy: { id: "asc" },
         });
         const tokensBeforeSend = await readTokens();
-        const failure = jest.spyOn(tokenService, "reuseActiveLink").mockRejectedValueOnce(new Error("QA residual reservation failure"));
+        const failure = jest.spyOn(tokenService, "issueLink").mockRejectedValueOnce(new Error("QA residual reservation failure"));
         try {
             await expect(app.get(ServiceRecordLinkGroupService).send(branchId, family.schedule.id, input, ownerId))
                 .rejects.toThrow("QA residual reservation failure");

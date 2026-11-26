@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
+import { BACKFILLED_SCALAR_LINK_PREFIX, GROUP_RECORD_LINK_PREFIX, readBackfilledLinkPolicy } from "application/policies/baby-record-rollout.policy";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
@@ -121,6 +122,38 @@ export async function readRecordLinkGroupSource(
 
 export type RecordLinkGroupSource = NonNullable<Awaited<ReturnType<typeof readRecordLinkGroupSource>>>;
 
+export async function canHandOverAcceptedLegacyLink(
+    tx: Prisma.TransactionClient, source: RecordLinkGroupSource, members: readonly RecordLinkGroupMember[],
+    acceptedCredential: string | null, { requireRetired = false } = {},
+): Promise<boolean> {
+    const [member] = members;
+    if (!acceptedCredential || !member || members.length !== 1 || source.householdBabyCount !== 1) return false;
+
+    // Group preparation itself ends scalar issuance. The backfilled allocation
+    // still proves the provenance of the original URL after prepare or reset.
+    const historical = await readBackfilledLinkPolicy(tx, source.scope);
+    if (!historical || historical.caseId !== member.caseId || historical.babyId !== member.babyId
+        || historical.scheduleId !== source.schedule.id || historical.employeeId !== member.employeeId) return false;
+
+    const phone = recordLinkPhone(member.employee.phone);
+    if (!phone) return false;
+    const tokens = await tx.service_record_token.findMany({
+        where: {
+            branchId: source.scope.branchId, scheduleId: source.schedule.id, employeeId: member.employeeId,
+            NOT: { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } },
+            AND: [
+                { OR: [{ serviceRecordCaseId: member.caseId }, { serviceRecordCaseId: null }] },
+                { OR: [{ linkTokenHash: acceptedCredential }, { revokedAt: null }, { active: true }] },
+            ],
+        },
+        select: { linkTokenHash: true, expectedPhoneHash: true, createdAt: true, active: true, revokedAt: true },
+    });
+    const [token] = tokens;
+    return tokens.length === 1 && token?.linkTokenHash === acceptedCredential && token.expectedPhoneHash === recordLinkHash(phone)
+        && (token.createdAt < historical.backfilledAt || token.linkTokenHash.startsWith(BACKFILLED_SCALAR_LINK_PREFIX))
+        && (token.active ? !requireRetired && token.revokedAt === null : token.revokedAt !== null);
+}
+
 export function canSendRecordLinkGroup(source: RecordLinkGroupSource, manual: boolean, now = new Date()): boolean {
     const { client, endDate } = source.schedule;
     const status = getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt, now);
@@ -234,7 +267,9 @@ export async function resolveRecordLinkGroup(tx: Prisma.TransactionClient, job: 
 
     const legacy = await readLegacyLinkOccurrence(tx, { ...source.scope, scheduleId: source.schedule.id,
         incarnationId: source.schedule.incarnationId, employeeId: row.recipientEmployeeId, phone });
-    if (legacy.blocked) return null;
+    if (legacy.blocked && (!manual || !await canHandOverAcceptedLegacyLink(
+        tx, source, members, legacy.acceptedCredential, { requireRetired: true },
+    ))) return null;
 
     if (!manual) {
         const unreserved = await unreservedRecordLinkMembers(tx, source, owned, job.id);
