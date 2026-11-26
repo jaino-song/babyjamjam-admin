@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -33,9 +33,9 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientAllocationWrite, ClientFormData, UpdateClientDto } from "@/features/clients/types";
-import { clientKeys } from "@/features/clients/hooks/keys";
-import { useBabyRecordCapability } from "@/features/clients/hooks/use-baby-record-capability";
-import { getActiveBranchId } from "@/features/system-templates/branch-context";
+import { getActiveBranchId, useActiveBranchId } from "@/features/system-templates/branch-context";
+import type { AuthUser } from "@/hooks/useGetAuthUser";
+import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
 import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { buildClientUpdatePayload, hasServicePeriodChange, splitEmployeeChangeFromStartDateChange } from "./client-update-payload";
@@ -245,8 +245,12 @@ interface ClientFormSession {
     open: boolean;
     clientId: number | null;
     branchId: string | null;
+    userId: string | null;
     branchChanged: boolean;
-    explicitAllocation: boolean;
+}
+
+function normalizedBranchId(branchId: string | null | undefined): string | null {
+    return branchId?.trim() || null;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -568,8 +572,12 @@ function ClientFormContent({
     const locale = useLocale();
     const isEditMode = !!client;
     const queryClient = useQueryClient();
-    const capability = useBabyRecordCapability(open);
-    const activeBranchId = capability.branchId;
+    const activeBranchId = normalizedBranchId(useActiveBranchId());
+    // The directory and calendar already load the authenticated branch. Observe
+    // that authority without starting a second request or trusting the cookie alone.
+    const readAuth = useCallback(() => queryClient.getQueryState<AuthUser | null>(AUTH_USER_QUERY_KEY), [queryClient]);
+    const subscribeToAuth = useCallback((onChange: () => void) => queryClient.getQueryCache().subscribe(onChange), [queryClient]);
+    const auth = useSyncExternalStore(subscribeToAuth, readAuth, () => undefined);
     const prefillRef = useRef(prefill);
     const appliedPrefillRef = useRef(prefill);
     useEffect(() => {
@@ -702,8 +710,8 @@ function ClientFormContent({
         open: false,
         clientId: null,
         branchId: null,
+        userId: null,
         branchChanged: false,
-        explicitAllocation: false,
     });
     const formDataBaselineRef = useRef<ClientFormData>(formData);
     // Turns on the first time staff touch a price field or anything the price table is looked up by,
@@ -1085,6 +1093,9 @@ function ClientFormContent({
         }));
     };
 
+    // Cancel work from the previous client before deferred validation can resume.
+    useLayoutEffect(() => () => { formSessionRef.current.open = false; }, [client?.id, open]);
+
     // Reset form when dialog opens/closes or client changes
     useEffect(() => {
         if (!open) {
@@ -1094,9 +1105,12 @@ function ClientFormContent({
         }
         const sessionClientId = client?.id ?? null;
         if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
+        const branchId = normalizedBranchId(getActiveBranchId());
+        const user = readAuth()?.data;
         formSessionRef.current = {
-            open: true, clientId: sessionClientId, branchId: getActiveBranchId(),
-            branchChanged: false, explicitAllocation: false,
+            open: true, clientId: sessionClientId, branchId,
+            userId: branchId && normalizedBranchId(user?.branchId) === branchId ? user?.id ?? null : null,
+            branchChanged: false,
         };
         if (open) {
             autoEndDateOwnedRef.current = false;
@@ -1212,12 +1226,19 @@ function ClientFormContent({
                 setPendingStartDateChange(null);
             });
         }
-    }, [clearPrefillName, client, open, prefillName, resetFieldStates]);
+    }, [clearPrefillName, client, open, prefillName, readAuth, resetFieldStates]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         const session = formSessionRef.current;
-        if (open && session.open && getActiveBranchId() !== session.branchId) session.branchChanged = true;
-    }, [activeBranchId, open]);
+        if (!session.open) return;
+        if (normalizedBranchId(getActiveBranchId()) !== session.branchId) session.branchChanged = true;
+        if (auth?.status !== "success") return;
+        if (session.userId && (auth.data?.id !== session.userId || normalizedBranchId(auth.data?.branchId) !== session.branchId)) {
+            session.branchChanged = true;
+        } else if (session.branchId && normalizedBranchId(auth.data?.branchId) === session.branchId) {
+            session.userId = auth.data?.id ?? null;
+        }
+    }, [activeBranchId, auth, client?.id, open]);
 
     // The contract candidate request can finish after the dialog has opened.
     // Apply that first late result while the create form is still untouched.
@@ -1321,8 +1342,11 @@ function ClientFormContent({
     });
     const allocationRules = allocationDraft.rules;
     const session = formSessionRef.current;
-    const branchChanged = session.open && (session.branchChanged || getActiveBranchId() !== session.branchId);
-    const canEditAllocation = capability.status === "enabled" && !branchChanged;
+    const authBranchId = normalizedBranchId(auth?.data?.branchId);
+    const branchChanged = session.open && (session.branchChanged || activeBranchId !== session.branchId
+        || (session.userId !== null && auth?.status === "success"
+            && (auth.data?.id !== session.userId || authBranchId !== session.branchId)));
+    const canEditAllocation = Boolean(activeBranchId && !branchChanged && (!auth || authBranchId === activeBranchId));
     const hasSavedAllocation = allocationSnapshot?.fetalConfirmation === "CONFIRMED";
     const savedAllocation = hasSavedAllocation ? allocationSnapshot : null;
     const readOnlyAllocation = canEditAllocation ? null : savedAllocation;
@@ -1335,28 +1359,15 @@ function ClientFormContent({
         || formData.type !== formDataBaselineRef.current.type
         || formData.voucherClient !== formDataBaselineRef.current.voucherClient
         || voucherYear !== (allocationSnapshot?.voucherIssuanceYear ?? null);
-    const isNewVoucherRegistration = !isEditMode && formData.voucherClient;
     const wantsAllocation = formData.voucherClient && (isEditMode
         ? hasSavedAllocation ? allocationWasEdited : hasBabyDraftChanges
         : Boolean(formData.type));
     const shouldWriteAllocation = canEditAllocation && wantsAllocation;
-    const explicitAllocationBlocked = !canEditAllocation && session.explicitAllocation;
-    const areVoucherControlsLocked = Boolean(readOnlyAllocation) || explicitAllocationBlocked || branchChanged;
-    useEffect(() => {
-        if (open && canEditAllocation) formSessionRef.current.explicitAllocation = wantsAllocation;
-    }, [canEditAllocation, open, wantsAllocation]);
+    const areVoucherControlsLocked = Boolean(readOnlyAllocation) || branchChanged;
 
     const babyCopy = (key: string) => t(locale, `clients.form.baby-record.${key}`);
 
     const getAllocationProblem = (): { field: ClientFormField; text: string } | undefined => {
-        if (readOnlyAllocation) {
-            const removedOwner = readOnlyAllocation.babyAssignments?.find(({ providerSlot }) =>
-                (providerSlot === 0 || providerSlot === 1) && providerIds[providerSlot] === null
-                && readOnlyAllocation.providers?.some(({ slot }) => slot === providerSlot));
-            if (removedOwner?.providerSlot != null) {
-                return { field: CLIENT_PROVIDER_FIELDS[removedOwner.providerSlot], text: babyCopy("choose-replacement") };
-            }
-        }
         if (!shouldWriteAllocation) return;
         if (!allocationRules) return { field: "type", text: babyCopy("invalid-grade") };
         if (!allocationDraft.option) return { field: "fetalType", text: babyCopy("select-fetal-type") };
@@ -1491,8 +1502,7 @@ function ClientFormContent({
         serverFieldMessages[field] ?? (allocationValidated && allocationProblem?.field === field
             ? { tone: "error", text: allocationProblem.text } : null);
     const showsRecordOwners = canEditAllocation && allocationDraft.allocation.status === "resolved"
-        && (allocationDraft.rows.length > 1 || allocationDraft.allocation.fetalType === "SEVERE_SINGLETON"
-            || allocationDraft.rows.some((row) => row.needsReplacement));
+        && (!isEditMode || hasSavedAllocation || wantsAllocation);
     const summaryErrorEntries = formErrorEntries.filter(({ field }) =>
         field === undefined
         || (field.startsWith("baby-") && (!showsRecordOwners || !allocationDraft.rows.some((row) => row.field === field)))
@@ -1812,19 +1822,22 @@ function ClientFormContent({
     // 종료일을 계산하지 못한 채(지원하지 않는 연도)로도 저장하지 않아요. 직접 입력하거나 기간을 바꾸면 풀려요.
     const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
-    const canWriteInSession = (session: typeof formSessionRef.current, grouped = false) => {
-        if (!session.open || session !== formSessionRef.current || session.branchChanged
-            || session.branchId !== getActiveBranchId() || (session.explicitAllocation && !grouped)) return false;
-        if (grouped) return capability.isEnabledNow();
-        if (!isNewVoucherRegistration) return true;
-        // 상담 단계에서는 바우처 유형이 정해지기 전에도 저장할 수 있다.
-        if (capability.status === "enabled") return !wantsAllocation && capability.isEnabledNow();
-        if (capability.status !== "paused" || !session.branchId) return false;
+    const isCurrentSession = (session: ClientFormSession) => {
+        if (!session.open || session !== formSessionRef.current || !session.branchId || session.branchChanged) return false;
+        if (session.branchId !== normalizedBranchId(getActiveBranchId())) {
+            session.branchChanged = true;
+            return false;
+        }
+        const user = readAuth()?.data;
+        return Boolean(session.userId) && user?.id === session.userId
+            && normalizedBranchId(user?.branchId) === session.branchId;
+    };
 
-        // The branch may have started a new capability read while the calendar was refreshing.
-        const current = queryClient.getQueryState<boolean>(clientKeys.babyRecordCapability(session.branchId));
+    const canWriteInSession = (session: ClientFormSession) => {
+        if (!isCurrentSession(session)) return false;
+        const current = readAuth();
         return current?.status === "success" && current.fetchStatus === "idle"
-            && !current.isInvalidated && current.data === false;
+            && !current.isInvalidated;
     };
 
     const handleSubmit = async (
@@ -1834,7 +1847,9 @@ function ClientFormContent({
     ) => {
         const session = formSessionRef.current;
         if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit
-            || !canWriteInSession(session, shouldWriteAllocation)) return;
+            || (isEditMode && initializedEditClientId !== client?.id)
+            || (wantsAllocation && !canEditAllocation)
+            || !canWriteInSession(session)) return;
         clearFormError();
 
         if (isLegacyNoopEdit && client) {
@@ -1845,11 +1860,12 @@ function ClientFormContent({
                 // phone-based document relink. Automatic form hydration is not considered an
                 // edit; any user interaction exits this narrow compatibility path.
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: {} });
+                if (!isCurrentSession(session)) return;
                 onSuccess?.(updatedClient);
                 onDirtyChange?.(false);
                 onClose();
             } catch (error: unknown) {
-                setMutationError(error);
+                if (isCurrentSession(session)) setMutationError(error);
             } finally {
                 submissionInFlightRef.current = false;
             }
@@ -1903,7 +1919,7 @@ function ClientFormContent({
         try {
             submissionInFlightRef.current = true;
             const fresh = await refreshForSave();
-            if (!canWriteInSession(session, Boolean(allocation))) return;
+            if (!canWriteInSession(session)) return;
             setCalendarRefreshFailed(!fresh.ok);
             if (!fresh.ok) return;
             const freshServiceCalendar = fresh.calendar.withServiceDays({
@@ -2004,7 +2020,7 @@ function ClientFormContent({
                         .then(({ data }) => ({ ok: true as const, record: data.record }),
                             (cause: unknown) => ({ ok: getErrorResponseStatus(cause) === 404, record: null }))
                         .finally(() => { if (session === formSessionRef.current) setIsCheckingStartDate(false); });
-                    if (!canWriteInSession(session, Boolean(allocation))) return;
+                    if (!canWriteInSession(session)) return;
                     if (!overview.ok) {
                         setErrorAndScroll(babyCopy("read-case-failed"));
                         return;
@@ -2033,7 +2049,7 @@ function ClientFormContent({
                 try {
                     updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
                 } catch (cause: unknown) {
-                    if (!session.open || session !== formSessionRef.current) return;
+                    if (!isCurrentSession(session)) return;
                     const lock = getStartDateLock(cause);
                     if (!lock) throw cause;
                     if (!lock.finalized && !lock.serviceStarted && lock.recordedSessionCount === 0) {
@@ -2048,6 +2064,7 @@ function ClientFormContent({
                     });
                     return;
                 }
+                if (!isCurrentSession(session)) return;
                 onSuccess?.(updatedClient);
             } else {
                 const createDto: CreateClientDto = {
@@ -2081,12 +2098,13 @@ function ClientFormContent({
                     areaId: formData.areaId || null,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
+                if (!isCurrentSession(session)) return;
                 onSuccess?.(newClient);
             }
             onClose();
             onDirtyChange?.(false);
         } catch (error: unknown) {
-            setMutationError(error, { endDateGuardSent, allocation });
+            if (isCurrentSession(session)) setMutationError(error, { endDateGuardSent, allocation });
         } finally {
             submissionInFlightRef.current = false;
         }
@@ -2098,22 +2116,21 @@ function ClientFormContent({
         startDateChangeMode: StartDateChangeMode,
         session: typeof formSessionRef.current,
     ) => {
-        const grouped = rememberedDto.providers !== undefined;
-        if (!canWriteInSession(session, grouped)) return;
+        if (!canWriteInSession(session)) return;
         const { startDateDto, employeeDto } = splitEmployeeChangeFromStartDateChange(rememberedDto);
         try {
             let updatedClient = await updateClient.mutateAsync({
                 id,
                 dto: { ...startDateDto, startDateChangeMode },
             });
-            if (!session.open || session !== formSessionRef.current) return;
+            if (!isCurrentSession(session)) return;
             if (employeeDto) {
                 if (!canWriteInSession(session)) return;
                 try {
                     updatedClient = await updateClient.mutateAsync({ id, dto: employeeDto });
-                    if (!session.open || session !== formSessionRef.current) return;
+                    if (!isCurrentSession(session)) return;
                 } catch (cause: unknown) {
-                    if (!session.open || session !== formSessionRef.current) return;
+                    if (!isCurrentSession(session)) return;
                     setPendingStartDateChange(null);
                     const normalized = normalizeApiError(cause, {
                         locale: locale === "en" ? "en-US" : "ko-KR",
@@ -2137,7 +2154,7 @@ function ClientFormContent({
             onClose();
             onDirtyChange?.(false);
         } catch (cause: unknown) {
-            if (!session.open || session !== formSessionRef.current) return;
+            if (!isCurrentSession(session)) return;
             setPendingStartDateChange(null);
             setMutationError(cause, {
                 endDateGuardSent: rememberedDto.expectedEndDate !== undefined,
@@ -2172,14 +2189,14 @@ function ClientFormContent({
     // message on every problem field. Only work in flight, an unknown outcome, a
     // stale edit form or a phone check that has not finished block them.
     const isAwaitingEditInit = Boolean(isEditMode && client && initializedEditClientId !== client.id);
-    const isAllocationBlockingSubmit = branchChanged || explicitAllocationBlocked
-        || (isNewVoucherRegistration && !canEditAllocation && capability.status !== "paused");
+    const isBranchBlockingSubmit = branchChanged || !activeBranchId || authBranchId !== activeBranchId || !auth?.data?.id
+        || auth?.status !== "success" || auth.fetchStatus !== "idle" || auth.isInvalidated;
     const isPanelActionBlocked = isSubmitting
         || isUnknownOutcome
         || isAwaitingEditInit
         || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit);
     // 달력은 마지막 단계의 저장 버튼만 막아요. 다음 단계로 가는 것은 달력과 무관해요.
-    const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit || isAllocationBlockingSubmit;
+    const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit || isBranchBlockingSubmit;
     const calendarLoadNotice = isCalendarReady && !isEndDateUnsupported && !calendarRefreshFailed ? null : (
         <CalendarLoadNotice
             indicator="spinner"
@@ -2245,7 +2262,7 @@ function ClientFormContent({
                 variant="positive"
                 size="sm"
                 onClick={() => void handleSubmit()}
-                disabled={isSubmitting || isUnknownOutcome || isCalendarBlockingSubmit || isAllocationBlockingSubmit
+                disabled={isSubmitting || isUnknownOutcome || isCalendarBlockingSubmit || isBranchBlockingSubmit
                     || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
                 loading={isSubmitting}
                 loadingLabel={isEditMode ? "저장 중" : "등록 중"}
@@ -3195,27 +3212,11 @@ function ClientFormContent({
     ) : null;
 
     const availabilityBase = `${base}_content_baby-record-availability`;
-    const availabilityMessage = branchChanged ? "branch-changed"
-        : explicitAllocationBlocked ? "draft-unavailable"
-        : capability.status === "paused" ? "enrollment-paused"
-        : activeBranchId ? "capability-unavailable" : "branch-required";
-    const availabilityNotice = (formData.voucherClient || isAllocationBlockingSubmit) && !canEditAllocation && (
-        <div data-component={availabilityBase} data-slot="baby-record-availability" className="flex flex-wrap items-center gap-2">
-            {!branchChanged && capability.status === "loading" ? (
-                <LoadingState inline size="sm" label={babyCopy("capability-loading")} data-component={`${availabilityBase}_loading`} />
-            ) : (
-                <FormHelperText data-component={`${availabilityBase}_message`} role="status">
-                    {babyCopy(availabilityMessage)}
-                </FormHelperText>
-            )}
-            {!branchChanged && activeBranchId && (capability.status === "unavailable"
-                || (capability.status === "paused" && explicitAllocationBlocked)) && (
-                <Button type="button" variant="outline" size="sm" data-component={`${availabilityBase}_retry`}
-                    onClick={() => { void capability.retry(); }}>
-                    {babyCopy("capability-retry")}
-                </Button>
-            )}
-        </div>
+    const isAuthBranchMismatch = auth?.data != null && authBranchId !== activeBranchId;
+    const availabilityNotice = (branchChanged || !activeBranchId || isAuthBranchMismatch) && (
+        <FormHelperText data-component={availabilityBase} data-slot="baby-record-availability" role="status">
+            {babyCopy(branchChanged ? "branch-changed" : "branch-required")}
+        </FormHelperText>
     );
 
     const formContent = surface === "panel" ? (
@@ -3242,7 +3243,7 @@ function ClientFormContent({
     const durationConfirmationDialog = (
         <TwoButtonModal
             data-component={`${base}_duration-confirmation`}
-            open={open && !isAllocationBlockingSubmit && pendingDurationConfirmation !== null}
+            open={open && !isBranchBlockingSubmit && pendingDurationConfirmation !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingDurationConfirmation(null); }}
             size="review"
             layout="question"
@@ -3262,7 +3263,7 @@ function ClientFormContent({
     const contractInfoChangeConfirmationDialog = (
         <TwoButtonModal
             data-component={`${base}_contract-info-change-confirmation`}
-            open={open && !isAllocationBlockingSubmit && pendingContractInfoChange !== null}
+            open={open && !isBranchBlockingSubmit && pendingContractInfoChange !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingContractInfoChange(null); }}
             size="review"
             layout="question"
@@ -3294,7 +3295,7 @@ function ClientFormContent({
     const retirementBase = `${base}_baby-retirement-confirmation`;
     const retirementMessage = babyCopy("retirement-message");
     const babyRetirementDialog = (
-        <Dialog open={open && !isAllocationBlockingSubmit && pendingBabyRetirement !== null}
+        <Dialog open={open && !isBranchBlockingSubmit && pendingBabyRetirement !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingBabyRetirement(null); }}>
             <FormDialogShell
                 data-component={retirementBase}
@@ -3329,7 +3330,7 @@ function ClientFormContent({
     const recordDocumentChangeConfirmationDialog = (
         <TwoButtonModal
             data-component={`${base}_record-document-change-confirmation`}
-            open={open && !isAllocationBlockingSubmit && pendingRecordDocumentChange !== null}
+            open={open && !isBranchBlockingSubmit && pendingRecordDocumentChange !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingRecordDocumentChange(null); }}
             size="review"
             layout="question"
@@ -3353,7 +3354,7 @@ function ClientFormContent({
     const startDateStartedConfirmationDialog = (
         <TwoButtonModal
             data-component={`${base}_start-date-started-confirmation`}
-            open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "started"}
+            open={open && !isBranchBlockingSubmit && pendingStartDateChange?.step === "started"}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
             size="review"
             layout="question"
@@ -3379,7 +3380,7 @@ function ClientFormContent({
     const startDateRecordsConfirmationDialog = (
         <TwoButtonModal
             data-component={`${base}_start-date-records-confirmation`}
-            open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "records"}
+            open={open && !isBranchBlockingSubmit && pendingStartDateChange?.step === "records"}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
             size="review"
             layout="question"
@@ -3400,7 +3401,7 @@ function ClientFormContent({
     const startDateShiftConfirmationDialog = (
         <TwoButtonModal
             data-component={`${base}_start-date-shift-confirmation`}
-            open={open && !isAllocationBlockingSubmit && pendingStartDateChange?.step === "shift"}
+            open={open && !isBranchBlockingSubmit && pendingStartDateChange?.step === "shift"}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
             size="review"
             layout="question"

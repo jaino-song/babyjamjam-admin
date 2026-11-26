@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import request from "supertest";
 
 import { resolveBabyRecordAllocation } from "@babyjamjam/shared/client/baby-record-allocation";
-import { readBackfilledScalarHousehold } from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { resolveServiceRecordCaseTarget } from "application/services/service-record-case-target";
@@ -191,10 +191,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         }
     });
 
-    const enableAllocation = () => db.system_setting.create({
-        data: { key: `branch:${branchId}:baby_service_records:enabled`, value: "true" },
-    });
-
     async function expectTwinCases(client: Registration) {
         const cases = await db.service_record_case.findMany({
             where: { branchId, clientId: client.id }, select: { id: true, babyId: true },
@@ -276,7 +272,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     }
 
     it("configured prebooking keeps the household greeting and holds record links", async () => {
-        await enableAllocation();
         const send = jest.spyOn(aligo, "sendSms");
         try {
             await approveSender();
@@ -326,7 +321,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("unstaffed configured prebooking schedules household routines like legacy registration", async () => {
-        await enableAllocation();
         const send = jest.spyOn(aligo, "sendSms");
         try {
             await approveSender();
@@ -352,7 +346,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("confirmed allocation edits reschedule pending household jobs for the current phone", async () => {
-        await enableAllocation();
         await approveSender();
         const startDate = dateAt(10);
         const common = { startDate, endDate: dateAt(30), serviceStatus: "pre_booking", applyMessageAutomation: true, smsAutomationEnabled: true };
@@ -391,7 +384,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("configured prebooking respects each recipient's automation setting", async () => {
-        await enableAllocation();
         const send = jest.spyOn(aligo, "sendSms");
         try {
             await approveSender();
@@ -503,7 +495,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it.each([false, true])("retains one pre-booking schedule with staff (service dates supplied: %s)", async (dated) => {
-        await enableAllocation();
         const [primary, assistant] = employeeIds as [number, number];
         const response = await create({
             ...twins(primary, assistant), serviceStatus: "pre_booking",
@@ -535,7 +526,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("keeps unstaffed twins without a schedule and reuses the first assignment path", async () => {
-        await enableAllocation();
         const { body } = await create(twins()).expect(201);
         expect(await schedules(body.id)).toHaveLength(0);
         expect(body.babyAssignments).toEqual(body.babies.map((baby: Baby) => ({ ...baby, providerSlot: null })));
@@ -549,7 +539,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("holds a configured customer's case and jobs until booking confirmation", async () => {
-        await enableAllocation();
         const { body } = await create(twins(employeeIds[0], employeeIds[1])).expect(201);
         const [initialSchedule] = await schedules(body.id);
         const dates = { startDate: dateAt(7), endDate: dateAt(22) };
@@ -569,7 +558,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("confirmed twins have two different case identities for their two registered babies", async () => {
-        await enableAllocation();
         const dates = { startDate: dateAt(7), endDate: dateAt(22) };
         const { body }: { body: Registration } = await create({
             ...twins(employeeIds[0], employeeIds[1]), ...dates, serviceStatus: "pre_booking",
@@ -591,7 +579,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("round-trips a severe singleton's explicit assistant owner and preserves it on a legacy edit", async () => {
-        await enableAllocation();
         const [primary, assistant] = employeeIds as [number, number];
         const { body } = await create({
             ...twins(primary, assistant), fetalType: "SEVERE_SINGLETON", babyCount: 1,
@@ -613,7 +600,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("round-trips an unassigned severe singleton and tombstones retained babies", async () => {
-        await enableAllocation();
         const payload = {
             ...twins(), fetalType: "SEVERE_SINGLETON", babyCount: 1,
             babyAssignments: [{ ordinal: 1, providerSlot: null }],
@@ -645,7 +631,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("reports nested pointers, missing/catalog year, unknown voucher, and mixed staff fields", async () => {
-        await enableAllocation();
         const input = twins(employeeIds[0], employeeIds[1]);
         for (const { fields, pointer, code } of [
             { fields: { voucherIssuanceYear: undefined }, pointer: "/voucherIssuanceYear", code: "REQUIRED" },
@@ -670,7 +655,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("checks C and D caps against dated catalog codes", async () => {
-        await enableAllocation();
         const desired = quadruplets(employeeIds.slice(0, 4));
         const tooMany = await create({ ...desired, type: "D가1형" }).expect(400);
         // D① has a lower staff cap even when the fetal type is valid.
@@ -689,7 +673,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("checks slot 2/3 activation and availability and includes both in schedule reads", async () => {
-        await enableAllocation();
         const payload = quadruplets(employeeIds.slice(0, 4));
         const period = { startDate: dateAt(1), endDate: dateAt(10) };
         await create({
@@ -724,7 +707,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("rejects foreign staff, foreign babies, and a member without branch access", async () => {
-        await enableAllocation();
         const input = twins(employeeIds[0], employeeIds[1]);
         const foreign = await create(twins(employeeIds[0], outsideEmployee)).expect(400);
         expect(foreign.body.code).toBe("EMPLOYEE_ASSIGNMENT_NOT_ELIGIBLE");
@@ -742,7 +724,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("keeps gapped stored ordinals, never recycles retired ordinals, and retries an identical addition", async () => {
-        await enableAllocation();
         const [primary, assistant] = employeeIds as [number, number];
         const { body } = await create({
             ...twins(primary, assistant), fetalType: "SEVERE_SINGLETON", babyCount: 1,
@@ -779,7 +760,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("admits only one divergent concurrent save and one create per phone", async () => {
-        await enableAllocation();
         const [primary, assistant, replacement] = employeeIds as [number, number, number];
         const values = { ...twins(primary, assistant), phone: "010-0000-4201" };
         const createResults = await Promise.all([create(values), create(values)]);
@@ -819,7 +799,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     }
 
     async function bookTwinsWithLinks() {
-        await enableAllocation();
         await approveSender();
         await app.get(MessageTriggerService).ensureDefaultRulesForBranch(branchId);
         const { body: client }: { body: Registration } = await create({
@@ -881,7 +860,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("rejects retirement when only one field of an otherwise empty header is authored", async () => {
-        await enableAllocation();
         const { client, record } = await bookedTwin(1);
         const header = await db.service_record.findFirstOrThrow({ where: { branchId, serviceRecordCaseId: record.id } });
         await db.service_record.update({ where: { id: header.id }, data: { momBirth: "1990-01-01" } });
@@ -997,7 +975,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("materializes one immediate assignment notice for the successor on a configured PATCH without a name", async () => {
-        await enableAllocation();
         const { client } = await bookedTwin();
         const replacement = employeeIds[2]!;
         await db.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
@@ -1022,7 +999,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("applies the booked twin's date and staff edit in a single commit with one final record lifecycle effect", async () => {
-        await enableAllocation();
         const { client, record } = await bookedTwin();
         const original = (await schedules(client.id))[0]!;
         const calendar = await app.get(HolidayCalendarService).forBranch(branchId);
@@ -1068,7 +1044,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("keeps legacy combined date/staff refusal and persists date-only reevaluation on the current schedule", async () => {
-        await enableAllocation();
         const { client } = await bookedTwin();
         const [original] = await schedules(client.id);
         const date = { startDate: dateAt(9), startDateChangeMode: "CONFIRM_STARTED" };
@@ -1104,7 +1079,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     }
 
     it("rolls back every row on a genuine stored-vector refusal", async () => {
-        await enableAllocation();
         const { client, record } = await bookedTwin();
         await db.service_record_case.update({
             where: { id: record.id }, data: { plannedSessions: [{ sessionIndex: 9 }] as Prisma.InputJsonValue },
@@ -1119,7 +1093,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("rolls back period and allocation when an exception occurs after realignment", async () => {
-        await enableAllocation();
         const { client } = await bookedTwin();
         const before = await committedRows(client.id);
         let correctedPeriod: {
@@ -1156,7 +1129,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("preserves signed history across staff replacement and refuses authored-baby retirement", async () => {
-        await enableAllocation();
         const { client, record } = await bookedTwin(1);
         const original = (await schedules(client.id))[0]!;
         const signed = await db.service_record_day.create({
@@ -1182,7 +1154,6 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("rejects legacy replacement colliding with slot 3 and then copies both assistants to the successor", async () => {
-        await enableAllocation();
         const payload = quadruplets(employeeIds.slice(0, 4));
         const { body } = await create({
             ...payload, startDate: dateAt(-5), endDate: dateAt(20), serviceStatus: "active", applyMessageAutomation: false,

@@ -4,8 +4,8 @@ import { useState } from "react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
 import type { Client, ClientFormData, UpdateClientDto } from "@/features/clients/types";
-import { clientKeys } from "@/features/clients/hooks/keys";
-import { getActiveBranchId } from "@/features/system-templates/branch-context";
+import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
+import { useBusinessDayCalendar, type RefreshForSaveResult } from "@/hooks/useBusinessDayCalendar";
 import { employeeQueryKeys, type Employee } from "@/hooks/useEmployees";
 import { DetailPanel } from "@/components/app/v3/DetailPanel";
 import { SteppedWizardStepper } from "@/components/app/v3/SteppedWizardStepper";
@@ -32,8 +32,13 @@ const providers = ["김봄", "박여름", "이하늘", "최가을", "한겨울"]
 }));
 const roles = ["주 제공인력", "보조 제공인력 1", "보조 제공인력 2", "보조 제공인력 3"];
 const year = 2026;
-const enabledBranch = "11111111-1111-4111-8111-111111111111";
-const pausedBranch = "22222222-2222-4222-8222-222222222222";
+const firstBranch = "11111111-1111-4111-8111-111111111111";
+const secondBranch = "22222222-2222-4222-8222-222222222222";
+const originalUserId = "qa-user";
+const authSessionChanges = [
+  { change: "the authenticated branch changes", branchId: secondBranch, userId: originalUserId },
+  { change: "the authenticated user changes", branchId: firstBranch, userId: "qa-other-user" },
+];
 const grades = ["A가1형", "B가1형", "B가2형", "C가1형", "C가2형", "D가1형", "D가2형"];
 const baby1 = { babyId: "c3a70030-e4a1-4dc0-976f-7d483fb4c4f1", ordinal: 1 };
 const baby2 = { babyId: "cd19b5cd-e4c9-4f04-81e8-ad0a065db5ad", ordinal: 3 };
@@ -152,8 +157,9 @@ function expectInactiveSlots(capacity: number) {
 describe("desktop client service-record allocation", () => {
   let queries: QueryClient;
   let currentClient: Client;
-  let readEnabledCapability: () => Promise<{ data: { enabled: boolean } }>;
-  let readPausedCapability: () => Promise<{ data: { enabled: unknown } }>;
+  let retiredSetting: boolean | undefined;
+  const calendarHook = jest.mocked(useBusinessDayCalendar);
+  const defaultCalendar = calendarHook.getMockImplementation()!;
   const get = jest.mocked(api.get);
   const post = jest.mocked(api.post);
   const patch = jest.mocked(api.patch);
@@ -169,17 +175,16 @@ describe("desktop client service-record allocation", () => {
   });
 
   beforeEach(() => {
-    selectBranch(enabledBranch);
-    readEnabledCapability = async () => ({ data: { enabled: true } });
-    readPausedCapability = async () => ({ data: { enabled: false } });
+    selectBranch(firstBranch);
+    retiredSetting = undefined;
     queries = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    queries.setQueryDefaults(AUTH_USER_QUERY_KEY, { gcTime: Infinity });
+    alignAuth(firstBranch);
     queries.setQueryData(employeeQueryKeys.lists(), providers);
     currentClient = savedTwins;
     get.mockReset().mockImplementation(async (url, config) => {
-      if (url === "/clients/baby-record-capability") {
-        return document.cookie.includes(`selected_branch_id=${pausedBranch}`)
-          ? readPausedCapability()
-          : readEnabledCapability();
+      if (url === "/clients/baby-record-capability" && retiredSetting === false) {
+        return { data: { enabled: retiredSetting } };
       }
       if (url === "/employees") return { data: providers };
       if (url === "/clients/check-phone") return { data: { exists: false } };
@@ -204,17 +209,24 @@ describe("desktop client service-record allocation", () => {
   });
 
   afterEach(() => {
+    calendarHook.mockImplementation(defaultCalendar);
     queries.clear();
     document.cookie = "selected_branch_id=; max-age=0; path=/";
   });
 
+  function alignAuth(branchId: string, userId = originalUserId) {
+    queries.setQueryData(AUTH_USER_QUERY_KEY, { id: userId, name: "QA", branchId, branchRole: "manager" });
+  }
+
+  function selectScopedBranch(branchId: string) {
+    selectBranch(branchId);
+    alignAuth(branchId);
+  }
+
   async function open(options: Parameters<typeof FormFixture>[0] = {}) {
     const view = render(<QueryClientProvider client={queries}><FormFixture {...options} /></QueryClientProvider>);
-    await waitFor(() => expect(queries.getQueryState(clientKeys.babyRecordCapability(getActiveBranchId())))
-      .toMatchObject({ status: "success", fetchStatus: "idle" }));
-    await waitFor(() => expect(screen.queryByRole("status", {
-      name: "이 지점의 아기별 기록지 설정 가능 여부를 확인하는 중이에요.",
-    })).not.toBeInTheDocument());
+    await act(async () => {});
+    if (!options.client) await screen.findByText("등록 가능한 번호입니다.");
     return view;
   }
 
@@ -226,6 +238,14 @@ describe("desktop client service-record allocation", () => {
     fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
     select("바우처 유형", type);
     await within(fetusSelect()).findByRole("option", { name: type.startsWith("A") ? "단태아" : /중증/ });
+  }
+
+  async function openSingletonRegistrationAtSave() {
+    const view = await open();
+    await chooseGrade("A가1형");
+    next();
+    next();
+    return { view, submit: screen.getByRole("button", { name: "생성" }) };
   }
 
   it("renders dialog sections in the same order as the panel steps", async () => {
@@ -245,9 +265,11 @@ describe("desktop client service-record allocation", () => {
     select("태아 유형", "SEVERE_SINGLETON");
     if (surface === "panel") next();
     expectInactiveSlots(2);
+    expect(ownerSelect("아기 기록지")).toBeDisabled();
+    expect(ownerSelect("아기 기록지")).toHaveValue("");
     await selectProvider(0, providers[0]);
     await selectProvider(1, providers[1]);
-    click("담당 변경");
+    expect(within(ownerSelect("아기 기록지")).getByRole("option", { name: "보조 제공인력 1 · 박여름" })).toHaveValue("1");
     select("아기 기록지 담당자", "1");
     expect(ownerSelect("아기 기록지")).toHaveValue("1");
     expect(screen.queryByText("둘째 기록지")).not.toBeInTheDocument();
@@ -305,7 +327,7 @@ describe("desktop client service-record allocation", () => {
   });
 
   it.each([
-    ["A가1형", ["단태아"], "SINGLETON", 1, false],
+    ["A가1형", ["단태아"], "SINGLETON", 1, true],
     ["B가1형", ["중증 단태아", "쌍생아"], "SEVERE_SINGLETON", 1, true],
     ["C가1형", ["중증 쌍태아", "삼태아"], "SEVERE_TWINS", 2, true],
     ["C가2형", ["중증 쌍태아", "삼태아"], "TRIPLETS", 3, true],
@@ -346,7 +368,6 @@ describe("desktop client service-record allocation", () => {
     expect(screen.queryByRole("option", { name: /김봄/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("combobox", { name: roles[1] }));
     for (const slot of [1, 2, 3]) await selectProvider(slot, providers[slot]);
-    click("담당 변경");
     expect(screen.queryByRole("combobox", { name: "첫째 기록지 담당자" })).not.toBeInTheDocument();
     expect(ownerSelect("넷째 기록지")).toHaveValue("3");
     expect(ownerSelect("다섯째 기록지")).toHaveValue("0");
@@ -382,7 +403,6 @@ describe("desktop client service-record allocation", () => {
     const onSuccess = jest.fn();
     const view = await open({ client: before, initialStep: 2, onSuccess });
     await selectProvider(0, providers[4]);
-    click("담당 변경");
     expect(ownerSelect("둘째 기록지")).toHaveValue("0");
     select("둘째 기록지 담당자", "1");
     next();
@@ -406,7 +426,6 @@ describe("desktop client service-record allocation", () => {
     view.unmount();
     const after = (await api.get<Client>("/clients/523")).data;
     await open({ client: after, initialStep: 2 });
-    click("담당 변경");
     expect(ownerSelect("둘째 기록지")).toHaveValue("1");
     await waitFor(() => expect(screen.getByRole("combobox", { name: roles[0] })).toHaveTextContent("한겨울"));
   });
@@ -416,7 +435,6 @@ describe("desktop client service-record allocation", () => {
     const onSuccess = jest.fn();
     await open({ client: { ...before, serviceRecordFinalized: true }, initialStep: 2, onSuccess });
     await selectProvider(0, providers[4]);
-    click("담당 변경");
     select("둘째 기록지 담당자", "1");
     next();
     fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2026-08-04" } });
@@ -464,6 +482,43 @@ describe("desktop client service-record allocation", () => {
     expect(fetusSelect()).toHaveValue("TWINS");
   });
 
+  it("lets the first twin record replace the severe singleton's secondary owner with the primary owner", async () => {
+    await open({
+      client: {
+        ...savedTwins,
+        fetalType: "SEVERE_SINGLETON",
+        babyCount: 1,
+        babies: [baby1],
+        babyAssignments: [{ ...baby1, providerSlot: 1 }],
+      },
+      initialStep: 1,
+    });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    next();
+
+    const firstOwner = ownerSelect("첫째 기록지");
+    expect(firstOwner).toBeEnabled();
+    expect(firstOwner).toHaveValue("");
+    expect(firstOwner).toHaveAccessibleDescription("담당 제공인력을 다시 선택해 주세요.");
+    expect(within(firstOwner).queryByRole("option", { name: /박여름/ })).not.toBeInTheDocument();
+    next();
+    expect(firstOwner).toBeVisible();
+
+    select("첫째 기록지 담당자", "0");
+    expect(firstOwner).not.toBeInTheDocument();
+    expect(screen.getByText("주 제공인력 · 김봄", { selector: "span" })).toBeVisible();
+    next();
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({
+      fetalType: "TWINS",
+      babyCount: 2,
+      expectedAllocationVersion: "fixture-version-1",
+      babyAssignments: [{ babyId: baby1.babyId, providerSlot: 0 }, { ordinal: 5, providerSlot: 1 }],
+    });
+  });
+
   it("keeps given baby IDs and adds the new child after the historical maximum when the grade changes", async () => {
     await open({ client: savedTwins, initialStep: 1 });
     await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
@@ -474,7 +529,6 @@ describe("desktop client service-record allocation", () => {
     next();
     expectInactiveSlots(3);
     await selectProvider(2, providers[2]);
-    click("담당 변경");
     expect(ownerSelect("둘째 기록지")).toHaveValue("0");
     expect(ownerSelect("셋째 기록지")).toHaveValue("2");
     next();
@@ -639,76 +693,30 @@ describe("desktop client service-record allocation", () => {
     expect(body).not.toHaveProperty("providers");
   });
 
-  it("preserves confirmed allocation on an unrelated edit while the branch is paused", async () => {
-    selectBranch(pausedBranch);
-    const client = { ...savedTwins, babyAssignments: [{ ...baby1, providerSlot: 0 }, { ...baby2, providerSlot: 1 }] } satisfies Client;
-    const view = await open({ client });
-    const address = "인천광역시 동구";
-    fireEvent.change(screen.getByLabelText(/^주소/), { target: { value: address } });
-    next();
-    expect(fetusSelect()).toBeDisabled();
-    expect(fetusSelect()).toHaveValue("TWINS");
-    expect(screen.getByLabelText("실제 아기 수")).toHaveValue(2);
-    next();
-    expect(screen.getByRole("heading", { name: "서비스 제공기록지 담당" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "담당 변경" })).not.toBeInTheDocument();
-    next();
-    click("저장");
-    await waitFor(() => expect(patch.mock.calls).toStrictEqual([["/clients/523", { address }]]));
-    view.unmount();
-    patch.mockClear();
-
-    await open({ client, initialStep: 2 });
-    fireEvent.click(within(screen.getByRole("combobox", { name: roles[1] }))
-      .getByRole("button", { name: "제공인력 선택 해제" }));
-    next();
-    expect(screen.getByText("담당 제공인력을 다시 선택해 주세요.")).toBeVisible();
-    expect(patch).not.toHaveBeenCalled();
-    await selectProvider(1, providers[4]);
-    next();
-    click("저장");
-    await waitFor(() => expect(patch.mock.calls).toStrictEqual([["/clients/523", { secondaryEmployeeId: providers[4].id }]]));
-  });
-
-  it("keeps legacy voucher registration usable when enrollment is off", async () => {
-    selectBranch(pausedBranch);
+  it.each([false, undefined])("registers A singleton with the full payload when the old setting is %s", async (setting) => {
+    retiredSetting = setting;
+    selectScopedBranch(secondBranch);
     await open();
-    await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
+    await chooseGrade("A가1형");
+    expect(fetusSelect()).toBeDisabled();
+    expect(fetusSelect()).toHaveValue("SINGLETON");
     next();
-    fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
-    select("바우처 유형", "A가1형");
-    expect(screen.queryByLabelText("태아 유형")).not.toBeInTheDocument();
-    next();
+    expectInactiveSlots(1);
+    const owners = screen.getByRole("heading", { name: "서비스 제공기록지 담당" }).closest("section")!;
+    expect(within(owners).getByText("미배정")).toBeVisible();
     await selectProvider(0, providers[0]);
-    await selectProvider(1, providers[1]);
+    expect(within(owners).getByText("주 제공인력 · 김봄")).toBeVisible();
     next();
-    const submit = screen.getByRole("button", { name: "생성" });
-    expect(submit).toBeEnabled();
-    let finishRead: (result: { data: { enabled: boolean } }) => void = () => {};
-    const read = jest.fn(() => new Promise<{ data: { enabled: boolean } }>((resolve) => { finishRead = resolve; }));
-    readPausedCapability = read;
-    await act(async () => {
-      fireEvent.click(submit);
-      void queries.refetchQueries({ queryKey: clientKeys.babyRecordCapability(pausedBranch) });
-    });
-    expect(read).toHaveBeenCalledTimes(1);
-    expect(submit).toBeDisabled();
-    expect(post).not.toHaveBeenCalled();
-    expect(patch).not.toHaveBeenCalled();
-    await act(async () => finishRead({ data: { enabled: false } }));
-    await waitFor(() => expect(submit).toBeEnabled());
     click("생성");
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    const body = post.mock.calls[0][1];
-    expect(body).toMatchObject({
-      voucherClient: true, type: "A가1형", primaryEmployeeId: providers[0].id, secondaryEmployeeId: providers[1].id,
-    });
-    for (const key of ["fetalType", "babyCount", "providers", "babyAssignments"]) {
-      expect(body).not.toHaveProperty(key);
-    }
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/clients", expect.objectContaining({
+      voucherClient: true, type: "A가1형", fetalType: "SINGLETON", babyCount: 1, voucherIssuanceYear: year,
+      providers: [{ slot: 0, employeeId: 11 }],
+      babyAssignments: [{ ordinal: 1, providerSlot: 0 }],
+    })));
+    expect(get.mock.calls.map(([url]) => url)).not.toContain("/clients/baby-record-capability");
   });
 
-  it.each<Surface>(["panel", "dialog"])("saves a voucher consultation without a type in the enabled %s", async (surface) => {
+  it.each<Surface>(["panel", "dialog"])("saves a voucher consultation without a type in the %s", async (surface) => {
     await open({ surface });
     if (surface === "panel") {
       await screen.findByText("등록 가능한 번호입니다.");
@@ -734,12 +742,9 @@ describe("desktop client service-record allocation", () => {
     }
   });
 
-  it.each<Surface>(["panel", "dialog"])("waits for a confirmed capability before a new voucher registration in the %s", async (surface) => {
-    selectBranch(pausedBranch);
-    let settle: (result: { data: { enabled: unknown } }) => void = () => {};
-    readPausedCapability = () => new Promise((resolve) => { settle = resolve; });
-    render(<QueryClientProvider client={queries}><FormFixture surface={surface} /></QueryClientProvider>);
-    await screen.findByText("등록 가능한 번호입니다.");
+  it.each<Surface>(["panel", "dialog"])("explains why the %s cannot save when branches differ at open", async (surface) => {
+    selectBranch(secondBranch);
+    await open({ surface });
     if (surface === "panel") next();
     fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
     select("바우처 유형", "A가1형");
@@ -748,76 +753,82 @@ describe("desktop client service-record allocation", () => {
       next();
     }
     const submit = screen.getByRole("button", { name: "생성" });
-    const expectBlocked = () => {
-      expect(submit).toBeDisabled();
-      fireEvent.click(submit);
-      expect(post).not.toHaveBeenCalled();
-      expect(patch).not.toHaveBeenCalled();
-    };
-    expect(screen.getByRole("status", {
-      name: "이 지점의 아기별 기록지 설정 가능 여부를 확인하는 중이에요.",
-    })).toBeVisible();
-    expectBlocked();
-
-    await act(async () => settle({ data: { enabled: "true" } }));
-    expect(await screen.findByText(/아기별 기록지 설정 가능 여부를 확인하지 못했어요/)).toBeVisible();
-    expectBlocked();
-
-    readPausedCapability = async () => ({ data: { enabled: false } });
-    click("다시 확인");
-    await waitFor(() => expect(submit).toBeEnabled());
+    expect(submit).toBeDisabled();
+    expect(screen.getByText("지점을 선택한 후 양식을 다시 열어 주세요.")).toHaveAttribute("role", "status");
     fireEvent.click(submit);
-    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
-    expect(post).toHaveBeenCalledWith("/clients", expect.objectContaining({ voucherClient: true, type: "A가1형" }));
-    expect(post.mock.calls[0][1]).not.toHaveProperty("fetalType");
+    expect(post).not.toHaveBeenCalled();
   });
 
-  it("does not submit an explicit enrollment after a branch switch or failed capability read", async () => {
-    await open();
-    await chooseGrade("A가1형");
-    next();
-    await selectProvider(0, providers[0]);
-    next();
-    const submit = screen.getByRole("button", { name: "생성" });
+  it.each(authSessionChanges)("requires reopening the registration form when $change without a cookie change", async ({ branchId, userId }) => {
+    const { submit } = await openSingletonRegistrationAtSave();
     expect(submit).toBeEnabled();
 
-    readEnabledCapability = async () => { throw new Error("Synthetic capability read failed"); };
-    await act(async () => {
-      await queries.refetchQueries({ queryKey: clientKeys.babyRecordCapability(enabledBranch) });
-    });
-    expect(await screen.findByText(/작성 중인 아기별 설정을 지금 저장할 수 없어요/)).toBeVisible();
+    await act(async () => alignAuth(branchId, userId));
     expect(submit).toBeDisabled();
-    fireEvent.click(submit);
-    expect(post).not.toHaveBeenCalled();
-    expect(patch).not.toHaveBeenCalled();
+    const reopenMessage = "선택한 지점이 바뀌었어요. 현재 지점에서 저장하려면 이 창을 닫고 다시 열어 주세요.";
+    expect(screen.getByText(reopenMessage)).toHaveAttribute("role", "status");
 
-    readEnabledCapability = async () => ({ data: { enabled: true } });
-    click("다시 확인");
-    await waitFor(() => expect(submit).toBeEnabled());
-    let settle: (result: { data: { enabled: string } }) => void = () => {};
-    const capability = new Promise<{ data: { enabled: string } }>((resolve) => { settle = resolve; });
-    const read = jest.fn(() => capability);
-    readPausedCapability = read;
-    await act(async () => selectBranch(pausedBranch));
-    await waitFor(() => expect(read).toHaveBeenCalled());
+    await act(async () => alignAuth(firstBranch));
     expect(submit).toBeDisabled();
+    expect(screen.getByText(reopenMessage)).toBeVisible();
     fireEvent.click(submit);
     expect(post).not.toHaveBeenCalled();
-    expect(patch).not.toHaveBeenCalled();
-    await act(async () => {
-      settle({ data: { enabled: "true" } });
-      await capability;
-    });
-    expect(submit).toBeDisabled();
-    fireEvent.click(submit);
-    expect(post).not.toHaveBeenCalled();
-    expect(patch).not.toHaveBeenCalled();
-
-    await act(async () => selectBranch(enabledBranch));
-    await waitFor(() => expect(queries.getQueryState(clientKeys.babyRecordCapability(enabledBranch)))
-      .toMatchObject({ status: "success", fetchStatus: "idle" }));
-    expect(submit).toBeDisabled();
   });
+
+  it.each(authSessionChanges)("refuses a pending registration when $change before the form observes it", async ({ branchId, userId }) => {
+    const calendar = defaultCalendar().calendar;
+    let finishRefresh!: (result: RefreshForSaveResult) => void;
+    const refreshForSave = jest.fn(() => new Promise<RefreshForSaveResult>((resolve) => { finishRefresh = resolve; }));
+    calendarHook.mockReturnValue({ ...defaultCalendar(), refreshForSave });
+    const { submit } = await openSingletonRegistrationAtSave();
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    expect(refreshForSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      // Keep the new authority in the cache while the form still has its previous render.
+      const notify = jest.spyOn(queries.getQueryCache(), "notify").mockImplementationOnce(() => {});
+      try {
+        alignAuth(branchId, userId);
+      } finally {
+        notify.mockRestore();
+      }
+      finishRefresh({ ok: true, changed: false, calendar });
+    });
+
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each(["different branch", "missing branch", "invalidated auth", "different customer"] as const)(
+    "discards a save waiting on the calendar after %s", async (change) => {
+      let finishRefresh!: (result: RefreshForSaveResult) => void;
+      const refreshForSave = jest.fn(() => new Promise<RefreshForSaveResult>((resolve) => { finishRefresh = resolve; }));
+      const calendar = defaultCalendar().calendar;
+      calendarHook.mockReturnValue({ ...defaultCalendar(), refreshForSave });
+      // Exercise normalization of an encoded selected branch against the auth ID.
+      selectBranch(encodeURIComponent(` ${firstBranch} `));
+      const { view, submit } = await openSingletonRegistrationAtSave();
+      expect(submit).toBeEnabled();
+      fireEvent.click(submit);
+      expect(refreshForSave).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        if (change === "different branch") selectScopedBranch(secondBranch);
+        if (change === "missing branch") selectBranch("");
+        if (change === "invalidated auth") await queries.invalidateQueries({ queryKey: AUTH_USER_QUERY_KEY });
+        if (change === "different customer") {
+          view.rerender(<QueryClientProvider client={queries}><FormFixture client={savedTwins} /></QueryClientProvider>);
+        }
+      });
+      await act(async () => finishRefresh({ ok: true, changed: false, calendar }));
+      expect(post).not.toHaveBeenCalled();
+      expect(patch).not.toHaveBeenCalled();
+      if (change === "different branch" || change === "missing branch") {
+        await act(async () => selectScopedBranch(firstBranch));
+        expect(submit).toBeDisabled();
+      }
+    },
+  );
 
   async function openShrinkConfirmation() {
     await open({
