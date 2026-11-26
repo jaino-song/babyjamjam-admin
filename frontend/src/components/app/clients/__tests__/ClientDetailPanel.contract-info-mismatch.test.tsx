@@ -8,6 +8,7 @@ import { ClientDetailPanel } from "../ClientDetailPanel";
 jest.mock("@/providers/LocaleProvider", () => ({ useLocale: () => "ko" }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: jest.fn() }) }));
 jest.mock("@/features/clients/hooks/use-clients", () => ({
+  useClient: () => ({}),
   useConfirmBooking: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
