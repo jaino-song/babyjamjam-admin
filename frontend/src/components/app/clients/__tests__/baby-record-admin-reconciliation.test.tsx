@@ -209,8 +209,9 @@ it("an unresolved household never queries scalar revision history", async () => 
     const knownEmpty = `/admin/service-records/client/${OTHER_CLIENT_ID}`;
     view.unmount();
     get.mockImplementation(async (path) => ({ data: path === knownEmpty ? overview([]) : [] }) as never);
-    setup(<Panel id={OTHER_CLIENT_ID} />);
-    await waitFor(() => expect(get).toHaveBeenCalledWith(`/admin/service-records/clients/${OTHER_CLIENT_ID}/revisions`));
+    const empty = setup(<Panel id={OTHER_CLIENT_ID} />);
+    await waitFor(() => expect(empty.queryClient.getQueryState(serviceRecordKeys.clientOverview(OTHER_CLIENT_ID, undefined, BRANCH_A))?.status).toBe("success"));
+    expect(get).not.toHaveBeenCalledWith(`/admin/service-records/clients/${OTHER_CLIENT_ID}/revisions`);
 });
 
 it("a cached singleton does not query scalar revisions while the household is being checked", async () => {
@@ -321,13 +322,15 @@ it("a singleton historic summary can be linked on the customer page while retain
     });
     fireEvent.click(screen.getByRole("tab", { name: "제공기록지" }));
     await screen.findByRole("combobox", { name: "연결할 아기" });
-    await waitFor(() => expect(get).toHaveBeenCalledWith(REVISIONS_PATH));
+    expect(get).not.toHaveBeenCalledWith(REVISIONS_PATH);
     expect(screen.getByText("옛 기록지", { exact: true })).toBeInTheDocument();
     expect(get).not.toHaveBeenCalledWith(casePath(HISTORIC));
     fireEvent.change(choice(), { target: { value: SECOND } });
     fireEvent.click(connect());
 
     expect(await screen.findByText("QA-기존 서명 문서")).toBeInTheDocument();
+    await waitFor(() => expect(get).toHaveBeenCalledWith(casePath(HISTORIC, REVISIONS_PATH)));
+    expect(get).not.toHaveBeenCalledWith(REVISIONS_PATH);
     expect(get).toHaveBeenCalledWith(casePath(HISTORIC));
     expect(screen.getByRole("button", { name: /^둘째 ·/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("link", { name: "제공기록지 보기" })).toHaveAttribute(
