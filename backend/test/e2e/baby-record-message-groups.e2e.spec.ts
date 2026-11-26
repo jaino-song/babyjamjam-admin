@@ -6,6 +6,7 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { ServiceRecordLinkGroupService } from "application/services/service-record-link-group.service";
 import { RECORD_LINK_GROUP_CHANGED } from "application/services/service-record-link-group-source";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
@@ -294,6 +295,65 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
             const submitted = calls().slice(callCount).map(call => [call.receiver, digest(call.message)]);
             expect(submitted).toEqual([[phone(0), digest(prepared.content)]]);
         }
+    });
+
+    it.each([2, 1])("explicitly sends %i members once after canceling an unsent manual group", async memberCount => {
+        const family = await book([0, 0]);
+        const scheduleId = family.schedule.id;
+        const caseIds = family.cases.map(row => row.id);
+        const original = await prepare(scheduleId, staff[0]!, caseIds);
+        // Admit the manual request without invoking the immediate dispatcher.
+        const admission = await app.get(ServiceRecordLinkGroupService).send(branchId, scheduleId, original.input, ownerId);
+        const readOriginal = () => db.message_trigger_job.findUniqueOrThrow({
+            where: { id: admission.jobId },
+            include: { recordMembers: { orderBy: { serviceRecordCaseId: "asc" } } },
+        });
+        const jobStatuses = async () => (await getJobs(family.clientId))
+            .map(({ id, status }) => ({ id, status })).sort((a, b) => a.id.localeCompare(b.id));
+        expect(admission.created).toBe(true);
+        expect(await readOriginal()).toMatchObject({ status: "pending", payload: { sentByUserId: ownerId } });
+        expect(stub.sendCalls).toHaveLength(0);
+
+        await http().post(`/message-trigger-jobs/${admission.jobId}/cancel`).expect(201);
+        const canceled = await readOriginal();
+        expect(canceled).toMatchObject({ status: "canceled", canceledByUser: true });
+        expect(canceled.recordMembers.map(member => member.serviceRecordCaseId)).toEqual([...caseIds].sort());
+        expect(await getLogs(admission.jobId)).toHaveLength(0);
+        const postCancel = await jobStatuses();
+        expect(postCancel.every(job => job.status === "canceled")).toBe(true);
+        await linkService.scheduleForServiceStart(scheduleId);
+        expect(await jobStatuses()).toEqual(postCancel);
+        expect(stub.sendCalls).toHaveLength(0);
+
+        const selected = caseIds.slice(0, memberCount);
+        const prepared = await prepare(scheduleId, staff[0]!, selected);
+        const { body: sent } = await postLink(scheduleId, "send", prepared.input).expect(201);
+        expect(sent.status).toBe("sent");
+        expect(sent.jobId).not.toBe(admission.jobId);
+        const jobs = await getJobs(family.clientId);
+        const replacement = jobs.find(job => job.id === sent.jobId);
+        expect(replacement).toMatchObject({ status: "sent", payload: { sentByUserId: ownerId } });
+        expect(replacement?.recordMembers.map(member => member.serviceRecordCaseId).sort()).toEqual([...selected].sort());
+        const receipt = await getLogs(sent.jobId);
+        expect(receipt).toHaveLength(1);
+        expect(receipt[0]).toMatchObject({ status: "sent", providerAcceptanceState: "accepted", receiver: phone(0) });
+        const previewHash = digest(prepared.content);
+        expect(digest(receipt[0]!.messageBody)).toBe(previewHash);
+        expect(stub.sendCalls.map(call => [call.receiver, digest(call.message)])).toEqual([[phone(0), previewHash]]);
+        expect(await readOriginal()).toStrictEqual(canceled);
+
+        const { body: replay } = await postLink(scheduleId, "send", prepared.input).expect(201);
+        expect(replay).toMatchObject({ jobId: sent.jobId, status: "sent" });
+        expect(await readOriginal()).toStrictEqual(canceled);
+        const postReplay = await jobStatuses();
+        expect(postReplay).toHaveLength(postCancel.length + 1);
+        expect(postReplay).toEqual(expect.arrayContaining([...postCancel, { id: sent.jobId, status: "sent" }]));
+        await linkService.scheduleForServiceStart(scheduleId);
+        expect(await jobStatuses()).toEqual(postReplay);
+        expect(await readOriginal()).toStrictEqual(canceled);
+        expect(await getLogs(admission.jobId)).toHaveLength(0);
+        expect(await getLogs(sent.jobId)).toStrictEqual(receipt);
+        expect(stub.sendCalls).toHaveLength(1);
     });
 
     it("partial carrier failure cannot repeat a previously accepted recipient", async () => {
