@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ClientNoteService } from "application/services/client-note.service";
 import {
     CreateClientUsecase,
     DeleteClientUsecase,
@@ -51,6 +52,7 @@ import { HolidayModule } from "./holiday.module";
         ListClientsPaginatedUsecase,
         UpdateClientUsecase,
         ClientService,
+        ClientNoteService,
         ServiceRecordStartDateChangeService,
         ClientDueDateSchedulerService,
         ClientAgentCapabilitiesProvider,

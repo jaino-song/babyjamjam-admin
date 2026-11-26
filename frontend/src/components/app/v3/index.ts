@@ -12,6 +12,21 @@ export { ExpandableSearch } from './ExpandableSearch';
 export { CompactDateSelect } from './CompactDateSelect';
 export type { CompactDateSelectOption } from './CompactDateSelect';
 export { PanelTitleGroup } from './PanelTitleGroup';
+export type { PanelTitleNotice, PanelTitleNoticeTone } from './PanelTitleGroup';
+export { ClientBadgeMark, ClientListStatus } from './ClientListStatus';
+export type { ClientBadgeMarkProps, ClientListStatusProps } from './ClientListStatus';
+export {
+  CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION,
+  CONTRACT_INFO_CHANGE_CONFIRM_TITLE,
+  CONTRACT_INFO_CHANGE_LIST_TITLE,
+  CONTRACT_INFO_MISMATCH_HINT,
+  CONTRACT_INFO_MISMATCH_NOTICE_TEXT,
+  ContractInfoChangeList,
+  ContractInfoMismatchIcon,
+  ContractInfoMismatchPill,
+  getContractInfoMismatchNotice,
+} from './ContractInfoMismatch';
+export type { ContractInfoChangeListProps, ContractInfoChangeListRow } from './ContractInfoMismatch';
 export { FilterChips } from './FilterChips';
 export { SearchFilterBar } from './SearchFilterBar';
 export { InfoCard } from './InfoCard';

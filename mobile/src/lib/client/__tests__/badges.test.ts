@@ -82,4 +82,19 @@ describe("getMobileClientBadges legacy fallback for a revoke-requested contract 
 
     expect(badges[0]).toEqual(expect.objectContaining({ key: "contract_required", label: "계약서 필요" }));
   });
+
+  it("shows 정보 불일치 as an orange warning after the service status, keeping the avatar tone", () => {
+    const badges = getMobileClientBadges({
+      ...BASE_CLIENT,
+      breastPump: false,
+      badges: [
+        { key: "contract_info_mismatch", status: "review", label: "정보 불일치", tone: "warning", priority: 5 },
+        { key: "service_status", status: "active", label: "진행중", tone: "primary", priority: 20 },
+      ],
+    });
+
+    expect(badges.map((badge) => badge.label)).toEqual(["진행중", "정보 불일치"]);
+    expect(badges[0].tone).toBe("primary");
+    expect(badges[1]).toEqual(expect.objectContaining({ key: "contract_info_mismatch", tone: "orange", priority: 25 }));
+  });
 });

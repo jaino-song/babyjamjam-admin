@@ -4,7 +4,7 @@ import React from "react";
 import { ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DetailTabs } from "./DetailTabs";
-import { PanelTitleGroup } from "./PanelTitleGroup";
+import { PanelTitleGroup, type PanelTitleNotice } from "./PanelTitleGroup";
 import { useSplitLayoutNavOptional } from "./SplitLayoutContext";
 import { useScrollActivity } from "./useScrollActivity";
 
@@ -24,6 +24,11 @@ interface DetailPanelProps {
   title?: React.ReactNode;
   /** Subtitle below the title */
   subtitle?: React.ReactNode;
+  /**
+   * One-line notice under the subtitle (tone, optional icon, content). Reusable for any
+   * state the reader should see before the panel body; hidden while loading.
+   */
+  headerNotice?: PanelTitleNotice | null;
   /** Badges/chips rendered before the title (leftmost position) */
   badgesLeft?: React.ReactNode;
   /** Badges/chips inline after the title */
@@ -106,6 +111,7 @@ export function DetailPanel({
   avatar,
   title,
   subtitle,
+  headerNotice = null,
   badgesLeft,
   badges,
   badgesRight,
@@ -178,6 +184,7 @@ export function DetailPanel({
           data-component={`${dataComponent}_header_title-group`}
           title={resolvedTitle}
           subtitle={resolvedSubtitle}
+          notice={isLoading ? null : headerNotice}
           badgesLeft={badgesLeft}
           badges={badges}
           badgesRight={badgesRight}

@@ -4,7 +4,16 @@ import { legacyClientBadges } from "@babyjamjam/shared/client/badges";
 import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
 import type { Client, ClientBadge, ClientBadgeTone } from "@/lib/client/types";
 
-const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "contract_status", "service_status"] as const satisfies readonly ClientBadge["key"][];
+// "정보 불일치" leads so the list shows its warning icon first; every other badge then
+// sits behind +N. It never colours the avatar, which keeps the service-status tone.
+export const CONTRACT_INFO_MISMATCH_BADGE_KEY = "contract_info_mismatch" as const satisfies ClientBadge["key"];
+
+const PRIMARY_CLIENT_BADGE_KEYS = [
+    CONTRACT_INFO_MISMATCH_BADGE_KEY,
+    "contract_required",
+    "contract_status",
+    "service_status",
+] as const satisfies readonly ClientBadge["key"][];
 
 const CLIENT_BADGE_AVATAR_CLASS_BY_TONE: Record<ClientBadgeTone, string> = {
     danger: `border ${STATUS_SURFACE.danger}`,
@@ -44,6 +53,15 @@ export const getClientBadges = (
 
 export const getPrimaryClientBadge = (badges: ClientBadge[]): ClientBadge | null => {
     return prioritizeClientBadges(badges)[0] ?? null;
+};
+
+export const isContractInfoMismatchBadge = (badge: Pick<ClientBadge, "key"> | null | undefined): boolean => (
+    badge?.key === CONTRACT_INFO_MISMATCH_BADGE_KEY
+);
+
+/** The badge whose tone colours the client avatar: the primary one, skipping "정보 불일치". */
+export const getClientAvatarBadge = (badges: ClientBadge[]): ClientBadge | null => {
+    return prioritizeClientBadges(badges).find((badge) => !isContractInfoMismatchBadge(badge)) ?? null;
 };
 
 export const getClientBadgeAvatarClassName = (badge: Pick<ClientBadge, "key" | "status" | "tone"> | null | undefined): string => {

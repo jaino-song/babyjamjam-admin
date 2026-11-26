@@ -61,7 +61,7 @@ export function ContractDocumentJobRetryDialog({ jobId, documentKind, progressSt
     cancelButtonDataComponent={sub("footer_cancel")} approvalButtonDataComponent={sub("footer_approve")}
     isDescriptionVisuallyHidden={false} approvalVariant="positive" approvalLabel="재시도" cancelLabel="닫기"
     onApprove={approve} isPending={retry.isPending} approvalDisabled={noLongerOffered}>
-    {retry.isError || noLongerOffered ? <p role="alert" data-component={sub("body_error")} data-slot="job-retry-error" className="mb-4 text-sm text-status-danger-fg">
+    {retry.isError || noLongerOffered ? <p role="alert" data-component={sub("body_error")} data-slot="job-retry-error" className="text-sm text-status-danger-fg">
       {errorCopy}
     </p> : null}
   </TwoButtonModal>;

@@ -61,7 +61,7 @@ export function ContractDocumentJobCancelDialog({ jobId, documentKind, progressS
     cancelButtonDataComponent={sub("footer_cancel")} approvalButtonDataComponent={sub("footer_approve")}
     isDescriptionVisuallyHidden={false} approvalVariant="destructive" approvalLabel="작업 취소" cancelLabel="닫기"
     onApprove={approve} isPending={cancel.isPending} approvalDisabled={noLongerOffered}>
-    {cancel.isError || noLongerOffered ? <p role="alert" data-component={sub("body_error")} data-slot="job-cancel-error" className="mb-4 text-sm text-status-danger-fg">
+    {cancel.isError || noLongerOffered ? <p role="alert" data-component={sub("body_error")} data-slot="job-cancel-error" className="text-sm text-status-danger-fg">
       {errorCopy}
     </p> : null}
   </TwoButtonModal>;

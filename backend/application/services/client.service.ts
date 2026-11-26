@@ -23,6 +23,7 @@ import {
 import { resolveEformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
 import { findMissingServiceRecordAlertsWithProgress } from "application/policies/missing-service-record-alert.policy";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
+import { ClientNoteService, type ContractInfoSnapshot } from "application/services/client-note.service";
 import {
     configuredServiceRecordTemplateIds,
     isServiceRecordEformsignDocument,
@@ -176,7 +177,13 @@ export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested
 // deleted/no document at all) is a dead document and falls back to the "발송 필요" check.
 // `voided` (계약 파기) is dead too: it is deliberately absent from this set.
 const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "revoke_requested", "opened", "completed"]);
-export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeKey =
+    | "contract_info_mismatch"
+    | "contract_required"
+    | "contract_status"
+    | "breast_pump"
+    | "service_status"
+    | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
     | "active"
@@ -299,6 +306,7 @@ export class ClientService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
         @Optional() private readonly serviceRecordStartDateChangeService?: ServiceRecordStartDateChangeService,
+        @Optional() private readonly clientNoteService?: ClientNoteService,
     ) {}
 
     /**
@@ -1027,7 +1035,61 @@ export class ClientService {
         return this.computeContractActionRequired(params, calendar);
     }
 
+    /**
+     * A completed contract can no longer change, so an edit to a field the contract
+     * holds leaves the two apart. Keep that on a client note for the 정보 불일치 badge.
+     */
+    private async recordContractInfoChangeInTransaction(
+        transaction: Prisma.TransactionClient,
+        branchid: string,
+        clientId: number,
+        before: ContractInfoSnapshot,
+        actorUserId: string | null | undefined,
+    ): Promise<void> {
+        if (!this.clientNoteService) return;
+        const after = await this.readContractInfoInTransaction(transaction, clientId);
+        if (!after) return;
+        const latestContract = (await findLatestContractSignalsByClientId(
+            transaction,
+            configuredServiceRecordTemplateIds(this.configService),
+            [clientId],
+        )).get(clientId);
+        await this.clientNoteService.recordContractInfoChangeInTransaction(transaction, {
+            branchId: branchid,
+            clientId,
+            latestContract,
+            before,
+            after,
+            actorUserId,
+        });
+    }
+
+    /** The client's contract fields (eformsign prefill) as stored inside the caller's transaction. */
+    private async readContractInfoInTransaction(
+        transaction: Prisma.TransactionClient,
+        clientId: number,
+    ): Promise<ContractInfoSnapshot | null> {
+        if (typeof transaction.client?.findUnique !== "function") return null;
+        return transaction.client.findUnique({
+            where: { id: clientId },
+            select: {
+                name: true,
+                phone: true,
+                address: true,
+                birthday: true,
+                startDate: true,
+                endDate: true,
+                duration: true,
+                fullPrice: true,
+                grant: true,
+                actualPrice: true,
+            },
+        });
+    }
+
     private buildClientBadges(params: {
+        /** An open note says the client's info changed after its current contract was completed. */
+        contractInfoMismatch?: boolean;
         contractActionRequired: ClientActionRequired | null;
         /** The current contract is 040/045 (철회 요청됨): still live, cancellation only requested. */
         contractRevokeRequested: boolean;
@@ -1036,6 +1098,18 @@ export class ClientService {
         careCenter: boolean | null;
     }): ClientBadge[] {
         const badges: ClientBadge[] = [];
+
+        // First, so the list card shows its warning icon in the status slot: the
+        // completed contract can no longer change and staff must check it by hand.
+        if (params.contractInfoMismatch) {
+            badges.push({
+                key: "contract_info_mismatch",
+                status: "review",
+                label: "정보 불일치",
+                tone: "warning",
+                priority: 5,
+            });
+        }
 
         if (params.contractActionRequired) {
             badges.push({
@@ -1835,6 +1909,9 @@ export class ClientService {
 
         // 현재 페이지 고객의 계약 문서만 한 번에 조회하고, 고객별 최신 상태를 사용한다.
         const latestContractMap = await this.findLatestContractByClientId(clientIds);
+        const contractInfoMismatchClientIds = await this.clientNoteService
+            ?.findContractInfoMismatchClientIds(this.prismaService, latestContractMap)
+            ?? new Set<number>();
 
         // Display-only: the cached branch calendar is enough for the badges.
         const calendar = await this.holidayCalendar.forBranch(branchid);
@@ -1884,6 +1961,7 @@ export class ClientService {
                 hasActiveContractDocument,
             };
             const badges = this.buildClientBadges({
+                contractInfoMismatch: contractInfoMismatchClientIds.has(client.id),
                 contractActionRequired: this.computeContractActionRequired(contractSignals, calendar),
                 contractRevokeRequested: documentStatus === "revoke_requested",
                 serviceStatus: computedStatus,
@@ -2729,6 +2807,7 @@ export class ClientService {
                     });
                 }
             }
+            await this.recordContractInfoChangeInTransaction(transaction, branchid, id, currentClient, params.actorUserId);
             await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, id, priorStatusInputs);
         };
 
@@ -2839,11 +2918,13 @@ export class ClientService {
      * Sets serviceStatus to 'terminated' and ends the service immediately
      * @param clientId - The client ID
      * @param reason - Optional termination reason for logging
+     * @param actorUserId - Who terminated, recorded on a contract-info note
      */
     async terminateService(
         branchid: string,
         clientId: number,
-        reason?: string
+        reason?: string,
+        actorUserId?: string | null,
     ): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
@@ -2904,11 +2985,20 @@ export class ClientService {
             }, transaction);
             const before = this.serviceRecordLinkService?.recordClientTransitionInTransaction
                 ? await this.clientRepository.findByIdForUpdate(branchid, clientId, transaction) : null;
+            // Termination moves the end date, a contract field: a completed
+            // contract gets the same note as an edit-form change.
+            const contractInfoBefore = this.clientNoteService
+                ? await this.readContractInfoInTransaction(transaction, clientId) ?? client : null;
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: SERVICE_STATUS.TERMINATED,
                 endDate: terminationEndDate,
             }, transaction, calendar);
             if (before) await this.serviceRecordLinkService?.recordClientTransitionInTransaction(transaction, branchid, clientId, before);
+            if (contractInfoBefore) {
+                await this.recordContractInfoChangeInTransaction(
+                    transaction, branchid, clientId, contractInfoBefore, actorUserId,
+                );
+            }
             const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
             const currentSchedule = snapshot?.employeeSchedules[0];
             if (currentSchedule) await closeScheduleAllocation(transaction, { branchId: branchid, clientId }, currentSchedule.id);

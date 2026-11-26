@@ -236,11 +236,11 @@ export class ClientController {
      */
     @Patch(":id/terminate")
     terminate(
-        @CurrentTenant() tenant: { branchId?: string },
+        @CurrentTenant() tenant: { branchId?: string; userId?: string },
         @Param("id", ParseIntPipe) id: number,
         @Body() dto: TerminateServiceDto
     ) {
-        return this.clientService.terminateService(tenant.branchId ?? "", id, dto.reason);
+        return this.clientService.terminateService(tenant.branchId ?? "", id, dto.reason, tenant.userId);
     }
 
     /**

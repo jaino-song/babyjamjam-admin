@@ -44,8 +44,8 @@ import type { Client } from "@/lib/client/types";
 import { canEditServiceRecordSchedule, type ClientListTab } from "@/features/clients/types";
 import {
     getClientBadgeAvatarClassName,
+    getClientAvatarBadge,
     getClientBadges,
-    getPrimaryClientBadge,
     prioritizeClientBadges,
 } from "@/lib/client/badges";
 import {
@@ -80,7 +80,7 @@ import {
     ListPanel,
     DetailPanel,
     InfoCard,
-    StatusBadge,
+    ClientListStatus,
     AnimatedSlotList,
     AnimatedSlotListItemContent,
     HeaderActionButton,
@@ -897,14 +897,13 @@ export default function ClientsPage() {
 	                                        if (!client) return null;
 	                                        const clientBadges = getClientBadges(client);
 	                                        const sortedClientBadges = prioritizeClientBadges(clientBadges);
-	                                        const primaryClientBadge = getPrimaryClientBadge(clientBadges);
-                                            const [firstClientBadge, ...remainingClientBadges] = sortedClientBadges;
+	                                        const avatarClientBadge = getClientAvatarBadge(clientBadges);
 
 	                                        return (
 	                                            <AnimatedSlotListItemContent
 	                                                data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item"
 	                                                icon={Users}
-	                                                iconContainerClassName={getClientBadgeAvatarClassName(primaryClientBadge)}
+	                                                iconContainerClassName={getClientBadgeAvatarClassName(avatarClientBadge)}
 	                                                title={client.name}
 	                                                subtitle={
 	                                                    <>
@@ -916,25 +915,12 @@ export default function ClientsPage() {
 	                                                        ) : null}
 	                                                    </>
 	                                                }
-                                                    status={firstClientBadge ? (
-                                                        <div className="flex items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
-                                                            <StatusBadge
-                                                                status={firstClientBadge.status}
-                                                                label={
-                                                                    firstClientBadge.label
-                                                                        ? getClientDisplayLabel(firstClientBadge.label)
-                                                                        : undefined
-                                                                }
-                                                            />
-                                                            {remainingClientBadges.length > 0 ? (
-                                                                <span
-                                                                    data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"
-                                                                    className="shrink-0 text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
-                                                                >
-                                                                    +{remainingClientBadges.length}
-                                                                </span>
-                                                            ) : null}
-                                                        </div>
+                                                    status={sortedClientBadges.length > 0 ? (
+                                                        <ClientListStatus
+                                                            data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item_status_badges"
+                                                            badges={sortedClientBadges}
+                                                            formatLabel={getClientDisplayLabel}
+                                                        />
                                                     ) : undefined}
 			                                            />
 	                                        );

@@ -292,6 +292,7 @@ model client {
   serviceRecordCases     service_record_case[]
   receiptLinkTokens      receipt_link_token[]
   endDateReviewItems     end_date_review_item[]
+  clientNotes            client_note[]
   serviceRecordRevisionDocumentStates service_record_revision_document_state[]
 
   babies                 client_baby[]             @relation("ClientBabies")
@@ -743,6 +744,7 @@ model branch {
   holidayOverrides              branch_holiday_override[]
   holidayChangeEvents           holiday_change_event[]
   endDateReviewItems            end_date_review_item[]
+  clientNotes                   client_note[]
 
   messageOccurrenceClaims message_occurrence_claim[]
 
@@ -2093,6 +2095,37 @@ model end_date_review_item {
   @@unique([changeEventId, clientId], map: "uq_end_date_review_item_event_client")
   @@index([branchId, clientId, status], map: "idx_end_date_review_item_branch_client_status")
   @@index([branchId, status], map: "idx_end_date_review_item_branch_status")
+}
+
+/// Database note: partial unique index `uq_client_note_client_kind_open` on
+/// (client_id, kind) WHERE status = 'open' exists in the database but cannot be
+/// expressed in Prisma (created via migration SQL). It allows at most one open
+/// note of each kind per client.
+///
+/// A standing note on a client that staff should see. `kind` is
+/// 'contract_info_mismatch' (the client's info was changed after its contract was
+/// completed, so the contract no longer matches); `status` is 'open' | 'resolved'
+/// (CHECKs in SQL). `changes` holds one `{ field, contractValue, clientValue }`
+/// entry per contract field that differs.
+model client_note {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId           String    @map("branch_id") @db.Uuid
+  clientId           Int       @map("client_id")
+  kind               String    @db.VarChar(40)
+  status             String    @default("open") @db.VarChar(10)
+  contractDocumentId String?   @map("contract_document_id") @db.VarChar(255) // eformsign_doc.document_id of the completed contract the note is about; no FK so the note survives document cleanup.
+  changes            Json      @default("[]") @db.JsonB
+  createdBy          String?   @map("created_by") @db.Uuid // Deliberately no FK to user: the audit value must survive user deletion.
+  resolvedBy         String?   @map("resolved_by") @db.Uuid // Deliberately no FK to user: the audit value must survive user deletion.
+  resolvedAt         DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolvedReason     String?   @map("resolved_reason") @db.VarChar(40)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch             branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  client             client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, clientId, status], map: "idx_client_note_branch_client_status")
+  @@index([clientId, kind, status], map: "idx_client_note_client_kind_status")
 }
 
 model eformsign_backup_daily_run {

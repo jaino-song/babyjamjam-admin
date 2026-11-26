@@ -20,6 +20,7 @@ import { normalizeApiError, PROBLEM_CATALOG } from "@babyjamjam/shared/errors/pr
 import { mapHttpProblem, sendProblemResponse } from "../../infrastructure/filters/problem-response";
 
 import { ClientService } from "../../application/services/client.service";
+import { ClientNoteService } from "../../application/services/client-note.service";
 import { ServiceRecordLifecycleService } from "../../application/services/service-record-lifecycle.service";
 import {
     CreateClientUsecase,
@@ -422,6 +423,7 @@ describe("ClientService", () => {
     const createServiceWith = (options: {
         branchLock?: { runExclusive: jest.Mock };
         startDateChange?: { applyInTransaction: jest.Mock };
+        clientNoteService?: ClientNoteService;
     } = {}) => new ClientService(
         createClientUsecase as unknown as CreateClientUsecase,
         findClientByIdUsecase as unknown as FindClientByIdUsecase,
@@ -443,6 +445,7 @@ describe("ClientService", () => {
         undefined,
         options.branchLock as never,
         options.startDateChange as unknown as ServiceRecordStartDateChangeService,
+        options.clientNoteService,
     );
 
     // ============================================
@@ -6331,6 +6334,163 @@ describe("ClientService", () => {
             expect(client?.badges[0]?.key).toBe("contract_status");
             // Still never "계약서 필요" for a live 040/045 contract.
             expect(keys(client)).not.toContain("contract_required");
+        });
+    });
+
+    describe("contract_info_mismatch badge (정보 불일치)", () => {
+        const completedContract = { clientId: 1, documentId: "doc-1", statusType: "003", stepType: null, stepName: null };
+        const withClientNotes = (notes: Array<{ clientId: number; contractDocumentId: string }>) => {
+            const clientNote = {
+                findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue(notes),
+                create: jest.fn().mockResolvedValue(undefined),
+                update: jest.fn().mockResolvedValue(undefined),
+            };
+            (prismaService as unknown as { client_note: typeof clientNote }).client_note = clientNote;
+            return clientNote;
+        };
+        const keys = (client: { badges: Array<{ key: string }> } | undefined) =>
+            client?.badges.map((badge) => badge.key);
+
+        it("leads the list badges when an open note is about the current completed contract", async () => {
+            const noteService = createServiceWith({ clientNoteService: new ClientNoteService() });
+            withClientNotes([{ clientId: 1, contractDocumentId: "doc-1" }]);
+            listClientsUsecase.execute.mockResolvedValue([createClientEntity()]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+
+            const [client] = await noteService.findAll(branchId);
+
+            expect(client?.badges[0]).toEqual({
+                key: "contract_info_mismatch",
+                status: "review",
+                label: "정보 불일치",
+                tone: "warning",
+                priority: 5,
+            });
+        });
+
+        it("drops the badge once a newer contract replaces the one the note was about", async () => {
+            const noteService = createServiceWith({ clientNoteService: new ClientNoteService() });
+            withClientNotes([{ clientId: 1, contractDocumentId: "doc-old" }]);
+            listClientsUsecase.execute.mockResolvedValue([createClientEntity()]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+
+            const [client] = await noteService.findAll(branchId);
+
+            expect(keys(client)).not.toContain("contract_info_mismatch");
+        });
+
+        it("shows no badge without the note service", async () => {
+            withClientNotes([{ clientId: 1, contractDocumentId: "doc-1" }]);
+            listClientsUsecase.execute.mockResolvedValue([createClientEntity()]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+
+            const [client] = await service.findAll(branchId);
+
+            expect(keys(client)).not.toContain("contract_info_mismatch");
+        });
+
+        it("records the edit on a note when a completed-contract client's address changes", async () => {
+            const noteService = createServiceWith({ clientNoteService: new ClientNoteService() });
+            const clientNote = withClientNotes([]);
+            const existing = createClientEntity();
+            findClientByIdUsecase.execute.mockResolvedValue(existing);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+            prismaService.client.findUnique.mockImplementation(async ({ select }) => {
+                // The note reads the saved row back without `id`; the locked reread selects `id`.
+                if (select && !("id" in select) && "actualPrice" in select) {
+                    return {
+                        name: existing.name,
+                        phone: existing.phone,
+                        address: "QA-새 주소",
+                        birthday: existing.birthday,
+                        startDate: existing.startDate,
+                        endDate: existing.endDate,
+                        duration: existing.duration,
+                        fullPrice: existing.fullPrice,
+                        grant: existing.grant,
+                        actualPrice: existing.actualPrice,
+                    };
+                }
+                return Object.keys(select ?? {}).join() === "eDocId" ? { eDocId: null } : null;
+            });
+
+            await noteService.update(branchId, 1, { address: "QA-새 주소" });
+
+            expect(clientNote.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    branchId,
+                    clientId: 1,
+                    kind: "contract_info_mismatch",
+                    status: "open",
+                    contractDocumentId: "doc-1",
+                    changes: [{ field: "address", contractValue: "Test Address", clientValue: "QA-새 주소" }],
+                }),
+            });
+        });
+        it("records the new end date on a note when a completed-contract client's service is terminated", async () => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-10-05T03:00:00Z"));
+            try {
+                const noteService = createServiceWith({ clientNoteService: new ClientNoteService() });
+                const clientNote = withClientNotes([]);
+                const existing = createClientEntity();
+                existing.startDate = new Date("2026-10-01");
+                existing.endDate = new Date("2026-11-30");
+                findClientByIdUsecase.execute.mockResolvedValue(existing);
+                updateClientUsecase.execute.mockResolvedValue(existing);
+                prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+                prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+                const snapshot = (endDate: Date) => ({
+                    name: existing.name,
+                    phone: existing.phone,
+                    address: existing.address,
+                    birthday: existing.birthday,
+                    startDate: existing.startDate,
+                    endDate,
+                    duration: existing.duration,
+                    fullPrice: existing.fullPrice,
+                    grant: existing.grant,
+                    actualPrice: existing.actualPrice,
+                });
+                let contractReads = 0;
+                prismaService.client.findUnique.mockImplementation(async ({ select }) => {
+                    if (select && !("id" in select) && "actualPrice" in select) {
+                        contractReads += 1;
+                        // First read is before the termination write, second is the saved row.
+                        return snapshot(contractReads === 1 ? new Date("2026-11-30") : new Date("2026-10-05"));
+                    }
+                    return null;
+                });
+
+                await noteService.terminateService(branchId, 1, undefined, "user-1");
+
+                expect(contractReads).toBe(2);
+                expect(clientNote.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
+                        branchId,
+                        clientId: 1,
+                        kind: "contract_info_mismatch",
+                        status: "open",
+                        contractDocumentId: "doc-1",
+                        changes: [{ field: "endDate", contractValue: "2026-11-30", clientValue: "2026-10-05" }],
+                    }),
+                });
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        it("records no note when a termination runs without the note service", async () => {
+            const clientNote = withClientNotes([]);
+            const existing = createClientEntity();
+            findClientByIdUsecase.execute.mockResolvedValue(existing);
+            updateClientUsecase.execute.mockResolvedValue(existing);
+            prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+            prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+
+            await service.terminateService(branchId, 1);
+
+            expect(clientNote.create).not.toHaveBeenCalled();
         });
     });
 

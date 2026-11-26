@@ -1,4 +1,10 @@
-export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeKey =
+    | "contract_info_mismatch"
+    | "contract_required"
+    | "contract_status"
+    | "breast_pump"
+    | "service_status"
+    | "care_center";
 
 export type ClientBadgeStatus =
     | "active"
@@ -46,6 +52,11 @@ export const CLIENT_BADGE_STATUS_TOKENS = {
     // displaces the real service_status badge.
     contract_status: {
         review: { variant: "warning", defaultLabel: "철회 요청됨" },
+    },
+    // The client's info changed after the contract was completed, so the contract no longer
+    // matches and cannot be changed. Backend-only (an open client note); no legacy derivation.
+    contract_info_mismatch: {
+        review: { variant: "warning", defaultLabel: "정보 불일치" },
     },
 } as const satisfies Record<ClientBadgeKey, Partial<Record<ClientBadgeStatus, ClientBadgeStatusToken>>>;
 

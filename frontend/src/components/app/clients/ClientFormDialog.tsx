@@ -46,6 +46,17 @@ import {
 } from "./client-baby-allocation";
 import { ClientBabyRecordOwners, ClientBabyRetirementList, ClientSavedProviderInput } from "./ClientBabyRecordOwners";
 import { getStartDateLock } from "./start-date-lock";
+import {
+    getContractInfoChangeKey,
+    getContractInfoChanges,
+    isContractLocked,
+    type ContractInfoChangeRow,
+} from "./contract-info-changes";
+import {
+    CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION,
+    CONTRACT_INFO_CHANGE_CONFIRM_TITLE,
+    ContractInfoChangeList,
+} from "@/components/app/v3/ContractInfoMismatch";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
@@ -78,6 +89,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { LoadingState } from "@/components/app/ui/LoadingState";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { FieldMessageText } from "@/components/app/ui/field-message";
 import {
     FormField,
@@ -635,6 +647,13 @@ function ClientFormContent({
     // Fields whose server error the user already edited away; set again by each new error.
     const [editedServerErrorFields, setEditedServerErrorFields] = useState<ClientFormField[]>([]);
     const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
+    // A save that changes a field the completed contract carries waits for this confirmation.
+    // It remembers the period confirmation already given so confirming does not ask for it again.
+    const [pendingContractInfoChange, setPendingContractInfoChange] = useState<{
+        confirmedPeriod?: string;
+        key: string;
+        rows: ContractInfoChangeRow[];
+    } | null>(null);
     const [pendingStartDateChange, setPendingStartDateChange] = useState<{
         id: number;
         dto: UpdateClientDto;
@@ -1175,6 +1194,7 @@ function ClientFormContent({
                 resetFieldStates();
                 pendingFieldFocusRef.current = null;
                 setPendingDurationConfirmation(null);
+                setPendingContractInfoChange(null);
                 setPendingStartDateChange(null);
             });
         }
@@ -1792,7 +1812,7 @@ function ClientFormContent({
             && !current.isInvalidated;
     };
 
-    const handleSubmit = async (confirmedPeriod?: string) => {
+    const handleSubmit = async (confirmedPeriod?: string, confirmedContractInfoChangeKey?: string) => {
         const session = formSessionRef.current;
         if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit
             || (isEditMode && initializedEditClientId !== client?.id)
@@ -1885,6 +1905,7 @@ function ClientFormContent({
             }
             if (fresh.changed || recalculated) {
                 setPendingDurationConfirmation(null);
+                setPendingContractInfoChange(null);
                 setErrorAndScroll(t(locale, "common.calendar-changed-before-save"));
                 return;
             }
@@ -1918,6 +1939,17 @@ function ClientFormContent({
             setPendingDurationConfirmation(null);
 
             if (isEditMode && client) {
+                // The completed contract can no longer change, so saving one of its fields leaves the
+                // client and the contract disagreeing. Ask first, bound to these exact values.
+                if (isContractLocked(client.documentStatus)) {
+                    const contractInfoChanges = getContractInfoChanges(getEffectiveBaseline(), formData);
+                    const contractInfoChangeKey = getContractInfoChangeKey(contractInfoChanges);
+                    if (contractInfoChanges.length > 0 && confirmedContractInfoChangeKey !== contractInfoChangeKey) {
+                        setPendingContractInfoChange({ confirmedPeriod, key: contractInfoChangeKey, rows: contractInfoChanges });
+                        return;
+                    }
+                }
+                setPendingContractInfoChange(null);
                 // Send only what the user changed since the form was opened. The backend moves the
                 // end date by itself (a delayed session extends it), so a full snapshot would roll
                 // that back. A save that touches the service period carries the end date this form
@@ -2147,6 +2179,7 @@ function ClientFormContent({
         }
 
         setPendingDurationConfirmation(null);
+        setPendingContractInfoChange(null);
         setPendingStartDateChange(null);
         setPendingBabyRetirement(null);
         if (searchParams.get("openClientForm") === "1") {
@@ -3155,45 +3188,55 @@ function ClientFormContent({
     );
 
     const durationConfirmationDialog = (
-        <Dialog
+        <TwoButtonModal
+            data-component={`${base}_duration-confirmation`}
             open={open && !isBranchBlockingSubmit && pendingDurationConfirmation !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingDurationConfirmation(null); }}
+            size="review"
+            layout="question"
+            title="서비스 기간 확인"
+            description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
+            cancelLabel="취소"
+            approvalLabel="확인"
+            approvalDisabled={isSubmitting || isUnknownOutcome}
+            onApprove={() => {
+                if (pendingDurationConfirmation !== null) {
+                    void handleSubmit(pendingDurationConfirmation);
+                }
+            }}
+        />
+    );
+
+    const contractInfoChangeConfirmationDialog = (
+        <TwoButtonModal
+            data-component={`${base}_contract-info-change-confirmation`}
+            open={open && !isBranchBlockingSubmit && pendingContractInfoChange !== null}
+            onOpenChange={(isOpen) => { if (!isOpen) setPendingContractInfoChange(null); }}
+            size="review"
+            layout="question"
+            title={CONTRACT_INFO_CHANGE_CONFIRM_TITLE}
+            description={CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION}
+            cancelLabel="취소"
+            approvalLabel="수정"
+            approvalDisabled={isSubmitting || isUnknownOutcome}
+            onApprove={() => {
+                if (pendingContractInfoChange !== null) {
+                    void handleSubmit(pendingContractInfoChange.confirmedPeriod, pendingContractInfoChange.key);
+                }
+            }}
         >
-            <FormDialogShell
-                data-component={`${base}_duration-confirmation`}
-                size="compact"
-                title="서비스 기간 확인"
-                description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
-                footer={(
-                    <>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            data-component={`${base}_duration-confirmation_cancel`}
-                            onClick={() => setPendingDurationConfirmation(null)}
-                        >
-                            취소
-                        </Button>
-                        <Button
-                            type="button"
-                            data-component={`${base}_duration-confirmation_confirm`}
-                            disabled={isSubmitting || isUnknownOutcome}
-                            onClick={() => {
-                                if (pendingDurationConfirmation !== null) {
-                                    void handleSubmit(pendingDurationConfirmation);
-                                }
-                            }}
-                        >
-                            확인
-                        </Button>
-                    </>
-                )}
-            >
-                <p data-component={`${base}_duration-confirmation_message`}>
-                    평일 기준으로 서비스 기간이 맞지 않습니다. 그래도 저장할까요?
-                </p>
-            </FormDialogShell>
-        </Dialog>
+            {pendingContractInfoChange ? (
+                <ContractInfoChangeList
+                    data-component={`${base}_contract-info-change-confirmation_body_changes`}
+                    rows={pendingContractInfoChange.rows.map((row) => ({
+                        key: row.field,
+                        label: t(locale, row.labelKey),
+                        previous: row.previous,
+                        next: row.next,
+                    }))}
+                />
+            ) : null}
+        </TwoButtonModal>
     );
 
     const retirementBase = `${base}_baby-retirement-confirmation`;
@@ -3345,6 +3388,7 @@ function ClientFormContent({
                 {employeeRegistrationDialog}
                 {durationConfirmationDialog}
                 {babyRetirementDialog}
+                {contractInfoChangeConfirmationDialog}
                 {startDateStartedConfirmationDialog}
                 {startDateRecordsConfirmationDialog}
             </>
@@ -3371,6 +3415,7 @@ function ClientFormContent({
             {employeeRegistrationDialog}
             {durationConfirmationDialog}
             {babyRetirementDialog}
+            {contractInfoChangeConfirmationDialog}
             {startDateStartedConfirmationDialog}
             {startDateRecordsConfirmationDialog}
         </>
