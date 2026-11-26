@@ -1,4 +1,3 @@
-import { isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
 import { isRecordLinkGroup, recordLinkHash, recordLinkPhone, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED, RECORD_LINK_GROUP_LOG_MARKER } from "./service-record-link-group-source";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
@@ -302,8 +301,7 @@ export class SmsRetryService {
                 sourceLog.branchId,
                 sourceLog.triggerJobId,
                 async (transaction, rulePolicy): Promise<AutomaticRetryBoundary> => {
-                    if ((grouped && !await isBabyRecordRolloutEnabled(transaction, sourceLog.branchId!))
-                        || !await this.permitsRecordLinkRetry(sourceLog, transaction, invocation)) {
+                    if (!await this.permitsRecordLinkRetry(sourceLog, transaction, invocation)) {
                         await this.retireRefusedAutomaticLegacyRecordLinkRetry(sourceLog, transaction, invocation, grouped);
                         return { kind: "claimed", log: null };
                     }
@@ -434,7 +432,7 @@ export class SmsRetryService {
         }
         const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
         const start = async (tx?: Prisma.TransactionClient) => {
-            if (grouped && (!tx || !await isBabyRecordRolloutEnabled(tx, sourceLog.branchId!))) return null;
+            if (grouped && !tx) return null;
             if (tx && !await this.permitsRecordLinkRetry(sourceLog, tx, invocation)) {
                 await this.retireRefusedAutomaticLegacyRecordLinkRetry(sourceLog, tx, invocation, grouped);
                 return null;
@@ -712,7 +710,6 @@ export class SmsRetryService {
         const retryDelayMs = await this.getRetryDelayMs(retry.branchId);
         const resume = (transaction?: Prisma.TransactionClient, rulePolicy?: AutomaticRetryRulePolicy) => this.quietHours!.runAdmission(retry.branchId!, retry.receiver, async (_decision, tx) => {
             if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            if (grouped && !await isBabyRecordRolloutEnabled(tx, retry.branchId!)) return null;
             const current = await this.logRepository.findByIdInBranch(retry.branchId!, retry.id, tx);
             const source = await this.logRepository.findByIdInBranch(retry.branchId!, sourceId, tx);
             if (!current || !source || current.status !== "pending" || current.provider !== "aligo_sms" || source.provider !== "aligo_sms"

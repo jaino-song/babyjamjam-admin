@@ -1,6 +1,4 @@
 import { hasReconciledLegacyLinkRetry } from "application/services/service-record-legacy-link-occurrence";
-import { babyRecordRolloutEnabledSql } from "application/policies/baby-record-rollout.policy";
-import { RECORD_LINK_GROUP_LOG_MARKER, recordLinkGroupJobSql } from "application/services/service-record-link-group-source";
 import {
     admitOccurrence, occurrenceVariables, resolveLogOccurrence, settleOccurrence, storedOccurrence, transferReleasedOccurrenceHolder,
 } from "./message-occurrence-ledger";
@@ -621,11 +619,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const eligible = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
             SELECT log.id
             FROM message_log log
-            LEFT JOIN message_trigger_job job ON job.id = log.trigger_job_id AND job.branch_id = log.branch_id
             WHERE log.status IN ('pending', 'failed') AND log.next_retry_at <= ${new Date()}
-              AND (NOT (COALESCE(log.variables ? ${RECORD_LINK_GROUP_LOG_MARKER}, false)
-                      OR COALESCE(${recordLinkGroupJobSql(Prisma.sql`job`)}, false))
-                   OR ${babyRecordRolloutEnabledSql(Prisma.sql`log.branch_id`)})
             ORDER BY log.next_retry_at, log.id
             LIMIT 50
         `);

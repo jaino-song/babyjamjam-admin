@@ -5,12 +5,12 @@ import { ConfigModule } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
-import { babyRecordRolloutKey } from "application/policies/baby-record-rollout.policy";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkGroupService } from "application/services/service-record-link-group.service";
 import { RECORD_LINK_GROUP_CHANGED } from "application/services/service-record-link-group-source";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
+import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import { SmsCarrierCheckService } from "application/services/sms-carrier-check.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
@@ -128,9 +128,6 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         branchId = (await db.branch.create({
             data: { name: "QA-Baby group messages", slug: `qa-send-${randomUUID()}`, smsSenderApprovalStatus: "approved" },
         })).id;
-        await db.system_setting.create({
-            data: { key: babyRecordRolloutKey(branchId), value: "true" },
-        });
         staff = [];
         for (let index = 0; index < 4; index++) {
             staff.push((await db.employee.create({
@@ -474,7 +471,14 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         }
         await db.message_log.updateMany({ where: { branchId, id: { in: ids } },
             data: { carrierCheckDueAt: new Date(Date.now() - 60_000) } });
-        await app.get(SmsCarrierCheckService).checkDueCarrierResults();
+        // The suite runs with schedulers disabled. Exercise one carrier poll
+        // explicitly against the stub, with the lease granted for this call.
+        const lease = jest.spyOn(app.get(SchedulerLeaseService), "holdsLease").mockReturnValue(true);
+        try {
+            await app.get(SmsCarrierCheckService).checkDueCarrierResults();
+        } finally {
+            lease.mockRestore();
+        }
         expect((await getLogs(jobs[0]!.id))[0]?.carrierResultState).toBe("delivered");
         expect((await getLogs(jobs[1]!.id))[0]?.carrierResultState).toBe("failed");
         await linkService.scheduleForServiceStart(family.schedule.id);
