@@ -390,6 +390,33 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         }
     });
 
+    it.each(["manual", "automatic"] as const)("cancels only the %s reservation after partial manual admission", async canceledKind => {
+        const family = await book([0, 0]);
+        const [original] = await getJobs(family.clientId);
+        const [selected, sibling] = family.cases;
+        const { input } = await prepare(family.schedule.id, staff[0]!, [selected!.id]);
+        const manual = await app.get(ServiceRecordLinkGroupService).send(branchId, family.schedule.id, input, ownerId);
+        const [residual] = (await getJobs(family.clientId)).filter(job => job.status === "pending" && job.id !== manual.jobId);
+        expect(residual).toMatchObject({ scheduledFor: original!.scheduledFor, recordMembers: [{ serviceRecordCaseId: sibling!.id }] });
+
+        const [canceledId, remainingId] = canceledKind === "manual" ? [manual.jobId, residual!.id] : [residual!.id, manual.jobId];
+        await http().post(`/message-trigger-jobs/${canceledId}/cancel`).expect(201);
+        await linkService.scheduleForServiceStart(family.schedule.id);
+        const jobs = await getJobs(family.clientId);
+        expect(jobs.find(job => job.id === canceledId)).toMatchObject({ status: "canceled", canceledByUser: true });
+        expect(jobs.filter(job => job.status === "pending").map(job => job.id)).toEqual([remainingId]);
+        expect(jobs.find(job => job.id === residual!.id)?.scheduledFor).toEqual(original!.scheduledFor);
+        expect(calls()).toHaveLength(0);
+
+        await dispatch(remainingId);
+        expect(calls()).toHaveLength(1);
+        const delivered = canceledKind === "manual" ? sibling : selected;
+        await verify(rawLinks(calls()[0]!.message)[0]!, phone(0), delivered!.babyId!, staff[0]!);
+        await linkService.scheduleForServiceStart(family.schedule.id);
+        expect((await getJobs(family.clientId)).filter(job => job.status === "pending")).toHaveLength(0);
+        expect(await getLogs(canceledId)).toHaveLength(0);
+    });
+
     it("sends each twin once when a partial manual admission races automatic dispatch", async () => {
         const family = await book([0, 0]);
         const [original] = await getJobs(family.clientId);
@@ -592,6 +619,35 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         } });
         return { family, job, linkToken, url };
     }
+
+    it("removes a refused v1 automatic retry from the due scan after grouped admission", async () => {
+        const { family, job } = await reserveScalarSingleton();
+        stub.script(phone(0), "transientReject");
+        await dispatch(job.id);
+        stub.clearScripts();
+        const [rejected] = await getLogs(job.id);
+        expect(rejected).toMatchObject({ status: "failed", providerAcceptanceState: "rejected" });
+        expect(rejected!.nextRetryAt).toBeInstanceOf(Date);
+        const due = await db.message_log.update({
+            where: { id: rejected!.id }, data: { nextRetryAt: new Date(0) },
+        });
+        expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(true);
+        expect(await getLogs(job.id)).toEqual([due]);
+
+        const source = (await logs.findPendingRetriesSystemScope()).find(log => log.id === due.id);
+        expect(source).toBeDefined();
+        expect(await app.get(SmsRetryService).retry(source!, "automatic")).toBeNull();
+
+        const [retired] = await getLogs(job.id);
+        expect(retired).toEqual({ ...due, nextRetryAt: null, updatedAt: retired?.updatedAt });
+        expect((await logs.findPendingRetriesSystemScope()).map(log => log.id)).not.toContain(due.id);
+        expect(calls()).toHaveLength(1);
+
+        const [group] = (await getJobs(family.clientId)).filter(candidate => candidate.status === "pending");
+        await dispatch(group!.id);
+        expect(calls()).toHaveLength(2);
+        expect(await assertCarrier(group!, "QA-Household")).toHaveLength(1);
+    });
 
     it.each(["delivered", "not-delivered"] as const)("blocks ambiguous v1 admission until explicit reconciliation reports %s", async outcome => {
         const { family, job, linkToken, url } = await reserveScalarSingleton();
