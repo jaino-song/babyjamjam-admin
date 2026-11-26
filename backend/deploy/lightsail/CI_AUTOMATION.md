@@ -160,11 +160,42 @@ succeeds: one API container, the authoritative route and exact
 `DATABASE_CONNECTION_MODE`, scheduler ownership, health/restart, image
 tag/digest identity, internal and public `/health/ready`, and public liveness.
 
-Before promoting the first image containing `20261126010000_baby_case_keys`:
+For the first Preview or Production deployment of an image containing
+`20261126010000_baby_case_keys`, complete the following steps in order. The
+`operator-upgrade` workflow installs only from the current protected `main` tip
+and requires production approval. Use the host procedure below for a reviewed
+revision that has yet to reach `main`.
 
-1. From the reviewed revision, run the existing root-only
-   `install-ci-operator.sh install` and `install-ci-operator.sh check` on the
-   deployment host. Verify the installed bundle before allowing promotion.
+1. With Lightsail operational approval, run this from the root of a trusted,
+   clean checkout on the deployment host. Set `reviewed_commit` to the full
+   commit SHA approved for the operator bundle. Require every command to
+   succeed before proceeding. The installer check validates the installed
+   manifest and metadata, and the SHA-256 checks tie the installed files to
+   the reviewed revision.
+
+   ```bash
+   (
+     set -euo pipefail
+     reviewed_commit='<reviewed full commit SHA>'
+     test "$(git rev-parse HEAD)" = "$reviewed_commit"
+     checkout_status=$(git status --porcelain)
+     test -z "$checkout_status"
+     sudo backend/deploy/lightsail/install-ci-operator.sh install --replace
+     sudo backend/deploy/lightsail/install-ci-operator.sh check
+
+     while read -r source installed; do
+       digest=$(git show "$reviewed_commit:$source" | sha256sum)
+       printf '%s  %s\n' "${digest%% *}" "$installed" | sudo /usr/bin/sha256sum --check -
+     done <<'BUNDLE_FILES'
+   backend/deploy/lightsail/ci-operator.sh /usr/local/sbin/babyjamjam-ci-operator
+   backend/deploy/lightsail/ci-operator.sh /usr/local/libexec/babyjamjam-ci-operator/ci-operator.sh
+   backend/deploy/lightsail/deploy.sh /usr/local/libexec/babyjamjam-ci-operator/deploy.sh
+   backend/deploy/lightsail/rollback.sh /usr/local/libexec/babyjamjam-ci-operator/rollback.sh
+   backend/compose.lightsail.yml /usr/local/libexec/babyjamjam-ci-operator/compose.lightsail.yml
+   BUNDLE_FILES
+   )
+   ```
+
 2. On each existing target database, complete the rollout gates and drain all
    old writers that rely on singleton keys. Then explicitly apply
    `backend/prisma/scripts/stage-baby-case-keys.sql` to that database.
