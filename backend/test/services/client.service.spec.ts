@@ -6428,6 +6428,70 @@ describe("ClientService", () => {
                 }),
             });
         });
+        it("records the new end date on a note when a completed-contract client's service is terminated", async () => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-10-05T03:00:00Z"));
+            try {
+                const noteService = createServiceWith({ clientNoteService: new ClientNoteService() });
+                const clientNote = withClientNotes([]);
+                const existing = createClientEntity();
+                existing.startDate = new Date("2026-10-01");
+                existing.endDate = new Date("2026-11-30");
+                findClientByIdUsecase.execute.mockResolvedValue(existing);
+                updateClientUsecase.execute.mockResolvedValue(existing);
+                prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+                prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+                const snapshot = (endDate: Date) => ({
+                    name: existing.name,
+                    phone: existing.phone,
+                    address: existing.address,
+                    birthday: existing.birthday,
+                    startDate: existing.startDate,
+                    endDate,
+                    duration: existing.duration,
+                    fullPrice: existing.fullPrice,
+                    grant: existing.grant,
+                    actualPrice: existing.actualPrice,
+                });
+                let contractReads = 0;
+                prismaService.client.findUnique.mockImplementation(async ({ select }) => {
+                    if (select && !("id" in select) && "actualPrice" in select) {
+                        contractReads += 1;
+                        // First read is before the termination write, second is the saved row.
+                        return snapshot(contractReads === 1 ? new Date("2026-11-30") : new Date("2026-10-05"));
+                    }
+                    return null;
+                });
+
+                await noteService.terminateService(branchId, 1, undefined, "user-1");
+
+                expect(contractReads).toBe(2);
+                expect(clientNote.create).toHaveBeenCalledWith({
+                    data: expect.objectContaining({
+                        branchId,
+                        clientId: 1,
+                        kind: "contract_info_mismatch",
+                        status: "open",
+                        contractDocumentId: "doc-1",
+                        changes: [{ field: "endDate", contractValue: "2026-11-30", clientValue: "2026-10-05" }],
+                    }),
+                });
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        it("records no note when a termination runs without the note service", async () => {
+            const clientNote = withClientNotes([]);
+            const existing = createClientEntity();
+            findClientByIdUsecase.execute.mockResolvedValue(existing);
+            updateClientUsecase.execute.mockResolvedValue(existing);
+            prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+            prismaService.eformsign_doc.findMany.mockResolvedValue([completedContract]);
+
+            await service.terminateService(branchId, 1);
+
+            expect(clientNote.create).not.toHaveBeenCalled();
+        });
     });
 
     // The digest, filters and badge share `isActiveContractSignal`; the list/documentStatus path

@@ -1046,22 +1046,8 @@ export class ClientService {
         before: ContractInfoSnapshot,
         actorUserId: string | null | undefined,
     ): Promise<void> {
-        if (!this.clientNoteService || typeof transaction.client?.findUnique !== "function") return;
-        const after = await transaction.client.findUnique({
-            where: { id: clientId },
-            select: {
-                name: true,
-                phone: true,
-                address: true,
-                birthday: true,
-                startDate: true,
-                endDate: true,
-                duration: true,
-                fullPrice: true,
-                grant: true,
-                actualPrice: true,
-            },
-        });
+        if (!this.clientNoteService) return;
+        const after = await this.readContractInfoInTransaction(transaction, clientId);
         if (!after) return;
         const latestContract = (await findLatestContractSignalsByClientId(
             transaction,
@@ -1075,6 +1061,29 @@ export class ClientService {
             before,
             after,
             actorUserId,
+        });
+    }
+
+    /** The client's contract fields (eformsign prefill) as stored inside the caller's transaction. */
+    private async readContractInfoInTransaction(
+        transaction: Prisma.TransactionClient,
+        clientId: number,
+    ): Promise<ContractInfoSnapshot | null> {
+        if (typeof transaction.client?.findUnique !== "function") return null;
+        return transaction.client.findUnique({
+            where: { id: clientId },
+            select: {
+                name: true,
+                phone: true,
+                address: true,
+                birthday: true,
+                startDate: true,
+                endDate: true,
+                duration: true,
+                fullPrice: true,
+                grant: true,
+                actualPrice: true,
+            },
         });
     }
 
@@ -2913,11 +2922,13 @@ export class ClientService {
      * Sets serviceStatus to 'terminated' and ends the service immediately
      * @param clientId - The client ID
      * @param reason - Optional termination reason for logging
+     * @param actorUserId - Who terminated, recorded on a contract-info note
      */
     async terminateService(
         branchid: string,
         clientId: number,
-        reason?: string
+        reason?: string,
+        actorUserId?: string | null,
     ): Promise<ClientEntity> {
         const client = await this.findClientByIdUsecase.execute(branchid, clientId);
         if (!client) {
@@ -2978,11 +2989,20 @@ export class ClientService {
             }, transaction);
             const before = this.serviceRecordLinkService?.recordClientTransitionInTransaction
                 ? await this.clientRepository.findByIdForUpdate(branchid, clientId, transaction) : null;
+            // Termination moves the end date, a contract field: a completed
+            // contract gets the same note as an edit-form change.
+            const contractInfoBefore = this.clientNoteService
+                ? await this.readContractInfoInTransaction(transaction, clientId) ?? client : null;
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: SERVICE_STATUS.TERMINATED,
                 endDate: terminationEndDate,
             }, transaction, calendar);
             if (before) await this.serviceRecordLinkService?.recordClientTransitionInTransaction(transaction, branchid, clientId, before);
+            if (contractInfoBefore) {
+                await this.recordContractInfoChangeInTransaction(
+                    transaction, branchid, clientId, contractInfoBefore, actorUserId,
+                );
+            }
             const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
             const currentSchedule = snapshot?.employeeSchedules[0];
             if (currentSchedule) await closeScheduleAllocation(transaction, { branchId: branchid, clientId }, currentSchedule.id);
