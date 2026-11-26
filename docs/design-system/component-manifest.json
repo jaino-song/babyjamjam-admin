@@ -647,9 +647,10 @@
         "exports": [
           "TwoButtonModal",
           "TwoButtonModalProps",
-          "TwoButtonModalSize"
+          "TwoButtonModalSize",
+          "TwoButtonModalLayout"
         ],
-        "note": "size compact: 300px with a fixed 5:3 ratio; review: 300px whose height follows a short body; detail: 420px with a scrolling body. The visible description is 12px: its block sits centered, its lines are left-aligned, and each sentence of a text description starts on its own line (after . ? or ! and a space, not after a digit); a \\n also starts a new line. review and detail leave 12px under the header; any body gets 12px under it, so bodies add no outer margin.",
+        "note": "size compact: 300px with a fixed 5:3 ratio; review: 300px whose height follows a short body; detail: 420px with a scrolling body. The visible description is 12px: its block sits centered, its lines are left-aligned, and each sentence of a text description starts on its own line (after . ? or ! and a space, not after a digit); a \\n also starts a new line. review and detail leave 12px under the header; any body gets 12px under it, so bodies add no outer margin. layout question: the description is the question, so the title is for screen readers only and the description is always shown, centered, semibold, dark and balanced, with 20px above and below and its sentences on shared lines; the modal is at least 180px tall and the spare height splits above and below the description.",
         "replaces": [
           "custom two-button confirmation modal markup"
         ],

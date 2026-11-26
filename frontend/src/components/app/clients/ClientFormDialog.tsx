@@ -3192,9 +3192,9 @@ function ClientFormContent({
             open={open && !isAllocationBlockingSubmit && pendingDurationConfirmation !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingDurationConfirmation(null); }}
             size="review"
+            layout="question"
             title="서비스 기간 확인"
-            description={"평일 기준으로 서비스 기간이 맞지 않아요.\n그래도 저장할까요?"}
-            isDescriptionVisuallyHidden={false}
+            description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
             cancelLabel="취소"
             approvalLabel="확인"
             approvalDisabled={isSubmitting || isUnknownOutcome}
@@ -3212,9 +3212,9 @@ function ClientFormContent({
             open={open && !isAllocationBlockingSubmit && pendingContractInfoChange !== null}
             onOpenChange={(isOpen) => { if (!isOpen) setPendingContractInfoChange(null); }}
             size="review"
+            layout="question"
             title={CONTRACT_INFO_CHANGE_CONFIRM_TITLE}
             description={CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION}
-            isDescriptionVisuallyHidden={false}
             cancelLabel="취소"
             approvalLabel="수정"
             approvalDisabled={isSubmitting || isUnknownOutcome}

@@ -20,11 +20,20 @@ import { cn } from "@/lib/utils";
  */
 type ApprovalModalSize = "compact" | "review" | "detail";
 type ApprovalButtonVariant = "positive" | "destructive";
+/**
+ * default: the title asks and the description explains.
+ * question: the description is the question itself. The title stays for screen readers only;
+ * the description is centered, semibold and dark with balanced lines, 20px above and below,
+ * and keeps its sentences on shared lines. The modal is at least 180px tall, the height of a
+ * compact one, and the spare height splits evenly above and below the description.
+ */
+type TwoButtonModalLayout = "default" | "question";
 
 const SOURCE_COMPONENT = "TwoButtonModal";
 const DEFAULT_DATA_COMPONENT = "desktop_v3_two-button-modal";
 
 export type TwoButtonModalSize = ApprovalModalSize;
+export type { TwoButtonModalLayout };
 
 /**
  * A sentence ends at ".", "?" or "!" after a character that is not a digit,
@@ -55,6 +64,7 @@ export interface TwoButtonModalProps {
   approvalVariant?: ApprovalButtonVariant;
   isDescriptionVisuallyHidden?: boolean;
   size?: ApprovalModalSize;
+  layout?: TwoButtonModalLayout;
   layer?: "default" | "nested";
   onCloseAutoFocus?: (event: Event) => void;
   "data-component"?: string;
@@ -86,6 +96,7 @@ export function TwoButtonModal({
   approvalVariant = "positive",
   isDescriptionVisuallyHidden = true,
   size = "compact",
+  layout = "default",
   layer = "default",
   onCloseAutoFocus,
   "data-component": canonicalDataComponent,
@@ -107,6 +118,10 @@ export function TwoButtonModal({
       ? `${canonicalDataComponentBase}_${suffix}`
       : `${dataComponent}-${suffix}`;
 
+  const isQuestion = layout === "question";
+  // The question layout always shows its description, since the description asks.
+  const isDescriptionHidden = !isQuestion && isDescriptionVisuallyHidden;
+
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isPending) return;
     onOpenChange(nextOpen);
@@ -125,6 +140,7 @@ export function TwoButtonModal({
           size === "compact" && "aspect-[5/3] sm:max-w-[300px]",
           size === "review" && "min-h-0 sm:max-w-[300px]",
           size === "detail" && "min-h-0 sm:max-w-[420px]",
+          isQuestion && "min-h-[180px]",
         )}
       >
         <DialogHeader
@@ -132,25 +148,31 @@ export function TwoButtonModal({
           className={cn(
             "gap-1 justify-center text-left sm:text-left",
             size === "compact" ? "flex-1 pb-0" : "pb-3",
+            isQuestion && "flex-1 justify-start",
           )}
         >
           <DialogTitle
             data-component={titleDataComponent ?? sub("title")}
             aria-label={titleAriaLabel}
-            className="break-keep [overflow-wrap:anywhere] text-center text-[calc(16px*var(--v3-ui-scale,1))] leading-[calc(24px*var(--v3-ui-scale,1))]"
+            className={cn(
+              "break-keep [overflow-wrap:anywhere] text-center text-[calc(16px*var(--v3-ui-scale,1))] leading-[calc(24px*var(--v3-ui-scale,1))]",
+              isQuestion && "sr-only",
+            )}
           >
             {title}
           </DialogTitle>
           <DialogDescription
             data-component={descriptionDataComponent ?? sub("description")}
             className={cn(
-              "mt-0 break-keep [overflow-wrap:anywhere] text-left text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
-              isDescriptionVisuallyHidden
-                ? "sr-only"
-                : "mx-auto w-fit max-w-full whitespace-pre-line",
+              "break-keep [overflow-wrap:anywhere] text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))]",
+              isQuestion
+                ? "my-auto py-5 text-center text-balance font-semibold text-v3-dark"
+                : "mt-0 text-left text-v3-text-muted",
+              isDescriptionHidden && "sr-only",
+              !isQuestion && !isDescriptionHidden && "mx-auto w-fit max-w-full whitespace-pre-line",
             )}
           >
-            {isDescriptionVisuallyHidden
+            {isQuestion || isDescriptionHidden
               ? description
               : breakBetweenSentences(description)}
           </DialogDescription>

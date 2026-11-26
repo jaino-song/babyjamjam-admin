@@ -193,4 +193,43 @@ describe("TwoButtonModal", () => {
 
     expect(screen.getByTestId("node-description").textContent).toBe("삭제하면 사라져요. 복구할 수 없어요.");
   });
+
+  it("shows the description as the centered question in the question layout", () => {
+    render(
+      <TwoButtonModal
+        open
+        size="review"
+        layout="question"
+        onOpenChange={jest.fn()}
+        title="확인이 필요해요"
+        description="계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?"
+        isDescriptionVisuallyHidden
+        approvalLabel="수정"
+        onApprove={jest.fn()}
+      />,
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "확인이 필요해요" });
+    const header = dialog.querySelector('[data-slot="dialog-header"]');
+    const title = screen.getByText("확인이 필요해요");
+    const description = screen.getByText("계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?");
+
+    expect(dialog).toHaveClass("min-h-[180px]", "sm:max-w-[300px]");
+    expect(dialog).not.toHaveClass("min-h-0", "aspect-[5/3]");
+    expect(header).toHaveClass("flex-1", "justify-start", "pb-3");
+    expect(header).not.toHaveClass("justify-center");
+    expect(title).toHaveClass("sr-only");
+    expect(description).not.toHaveClass("sr-only", "text-left", "text-v3-text-muted", "whitespace-pre-line", "w-fit");
+    expect(description).toHaveClass(
+      "text-[calc(12px*var(--v3-ui-scale,1))]",
+      "leading-[calc(20px*var(--v3-ui-scale,1))]",
+      "my-auto",
+      "py-5",
+      "text-center",
+      "text-balance",
+      "font-semibold",
+      "text-v3-dark",
+    );
+    expect(description.textContent).toBe("계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?");
+  });
 });
