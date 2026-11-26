@@ -1,6 +1,7 @@
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
+import { babyRecordRolloutKey } from "application/policies/baby-record-rollout.policy";
 import { MessageQuietHoursService } from "application/services/message-quiet-hours.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
@@ -11,6 +12,7 @@ import { SmsProviderAcceptanceService } from "application/services/sms-provider-
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
 import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { RECORD_LINK_GROUP_KEY_PREFIX, RECORD_LINK_GROUP_LOG_MARKER } from "application/services/service-record-link-group-source";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { MessageDeliveryController } from "interface/controllers/message-delivery.controller";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
@@ -18,6 +20,17 @@ import { SbMessageTriggerJobRepository } from "infrastructure/database/repositor
 
 // Run the real message services against an in-memory SQL and Prisma boundary.
 type Row = Record<string, unknown>;
+const RETRY_SELECTION_LIMIT = 50;
+
+function isDate(value: unknown): value is Date {
+    // structuredClone can return dates from outside Jest's realm.
+    return Object.prototype.toString.call(value) === "[object Date]";
+}
+
+function hasJsonbKey(value: unknown, key: string): boolean {
+    if (Array.isArray(value)) return value.includes(key);
+    return value === key || (value !== null && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key));
+}
 
 export function memoryQueue(templateBody?: string) {
     const branchId = "88000000-0000-4000-8000-000000000001";
@@ -128,6 +141,34 @@ export function memoryQueue(templateBody?: string) {
             finally { active = false; }
         }),
         $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+            if (/\bSELECT log\.id\s+FROM message_log log\b/.test(sql.sql)) {
+                const [now] = sql.values;
+                if (!isDate(now)) throw new Error("Expected a retry selection cutoff");
+                const cutoff = now.getTime();
+
+                return tables["message_log"]!.flatMap(log => {
+                    const { id, status, nextRetryAt, triggerJobId, branchId: logBranchId, variables } = log;
+                    if (status !== "pending" && status !== "failed") return [];
+                    if (typeof id !== "number" || !isDate(nextRetryAt)) return [];
+                    const due = nextRetryAt.getTime();
+                    if (!(due <= cutoff)) return [];
+
+                    const job = typeof triggerJobId === "string" ? tables["message_trigger_job"]!.find(
+                        job => job["id"] === triggerJobId && job["branchId"] === logBranchId,
+                    ) : undefined;
+                    const dedupeKey = job?.["dedupeKey"];
+                    const isGroup = hasJsonbKey(variables, RECORD_LINK_GROUP_LOG_MARKER)
+                        || (typeof dedupeKey === "string" && dedupeKey.startsWith(RECORD_LINK_GROUP_KEY_PREFIX))
+                        || job?.["recipientEmployeeId"] != null
+                        || hasJsonbKey(job?.["payload"], "recordLinkGroup");
+                    const rolloutEnabled = typeof logBranchId === "string" && tables["system_setting"]!.some(
+                        setting => setting["key"] === babyRecordRolloutKey(logBranchId) && setting["value"] === "true",
+                    );
+                    return isGroup && !rolloutEnabled ? [] : [{ id, due }];
+                }).sort((left, right) => left.due - right.due || left.id - right.id)
+                    .slice(0, RETRY_SELECTION_LIMIT)
+                    .map(({ id }) => ({ id }));
+            }
             if (sql.sql.includes("FROM message_occurrence_claim")) {
                 return tables["message_occurrence_claim"]!.filter(row => row["branchId"] === sql.values[0] && row["occurrenceKey"] === sql.values[1])
                     .map(row => ({ occurrence_key: row["occurrenceKey"], state: row["state"], holder_log_id: row["holderLogId"] }));
