@@ -6,9 +6,12 @@ import { randomUUID } from "node:crypto";
 import request from "supertest";
 
 import { resolveBabyRecordAllocation } from "@babyjamjam/shared/client/baby-record-allocation";
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-rollout.policy";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { resolveServiceRecordCaseTarget } from "application/services/service-record-case-target";
 import { ServiceRecordStartDateChangeService } from "application/services/service-record-start-date-change.service";
+import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
@@ -306,8 +309,13 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             }
             const scope = { branchId, clientId: configured.id };
             await expectTwinCases(configured);
-            expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
-            expect(await db.message_trigger_job.count({ where: { ...scope, ruleId: SERVICE_RECORD_LINK_RULE_ID } })).toBe(0);
+            const links = await db.message_trigger_job.findMany({
+                where: { ...scope, ruleId: SERVICE_RECORD_LINK_RULE_ID }, include: { recordMembers: true },
+            });
+            expect(links).toEqual([expect.objectContaining({ recipientEmployeeId: employeeIds[0], status: "pending" })]);
+            expect(links[0]!.recordMembers.map(({ babyId }) => babyId).sort()).toEqual(
+                configured.babies.map(({ babyId }: Baby) => babyId).sort(),
+            );
             expect(await db.message_trigger_job.count({
                 where: { ...scope, ruleId: assignmentRule.id, status: "pending" },
             })).toBe(1);
@@ -402,6 +410,10 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             };
             const { body: configured } = await create({ ...twins(configuredEmployee), ...common, phone: "010-0000-7131" }).expect(201);
             const { body: legacy } = await create({ ...common, type: "B가2형", phone: "010-0000-7141" }).expect(201);
+            const optedOutEmployee = employeeIds[2]!;
+            await db.employee.update({ where: { id: optedOutEmployee }, data: { smsAutomationEnabled: false } });
+            const { body: optedOut } = await create({ ...twins(optedOutEmployee), ...common }).expect(201);
+            await assertNoRecordEffects(optedOut.id);
             const cases = [
                 { clientId: configured.id as number, phone: "010-0000-7132", employeeId: configuredEmployee, staffPhone: "01000000000" },
                 { clientId: legacy.id as number, phone: "010-0000-7142", employeeId: legacyEmployee, staffPhone: "01000000001" },
@@ -437,6 +449,11 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
 
             await confirm(configured.id);
             await confirm(legacy.id);
+            await confirm(optedOut.id);
+            await expectTwinCases(optedOut);
+            expect(await db.message_trigger_job.count({
+                where: { branchId, clientId: optedOut.id, ruleId: SERVICE_RECORD_LINK_RULE_ID },
+            })).toBe(0);
             // Legacy's ordinary assignment on a confirmed booking creates its link.
             await edit(legacy.id, { primaryEmployeeId: legacyEmployee }).expect(200);
             const statusBeforeReplay = await Promise.all(cases.map(({ clientId }) => committedRows(clientId)));
@@ -448,19 +465,9 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
             for (const [index, { clientId, employeeId, staffPhone }] of cases.entries()) {
                 expect(await householdJobs(clientId)).toEqual(canceledRoutines[index]);
                 const links = await db.message_trigger_job.findMany({ where: { branchId, clientId, ruleId: SERVICE_RECORD_LINK_RULE_ID } });
-                if (clientId === configured.id) {
-                    // Employee-group delivery is introduced after schema closure. A scalar
-                    // link would lose one of the two records even with a single caregiver.
-                    expect(await db.service_record_case.count({ where: { branchId, clientId, babyId: { not: null } } })).toBe(2);
-                    expect(await db.service_record_job_member.count({ where: { branchId, clientId } })).toBe(0);
-                    expect(links).toEqual([]);
-                    continue;
-                }
-                const legacySchedules = await schedules(clientId);
-                expect(legacySchedules).toHaveLength(1);
-                const [legacySchedule] = legacySchedules;
-                if (!legacySchedule) throw new Error("Expected the legacy caregiver's schedule");
-                const previousDay = new Date(legacySchedule.startDate.getTime() - 86_400_000).toISOString().slice(0, 10);
+                const current = await schedules(clientId);
+                expect(current).toHaveLength(1);
+                const previousDay = new Date(current[0]!.startDate.getTime() - 86_400_000).toISOString().slice(0, 10);
                 expect(links).toEqual([expect.objectContaining({
                     status: "pending", clientId, recipientType: "PRIMARY_EMPLOYEE", recipientPhone: staffPhone,
                     scheduledFor: new Date(`${previousDay}T12:00:00+09:00`),
@@ -471,20 +478,25 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
                 if (index === 0) {
                     const members = await db.service_record_job_member.findMany({ where: { branchId, clientId, jobId: links[0]!.id } });
                     expect(members.map(member => member.employeeId)).toEqual([employeeId, employeeId]);
+                    const expectedBabies = configured.babies.map(({ babyId }: Baby) => babyId).sort();
+                    expect(members.map(({ babyId }) => babyId).sort()).toEqual(expectedBabies);
                     const message = send.mock.calls[0]![0].message;
                     const urls = message.match(/https?:\/\/[^\s]+\/service-record\/efl_[A-Za-z0-9_-]+/g) ?? [];
                     expect(new Set(urls).size).toBe(2);
+                    const visitedBabies: string[] = [];
                     for (const url of urls) {
                         const linkToken = new URL(url).pathname.split("/").at(-1);
                         const { body: challenge } = await http().post("/service-record/verify").send({ linkToken, phone: staffPhone }).expect(201);
                         expect(challenge.ok).toBe(true);
                         const { body: context } = await http().get("/service-record/context").auth(challenge.accessToken, { type: "bearer" }).expect(200);
-                        expect(members.some(member => member.babyId === context.babyId && member.employeeId === context.employee.id)).toBe(true);
+                        expect(context.employee.id).toBe(employeeId);
+                        visitedBabies.push(context.babyId);
                     }
+                    expect(visitedBabies.sort()).toEqual(expectedBabies);
                 }
                 expect(await householdJobs(clientId)).toEqual(canceledRoutines[index]);
             }
-            expect(send.mock.calls.flatMap(([params]) => params.receiver.split(","))).toEqual(["01000000001"]);
+            expect(send.mock.calls.flatMap(([params]) => params.receiver.split(","))).toEqual(["01000000000", "01000000001"]);
         } finally {
             send.mockRestore();
         }
@@ -557,6 +569,7 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
     });
 
     it("confirmed twins have two different case identities for their two registered babies", async () => {
+        await enableAllocation();
         const dates = { startDate: dateAt(7), endDate: dateAt(22) };
         const { body }: { body: Registration } = await create({
             ...twins(employeeIds[0], employeeIds[1]), ...dates, serviceStatus: "pre_booking",
@@ -795,6 +808,193 @@ describeE2E("baby record registration over the real client HTTP routes", () => {
         });
         return { client, record };
     }
+
+    function keepFirstBaby(client: Registration) {
+        return {
+            ...twinsEdit(client, employeeIds[0], employeeIds[1]),
+            fetalType: "SEVERE_SINGLETON",
+            babyCount: 1,
+            babyAssignments: [{ babyId: client.babies[0]!.babyId, providerSlot: 0 }],
+        };
+    }
+
+    async function bookTwinsWithLinks() {
+        await enableAllocation();
+        await approveSender();
+        await app.get(MessageTriggerService).ensureDefaultRulesForBranch(branchId);
+        const { body: client }: { body: Registration } = await create({
+            ...twins(employeeIds[0], employeeIds[1]), serviceStatus: "pre_booking",
+            startDate: dateAt(7), endDate: dateAt(22), applyMessageAutomation: false,
+        }).expect(201);
+        await confirm(client.id);
+        return (await get(client.id).expect(200)).body as Registration;
+    }
+
+    it("retires an untouched booked baby and selects the surviving case and credentials", async () => {
+        const client = await bookTwinsWithLinks();
+        const [keep, retire] = client.babies as [Baby, Baby];
+        const scope = { branchId, clientId: client.id };
+        const headers = await db.service_record.findMany({ where: { branchId, serviceRecordCase: scope } });
+        expect(headers).toHaveLength(2);
+        expect(headers).toEqual(headers.map(() => expect.objectContaining({
+            momName: null, momBirth: null, babyName: null, babyBirth: null, deliveryType: null, babyWeight: null,
+        })));
+        const caseFor = (babyId: string) => db.service_record_case.findUniqueOrThrow({ where: { babyId } });
+        const surviving = await caseFor(keep.babyId);
+        const retiring = await caseFor(retire.babyId);
+        const jobFor = (babyId: string) => db.message_trigger_job.findFirstOrThrow({
+            where: { ...scope, ruleId: SERVICE_RECORD_LINK_RULE_ID, recordMembers: { some: { babyId } } },
+        });
+        const [survivingJob, retiringJob] = await Promise.all([jobFor(keep.babyId), jobFor(retire.babyId)]);
+        expect(survivingJob.id).not.toBe(retiringJob.id);
+        const tokenFor = (caseId: string) => db.service_record_token.findFirstOrThrow({
+            where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
+        });
+        const [survivingToken, retiringToken] = await Promise.all([tokenFor(surviving.id), tokenFor(retiring.id)]);
+        const unscoped = await db.service_record_token.create({ data: {
+            branchId, scheduleId: survivingToken.scheduleId, employeeId: survivingToken.employeeId,
+            expectedPhoneHash: survivingToken.expectedPhoneHash, expiresAt: survivingToken.expiresAt,
+            linkTokenHash: `qa-${randomUUID()}`,
+        } });
+        expect(await resolveServiceRecordCaseTarget(db, scope)).toEqual({ kind: "ambiguous" });
+
+        const { body } = await edit(client.id, keepFirstBaby(client)).expect(200);
+        expect(body.babies).toEqual([keep]);
+        expect(await db.client_baby.findUniqueOrThrow({ where: { id: retire.babyId } })).toMatchObject({ active: false });
+        expect((await caseFor(retire.babyId)).id).toBe(retiring.id);
+        expect(await db.service_record.findMany({ where: { id: { in: headers.map(({ id }) => id) } } }))
+            .toEqual(expect.arrayContaining(headers));
+        expect(await resolveServiceRecordCaseTarget(db, scope)).toMatchObject({
+            kind: "resolved", caseId: surviving.id, babyId: keep.babyId, babyCount: 1,
+        });
+        expect(await resolveServiceRecordCaseTarget(db, { ...scope, caseId: retiring.id })).toEqual({
+            kind: "retired", caseId: retiring.id, babyId: retire.babyId,
+        });
+        expect(await jobFor(retire.babyId)).toMatchObject({ id: retiringJob.id, status: "canceled" });
+        expect(await jobFor(keep.babyId)).toMatchObject({ id: survivingJob.id, status: survivingJob.status });
+        expect((await tokenFor(surviving.id)).id).toBe(survivingToken.id);
+        for (const { id } of [retiringToken, unscoped]) {
+            expect(await db.service_record_token.findUniqueOrThrow({ where: { id } })).toMatchObject({
+                active: false, revokedAt: expect.any(Date), accessTokenHash: null,
+            });
+        }
+    });
+
+    it("rejects retirement when only one field of an otherwise empty header is authored", async () => {
+        await enableAllocation();
+        const { client, record } = await bookedTwin(1);
+        const header = await db.service_record.findFirstOrThrow({ where: { branchId, serviceRecordCaseId: record.id } });
+        await db.service_record.update({ where: { id: header.id }, data: { momBirth: "1990-01-01" } });
+        const before = await committedRows(client.id);
+
+        const { body } = await edit(client.id, keepFirstBaby(client)).expect(409);
+        errorAt(body, "/babyCount");
+        expect(await committedRows(client.id)).toEqual(before);
+        expect(await db.service_record.findUniqueOrThrow({ where: { id: header.id } })).toMatchObject({
+            momBirth: "1990-01-01", momName: null, babyName: null,
+        });
+    });
+
+    it("keeps signed twin records, live caregiver sessions and existing sends when funding changes", async () => {
+        const client = await bookTwinsWithLinks();
+        const scope = { branchId, clientId: client.id };
+        const before = await committedRows(client.id);
+        const [schedule] = await schedules(client.id);
+        const [record] = before.cases;
+        const signed = await db.service_record_day.create({ data: {
+            branchId, scheduleId: schedule!.id, serviceRecordCaseId: record!.id,
+            caseSessionIndex: 1, sessionIndex: 1, serviceDate: schedule!.startDate,
+            clientSignedAt: new Date(), locked: true, submittedAt: new Date(),
+        } });
+        const tokens = await db.service_record_token.findMany({ where: { branchId, scheduleId: schedule!.id, active: true } });
+        expect(tokens).toHaveLength(2);
+        const sessions = await Promise.all(tokens.map(async (token) => {
+            const index = employeeIds.indexOf(token.employeeId);
+            const { body } = await http().post("/service-record/verify").send({
+                linkToken: token.linkTokenHash, phone: `0100000000${index}`,
+            }).expect(201);
+            expect(body.ok).toBe(true);
+            const babyId = before.cases.find(({ id }) => id === token.serviceRecordCaseId)?.babyId;
+            expect(babyId).toEqual(expect.any(String));
+            return { babyId, accessToken: body.accessToken as string };
+        }));
+        const jobs = () => db.message_trigger_job.findMany({
+            where: { ...scope, ruleId: SERVICE_RECORD_LINK_RULE_ID },
+            orderBy: { id: "asc" },
+            select: { id: true, status: true },
+        });
+        const previousJobs = await jobs();
+        expect(previousJobs).toHaveLength(2);
+        const conflicting = await edit(client.id, { ...twinsEdit(client, employeeIds[0], employeeIds[1]), voucherClient: false, type: null }).expect(409);
+        errorAt(conflicting.body, "/voucherClient");
+        const conflictingStaff = await edit(client.id, { voucherClient: false, type: null, primaryEmployeeId: employeeIds[2] }).expect(409);
+        errorAt(conflictingStaff.body, "/primaryEmployeeId");
+        expect((await get(client.id).expect(200)).body).toMatchObject({ voucherClient: true, allocationVersion: client.allocationVersion });
+
+        const { body } = await edit(client.id, {
+            voucherClient: false, type: null, fullPrice: "150000", grant: "0",
+            primaryEmployeeId: employeeIds[0], secondaryEmployeeId: employeeIds[1],
+        }).expect(200);
+        expect(body).toMatchObject({
+            voucherClient: false, type: null, fullPrice: "150000", grant: "0", actualPrice: "150000",
+            babies: client.babies, babyAssignments: client.babyAssignments,
+        });
+        const later = await edit(client.id, { type: null, fullPrice: "180000" }).expect(200);
+        expect(later.body).toMatchObject({ actualPrice: "180000", babyAssignments: client.babyAssignments });
+        expect(await schedules(client.id)).toEqual([schedule]);
+        expect((await committedRows(client.id)).cases.map(({ id, babyId }) => ({ id, babyId })))
+            .toEqual(before.cases.map(({ id, babyId }) => ({ id, babyId })));
+        expect(await db.service_record_day.findUniqueOrThrow({ where: { id: signed.id } })).toEqual(signed);
+        expect(await jobs()).toEqual(previousJobs);
+        for (const { babyId, accessToken } of sessions) {
+            const { body: context } = await http().get("/service-record/context").auth(accessToken, { type: "bearer" }).expect(200);
+            expect(context.babyId).toBe(babyId);
+        }
+    });
+
+    it("preserves the original case link for a historically backfilled singleton on self-pay", async () => {
+        const employeeId = employeeIds[0]!;
+        const { body: client } = await create({
+            type: "A가1형", primaryEmployeeId: employeeId, serviceStatus: "pre_booking",
+            startDate: dateAt(7), endDate: dateAt(22), applyMessageAutomation: false,
+        }).expect(201);
+        await confirm(client.id);
+        const scope = { branchId, clientId: client.id };
+        const record = await db.service_record_case.findFirstOrThrow({ where: scope });
+        const [schedule] = await schedules(client.id);
+        const scheduleId = schedule!.id;
+        const { linkToken } = await app.get(ServiceRecordTokenService).issueLink({
+            branchId, scheduleId, employeeId, serviceRecordCaseId: record.id,
+            expectedPhone: "01000000000", expiresAt: new Date(dateAt(21)),
+        });
+        // Reproduce the durable provenance written by the singleton backfill.
+        const baby = await db.client_baby.create({ data: { ...scope, ordinal: 1, legacyBackfilled: true } });
+        await db.client.update({ where: { id: client.id }, data: { fetalType: "SINGLETON", fetalConfirmation: "CONFIRMED" } });
+        await db.service_record_case.update({ where: { id: record.id }, data: { babyId: baby.id } });
+        const slot = await db.service_record_team_slot.create({
+            data: { ...scope, scheduleId, employeeId, slot: 0, legacyBackfilled: true },
+        });
+        const owner = await db.service_record_baby_assignment.create({
+            data: { ...scope, scheduleId, employeeId, babyId: baby.id, teamSlotId: slot.id, legacyBackfilled: true },
+        });
+        const historical = await readBackfilledScalarHousehold(db, scope);
+        expect(historical).toMatchObject({ caseId: record.id, babyId: baby.id, employeeId, scheduleId });
+
+        const { body } = await edit(client.id, { voucherClient: false, type: null, fullPrice: "100000" }).expect(200);
+        expect(body).toMatchObject({
+            voucherClient: false, type: null, actualPrice: "100000",
+            babies: [{ babyId: baby.id, ordinal: 1 }],
+            babyAssignments: [{ babyId: baby.id, ordinal: 1, providerSlot: 0 }],
+        });
+        expect(await readBackfilledScalarHousehold(db, scope)).toEqual(historical);
+        expect(await db.service_record_baby_assignment.findMany({ where: scope })).toEqual([owner]);
+        const { body: challenge } = await http().post("/service-record/verify").send({
+            linkToken, phone: "01000000000",
+        }).expect(201);
+        expect(challenge.ok).toBe(true);
+        const { body: context } = await http().get("/service-record/context").auth(challenge.accessToken, { type: "bearer" }).expect(200);
+        expect(context.babyId).toBe(baby.id);
+    });
 
     it("materializes one immediate assignment notice for the successor on a configured PATCH without a name", async () => {
         await enableAllocation();
