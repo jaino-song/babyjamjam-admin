@@ -1255,12 +1255,22 @@ function ClientDetailPanelBody({
     const householdOverview = isBranchContextAligned(recordBranchId) && !householdQuery.isPlaceholderData
         ? householdQuery.data : undefined;
     const knownCaseList = householdOverview?.cases;
+    // 예약 전 사례가 없으면 고객 정보에서 확정된 아기 수를 확인한다.
+    const householdClient = recordClient?.fetalConfirmation == null ? client : recordClient;
+    const confirmedBabyCount = householdClient.fetalConfirmation === "CONFIRMED"
+        ? householdClient.babyCount ?? householdClient.babies?.length ?? 0
+        : 0;
+    const needsCustomerCount = knownCaseList?.length === 0 && layout === "desktop";
+    const customerCountUnknown = needsCustomerCount
+        && (recordClientQuery.isPending || recordClientQuery.isError || recordClientQuery.isPlaceholderData);
     const revisionHistoryKnown = recordsActive && knownCaseList !== undefined && !householdQuery.isError
         && (selectedRecordCaseId
             ? knownCaseList.some(({ caseId }) => caseId === selectedRecordCaseId)
-            : knownCaseList.length <= 1);
+            : knownCaseList.length <= 1 && confirmedBabyCount <= 1 && !customerCountUnknown
+                && (knownCaseList[0]?.babyCount ?? 0) <= 1);
     const revisionHistoryEnabled = revisionHistoryKnown
-        && (selectedRecordCaseId !== undefined || (!householdQuery.isFetching && !householdQuery.isPaused));
+        && (selectedRecordCaseId !== undefined || (!householdQuery.isFetching && !householdQuery.isPaused
+            && (!needsCustomerCount || (!recordClientQuery.isFetching && !recordClientQuery.isPaused))));
     const revisionHistoryQuery = useClientServiceRecordRevisionHistory(clientId, {
         enabled: revisionHistoryEnabled,
         caseId: selectedRecordCaseId,
