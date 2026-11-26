@@ -34,6 +34,11 @@ const roles = ["주 제공인력", "보조 제공인력 1", "보조 제공인력
 const year = 2026;
 const firstBranch = "11111111-1111-4111-8111-111111111111";
 const secondBranch = "22222222-2222-4222-8222-222222222222";
+const originalUserId = "qa-user";
+const authSessionChanges = [
+  { change: "the authenticated branch changes", branchId: secondBranch, userId: originalUserId },
+  { change: "the authenticated user changes", branchId: firstBranch, userId: "qa-other-user" },
+];
 const grades = ["A가1형", "B가1형", "B가2형", "C가1형", "C가2형", "D가1형", "D가2형"];
 const baby1 = { babyId: "c3a70030-e4a1-4dc0-976f-7d483fb4c4f1", ordinal: 1 };
 const baby2 = { babyId: "cd19b5cd-e4c9-4f04-81e8-ad0a065db5ad", ordinal: 3 };
@@ -209,8 +214,8 @@ describe("desktop client service-record allocation", () => {
     document.cookie = "selected_branch_id=; max-age=0; path=/";
   });
 
-  function alignAuth(branchId: string) {
-    queries.setQueryData(AUTH_USER_QUERY_KEY, { id: "qa-user", name: "QA", branchId, branchRole: "manager" });
+  function alignAuth(branchId: string, userId = originalUserId) {
+    queries.setQueryData(AUTH_USER_QUERY_KEY, { id: userId, name: "QA", branchId, branchRole: "manager" });
   }
 
   function selectScopedBranch(branchId: string) {
@@ -233,6 +238,14 @@ describe("desktop client service-record allocation", () => {
     fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
     select("바우처 유형", type);
     await within(fetusSelect()).findByRole("option", { name: type.startsWith("A") ? "단태아" : /중증/ });
+  }
+
+  async function openSingletonRegistrationAtSave() {
+    const view = await open();
+    await chooseGrade("A가1형");
+    next();
+    next();
+    return { view, submit: screen.getByRole("button", { name: "생성" }) };
   }
 
   it("renders dialog sections in the same order as the panel steps", async () => {
@@ -725,6 +738,46 @@ describe("desktop client service-record allocation", () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it.each(authSessionChanges)("requires reopening the registration form when $change without a cookie change", async ({ branchId, userId }) => {
+    const { submit } = await openSingletonRegistrationAtSave();
+    expect(submit).toBeEnabled();
+
+    await act(async () => alignAuth(branchId, userId));
+    expect(submit).toBeDisabled();
+    const reopenMessage = "선택한 지점이 바뀌었어요. 현재 지점에서 저장하려면 이 창을 닫고 다시 열어 주세요.";
+    expect(screen.getByText(reopenMessage)).toHaveAttribute("role", "status");
+
+    await act(async () => alignAuth(firstBranch));
+    expect(submit).toBeDisabled();
+    expect(screen.getByText(reopenMessage)).toBeVisible();
+    fireEvent.click(submit);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each(authSessionChanges)("refuses a pending registration when $change before the form observes it", async ({ branchId, userId }) => {
+    const calendar = defaultCalendar().calendar;
+    let finishRefresh!: (result: RefreshForSaveResult) => void;
+    const refreshForSave = jest.fn(() => new Promise<RefreshForSaveResult>((resolve) => { finishRefresh = resolve; }));
+    calendarHook.mockReturnValue({ ...defaultCalendar(), refreshForSave });
+    const { submit } = await openSingletonRegistrationAtSave();
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    expect(refreshForSave).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      // Keep the new authority in the cache while the form still has its previous render.
+      const notify = jest.spyOn(queries.getQueryCache(), "notify").mockImplementationOnce(() => {});
+      try {
+        alignAuth(branchId, userId);
+      } finally {
+        notify.mockRestore();
+      }
+      finishRefresh({ ok: true, changed: false, calendar });
+    });
+
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it.each(["different branch", "missing branch", "invalidated auth", "different customer"] as const)(
     "discards a save waiting on the calendar after %s", async (change) => {
       let finishRefresh!: (result: RefreshForSaveResult) => void;
@@ -733,11 +786,7 @@ describe("desktop client service-record allocation", () => {
       calendarHook.mockReturnValue({ ...defaultCalendar(), refreshForSave });
       // Exercise normalization of an encoded selected branch against the auth ID.
       selectBranch(encodeURIComponent(` ${firstBranch} `));
-      const view = await open();
-      await chooseGrade("A가1형");
-      next();
-      next();
-      const submit = screen.getByRole("button", { name: "생성" });
+      const { view, submit } = await openSingletonRegistrationAtSave();
       expect(submit).toBeEnabled();
       fireEvent.click(submit);
       expect(refreshForSave).toHaveBeenCalledTimes(1);
