@@ -4,7 +4,7 @@ import { api } from "@/lib/api/client";
 import type { Client } from "@/lib/client/types";
 
 import { ClientFormDialog } from "../ClientFormDialog";
-import { render } from "./render-client-form";
+import { render } from "@/test-utils/render-client-form";
 
 let mockVoucherPriceInfos = [
     {

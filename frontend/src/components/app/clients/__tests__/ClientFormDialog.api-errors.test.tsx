@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { render } from "./render-client-form";
+import { render } from "@/test-utils/render-client-form";
 import { useState } from "react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
