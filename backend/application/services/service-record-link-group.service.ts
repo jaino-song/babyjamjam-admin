@@ -1,4 +1,4 @@
-import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold } from "application/policies/baby-record-rollout.policy";
+import { BabyRecordRolloutPausedException, GROUP_RECORD_LINK_PREFIX, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold } from "application/policies/baby-record-rollout.policy";
 import { randomUUID } from "node:crypto";
 
 import { renderServiceRecordLinks } from "@babyjamjam/shared/message/service-record-links";
@@ -11,6 +11,7 @@ import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/c
 import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
+    isServiceRecordLinkManualDedupeKey,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
 } from "domain/constants/service-record-link-message";
@@ -28,6 +29,7 @@ import {
     recordLinkHash, recordLinkPhone, RECORD_LINK_GROUP_KEY_PREFIX,
     type RecordLinkGroupMember, type RecordLinkGroupSource, unreservedRecordLinkMembers,
 } from "./service-record-link-group-source";
+import { readLegacyLinkOccurrence } from "./service-record-legacy-link-occurrence";
 import { ServiceRecordTokenService } from "./service-record-token.service";
 import { SystemTemplateService } from "./system-template.service";
 
@@ -48,6 +50,12 @@ export interface RecordLinkPrepareSelection {
 }
 
 const pendingStatuses = ["pending", "processing", "needs_setup"];
+
+interface ResidualReservation {
+    scheduledFor: Date;
+    nextAttemptAt: Date | null;
+    residualOfManualJobId: string;
+}
 const changed = () => codeOnlyProblemException("SERVICE_RECORD_WRITE_TARGET_CHANGED");
 
 export function serviceRecordGroupUrl(config: ConfigService, token: string): string {
@@ -139,6 +147,7 @@ export class ServiceRecordLinkGroupService {
     async send(branchId: string, scheduleId: number, input: RecordLinkSendSelection, actorUserId: string) {
         return this.withSource(branchId, scheduleId, async (source, tx) => {
             const members = await this.select(tx, source, input.employeeId, input.members, input.recipientPhone);
+            if (!await this.releaseLegacyCredential(tx, source, members, true)) throw changed();
             const selected = new Map(input.members.map(member => [member.caseId, member.preparedLinkToken]));
             const prepared = [];
             for (const member of members) {
@@ -216,30 +225,55 @@ export class ServiceRecordLinkGroupService {
                 // A locked credential or a policy/template race can refuse a job with an otherwise
                 // current source. Dispatch recovery should not continually recreate that same job.
                 if (options.supersededSourceHash === recordLinkGroupSourceHash(source, members)) continue;
-                // A proven earlier singleton keeps its original job and delivery proof.
-                if (source.householdBabyCount === 1 && members[0]!.employeeId === source.schedule.primaryEmployeeId
-                    && await this.hasLegacyOccurrence(tx, source, members[0]!.employeeId)) continue;
-                const prepared = [];
-                for (const member of members) {
-                    const params = this.params(source, member, false);
-                    const token = await this.tokenService.reuseActiveLink(params, {}, tx)
-                        ?? await this.tokenService.issueLink(params, tx);
-                    prepared.push(this.linkMember(member, params.expiresAt, token.linkToken));
-                }
-                const result = await this.admit(tx, source, members, prepared);
+                if (!await this.releaseLegacyCredential(tx, source, members, false)) continue;
+                const result = await this.admit(tx, source, members, await this.automaticLinks(tx, source, members));
                 admitted ||= result.created;
             }
             return admitted;
         });
     }
 
-    private async hasLegacyOccurrence(tx: Prisma.TransactionClient, { scope, schedule }: RecordLinkGroupSource, employeeId: number) {
-        return Boolean(await tx.message_trigger_job.findFirst({
-            where: { ...scope, employeeScheduleId: schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID, recipientEmployeeId: null,
-                OR: [{ status: { in: [...pendingStatuses, "dispatching", "sent"] } }, { canceledByUser: true }],
-                payload: { path: ["employeeId"], equals: employeeId } },
-            select: { id: true },
-        }));
+    private async releaseLegacyCredential(
+        tx: Prisma.TransactionClient, { scope, schedule, householdBabyCount }: RecordLinkGroupSource,
+        members: RecordLinkGroupMember[], manual: boolean,
+    ): Promise<boolean> {
+        const member = members[0]!;
+        const phone = recordLinkPhone(member.employee.phone)!;
+        const legacy = await readLegacyLinkOccurrence(tx, { ...scope, scheduleId: schedule.id,
+            incarnationId: schedule.incarnationId, employeeId: member.employeeId, phone });
+        if (legacy.blocked || legacy.jobs.some(job => (!manual && job.canceledByUser)
+            || (householdBabyCount === 1 && member.employeeId === schedule.primaryEmployeeId
+                && pendingStatuses.includes(job.status)))) return false;
+
+        const legacyTokens = { branchId: scope.branchId, scheduleId: schedule.id, employeeId: member.employeeId,
+            active: true, revokedAt: null, NOT: { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } },
+            OR: [{ serviceRecordCaseId: { in: members.map(item => item.caseId) } },
+                ...(householdBabyCount === 1 ? [{ serviceRecordCaseId: null }] : [])],
+        };
+        const active = await tx.service_record_token.findMany({ where: legacyTokens,
+            select: { id: true, linkTokenHash: true, expectedPhoneHash: true } });
+        const rejected = new Set(legacy.rejected.map(log => log.credential));
+        if (active.some(token => token.expectedPhoneHash !== recordLinkHash(phone) || !rejected.has(token.linkTokenHash))) return false;
+        if (active.length) {
+            // Retire only the exact credential proved unused by this occurrence.
+            // The original provider and occurrence records are kept for audit.
+            await tx.service_record_token.updateMany({
+                where: { ...legacyTokens, id: { in: active.map(token => token.id) } },
+                data: { active: false, revokedAt: new Date() },
+            });
+        }
+        return true;
+    }
+
+    private async automaticLinks(tx: Prisma.TransactionClient, source: RecordLinkGroupSource, members: RecordLinkGroupMember[]) {
+        const prepared = [];
+        for (const member of members) {
+            const params = this.params(source, member, false);
+            const token = await this.tokenService.reuseActiveLink(params, {}, tx)
+                ?? await this.tokenService.issueLink(params, tx);
+            prepared.push(this.linkMember(member, params.expiresAt, token.linkToken));
+        }
+        return prepared;
     }
 
     private async select(
@@ -293,7 +327,7 @@ export class ServiceRecordLinkGroupService {
     }
 
     private async cancel(tx: Prisma.TransactionClient, id: string) {
-        await tx.message_trigger_job.updateMany({
+        return tx.message_trigger_job.updateMany({
             where: { id, canceledByUser: false, status: { in: pendingStatuses }, logs: { none: recordLinkGroupCarrierEvidence } },
             data: { status: "canceled", cancelReason: SERVICE_RECORD_LINK_RESCHEDULED_REASON, canceledAt: new Date(),
                 claimToken: null, nextAttemptAt: null, processingDeadlineAt: null },
@@ -301,7 +335,8 @@ export class ServiceRecordLinkGroupService {
     }
 
     private async admit(tx: Prisma.TransactionClient, source: RecordLinkGroupSource, members: RecordLinkGroupMember[],
-        links: readonly { caseId: string; preparedLinkToken: string }[], manual?: { actorUserId: string; previewHash: string }) {
+        links: readonly { caseId: string; preparedLinkToken: string }[], manual?: { actorUserId: string; previewHash: string },
+        residual?: ResidualReservation): Promise<{ jobId: string; scheduledFor: Date; created: boolean }> {
         const member = members[0]!;
         const { scope, schedule } = source;
         const sourceHash = recordLinkGroupSourceHash(source, members);
@@ -324,13 +359,18 @@ export class ServiceRecordLinkGroupService {
         if (acceptedOrPending) return { jobId: acceptedOrPending.id, scheduledFor: acceptedOrPending.scheduledFor, created: false };
 
         const targets = new Set(members.map(item => `${item.caseId}:${item.assignmentVersion}`));
+        const replaced = [];
         for (const job of jobs) {
             if (!job.recordMembers.some(item => targets.has(`${item.serviceRecordCaseId}:${item.assignmentVersion}`))) continue;
             if (blocksReplacement(job)) {
                 if (manual) throw changed();
                 return { jobId: job.id, scheduledFor: job.scheduledFor, created: false };
             }
-            if (manual) await this.cancel(tx, job.id);
+            if (manual && pendingStatuses.includes(job.status)) {
+                if ((await this.cancel(tx, job.id)).count !== 1) throw changed();
+                if (!isServiceRecordLinkManualDedupeKey(job.dedupeKey)
+                    && !(job.payload as unknown as MessageTriggerJobPayload).sentByUserId) replaced.push(job);
+            }
         }
 
         const tokens = await tx.service_record_token.findMany({
@@ -350,12 +390,13 @@ export class ServiceRecordLinkGroupService {
             recipientName: member.employee.name, recipientPhone: employeePhone, templateVariables: {},
             recordLinkGroup: { version: 1, sourceHash, members: proof, ...(manual ? { previewHash: manual.previewHash } : {}) },
             ...(manual ? { sentByUserId: manual.actorUserId } : {}),
+            ...(residual ? { residualOfManualJobId: residual.residualOfManualJobId } : {}),
         };
         const key = `${RECORD_LINK_GROUP_KEY_PREFIX}${schedule.id}:employee:${member.employeeId}`;
-        const scheduledFor = manual ? new Date() : getServiceRecordLinkScheduledFor(schedule.startDate);
+        const scheduledFor = manual ? new Date() : residual?.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate);
         const job = await tx.message_trigger_job.create({
             data: {
-                ...occurrence, scheduledFor, dedupeKey: manual ? `${key}:manual:${randomUUID()}` : `${key}:${sourceHash}:${exact.length}`,
+                ...occurrence, scheduledFor, nextAttemptAt: residual?.nextAttemptAt, dedupeKey: manual ? `${key}:manual:${randomUUID()}` : `${key}:${sourceHash}:${exact.length}`,
                 recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipientPhone: employeePhone,
                 templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
                 payload: payload as unknown as Prisma.InputJsonValue,
@@ -366,6 +407,22 @@ export class ServiceRecordLinkGroupService {
             data: members.map(item => ({ ...scope, jobId: job.id, scheduleId: schedule.id, employeeId: member.employeeId,
                 serviceRecordCaseId: item.caseId, babyId: item.babyId, assignmentVersion: item.assignmentVersion })),
         });
+        if (replaced.length && canSendRecordLinkGroup(source, false) && member.employee.smsAutomationEnabled) {
+            const remaining = await unreservedRecordLinkMembers(tx, source, source.members.filter(item => item.employeeId === member.employeeId));
+            const reserved = new Set<string>();
+            for (const original of replaced.sort((a, b) => a.scheduledFor.getTime() - b.scheduledFor.getTime())) {
+                const siblings = remaining.filter(item => {
+                    const target = `${item.caseId}:${item.assignmentVersion}`;
+                    return !targets.has(target) && !reserved.has(target)
+                        && original.recordMembers.some(row => row.serviceRecordCaseId === item.caseId && row.assignmentVersion === item.assignmentVersion);
+                });
+                if (!siblings.length) continue;
+                await this.admit(tx, source, siblings, await this.automaticLinks(tx, source, siblings), undefined, {
+                    scheduledFor: original.scheduledFor, nextAttemptAt: original.nextAttemptAt, residualOfManualJobId: job.id,
+                });
+                siblings.forEach(item => reserved.add(`${item.caseId}:${item.assignmentVersion}`));
+            }
+        }
         return { jobId: job.id, scheduledFor, created: true };
     }
 }

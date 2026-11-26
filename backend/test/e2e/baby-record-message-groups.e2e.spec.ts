@@ -360,6 +360,80 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         expect(stub.sendCalls).toHaveLength(1);
     });
 
+    it.each([0, 4])("keeps only the unselected sibling at its original automatic time (start offset %i)", async startDays => {
+        const family = await book([0, 0], { startDays });
+        const [original] = await getJobs(family.clientId);
+        const [selected, sibling] = family.cases;
+        const prepared = await prepare(family.schedule.id, staff[0]!, [selected!.id]);
+
+        const { body: sent } = await postLink(family.schedule.id, "send", prepared.input).expect(201);
+        expect(sent.status).toBe("sent");
+        expect(calls()).toHaveLength(1);
+        await verify(rawLinks(calls()[0]!.message)[0]!, phone(0), selected!.babyId!, staff[0]!);
+        const [residual] = (await getJobs(family.clientId)).filter(job => job.status === "pending");
+        expect(residual).toMatchObject({ scheduledFor: original!.scheduledFor, recordMembers: [{ serviceRecordCaseId: sibling!.id }] });
+        expect(residual!.payload).not.toHaveProperty("sentByUserId");
+
+        await linkService.scheduleForServiceStart(family.schedule.id);
+        const { body: replay } = await postLink(family.schedule.id, "send", prepared.input).expect(201);
+        expect(replay.jobId).toBe(sent.jobId);
+        expect((await getJobs(family.clientId)).filter(job => job.status === "pending").map(job => job.id)).toEqual([residual!.id]);
+        expect(calls()).toHaveLength(1);
+
+        await dispatch(residual!.id);
+        if (startDays > 0) {
+            expect(calls()).toHaveLength(1);
+            expect(await getLogs(residual!.id)).toHaveLength(0);
+        } else {
+            expect(calls()).toHaveLength(2);
+            await verify(rawLinks(calls()[1]!.message)[0]!, phone(0), sibling!.babyId!, staff[0]!);
+        }
+    });
+
+    it("sends each twin once when a partial manual admission races automatic dispatch", async () => {
+        const family = await book([0, 0]);
+        const [original] = await getJobs(family.clientId);
+        const { input } = await prepare(family.schedule.id, staff[0]!, [family.cases[0]!.id]);
+
+        const [manual] = await Promise.all([postLink(family.schedule.id, "send", input), dispatch(original!.id)]);
+        expect([201, 409]).toContain(manual.status);
+        await linkService.scheduleForServiceStart(family.schedule.id);
+        for (const job of (await getJobs(family.clientId)).filter(job => job.status === "pending")) await dispatch(job.id);
+
+        const sent = (await getJobs(family.clientId)).filter(job => job.status === "sent");
+        const delivered = sent.flatMap(job => job.recordMembers.map(member => member.serviceRecordCaseId)).sort();
+        expect(delivered).toEqual(family.cases.map(record => record.id).sort());
+        const links = calls().flatMap(call => rawLinks(call.message));
+        expect(links).toHaveLength(2);
+        expect(new Set(links).size).toBe(2);
+        for (const job of sent) await assertCarrier(job, "QA-Household");
+    });
+
+    it("rolls back manual admission when reserving the automatic sibling fails", async () => {
+        const family = await book([0, 0]);
+        const original = await getJobs(family.clientId);
+        const { input } = await prepare(family.schedule.id, staff[0]!, [family.cases[0]!.id]);
+        const tokenService = app.get(ServiceRecordTokenService);
+        const readTokens = () => db.service_record_token.findMany({
+            where: { branchId, scheduleId: family.schedule.id }, orderBy: { id: "asc" },
+        });
+        const tokensBeforeSend = await readTokens();
+        const failure = jest.spyOn(tokenService, "reuseActiveLink").mockRejectedValueOnce(new Error("QA residual reservation failure"));
+        try {
+            await expect(app.get(ServiceRecordLinkGroupService).send(branchId, family.schedule.id, input, ownerId))
+                .rejects.toThrow("QA residual reservation failure");
+        } finally {
+            failure.mockRestore();
+        }
+        expect(await getJobs(family.clientId)).toEqual(original);
+        expect(await readTokens()).toEqual(tokensBeforeSend);
+        expect(calls()).toHaveLength(0);
+
+        await dispatch(original[0]!.id);
+        expect(calls()).toHaveLength(1);
+        expect(await assertCarrier(original[0]!, "QA-Household")).toHaveLength(2);
+    });
+
     it("partial carrier failure cannot repeat a previously accepted recipient", async () => {
         stub.script(phone(1), "carrierFail");
         const family = await book([0, 1]);
@@ -494,6 +568,143 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
             expect((await dispatch(legacy.id)).status).toBe(family === one ? "sent" : "canceled");
         }
         expect(calls().length).toBe(1);
+    });
+
+    async function reserveScalarSingleton() {
+        const employee = { id: staff[0]!, branchId };
+        await db.employee.update({ where: employee, data: { smsAutomationEnabled: false } });
+        const family = await book([0], { auto: false });
+        await db.employee.update({ where: employee, data: { smsAutomationEnabled: true } });
+        const { linkToken } = await app.get(ServiceRecordTokenService).issueLink({
+            branchId, scheduleId: family.schedule.id, serviceRecordCaseId: family.cases[0]!.id,
+            employeeId: staff[0]!, expectedPhone: phone(0), expiresAt: getServiceRecordTokenExpiresAt(family.schedule.endDate),
+        });
+        const url = `https://example.test/service-record/${linkToken}`;
+        const job = await db.message_trigger_job.create({ data: {
+            branchId, clientId: family.clientId, employeeScheduleId: family.schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID,
+            scheduledFor: getServiceRecordLinkScheduledFor(family.schedule.startDate), recipientType: "PRIMARY_EMPLOYEE",
+            recipientPhone: phone(0), templateKey: key,
+            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${family.schedule.id}:primary`,
+            payload: { employeeId: staff[0]!, recipientName: "QA-Caregiver 1", recipientPhone: phone(0),
+                memberId: `employee:${staff[0]}`, buttonUrl: url, templateVariables: {
+                    employeeName: "QA-Caregiver 1", clientName: "QA-Household", serviceStartDate: dateAt(0), serviceRecordUrl: url,
+                } },
+        } });
+        return { family, job, linkToken, url };
+    }
+
+    it.each(["delivered", "not-delivered"] as const)("blocks ambiguous v1 admission until explicit reconciliation reports %s", async outcome => {
+        const { family, job, linkToken, url } = await reserveScalarSingleton();
+        stub.script(phone(0), "throw");
+        await dispatch(job.id);
+        stub.clearScripts();
+        const [unknown] = await getLogs(job.id);
+        expect(unknown?.providerAcceptanceState).toBe("uncertain");
+        const readLink = () => db.service_record_token.findUniqueOrThrow({ where: { linkTokenHash: linkToken } });
+        expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(false);
+        expect(await getJobs(family.clientId)).toHaveLength(1);
+        expect((await readLink()).active).toBe(true);
+        expect(calls()).toHaveLength(1);
+
+        await app.get(SmsProviderAcceptanceService).reconcile({
+            branchId, logId: unknown!.id, actor: ownerId, reason: "QA reconciled carrier history", outcome,
+        });
+        const reconciled = await getLogs(job.id);
+        expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(outcome === "not-delivered");
+        if (outcome === "delivered") {
+            expect(await getJobs(family.clientId)).toHaveLength(1);
+            expect(calls()).toHaveLength(1);
+            await verify(url, phone(0), family.cases[0]!.babyId!, staff[0]!);
+        } else {
+            const groups = (await getJobs(family.clientId)).filter(group => group.status === "pending" && group.recordMembers.length);
+            expect(groups).toHaveLength(1);
+            expect((await readLink()).active).toBe(false);
+            const source = await logs.findByIdInBranch(branchId, unknown!.id);
+            expect(await app.get(SmsRetryService).retry(source!, "manual")).toBeNull();
+            await dispatch(groups[0]!.id);
+            expect(calls()).toHaveLength(2);
+            expect(await assertCarrier(groups[0]!, "QA-Household")).toHaveLength(1);
+            expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(false);
+        }
+        expect(await getLogs(job.id)).toEqual(reconciled);
+    });
+
+    it("keeps the v1 credential when a retry descendant is accepted before grouped admission", async () => {
+        const { family, job, url } = await reserveScalarSingleton();
+        stub.script(phone(0), "reject");
+        await dispatch(job.id);
+        stub.clearScripts();
+        const [rejected] = await getLogs(job.id);
+        expect(rejected?.providerAcceptanceState).toBe("rejected");
+        const source = await logs.findByIdInBranch(branchId, rejected!.id);
+        expect((await app.get(SmsRetryService).retry(source!, "manual"))?.status).toBe("sent");
+        expect(digest(rawLinks(calls()[1]!.message)[0]!)).toBe(digest(url));
+        expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(false);
+        expect(await getJobs(family.clientId)).toHaveLength(1);
+        expect(calls()).toHaveLength(2);
+        await verify(url, phone(0), family.cases[0]!.babyId!, staff[0]!);
+    });
+
+    it.each(["legacy", "grouped"] as const)("releases a %s successor after reconciling an ambiguous v1 retry descendant", async successor => {
+        const { family, job, url } = await reserveScalarSingleton();
+        stub.script(phone(0), "reject");
+        await dispatch(job.id);
+        const [original] = await getLogs(job.id);
+        stub.script(phone(0), "throw");
+        const retry = await app.get(SmsRetryService).retryById(branchId, original!.id);
+        expect(retry.providerAcceptanceState).toBe("uncertain");
+        stub.clearScripts();
+        expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(false);
+        expect((await getJobs(family.clientId)).map(row => row.id)).toEqual([job.id]);
+        expect(calls()).toHaveLength(2);
+
+        await app.get(SmsProviderAcceptanceService).reconcile({
+            branchId, logId: retry.id, actor: ownerId, reason: "QA confirmed no retry delivery", outcome: "not-delivered",
+        });
+        const history = await getLogs(job.id);
+        if (successor === "legacy") {
+            expect((await app.get(SmsRetryService).retryById(branchId, retry.id)).status).toBe("sent");
+            expect(digest(rawLinks(calls()[2]!.message)[0]!)).toBe(digest(url));
+            await verify(url, phone(0), family.cases[0]!.babyId!, staff[0]!);
+        } else {
+            expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(true);
+            const [group] = (await getJobs(family.clientId)).filter(candidate => candidate.status === "pending");
+            await dispatch(group!.id);
+            expect(await assertCarrier(group!, "QA-Household")).toHaveLength(1);
+            expect(await getLogs(job.id)).toEqual(history);
+        }
+        expect(calls()).toHaveLength(3);
+        expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(false);
+    });
+
+    it("admits one successor when v1 retry and grouped scheduling race", async () => {
+        const { family, job, url } = await reserveScalarSingleton();
+        stub.script(phone(0), "reject");
+        await dispatch(job.id);
+        stub.clearScripts();
+        const [rejected] = await getLogs(job.id);
+        expect(rejected?.providerAcceptanceState).toBe("rejected");
+
+        const [admitted, retried] = await Promise.all([
+            linkService.scheduleForServiceStart(family.schedule.id),
+            app.get(SmsRetryService).retryById(branchId, rejected!.id).catch(error => {
+                if (error?.status !== 409) throw error;
+                return null;
+            }),
+        ]);
+        if (admitted) {
+            expect(retried).toBeNull();
+            const [group] = (await getJobs(family.clientId)).filter(candidate => candidate.status === "pending");
+            await dispatch(group!.id);
+            expect(await assertCarrier(group!, "QA-Household")).toHaveLength(1);
+        } else {
+            expect(retried?.status).toBe("sent");
+            expect(digest(rawLinks(calls()[1]!.message)[0]!)).toBe(digest(url));
+            await verify(url, phone(0), family.cases[0]!.babyId!, staff[0]!);
+        }
+        expect(calls()).toHaveLength(2);
+        expect(await linkService.scheduleForServiceStart(family.schedule.id)).toBe(false);
+        expect((await getJobs(family.clientId)).filter(candidate => candidate.status === "pending")).toHaveLength(0);
     });
 
     it("reschedules a pending v1 singleton in place when its start date changes", async () => {

@@ -51,6 +51,7 @@ export interface RecordLinkGroupSnapshot {
 
 export interface MessageTriggerJobPayload {
     recordLinkGroup?: RecordLinkGroupSnapshot;
+    residualOfManualJobId?: string;
     existingMessageLogId?: number;
     origin?: "ADMIN_DIRECT";
     caregiverSourceSnapshot?: CaregiverSourceSnapshot;

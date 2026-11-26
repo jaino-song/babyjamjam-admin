@@ -13,7 +13,9 @@ import {
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 
-export const RECORD_LINK_GROUP_LOG_MARKER = "recordLinkGroupVersion";
+import { readLegacyLinkOccurrence } from "./service-record-legacy-link-occurrence";
+
+export { RECORD_LINK_GROUP_LOG_MARKER } from "./service-record-legacy-link-occurrence";
 export const RECORD_LINK_GROUP_CHANGED = "제공기록지 링크의 담당자 또는 발송 대상이 변경되었습니다";
 export const RECORD_LINK_GROUP_KEY_PREFIX = `${SERVICE_RECORD_LINK_RULE_ID}:group:`;
 
@@ -229,6 +231,10 @@ export async function resolveRecordLinkGroup(tx: Prisma.TransactionClient, job: 
     if (!employee || !phone || phone !== job.recipientPhone || phone !== job.payload.recipientPhone
         || (!manual && !employee.smsAutomationEnabled)
         || members.length !== row.recordMembers.length || recordLinkGroupSourceHash(source, members) !== group.sourceHash) return null;
+
+    const legacy = await readLegacyLinkOccurrence(tx, { ...source.scope, scheduleId: source.schedule.id,
+        incarnationId: source.schedule.incarnationId, employeeId: row.recipientEmployeeId, phone });
+    if (legacy.blocked) return null;
 
     if (!manual) {
         const unreserved = await unreservedRecordLinkMembers(tx, source, owned, job.id);
