@@ -6,6 +6,7 @@ import { Test } from "@nestjs/testing";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 
+import { babyRecordRolloutKey } from "application/policies/baby-record-rollout.policy";
 import { HolidayReviewProcessorService } from "application/services/holiday-review-processor.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
@@ -125,10 +126,15 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
         return { userId: user.id, authorization };
     }
 
-    async function branchFixture() {
+    async function branchFixture(enableBabyRecords = false) {
         const branch = await db.branch.create({
             data: { name: "QA-Schema closure", slug: `qa-schema-closure-${randomUUID()}` },
         });
+        if (enableBabyRecords) {
+            await db.system_setting.create({
+                data: { key: babyRecordRolloutKey(branch.id), value: "true" },
+            });
+        }
         return { branchId: branch.id, ...await userInBranch(branch.id) };
     }
 
@@ -243,7 +249,7 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
     }
 
     it("canonical keys allow siblings on the same schedule and session", async () => {
-        const branch = await branchFixture();
+        const branch = await branchFixture(true);
         const primary = await caregiver(branch.branchId, "01000009301");
         const assistant = await caregiver(branch.branchId, "01000009302");
         const { registration, ...scope } = await register(branch, twins(primary, assistant));
@@ -307,7 +313,7 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
     });
 
     it("the authenticated adoption route preserves a signed case", async () => {
-        const branch = await branchFixture();
+        const branch = await branchFixture(true);
         const assistant = await caregiver(branch.branchId, "01000009302");
         const { scope, record, day, revision, document, file, link, access, primary, schedule } =
             await signedLegacyFixture(branch, assistant);
@@ -324,6 +330,13 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
         expect(await ownedCases(scope)).toEqual([expect.objectContaining({ id: record.id, babyId: null })]);
 
         const before = await db.service_record_token.findUniqueOrThrow({ where: { linkTokenHash: link } });
+        expect(before).toMatchObject({
+            scheduleId: schedule.id, employeeId: primary.id, serviceRecordCaseId: record.id,
+            active: false, revokedAt: expect.any(Date), accessTokenHash: null, verifiedAt: null,
+        });
+        expect((await linkStatus(link).expect(200)).body).toEqual({ valid: false, reason: "unavailable" });
+        await context(access).expect(401);
+
         const response = await http().post(adoption(scope.clientId, record.id)).auth(branch.authorization, { type: "bearer" })
             .send({ babyId }).expect(200);
         expect(response.body).toEqual({ caseId: record.id, babyId });
@@ -339,19 +352,21 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
         expect(await db.eformsign_doc.findUnique({ where: { id: document.id } })).toEqual(document);
         expect(await db.eformsign_doc_file.findUnique({ where: { id: file.id } })).toEqual(file);
         const after = await db.service_record_token.findUniqueOrThrow({ where: { id: before.id } });
-        expect(after.linkTokenHash === before.linkTokenHash && after.accessTokenHash === before.accessTokenHash).toBe(true);
-        expect(after).toMatchObject({
-            scheduleId: schedule.id, employeeId: primary.id, serviceRecordCaseId: record.id, active: true, revokedAt: null,
-        });
+        expect(after).toEqual(before);
+        expect((await linkStatus(link).expect(200)).body).toEqual({ valid: false, reason: "unavailable" });
+        expect((await verify(link, primary.phone).expect(201)).body.ok).toBe(false);
+        await context(access).expect(401);
 
-        expect((await linkStatus(link).expect(200)).body).toEqual({ valid: true });
-        expect((await context(access).expect(200)).body).toMatchObject({
+        const freshLink = await issue(scope.branchId, schedule.id, record.id, primary);
+        expect(freshLink === link).toBe(false);
+        expect((await verify(freshLink, assistant.phone).expect(201)).body).toMatchObject({ ok: false });
+        const reopened = await authorize(freshLink, primary);
+        expect((await context(reopened).expect(200)).body).toMatchObject({
             babyId, babyRank: 1, employee: { id: primary.id },
-            sessions: [{ id: day.id, serviceRecordCaseId: record.id, clientSignature: signature }],
+            sessions: [{ id: day.id, serviceRecordCaseId: record.id, clientSignature: signature, employeeId: primary.id }],
         });
-        expect((await verify(link, assistant.phone).expect(201)).body).toMatchObject({ ok: false });
-        const reopened = await authorize(link, primary);
-        expect((await context(reopened).expect(200)).body).toMatchObject({ babyId, employee: { id: primary.id } });
+        expect((await linkStatus(link).expect(200)).body).toEqual({ valid: false, reason: "unavailable" });
+        await context(access).expect(401);
         expect(await db.admin_audit_event.findMany({
             where: { branchId: scope.branchId, targetId: record.id, action: "service_record.legacy_case_adopt" },
             select: { actorUserId: true, outcome: true, afterPayload: true },
@@ -393,7 +408,7 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
     });
 
     it("the second sibling blocks a household holiday change", async () => {
-        const branch = await branchFixture();
+        const branch = await branchFixture(true);
         const primary = await caregiver(branch.branchId, "01000009301");
         const assistant = await caregiver(branch.branchId, "01000009302");
         const nextPrimary = await caregiver(branch.branchId, "01000009303");

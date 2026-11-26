@@ -162,25 +162,30 @@ describe("ClientServiceRecords", () => {
         const cases: NonNullable<ServiceRecordOverview["cases"]> = [
             { caseId: "case-first", babyId: "baby-first", rank: 1 },
             { caseId: secondCaseId, babyId: "baby-second", rank: 2 },
-        ].map((item) => ({
+        ].map((item, index) => ({
             ...item,
             babyCount: 2,
             legacyName: null,
             retired: false,
             status: "IN_PROGRESS",
             assignees: [assignment.employee],
+            linkAssignments: [{
+                scheduleId: assignment.scheduleId, employeeId: assignment.employee.id, assignmentVersion: index + 6,
+            }],
             totalSessions: 1,
             submittedSessions: 0,
         }));
         mockUseClientServiceRecords.mockImplementation((clientId, options) => {
             const selectedCase = cases.find(({ caseId }) => caseId === options?.caseId);
             return clientId === client.id && selectedCase ? {
+                cases,
+                legacyLinkAssignment: null,
                 record: { ...createRecord("IN_PROGRESS"), id: selectedCase.caseId },
                 assignments: [assignment],
             } : undefined;
         });
         mockMutateAsync.mockResolvedValue({ ok: true, status: "sent" });
-        renderComponent({ cases, assignments: [] });
+        renderComponent({ cases, record: null, assignments: [], legacyLinkAssignment: null });
 
         fireEvent.click(screen.getByRole("button", { name: /^첫째 ·/ }));
         fireEvent.click(screen.getByRole("button", { name: /^둘째 ·/ }));
@@ -190,7 +195,10 @@ describe("ClientServiceRecords", () => {
 
         expect(mockUseClientServiceRecords).toHaveBeenCalledWith(client.id, { caseId: secondCaseId, enabled: true });
         expect(mockMutateAsync.mock.calls).toEqual([[
-            { clientId: client.id, scheduleId: assignment.scheduleId, caseId: secondCaseId },
+            {
+                clientId: client.id, scheduleId: assignment.scheduleId,
+                target: { employeeId: assignment.employee.id, members: [{ caseId: secondCaseId, assignmentVersion: 7 }] },
+            },
         ]]);
     });
 

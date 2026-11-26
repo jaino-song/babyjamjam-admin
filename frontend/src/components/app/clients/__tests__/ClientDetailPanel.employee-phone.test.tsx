@@ -8,12 +8,14 @@ import { eformsignApi } from "@/services/api";
 
 const mockUseClientServiceRecordRevisionHistory = jest.fn();
 const mockClientServiceRecordsTab = jest.fn();
+const mockUseClientServiceRecords = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
     useLocale: () => "ko",
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
+    useClient: () => ({}),
     useConfirmBooking: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
@@ -40,7 +42,7 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 }));
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
-    useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
+    useClientServiceRecords: () => mockUseClientServiceRecords(),
     useClientServiceRecordRevisionHistory: () => mockUseClientServiceRecordRevisionHistory(),
     useRetryServiceRecordDocument: () => ({
         isPending: false,
@@ -151,6 +153,7 @@ const client: Client = {
 describe("ClientDetailPanel employee phones", () => {
     beforeEach(() => {
         mockGetDocumentsByClientId.mockReset().mockResolvedValue([]);
+        mockUseClientServiceRecords.mockReset().mockReturnValue({ data: undefined, isError: false, isLoading: false });
         mockUseClientServiceRecordRevisionHistory.mockReset().mockReturnValue({
             data: undefined,
             error: undefined,
@@ -161,6 +164,8 @@ describe("ClientDetailPanel employee phones", () => {
         });
         mockClientServiceRecordsTab.mockReset();
     });
+
+    afterEach(() => { document.cookie = "selected_branch_id=; max-age=0; path=/"; });
 
     function renderPanel(detailClient: Client = client) {
         const queryClient = new QueryClient({
@@ -226,6 +231,8 @@ describe("ClientDetailPanel employee phones", () => {
     });
 
     it("passes the revision history response status through to the service-record tab", async () => {
+        document.cookie = "selected_branch_id=branch-a; path=/";
+        mockUseClientServiceRecords.mockReturnValue({ data: { cases: [], record: null, assignments: [] } });
         mockUseClientServiceRecordRevisionHistory.mockReturnValue({
             data: undefined,
             error: { response: { status: 404 } },

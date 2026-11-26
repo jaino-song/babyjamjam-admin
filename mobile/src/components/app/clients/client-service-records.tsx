@@ -7,6 +7,7 @@ import { createContext, useContext, useMemo, useRef, useState, type KeyboardEven
 import {
     getServiceRecordStatusMeta,
     getSignatureStatusMeta,
+    serviceRecordCaseLabel,
     type ServiceRecordStatusMeta,
 } from "@babyjamjam/shared/constants/service-record-display";
 import { RefreshCw } from "lucide-react";
@@ -161,8 +162,7 @@ function ClientServiceRecordsContent({
     const picker = cases.length > 1 || (!overview?.record && cases.length > 0) ? (
         <ul data-component={`${dataComponent}_case-picker`} data-slot="case-picker" className="flex flex-wrap gap-2">
             {cases.map((item) => {
-                const rankLabel = item.rank === null ? item.legacyName || "기존 제공기록지"
-                    : (["첫째", "둘째", "셋째", "넷째", "다섯째", "여섯째", "일곱째", "여덟째", "아홉째", "열째"][item.rank - 1] ?? `${item.rank}번째 아기`);
+                const rankLabel = serviceRecordCaseLabel(item);
                 const names = item.assignees.map(({ name }) => name).join(", ");
                 return <li key={item.caseId} data-component={`${dataComponent}_case-picker_option`} data-slot="option">
                     <Button data-component={`${dataComponent}_case-picker_option_button`} data-slot="case-select"

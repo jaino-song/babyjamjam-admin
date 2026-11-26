@@ -1,4 +1,5 @@
 import type { StatusBadgeVariant } from "../tokens/status-badge";
+import type { AdminServiceRecordCaseSummary } from "../types/service-record";
 import {
     EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
     getEformsignStatusCategory,
@@ -40,6 +41,13 @@ export const SERVICE_RECORD_STATUS_FALLBACK_META: ServiceRecordStatusMeta = {
 
 export function getServiceRecordStatusMeta(status: string | null | undefined): ServiceRecordStatusMeta {
     return (status && SERVICE_RECORD_STATUS_META[status]) || SERVICE_RECORD_STATUS_FALLBACK_META;
+}
+
+const KOREAN_ORDINALS = ["첫째", "둘째", "셋째", "넷째", "다섯째", "여섯째", "일곱째", "여덟째", "아홉째", "열째"];
+
+export function serviceRecordCaseLabel(record: Pick<AdminServiceRecordCaseSummary, "rank" | "legacyName">): string {
+    if (record.rank === null) return record.legacyName?.trim() || "기존 제공기록지";
+    return KOREAN_ORDINALS[record.rank - 1] ?? `${record.rank}번째 아기`;
 }
 
 export interface SignatureStatusInput {

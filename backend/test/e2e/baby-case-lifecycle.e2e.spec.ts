@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 
+import { babyRecordRolloutKey } from "application/policies/baby-record-rollout.policy";
 import { resolveServiceRecordCaseTarget } from "application/services/service-record-case-target";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
@@ -143,6 +144,11 @@ describeE2E("baby case lifecycle with the staged PostgreSQL keys", () => {
         allocation("TWINS", "B가2형", employees, [0, employees.length > 1 ? 1 : 0]);
 
     async function register(values: object): Promise<Registration> {
+        if ("fetalType" in values) {
+            await db.system_setting.create({
+                data: { key: babyRecordRolloutKey(branchId), value: "true" },
+            });
+        }
         const response = await http().post("/clients").send({
             name: "QA-Lifecycle client", voucherClient: true, breastPump: false,
             applyMessageAutomation: false, serviceStatus: "pre_booking", startDate: dateAt(7), endDate: dateAt(24),

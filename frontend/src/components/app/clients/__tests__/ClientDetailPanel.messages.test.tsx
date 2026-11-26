@@ -31,6 +31,7 @@ jest.mock("@/providers/LocaleProvider", () => ({
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
+    useClient: () => ({}),
     useConfirmBooking: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 

@@ -151,6 +151,11 @@ export function normalizeServiceRecordOverview(value: unknown): ServiceRecordOve
 }
 
 export const serviceRecordsApi = {
+    adoptLegacyCase: (clientId: number, caseId: string, babyId: string) =>
+        api.post<{ caseId: string; babyId: string }>(
+            `/admin/service-records/client/${clientId}/cases/${encodeURIComponent(caseId)}/adopt`,
+            { babyId },
+        ),
     getClientOverview: (clientId: number, caseId?: string) =>
         api.get<unknown>(withServiceRecordCase(`/admin/service-records/client/${clientId}`, caseId)).then((response) => ({
             ...response,

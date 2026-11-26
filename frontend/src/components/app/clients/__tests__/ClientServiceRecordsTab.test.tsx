@@ -182,13 +182,16 @@ describe("ClientServiceRecordsTab", () => {
         const cases: NonNullable<ServiceRecordOverview["cases"]> = [
             { caseId: "case-first", babyId: "baby-first", rank: 1 },
             { caseId: secondCaseId, babyId: "baby-second", rank: 2 },
-        ].map((item) => ({
+        ].map((item, index) => ({
             ...item,
             babyCount: 2,
             legacyName: null,
             retired: false,
             status: "IN_PROGRESS",
             assignees: [assignment.employee],
+            linkAssignments: [{
+                scheduleId: assignment.scheduleId, employeeId: assignment.employee.id, assignmentVersion: index + 6,
+            }],
             totalSessions: 6,
             submittedSessions: 0,
         }));
@@ -206,6 +209,7 @@ describe("ClientServiceRecordsTab", () => {
                     clientId={selection.clientId} isLoading={false} isError={false}
                     overview={{
                         cases,
+                        legacyLinkAssignment: null,
                         record: selectedCase ? createCaseRecord(selectedCase.caseId, sessions) : null,
                         assignments: selectedCase ? [assignment] : [],
                     }}
@@ -254,7 +258,10 @@ describe("ClientServiceRecordsTab", () => {
             });
 
             expect(mutateAsync.mock.calls).toEqual([[
-                { clientId, scheduleId: assignment.scheduleId, caseId: secondCaseId },
+                {
+                    clientId, scheduleId: assignment.scheduleId,
+                    target: { employeeId: assignment.employee.id, members: [{ caseId: secondCaseId, assignmentVersion: 7 }] },
+                },
             ]]);
         });
 
