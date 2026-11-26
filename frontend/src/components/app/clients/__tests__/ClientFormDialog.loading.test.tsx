@@ -1,5 +1,5 @@
 import { screen } from "@testing-library/react";
-import { render } from "./render-client-form";
+import { render } from "@/test-utils/render-client-form";
 
 import { api } from "@/lib/api/client";
 
