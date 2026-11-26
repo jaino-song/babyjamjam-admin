@@ -35,7 +35,7 @@ const mockRouter = {
     replace: jest.fn((href: string) => { mockSearchParams = new URL(href, "http://localhost").searchParams; }),
     push: jest.fn(),
 };
-let mockAuth: { data?: { role: string; branchRole: string | null; branchId?: string }; isError?: boolean };
+let mockAuth: { data?: { id: string; role: string; branchRole: string | null; branchId?: string }; isError?: boolean };
 const mockDirectory = jest.fn();
 const mockMissingClients = jest.fn();
 
@@ -132,6 +132,8 @@ function setBranch(branchId: string) {
 
 function setup(node: ReactNode, seed?: (queryClient: QueryClient) => void) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    queryClient.setQueryDefaults(AUTH_USER_QUERY_KEY, { gcTime: Infinity });
+    if (mockAuth.data) queryClient.setQueryData(AUTH_USER_QUERY_KEY, mockAuth.data);
     seed?.(queryClient);
     const Wrapper = ({ children }: { children: ReactNode }) => (
         <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -165,7 +167,7 @@ function mockReads(read: (path: string) => object | Promise<{ data: unknown }> |
 beforeEach(() => {
     mockSearchParams = new URLSearchParams();
     setBranch(BRANCH_A);
-    mockAuth = { data: { role: "user", branchRole: "manager" } };
+    mockAuth = { data: { id: "qa-user", role: "user", branchRole: "manager", branchId: BRANCH_A } };
     mockDirectory.mockReturnValue({ clients: [client], isBranchContextReady: true, data: {}, matchedTotal: 1 });
     mockMissingClients.mockReturnValue({});
 });
@@ -340,6 +342,7 @@ it("a singleton historic summary can be linked on the customer page while retain
     expect(get.mock.calls.filter(([path]) => path === RECORDS_PATH)).toHaveLength(2);
     expect(screen.queryByRole("combobox", { name: "연결할 아기" })).not.toBeInTheDocument();
     expect(post).toHaveBeenCalledTimes(1);
+    expect(get.mock.calls.map(([path]) => path)).not.toContain(CAPABILITY_PATH);
 });
 
 it("refreshes a conflicting claim and never falls back to a different baby", async () => {
@@ -355,6 +358,7 @@ it("refreshes a conflicting claim and never falls back to a different baby", asy
     });
     setup(<Panel />);
     fireEvent.click(await screen.findByRole("button", { name: HISTORIC_BUTTON }));
+    await screen.findByRole("link", { name: "제공기록지 보기" });
     await screen.findByRole("combobox", { name: "연결할 아기" });
     fireEvent.change(choice(), { target: { value: SECOND } });
     fireEvent.click(connect());
@@ -365,15 +369,13 @@ it("refreshes a conflicting claim and never falls back to a different baby", asy
     expect(post).toHaveBeenCalledTimes(1);
 });
 
-it("a pause during submission leaves the signed record readable and prevents resending", async () => {
-    const pause = deferred<void>();
-    let enabled = true;
+it("a conflicting submission leaves the signed record readable and requires a fresh choice", async () => {
+    const pending = deferred<void>();
     const signed = overview(cases, record(HISTORIC));
     mockReads((path) => path === RECORDS_PATH || path === casePath(HISTORIC) ? signed
-        : path === CAPABILITY_PATH ? { enabled } : undefined);
+        : path === CAPABILITY_PATH ? { enabled: false } : undefined);
     const post = jest.spyOn(api, "post").mockImplementation(async () => {
-        await pause.response;
-        enabled = false;
+        await pending.response;
         throw { response: { status: 409 } };
     });
     const { queryClient } = setup(<Panel caseId={HISTORIC} />);
@@ -385,23 +387,24 @@ it("a pause during submission leaves the signed record readable and prevents res
     expect(submit).toBeDisabled();
     fireEvent.click(submit);
     expect(post).toHaveBeenCalledTimes(1);
-    await act(async () => pause.resolve(undefined));
+    await act(async () => pending.resolve(undefined));
     await screen.findByText(/연결 대상이 변경되었어요/);
     await waitFor(() => expect(queryClient.isFetching()).toBe(0));
-    expect(screen.queryByRole("button", { name: "연결" })).not.toBeInTheDocument();
+    expect(connect()).toBeDisabled();
+    expect(choice()).toHaveValue("");
     expect(screen.getByRole("link", { name: "제공기록지 보기" })).toHaveAttribute("href", expect.stringContaining(HISTORIC));
     expect(post).toHaveBeenCalledTimes(1);
 });
 
-it.each(["paused", "unknown-role", "inactive-branch", "other-branch", "gone", "retired"])(
+it.each(["unknown-role", "inactive-branch", "other-branch", "missing-auth-branch", "gone", "retired"])(
     "keeps the historic read without a %s adoption", async (condition) => {
         if (condition === "unknown-role") mockAuth = { isError: true };
-        if (condition === "inactive-branch") mockAuth = { data: { role: "owner", branchRole: null, branchId: BRANCH_A } };
-        if (condition === "other-branch") mockAuth = { data: { role: "user", branchRole: "manager", branchId: BRANCH_B } };
+        if (condition === "inactive-branch") mockAuth = { data: { id: "qa-user", role: "owner", branchRole: null, branchId: BRANCH_A } };
+        if (condition === "other-branch") mockAuth = { data: { id: "qa-user", role: "user", branchRole: "manager", branchId: BRANCH_B } };
+        if (condition === "missing-auth-branch") mockAuth = { data: { id: "qa-user", role: "user", branchRole: "manager" } };
         const historic = { ...cases[0]!, retired: condition === "retired" };
         const signed = overview([historic], record(HISTORIC));
         mockReads((path) => path === RECORDS_PATH || path === casePath(HISTORIC) ? signed
-            : path === CAPABILITY_PATH ? { enabled: condition !== "paused" }
             : path === `/clients/${CLIENT_ID}` ? (condition === "gone" ? { ...client, babies: [] } : client) : undefined);
         const post = jest.spyOn(api, "post");
         const get = jest.mocked(api.get);
@@ -417,10 +420,7 @@ it("rejects a deliberate choice when branch authority is invalidated before subm
     const signed = overview(cases, record(HISTORIC));
     mockReads((path) => path === RECORDS_PATH || path === casePath(HISTORIC) ? signed : undefined);
     const post = jest.spyOn(api, "post");
-    const { queryClient } = setup(<Panel caseId={HISTORIC} />, (cache) => {
-        cache.setQueryDefaults(AUTH_USER_QUERY_KEY, { gcTime: Infinity });
-        cache.setQueryData(AUTH_USER_QUERY_KEY, mockAuth.data);
-    });
+    const { queryClient } = setup(<Panel caseId={HISTORIC} />);
     await screen.findByRole("combobox", { name: "연결할 아기" });
     fireEvent.change(choice(), { target: { value: SECOND } });
     const submit = connect();
@@ -456,3 +456,43 @@ it("a delayed adoption cannot refresh or replace the next customer's deliberate 
     expect(get.mock.calls.filter(([path]) => path.startsWith(otherPath))).toHaveLength(requests);
     expect(post).toHaveBeenCalledTimes(1);
 });
+
+it.each(["success", "conflict"] as const)(
+    "ignores %s for pending adoption after the authenticated session changes", async (outcome) => {
+        const adoption = deferred<{ caseId: string; babyId: string }>();
+        const signed = overview(cases, record(HISTORIC));
+        const get = mockReads((path) => path === RECORDS_PATH || path === casePath(HISTORIC) ? signed : undefined);
+        const post = jest.spyOn(api, "post").mockImplementation(async () => {
+            const response = await adoption.response;
+            if (outcome === "conflict") throw { response: { status: 409 } };
+            return response;
+        });
+        const { queryClient } = setup(<Panel caseId={HISTORIC} />);
+        await screen.findByRole("link", { name: "제공기록지 보기" });
+        await screen.findByRole("combobox", { name: "연결할 아기" });
+        await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+
+        const select = choice();
+        const branchCookie = document.cookie;
+        fireEvent.change(select, { target: { value: SECOND } });
+        fireEvent.click(connect());
+        expect(post.mock.calls).toEqual([[`${RECORDS_PATH}/cases/${HISTORIC}/adopt`, { babyId: SECOND }]]);
+        expect(select).toBeDisabled();
+
+        // The cache observes the new session before the mounted form's auth hook updates.
+        act(() => {
+            queryClient.setQueryData(AUTH_USER_QUERY_KEY, { ...mockAuth.data!, id: "next-qa-user" });
+        });
+        expect(choice()).toBe(select);
+        expect(select).toBeDisabled();
+        const readsBeforeResponse = get.mock.calls.length;
+        await act(async () => adoption.resolve({ caseId: HISTORIC, babyId: SECOND }));
+
+        expect(get).toHaveBeenCalledTimes(readsBeforeResponse);
+        expect(choice()).toBe(select);
+        expect(select).toBeEnabled();
+        expect(screen.queryByText("기존 제공기록지를 선택한 아기에 연결했어요.")).not.toBeInTheDocument();
+        expect(screen.queryByText(/연결 대상이 변경되었어요/)).not.toBeInTheDocument();
+        expect(document.cookie).toBe(branchCookie);
+    },
+);
