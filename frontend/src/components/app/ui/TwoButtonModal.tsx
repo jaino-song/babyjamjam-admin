@@ -26,6 +26,19 @@ const DEFAULT_DATA_COMPONENT = "desktop_v3_two-button-modal";
 
 export type TwoButtonModalSize = ApprovalModalSize;
 
+/**
+ * A sentence ends at ".", "?" or "!" after a character that is not a digit,
+ * so "1. 항목" and "2.5" stay whole.
+ */
+const SENTENCE_GAP = /([^\d\s][.?!])[ \t]+(?=\S)/g;
+
+/** Starts each sentence of a visible text description on its own line. */
+function breakBetweenSentences(description: ReactNode): ReactNode {
+  return typeof description === "string"
+    ? description.replace(SENTENCE_GAP, "$1\n")
+    : description;
+}
+
 export interface TwoButtonModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -137,7 +150,9 @@ export function TwoButtonModal({
                 : "mx-auto w-fit max-w-full whitespace-pre-line",
             )}
           >
-            {description}
+            {isDescriptionVisuallyHidden
+              ? description
+              : breakBetweenSentences(description)}
           </DialogDescription>
         </DialogHeader>
 

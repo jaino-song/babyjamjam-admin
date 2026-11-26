@@ -48,7 +48,7 @@ describe.each([390, 1280])("service-record jobs at %spx", width => {
     const dialog = screen.getByRole("dialog", { name: "제공기록지 생성을 재시도할까요?" });
     const description = within(dialog).getByText(/재시도하면 서버에서 제공기록지를 다시 생성합니다\./);
     const afterDispatch = ["dispatch_authorized", "creating", "sent", "reconciling"].includes(progressStep);
-    expect(description.textContent).toBe(`재시도하면 서버에서 제공기록지를 다시 생성합니다.${afterDispatch ? ` ${WARNING}` : ""}`);
+    expect(description.textContent).toBe(`재시도하면 서버에서 제공기록지를 다시 생성합니다.${afterDispatch ? `\n${WARNING.replace(". ", ".\n")}` : ""}`);
     expect(description).toBeVisible();
     expect(description).toHaveAttribute("data-component", `${BASE}_retry_header_description`);
     expect(dialog).not.toHaveTextContent(/계약서|수동 전송/);

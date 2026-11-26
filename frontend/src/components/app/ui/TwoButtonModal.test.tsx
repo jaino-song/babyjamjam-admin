@@ -143,4 +143,54 @@ describe("TwoButtonModal", () => {
     );
     expect(screen.getByTestId("review-body").parentElement).toHaveClass("overflow-y-auto");
   });
+
+  it("starts each sentence of a visible text description on its own line", () => {
+    render(
+      <TwoButtonModal
+        open
+        size="review"
+        onOpenChange={jest.fn()}
+        title="확인"
+        description="메시지는 발송되지 않았습니다. 아래 링크를 복사해 주세요? 1. 항목은 2.5시간이에요!  끝"
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="확인"
+        onApprove={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/메시지는 발송되지 않았습니다/).textContent).toBe(
+      "메시지는 발송되지 않았습니다.\n아래 링크를 복사해 주세요?\n1. 항목은 2.5시간이에요!\n끝",
+    );
+  });
+
+  it("leaves a hidden or non-text description as written", () => {
+    const { rerender } = render(
+      <TwoButtonModal
+        open
+        onOpenChange={jest.fn()}
+        title="삭제할까요?"
+        description="삭제하면 사라져요. 복구할 수 없어요."
+        approvalLabel="삭제"
+        onApprove={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("삭제하면 사라져요. 복구할 수 없어요.")).toHaveClass("sr-only");
+    expect(screen.getByText("삭제하면 사라져요. 복구할 수 없어요.").textContent).toBe("삭제하면 사라져요. 복구할 수 없어요.");
+
+    rerender(
+      <TwoButtonModal
+        open
+        size="review"
+        onOpenChange={jest.fn()}
+        title="삭제할까요?"
+        description={<span data-testid="node-description">삭제하면 사라져요. 복구할 수 없어요.</span>}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="삭제"
+        onApprove={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("node-description").textContent).toBe("삭제하면 사라져요. 복구할 수 없어요.");
+  });
 });
