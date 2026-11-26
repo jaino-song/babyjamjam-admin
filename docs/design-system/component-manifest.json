@@ -649,7 +649,7 @@
           "TwoButtonModalProps",
           "TwoButtonModalSize"
         ],
-        "note": "size compact: 300px with a fixed 5:3 ratio; review: 300px whose height follows a short body; detail: 420px with a scrolling body. The visible description is 12px and centered.",
+        "note": "size compact: 300px with a fixed 5:3 ratio; review: 300px whose height follows a short body; detail: 420px with a scrolling body. The visible description is 12px: its block sits centered, its lines are left-aligned, and a \\n in the text starts a new line, so put one between sentences. review and detail leave 12px under the header; any body gets 12px under it, so bodies add no outer margin.",
         "replaces": [
           "custom two-button confirmation modal markup"
         ],

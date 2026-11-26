@@ -2757,7 +2757,7 @@ function ClientFormContent({
             onOpenChange={(isOpen) => { if (!isOpen) setPendingDurationConfirmation(null); }}
             size="review"
             title="서비스 기간 확인"
-            description="평일 기준으로 서비스 기간이 맞지 않아요. 그래도 저장할까요?"
+            description={"평일 기준으로 서비스 기간이 맞지 않아요.\n그래도 저장할까요?"}
             isDescriptionVisuallyHidden={false}
             cancelLabel="취소"
             approvalLabel="확인"

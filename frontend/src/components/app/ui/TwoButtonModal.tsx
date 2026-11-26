@@ -117,8 +117,8 @@ export function TwoButtonModal({
         <DialogHeader
           data-component={headerDataComponent ?? sub("header")}
           className={cn(
-            "gap-1 justify-center pb-0 text-left sm:text-left",
-            size === "compact" && "flex-1",
+            "gap-1 justify-center text-left sm:text-left",
+            size === "compact" ? "flex-1 pb-0" : "pb-3",
           )}
         >
           <DialogTitle
@@ -131,8 +131,10 @@ export function TwoButtonModal({
           <DialogDescription
             data-component={descriptionDataComponent ?? sub("description")}
             className={cn(
-              "mt-0 break-keep [overflow-wrap:anywhere] text-center text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
-              isDescriptionVisuallyHidden && "sr-only",
+              "mt-0 break-keep [overflow-wrap:anywhere] text-left text-[calc(12px*var(--v3-ui-scale,1))] leading-[calc(20px*var(--v3-ui-scale,1))] text-v3-text-muted",
+              isDescriptionVisuallyHidden
+                ? "sr-only"
+                : "mx-auto w-fit max-w-full whitespace-pre-line",
             )}
           >
             {description}
@@ -142,7 +144,10 @@ export function TwoButtonModal({
         {children ? (
           <div
             data-component={bodyDataComponent ?? sub("body")}
-            className={cn("min-h-0", (size === "detail" || size === "review") && "overflow-y-auto")}
+            className={cn(
+              "min-h-0 pb-3 empty:hidden",
+              (size === "detail" || size === "review") && "overflow-y-auto",
+            )}
           >
             {children}
           </div>

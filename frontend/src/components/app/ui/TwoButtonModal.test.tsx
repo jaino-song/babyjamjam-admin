@@ -31,8 +31,8 @@ describe("TwoButtonModal", () => {
     expect(dialog).toHaveClass("aspect-[5/3]", "sm:max-w-[300px]");
     expect(header).toHaveClass("gap-1");
     expect(header).not.toHaveClass("gap-2");
-    expect(header).toHaveClass("text-left", "sm:text-left");
-    expect(header).not.toHaveClass("text-center", "sm:text-center");
+    expect(header).toHaveClass("text-left", "sm:text-left", "flex-1", "pb-0");
+    expect(header).not.toHaveClass("text-center", "sm:text-center", "pb-3");
     expect(title).toHaveClass(
       "text-center",
       "text-[calc(16px*var(--v3-ui-scale,1))]",
@@ -43,7 +43,8 @@ describe("TwoButtonModal", () => {
       "text-[calc(12px*var(--v3-ui-scale,1))]",
       "leading-[calc(20px*var(--v3-ui-scale,1))]",
     );
-    expect(description).toHaveClass("mt-0", "text-center");
+    expect(description).toHaveClass("mt-0", "text-left");
+    expect(description).not.toHaveClass("text-center", "w-fit", "mx-auto", "whitespace-pre-line");
     expect(title).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
     expect(description).toHaveClass("break-keep", "[overflow-wrap:anywhere]");
     expect(description).not.toHaveClass("mt-[calc(6px*var(--glint-ui-scale,1))]");
@@ -101,8 +102,10 @@ describe("TwoButtonModal", () => {
     );
 
     expect(screen.getByRole("dialog")).toHaveClass("sm:max-w-[420px]");
+    expect(screen.getByRole("dialog").querySelector('[data-slot="dialog-header"]')).toHaveClass("pb-3");
     expect(screen.getByText("최근 같은 메시지를 보낸 기록이 있습니다.")).not.toHaveClass("sr-only");
     expect(screen.getByTestId("review-body")).toBeInTheDocument();
+    expect(screen.getByTestId("review-body").parentElement).toHaveClass("pb-3", "empty:hidden");
     expect(screen.getByRole("button", { name: "전송" })).toHaveClass("w-1/2");
   });
 
@@ -126,9 +129,18 @@ describe("TwoButtonModal", () => {
     expect(dialog).toHaveClass("min-h-0", "sm:max-w-[300px]");
     expect(dialog).not.toHaveClass("aspect-[5/3]");
     expect(dialog.querySelector('[data-slot="dialog-header"]')).not.toHaveClass("flex-1");
+    expect(dialog.querySelector('[data-slot="dialog-header"]')).toHaveClass("pb-3");
     const description = screen.getByText("계약서가 완료된 상태여서 계약서는 변경할 수 없어요. 그래도 수정할까요?");
-    expect(description).not.toHaveClass("sr-only");
-    expect(description).toHaveClass("text-[calc(12px*var(--v3-ui-scale,1))]", "text-v3-text-muted", "text-center");
+    expect(description).not.toHaveClass("sr-only", "text-center");
+    expect(description).toHaveClass(
+      "text-[calc(12px*var(--v3-ui-scale,1))]",
+      "text-v3-text-muted",
+      "text-left",
+      "mx-auto",
+      "w-fit",
+      "max-w-full",
+      "whitespace-pre-line",
+    );
     expect(screen.getByTestId("review-body").parentElement).toHaveClass("overflow-y-auto");
   });
 });

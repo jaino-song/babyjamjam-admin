@@ -31,7 +31,7 @@ export function ServiceRecordLinkResetResultModal({
             approvalLabel="링크 복사"
             onApprove={() => onCopy(serviceRecordUrl)}
         >
-            <div className="px-6 py-4">
+            <div className="px-6">
                 <label
                     htmlFor="reset-service-record-link-url"
                     className="mb-2 block text-sm font-medium text-v3-text"
