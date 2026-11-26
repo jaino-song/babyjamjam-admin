@@ -3126,7 +3126,8 @@ function ClientFormContent({
     ) : null;
 
     const availabilityBase = `${base}_content_baby-record-availability`;
-    const availabilityNotice = (branchChanged || !activeBranchId) && (
+    const isAuthBranchMismatch = auth?.data != null && authBranchId !== activeBranchId;
+    const availabilityNotice = (branchChanged || !activeBranchId || isAuthBranchMismatch) && (
         <FormHelperText data-component={availabilityBase} data-slot="baby-record-availability" role="status">
             {babyCopy(branchChanged ? "branch-changed" : "branch-required")}
         </FormHelperText>
