@@ -1072,14 +1072,14 @@ function ClientFormContent({
         const sessionClientId = client?.id ?? null;
         if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
         const selectedBranchId = normalizedBranchId(getActiveBranchId());
-        const currentAuth = readAuth();
-        const user = currentAuth?.data;
+        const user = readAuth()?.data;
         const userBranchId = normalizedBranchId(user?.branchId);
-        const branchId = selectedBranchId ?? (sessionClientId === null && user?.id && isSettledAuth(currentAuth)
-            ? userBranchId : null);
+        const isAutomaticRegistration = sessionClientId === null && selectedBranchId === null;
+        // Keep the cached identity across revalidation. Save still requires settled auth.
+        const branchId = isAutomaticRegistration && user?.id ? userBranchId : selectedBranchId;
         formSessionRef.current = {
             open: true, clientId: sessionClientId, selectedBranchId, branchId,
-            userId: branchId && userBranchId === branchId ? user?.id ?? null : null,
+            userId: isAutomaticRegistration || (branchId !== null && userBranchId === branchId) ? user?.id ?? null : null,
             branchChanged: false,
         };
         if (open) {
@@ -1200,10 +1200,9 @@ function ClientFormContent({
         const session = formSessionRef.current;
         if (!session.open) return;
         if (normalizedBranchId(getActiveBranchId()) !== session.selectedBranchId) session.branchChanged = true;
-        // A new registration can open while /auth/me is still resolving. Bind
-        // it once to the settled identity and keep the original mirror state.
+        // Only a registration opened without a cached identity can bind later.
         if (!session.branchChanged && session.clientId === null && session.selectedBranchId === null
-            && session.branchId === null && automaticBranchId) {
+            && session.branchId === null && session.userId === null && automaticBranchId) {
             session.branchId = automaticBranchId;
             session.userId = auth?.data?.id ?? null;
         }

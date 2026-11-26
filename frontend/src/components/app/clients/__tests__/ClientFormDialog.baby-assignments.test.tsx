@@ -37,10 +37,11 @@ const year = 2026;
 const firstBranch = "11111111-1111-4111-8111-111111111111";
 const secondBranch = "22222222-2222-4222-8222-222222222222";
 const originalUserId = "qa-user";
-const authSessionChanges = [
+const replacementIdentities = [
   { change: "the authenticated branch changes", branchId: secondBranch, userId: originalUserId },
   { change: "the authenticated user changes", branchId: firstBranch, userId: "qa-other-user" },
-].flatMap((change) => [
+];
+const authSessionChanges = replacementIdentities.flatMap((change) => [
   { ...change, selection: "explicit" },
   { ...change, selection: "automatic" },
 ]);
@@ -734,9 +735,13 @@ describe("desktop client service-record allocation", () => {
     expect(document.cookie).not.toMatch(/selected_(branch|organization)_id/);
   });
 
-  it("binds the open registration when automatic branch authority first resolves", async () => {
+  it.each(["an empty auth query", "matching invalidated auth"])("binds the open registration after %s resolves", async (initialAuth) => {
     clearBranchSelection();
-    queries.removeQueries({ queryKey: AUTH_USER_QUERY_KEY });
+    if (initialAuth === "an empty auth query") {
+      queries.removeQueries({ queryKey: AUTH_USER_QUERY_KEY });
+    } else {
+      await queries.invalidateQueries({ queryKey: AUTH_USER_QUERY_KEY, refetchType: "none" });
+    }
     await open();
     next();
     fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
@@ -751,6 +756,50 @@ describe("desktop client service-record allocation", () => {
     next();
     click("생성");
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/clients", expect.objectContaining({ name: basicInfo.name }), {
+      headers: { [REGISTRATION_BRANCH_HEADER]: firstBranch, [REGISTRATION_USER_HEADER]: originalUserId },
+    });
+  });
+
+  it.each(replacementIdentities.flatMap((identity) => [
+    { ...identity, revalidation: "invalidated" },
+    { ...identity, revalidation: "fetching" },
+  ]))("requires reopening a cookieless form opened with $revalidation auth when $change", async ({ branchId, userId, revalidation }) => {
+    clearBranchSelection();
+    if (revalidation === "invalidated") {
+      await queries.invalidateQueries({ queryKey: AUTH_USER_QUERY_KEY, refetchType: "none" });
+    }
+    let resolveAuth!: (user: AuthUser) => void;
+    const authRequest = revalidation === "fetching" ? queries.fetchQuery({
+      queryKey: AUTH_USER_QUERY_KEY,
+      queryFn: () => new Promise<AuthUser>((resolve) => { resolveAuth = resolve; }),
+    }) : undefined;
+    const view = await open({ surface: "dialog" });
+    const submit = screen.getByRole("button", { name: "생성" });
+    expect(submit).toBeDisabled();
+
+    await act(async () => {
+      if (authRequest) {
+        resolveAuth({ id: userId, name: "QA", branchId, branchRole: "manager" });
+        await authRequest;
+      } else {
+        alignAuth(branchId, userId);
+      }
+    });
+    await act(async () => { fireEvent.click(submit); });
+    expect(post).not.toHaveBeenCalled();
+    expect(submit).toBeDisabled();
+    const reopenMessage = "선택한 지점이 바뀌었어요. 현재 지점에서 저장하려면 이 창을 닫고 다시 열어 주세요.";
+    expect(screen.getByText(reopenMessage)).toHaveAttribute("role", "status");
+
+    view.unmount();
+    await open({ surface: "dialog" });
+    expect(screen.getByRole("button", { name: "생성" })).toBeEnabled();
+    click("생성");
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/clients", expect.objectContaining({ name: basicInfo.name }), {
+      headers: { [REGISTRATION_BRANCH_HEADER]: branchId, [REGISTRATION_USER_HEADER]: userId },
+    });
   });
 
   it("hides previously selectable scoped providers after a denied refresh and recovers on success", async () => {
@@ -783,9 +832,9 @@ describe("desktop client service-record allocation", () => {
     expect(trigger).toHaveTextContent(recoveredProvider.name);
   });
 
-  it("waits for cookieless branch authority before mounting provider search", async () => {
+  it.each(["empty", "cached"])("waits for a %s auth query before mounting cookieless provider search", async (initialAuth) => {
     clearBranchSelection();
-    queries.removeQueries({ queryKey: AUTH_USER_QUERY_KEY });
+    if (initialAuth === "empty") queries.removeQueries({ queryKey: AUTH_USER_QUERY_KEY });
     queries.setQueryData(employeeQueryKeys.lists(), [{ ...providers[0], name: "다른 지점 제공인력" }]);
     const defaultGet = get.getMockImplementation()!;
     let resolveAuth!: (user: AuthUser) => void;
