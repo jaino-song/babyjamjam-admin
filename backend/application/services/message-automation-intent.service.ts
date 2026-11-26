@@ -1,4 +1,3 @@
-import { BabyRecordRolloutPausedException } from "application/policies/baby-record-rollout.policy";
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Prisma } from "@prisma/client";
@@ -195,10 +194,6 @@ export class MessageAutomationIntentService {
             }
             return this.deleteClaimedIntent(claim);
         } catch (error) {
-            if (error instanceof BabyRecordRolloutPausedException) {
-                await this.releaseIntent(claim);
-                return false;
-            }
             await this.releaseAfterFailure(claim, error);
             throw error;
         }

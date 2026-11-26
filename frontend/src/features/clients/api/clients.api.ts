@@ -1,6 +1,5 @@
 import { api } from '@/lib/api/client';
 
-import { parseBabyRecordCapability } from './baby-record-capability';
 import { parseServiceRecordMissingClients } from './service-record-missing';
 import type {
   Client,
@@ -29,13 +28,6 @@ export interface ClientListSummaryParams {
  * All API calls go through the Next.js /api proxy for CORS safety
  */
 export const clientsApi = {
-  getBabyRecordCapability: async (signal: AbortSignal): Promise<boolean> => {
-    const { data } = await api.get<unknown>('/clients/baby-record-capability', { signal });
-    const capability = parseBabyRecordCapability(data);
-    if (!capability) throw new Error('Invalid baby-record capability response');
-    return capability.enabled;
-  },
-
   listServiceRecordMissing: async () => {
     const response = await api.get<unknown>('/clients/service-record-missing');
     return { ...response, data: parseServiceRecordMissingClients(response.data) };

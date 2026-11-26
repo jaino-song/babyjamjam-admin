@@ -6,7 +6,6 @@ import { Test } from "@nestjs/testing";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 
-import { babyRecordRolloutKey } from "application/policies/baby-record-rollout.policy";
 import { HolidayReviewProcessorService } from "application/services/holiday-review-processor.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
@@ -126,15 +125,10 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
         return { userId: user.id, authorization };
     }
 
-    async function branchFixture(enableBabyRecords = false) {
+    async function branchFixture() {
         const branch = await db.branch.create({
             data: { name: "QA-Schema closure", slug: `qa-schema-closure-${randomUUID()}` },
         });
-        if (enableBabyRecords) {
-            await db.system_setting.create({
-                data: { key: babyRecordRolloutKey(branch.id), value: "true" },
-            });
-        }
         return { branchId: branch.id, ...await userInBranch(branch.id) };
     }
 
@@ -249,7 +243,7 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
     }
 
     it("canonical keys allow siblings on the same schedule and session", async () => {
-        const branch = await branchFixture(true);
+        const branch = await branchFixture();
         const primary = await caregiver(branch.branchId, "01000009301");
         const assistant = await caregiver(branch.branchId, "01000009302");
         const { registration, ...scope } = await register(branch, twins(primary, assistant));
@@ -313,7 +307,7 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
     });
 
     it("the authenticated adoption route preserves a signed case", async () => {
-        const branch = await branchFixture(true);
+        const branch = await branchFixture();
         const assistant = await caregiver(branch.branchId, "01000009302");
         const { scope, record, day, revision, document, file, link, access, primary, schedule } =
             await signedLegacyFixture(branch, assistant);
@@ -408,7 +402,7 @@ describeReal("baby case schema closure across real HTTP routes and PostgreSQL", 
     });
 
     it("the second sibling blocks a household holiday change", async () => {
-        const branch = await branchFixture(true);
+        const branch = await branchFixture();
         const primary = await caregiver(branch.branchId, "01000009301");
         const assistant = await caregiver(branch.branchId, "01000009302");
         const nextPrimary = await caregiver(branch.branchId, "01000009303");
