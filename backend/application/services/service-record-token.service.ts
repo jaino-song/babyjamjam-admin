@@ -265,6 +265,42 @@ export class ServiceRecordTokenService {
         return false;
     }
 
+    private async retireBackfilledScalarLinks(
+        tx: Prisma.TransactionClient,
+        params: ServiceRecordLinkTokenParams,
+        current: { clientId: number; target: Extract<ServiceRecordCaseTarget, { kind: "resolved" }> },
+        groupScope: Prisma.service_record_tokenWhereInput,
+        checkChallenge = false,
+    ) {
+        const { branchId, scheduleId, employeeId } = params;
+        const historical = await readBackfilledLinkPolicy(tx, { branchId, clientId: current.clientId });
+        if (historical?.caseId !== current.target.caseId
+            || historical.scheduleId !== scheduleId || historical.employeeId !== employeeId) return;
+
+        // A grouped prepare already leaves durable group provenance. Use the
+        // historical tuple and token provenance even when scalar writes are fenced.
+        const where: Prisma.service_record_tokenWhereInput = {
+            ...groupScope,
+            linkTokenHash: { not: { startsWith: GROUP_RECORD_LINK_PREFIX } },
+            AND: [{ OR: [
+                { createdAt: { lt: historical.backfilledAt } },
+                { linkTokenHash: { startsWith: BACKFILLED_SCALAR_LINK_PREFIX } },
+            ] }],
+        };
+        if (checkChallenge && await tx.service_record_token.findFirst({ where: { ...where, active: true }, select: { id: true } })) {
+            const activeRows = await this.lockActiveRowsForAssignment(tx, params, current.target.caseId, Boolean(groupScope.OR));
+            if (activeRows.some(row => row.lockedAt || row.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS)) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
+        }
+        // Retire the previous URL and its verified session before promotion.
+        // The database also permits just one active token bound to each case.
+        await tx.service_record_token.updateMany({
+            where,
+            data: { active: false, revokedAt: new Date(), accessTokenHash: null, verifiedAt: null },
+        });
+    }
+
     /** A link stays with its case and employee for the lifetime of the credential. */
     async issueLink(params: ServiceRecordLinkTokenParams, transaction?: Prisma.TransactionClient): Promise<{ linkToken: string }> {
         return this.persistLink(params, true, transaction);
@@ -279,6 +315,9 @@ export class ServiceRecordTokenService {
 
             const historical = await this.authorizeLinkWrite(tx, params, current);
             const scope = await this.credentialScope(tx, params, current);
+            if (params.grouped && current.configured && activate) {
+                await this.retireBackfilledScalarLinks(tx, params, current, scope, !params.resetChallenge);
+            }
             const row = await tx.service_record_token.findFirst({
                 where: scope,
                 orderBy: [{ active: "desc" }, { createdAt: "desc" }, { id: "desc" }],
@@ -360,21 +399,24 @@ export class ServiceRecordTokenService {
             if (!current || current.phoneHash !== expectedPhoneHash) return false;
             await this.authorizeLinkWrite(tx, params, current);
             const scope = await this.credentialScope(tx, params, current);
-            // In-flight grouped prepares from before token provenance was
-            // recorded remain usable through their original grouped request.
             const record = await tx.service_record_token.findFirst({
-                where: { ...scope, ...(params.grouped
-                    ? { linkTokenHash: { not: { startsWith: BACKFILLED_SCALAR_LINK_PREFIX } } } : {}), id: candidate.id },
+                where: { ...scope, id: candidate.id },
             });
             if (!record || record.expectedPhoneHash !== expectedPhoneHash || record.expiresAt.getTime() <= Date.now()) return false;
 
             // Serialize activation with the active challenge without clearing a lock.
             const activeRows = await this.lockActiveRowsForAssignment(tx, record, current.target.caseId, Boolean(scope.OR));
             if (activeRows.some((row) => row.lockedAt || row.failedAttempts >= SERVICE_RECORD_PHONE_CHALLENGE_MAX_FAILED_ATTEMPTS)) return false;
+            if (params.grouped && current.configured) {
+                await this.retireBackfilledScalarLinks(tx, params, current, scope);
+            }
             const updated = await tx.service_record_token.updateMany({
                 where: { ...scope, id: record.id, expectedPhoneHash },
                 data: { active: true, expiresAt: params.expiresAt },
             });
+            if (params.grouped && updated.count !== 1) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
             return updated.count === 1;
         };
         return transaction ? activate(transaction) : this.prismaService.$transaction(activate);
