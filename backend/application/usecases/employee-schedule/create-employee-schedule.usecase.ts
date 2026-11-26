@@ -5,6 +5,9 @@ import {
     EmployeeScheduleRoleError,
 } from "domain/entities/employee-schedule.entity";
 import { EMPLOYEE_SCHEDULE_REPOSITORY, IEmployeeScheduleRepository } from "domain/repositories/employee-schedule.repository.interface";
+import {
+    allocationConflict, loadClientAllocations, persistClientAllocation, planLegacyClientAllocation,
+} from "application/services/client-allocation.service";
 import { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { assertEmployeeAssignmentEligibility, type EmployeeAssignmentCandidate } from "application/policies/employee-assignment-eligibility.policy";
@@ -48,16 +51,9 @@ export class CreateEmployeeScheduleUsecase {
 
             const employeeIds = [params.primaryEmployeeId, params.secondaryEmployeeId]
                 .filter((employeeId): employeeId is number => employeeId !== null);
-            const existingCase = tx.service_record_case?.findUnique
-                ? await tx.service_record_case.findUnique({
-                    where: { clientId: params.clientId },
-                    select: { id: true },
-                })
-                : null;
             await lockServiceRecordWriteSet(tx, {
                 branchId: branchid,
                 clientId: params.clientId,
-                caseId: existingCase?.id,
                 employeeIds,
             });
             // The initial client lookup is discovery only. Revalidate branch
@@ -119,8 +115,16 @@ export class CreateEmployeeScheduleUsecase {
                 }
                 throw error;
             }
+            const snapshot = (await loadClientAllocations(tx, branchid, [params.clientId])).get(params.clientId);
+            const allocation = !schedule.replaced && await planLegacyClientAllocation(tx, snapshot, params);
+            if (allocation && snapshot?.employeeSchedules.length) allocationConflict("/clientId");
             await assertEmployeeScheduleWriteIsAvailable(tx, schedule, branchid);
-            return this.employeeScheduleRepository.create(branchid, schedule, tx);
+            const created = await this.employeeScheduleRepository.create(branchid, schedule, tx);
+            if (allocation) {
+                await persistClientAllocation(tx, { branchId: branchid, clientId: params.clientId }, allocation, created.id, null);
+                created.providers = allocation.providers;
+            }
+            return created;
         };
 
         return transaction ? persist(transaction) : this.prismaService.$transaction(persist);

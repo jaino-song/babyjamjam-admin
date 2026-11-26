@@ -22,7 +22,7 @@ const mockSelectClient = jest.fn();
 // The stored record of the client already selected in the form store (id 7). It matches the
 // default form state below, so a submit without edits has nothing to ask about; the page builds
 // its diff baseline from this record, not from the store's form values.
-const mockClients = [{
+const defaultClients = [{
   id: 7,
   name: "테스트 고객",
   phone: "01012345678",
@@ -40,6 +40,8 @@ const mockClients = [{
   endDate: "2026-09-16",
   eDocId: null,
 } as Client];
+let mockClients = defaultClients;
+let mockAreaTemplates: Array<{ areaId: string; templateName: string }> = [];
 
 jest.mock("@/hooks/useBusinessDayCalendar");
 
@@ -58,11 +60,12 @@ jest.mock("@/stores/form-store", () => ({
 jest.mock("@/hooks", () => ({
   useVoucherYears: () => ({ data: [2026] }),
   useVoucherPriceInfos: () => ({ data: [] }),
-  useAreaTemplates: () => ({ data: [] }),
+  useAreaTemplates: () => ({ data: mockAreaTemplates }),
   useAllVoucherPrices: () => ({ data: [] }),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
+  clientQueryKeys: { all: ["clients"] },
   useAllClients: () => ({ data: mockClients, isError: false, error: null, refetch: jest.fn(), isFetching: false }),
   useCreateClient: () => ({ mutateAsync: mockCreateClient }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClient }),
@@ -291,6 +294,8 @@ beforeEach(() => {
   jest.useRealTimers();
   jest.clearAllMocks();
   mockUseFormStore.mockReset();
+  mockClients = defaultClients;
+  mockAreaTemplates = [];
   installEventSourceStub();
   installFormState();
   mockCreateClient.mockResolvedValue({ id: 8 });
@@ -614,10 +619,96 @@ describe("contract date validation", () => {
     );
   });
 
-  it("keeps a known reissue payment date prefilled", async () => {
-    installFormState({ paymentDate: "2026-09-15", isContractReissue: true });
-    await renderReadyPage();
-    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue("2026-09-15");
+  it("displays and sends the explicit reissue payment date when the client has a different saved date", async () => {
+    const { useFormStore } = jest.requireActual<typeof import("@/stores/form-store")>("@/stores/form-store");
+    const savedDate = "2026-11-20";
+    const reissueDate = "2026-11-21";
+    const client = { ...defaultClients[0], copaymentReceivedDate: savedDate };
+    mockClients = [client];
+    mockAreaTemplates = [{ areaId: "Namdonggu", templateName: "남동구 산모 계약서" }];
+    useFormStore.getState().resetAll();
+    useFormStore.getState().prefillFromContract({
+      clientId: client.id,
+      name: client.name,
+      phone: client.phone ?? "",
+      birthday: client.birthday ?? "",
+      address: client.address ?? "",
+      employeeId: client.primaryEmployee?.id,
+      employeeName: client.primaryEmployee?.name,
+      employeePhone: "010-9999-8888",
+      startDate: client.startDate ?? "",
+      endDate: client.endDate ?? "",
+      fullPrice: client.fullPrice ?? "",
+      grant: client.grant ?? "",
+      actualPrice: client.actualPrice ?? "",
+      voucherType: client.type ?? "",
+      voucherDuration: String(client.duration),
+      copaymentReceivedDate: savedDate,
+      paymentDate: reissueDate,
+      isContractReissue: true,
+    });
+    mockUseFormStore.mockImplementation(useFormStore);
+    mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-reissue", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue(reissueDate);
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(mockDispatchHeadless).toHaveBeenCalledWith(
+      expect.objectContaining({
+        copaymentReceivedDate: reissueDate,
+        paymentYear: "26",
+        paymentMonth: "11",
+        paymentDay: "21",
+      }),
+      client.id,
+      expect.any(String),
+    );
+  });
+
+  it("prefills a late saved date and sends the editable date through the direct route", async () => {
+    const { default: ContractCreationPage } = await import("./page");
+    mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-date", durationMs: 1 });
+    const { rerender } = render(<ContractCreationPage />);
+    for (let step = 0; step < 3; step++) {
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    }
+    mockClients = [{ ...defaultClients[0], copaymentReceivedDate: "2026-11-20" }];
+    rerender(<ContractCreationPage />);
+    const input = getDateInput("본인부담금 수령 날짜");
+    expect(input).toHaveValue("2026-11-20");
+
+    fireEvent.change(input, { target: { value: "20261121" } });
+    mockClients = [{ ...defaultClients[0], copaymentReceivedDate: "2026-11-19" }];
+    rerender(<ContractCreationPage />);
+    expect(input).toHaveValue("2026-11-21");
+    fireEvent.click(screen.getByRole("button", { name: "계약서 생성" }));
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledWith(
+      expect.objectContaining({
+        copaymentReceivedDate: "2026-11-21", paymentYear: "26", paymentMonth: "11", paymentDay: "21",
+      }),
+      7,
+      expect.any(String),
+    ));
+  });
+
+  it("copies the next client's date, recomputes the fallback on another switch, and discards the draft on close", async () => {
+    const { useFormStore } = jest.requireActual<typeof import("@/stores/form-store")>("@/stores/form-store");
+    useFormStore.getState().prefillFromContract({ clientId: 7, name: "테스트 고객", paymentDate: "2026-11-21", isContractReissue: true });
+    mockUseFormStore.mockImplementation(useFormStore);
+    const { default: ContractCreationPage } = await import("./page");
+    render(<ContractCreationPage />);
+    const next = { ...defaultClients[0], id: 8, copaymentReceivedDate: "2026-11-20", startDate: null };
+    act(() => mockSelectClient(8, next));
+    expect(useFormStore.getState().paymentDate).toBe("2026-11-20");
+    act(() => mockSelectClient(9, { ...next, id: 9, copaymentReceivedDate: null }));
+    expect(useFormStore.getState().paymentDate).toBe(todayIsoDate());
+    fireEvent.click(screen.getByRole("button", { name: "계약서 생성 닫기" }));
+    expect(useFormStore.getState().clientId).toBeNull();
+    expect(useFormStore.getState().historicalPaymentDate).toBe("");
+    expect(mockPush).toHaveBeenCalledWith("/contracts");
+    expectNoContractSideEffects();
   });
 
   it("still defaults a blank new-contract payment date to today", async () => {

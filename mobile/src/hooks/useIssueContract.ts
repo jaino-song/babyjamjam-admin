@@ -68,6 +68,7 @@ export function useIssueContract() {
       grant: target.grant ?? "",
       actualPrice: target.actualPrice ?? "",
       paymentDate: reissue?.paymentDate,
+      copaymentReceivedDate: target.copaymentReceivedDate,
       isContractReissue: reissue != null,
       supersedeDocumentId: reissue?.supersedeDocumentId,
       voucherType: target.type ?? "",

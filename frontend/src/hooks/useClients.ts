@@ -194,7 +194,7 @@ export function useUpdateClient() {
             await queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
             await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(variables.id) });
-            if (variables.dto.primaryEmployeeId !== undefined || variables.dto.secondaryEmployeeId !== undefined) {
+            if (variables.dto.providers !== undefined || variables.dto.primaryEmployeeId !== undefined || variables.dto.secondaryEmployeeId !== undefined) {
                 await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
             }
         },

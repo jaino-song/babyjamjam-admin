@@ -182,3 +182,5 @@ jobs:
       # at the job level — the runner injects its own.
       - name: Run call-inbox E2E against local vendor stubs
         run: pnpm --filter ./backend run e2e:call-inbox
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096

@@ -86,6 +86,9 @@ export interface RecentEformsignDocRow {
 export interface EformsignContractCandidateRow {
     id: number;
     documentId: string;
+    branchId: string | null;
+    clientId: number | null;
+    expired: boolean;
     documentKind: string | null;
     serviceRecordCaseId: string | null;
     templateId: string | null;

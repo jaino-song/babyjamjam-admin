@@ -22,7 +22,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
         const body = await readJsonObjectBody(request);
         const response = await serverAPIClient.post(
-            `/admin/service-records/client/${encodeURIComponent(clientId)}/period-mismatch/fit`,
+            `/admin/service-records/client/${encodeURIComponent(clientId)}/period-mismatch/fit${new URL(request.url).search}`,
             body,
             { headers: getAuthHeaders(token) },
         );

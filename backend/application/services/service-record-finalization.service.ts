@@ -1,10 +1,15 @@
-import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
 import {
     INITIAL_FINALIZATION_REQUEST_PREFIX,
+    INITIAL_PROVIDER_FAILURE_CODES,
     initialFinalizationRequestKey,
+    initialFinalizationGenerationRequestKey,
+    releaseTerminalInitialFinalizationKey,
+    isInitialFinalizationRequestKeyFor,
+    isInitialFinalizationWorkflowScopeForRevision,
 } from "application/policies/service-record-initial-finalization.policy";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -49,6 +54,9 @@ const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
  */
 const CLIENT_NOT_TOMBSTONED: Prisma.service_record_caseWhereInput = {
     OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }],
+};
+const CASE_BABY_NOT_RETIRED: Prisma.service_record_caseWhereInput = {
+    OR: [{ babyId: null }, { baby: { is: { active: true } } }],
 };
 const CLIENT_TOMBSTONED: Prisma.service_record_caseWhereInput = {
     client: { is: { deletedAt: { not: null } } },
@@ -414,6 +422,11 @@ function hasCompleteRevisionOriginalDates(
     return seen.size === expectedIndexes.size;
 }
 
+/** The INITIAL regeneration API exposes its readiness reason as the sole conflict code. */
+export function initialFinalizationConflict(code: string): ConflictException {
+    return new ConflictException({ code });
+}
+
 @Injectable()
 export class ServiceRecordFinalizationService {
     private readonly logger = new Logger(ServiceRecordFinalizationService.name);
@@ -437,7 +450,7 @@ export class ServiceRecordFinalizationService {
         const candidates = await this.prisma.service_record_case.findMany({
             where: {
                 snapshotChunks: { none: { status: "MANUAL_REVIEW" } },
-                AND: [CLIENT_NOT_TOMBSTONED],
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                     {
@@ -595,13 +608,14 @@ export class ServiceRecordFinalizationService {
                     nextAttemptAt: Date | null;
                     finalizationAttempts: number;
                     client?: { deletedAt: Date | null } | null;
+                    baby?: { active: boolean } | null;
                 } | null>;
             } | undefined;
             if (typeof caseDelegate?.findUnique !== "function") {
                 const claimed = await tx.service_record_case.updateMany({
                     where: {
                         id: caseId,
-                        AND: [CLIENT_NOT_TOMBSTONED],
+                        AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                         OR: [
                             { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                             {
@@ -672,6 +686,7 @@ export class ServiceRecordFinalizationService {
                     nextAttemptAt: true,
                     finalizationAttempts: true,
                     client: { select: { deletedAt: true } },
+                    baby: { select: { active: true } },
                 },
             });
             if (
@@ -679,6 +694,7 @@ export class ServiceRecordFinalizationService {
                 // Reread under the lock: a client deleted while this run waited
                 // for the lock must not be finalized, and nothing is changed.
                 || (current.client?.deletedAt ?? null) !== null
+                || current.baby?.active === false
                 || current.branchId !== branchId
                 || (
                     current.status === SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED
@@ -724,7 +740,7 @@ export class ServiceRecordFinalizationService {
                 where: {
                     id: caseId,
                     branchId,
-                    AND: [CLIENT_NOT_TOMBSTONED],
+                    AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                     OR: [
                         { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                         {
@@ -763,7 +779,7 @@ export class ServiceRecordFinalizationService {
         } | undefined;
         if (typeof delegate?.findUnique !== "function") return null;
         const row = await delegate.findUnique({
-            where: { id: caseId },
+            where: { id: caseId, AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED] },
             select: {
                 id: true,
                 branchId: true,
@@ -845,6 +861,74 @@ export class ServiceRecordFinalizationService {
         };
     }
 
+    /** 상태를 기준으로 새 INITIAL 세대를 만들고 같은 요청의 재전송을 재사용한다. */
+    async regenerateInitialFinalization(
+        branchId: string,
+        input: { revisionId: string; documentStateId: string; expectedGeneration: string },
+    ): Promise<{ state: ServiceRecordRevisionDocumentState; jobId: string; status: string }> {
+        if (!this.editRepository || !this.documentJobService) {
+            throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE");
+        }
+        const target = await this.editRepository.findRevisionDocumentStateForBranch(
+            branchId, input.revisionId, input.documentStateId,
+        );
+        if (!target) throw new NotFoundException({ code: "RESOURCE_NOT_FOUND" });
+        if (target.operation !== "record_snapshot" || !isInitialFinalizationWorkflowScopeForRevision(target.workflowScope, input.revisionId)) {
+            throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_STATE_NOT_READY");
+        }
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        return this.prisma.$transaction(async tx => {
+            await lockServiceRecordWriteSet(tx, { branchId, clientId: target.clientId, caseId: target.serviceRecordCaseId });
+            const source = await this.readFinalizationCase(tx, target.serviceRecordCaseId);
+            if (!source || source.branchId !== branchId || source.clientId !== target.clientId
+                || source.currentRevisionId !== input.revisionId || target.generation !== input.expectedGeneration) {
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_REVISION_CHANGED");
+            }
+            const newest = await tx.service_record_revision_document_state.findFirst({
+                where: { branchId, clientId: target.clientId, serviceRecordCaseId: source.id,
+                    revisionId: input.revisionId, operation: "record_snapshot",
+                    workflowScope: { path: ["generationKind"], equals: "INITIAL_FINALIZATION" } },
+                orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            });
+            const scope = newest?.workflowScope;
+            if (newest && scope && typeof scope === "object" && !Array.isArray(scope)
+                && scope["regeneratedFromGeneration"] === input.expectedGeneration
+                && target.operation === "record_snapshot") {
+                const key = scope["requestKey"];
+                if (!isInitialFinalizationRequestKeyFor(input.revisionId, key)) {
+                    throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED");
+                }
+                const job = await this.documentJobService!.findByRequestKeyInTransaction(tx, key);
+                if (!job || job.payload?.["generation"] !== newest.generation
+                    || job.payload?.["documentStateId"] !== newest.id) {
+                    throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED");
+                }
+                this.assertFrozenGenerationJob(job, source, input.revisionId, job.requestKey);
+                const state = await this.editRepository!.findRevisionDocumentStateForBranch(branchId, input.revisionId, newest.id, { tx });
+                if (!state) throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_STATE_NOT_FOUND");
+                return { state, jobId: job.id, status: job.status };
+            }
+            if (!newest || newest.id !== input.documentStateId || newest.generation !== input.expectedGeneration) {
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_GENERATION_CHANGED");
+            }
+            const readiness = await releaseTerminalInitialFinalizationKey(tx, source.id, input.revisionId);
+            if (!readiness.ready) {
+                const reason = readiness.reason === readiness.state?.lastErrorCode
+                    && !INITIAL_PROVIDER_FAILURE_CODES.has(readiness.reason)
+                    ? "SERVICE_RECORD_INITIAL_STATE_NOT_READY" : readiness.reason;
+                throw initialFinalizationConflict(reason);
+            }
+            const result = await this.freezeInitialFinalizationGeneration(tx, source, calendar, input.expectedGeneration);
+            if (!result) throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE");
+            const changed = await tx.service_record_case.updateMany({
+                where: { id: source.id, branchId, currentRevisionId: input.revisionId },
+                data: { status: SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED, nextAttemptAt: null, version: { increment: 1 } },
+            });
+            if (changed.count !== 1) throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_REVISION_CHANGED");
+            return result;
+        });
+    }
+
     /**
      * Freeze a complete revised source exactly once. The durable job payload
      * is the generation input; retries resolve the request key and reuse that
@@ -854,7 +938,8 @@ export class ServiceRecordFinalizationService {
         tx: Prisma.TransactionClient,
         source: FinalizationCaseSnapshot,
         calendar: KrBusinessDayCalendar,
-    ): Promise<void> {
+        regeneratedFromGeneration?: string,
+    ): Promise<{ state: ServiceRecordRevisionDocumentState; jobId: string; status: string } | void> {
         const revisionId = source.currentRevisionId;
         if (!revisionId || !source.clientId) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
@@ -866,9 +951,36 @@ export class ServiceRecordFinalizationService {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
         }
 
+        if (regeneratedFromGeneration === undefined) {
+            const jobs = await tx.eformsign_document_job.findMany({
+                where: { branchId: source.branchId, clientId: source.clientId, jobType: "create_document", source: "auto_finalize",
+                    AND: [{ payload: { path: ["revisionId"], equals: revisionId } },
+                        { payload: { path: ["generationKind"], equals: "INITIAL_FINALIZATION" } }] },
+            });
+            if (jobs.length) {
+                for (const job of jobs) {
+                    this.assertFrozenGenerationJob({ ...job, payload: job.payload as Record<string, unknown> | null }, source, revisionId, job.requestKey);
+                }
+                return;
+            }
+        }
+        const newest = await tx.service_record_revision_document_state?.findFirst?.({
+            where: { branchId: source.branchId, clientId: source.clientId, serviceRecordCaseId: source.id,
+                revisionId, operation: "record_snapshot", workflowScope: { path: ["generationKind"], equals: "INITIAL_FINALIZATION" } },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            select: { generation: true, workflowScope: true },
+        });
+        const scope = newest?.workflowScope;
+        const newestRequestKey = scope && typeof scope === "object" && !Array.isArray(scope) ? scope["requestKey"] : null;
         const requestKey = initialFinalizationRequestKey(revisionId);
-        const existing = await this.documentJobService.findByRequestKeyInTransaction(tx, requestKey);
+        const existingRequestKey = isInitialFinalizationRequestKeyFor(revisionId, newestRequestKey)
+            ? newestRequestKey : requestKey;
+        const existing = regeneratedFromGeneration === undefined
+            ? await this.documentJobService.findByRequestKeyInTransaction(tx, existingRequestKey) : null;
         if (existing) {
+            if (newest && existing.payload?.["generation"] !== newest.generation) {
+                throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+            }
             const existingPayload = existing.payload;
             const existingGeneration = existingPayload?.["generation"];
             const existingImmutablePayload = existingPayload?.["immutablePayload"];
@@ -886,14 +998,14 @@ export class ServiceRecordFinalizationService {
                     revisionId,
                     existingGeneration,
                     existingImmutablePayload as Record<string, unknown>,
-                    requestKey,
+                    existingRequestKey,
                     existingDocumentVersion,
                 );
                 if (existingState && existingState.documentVersion !== existingDocumentVersion) {
                     throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
                 }
             }
-            this.assertFrozenGenerationJob(existing, source, revisionId, requestKey);
+            this.assertFrozenGenerationJob(existing, source, revisionId, existingRequestKey);
             return;
         }
 
@@ -927,6 +1039,8 @@ export class ServiceRecordFinalizationService {
         }
 
         const generation = randomGenerationId();
+        const generationRequestKey = regeneratedFromGeneration === undefined ? requestKey
+            : initialFinalizationGenerationRequestKey(revisionId, generation);
         const immutablePayload = this.buildInitialFinalizationPayload(source, revision, generation);
         const payloadFingerprint = sha256CanonicalJson(immutablePayload);
         if (!this.editRepository) {
@@ -938,7 +1052,9 @@ export class ServiceRecordFinalizationService {
             revisionId,
             generation,
             immutablePayload,
-            requestKey,
+            generationRequestKey,
+            undefined,
+            regeneratedFromGeneration,
         );
         if (!documentState) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
@@ -986,27 +1102,45 @@ export class ServiceRecordFinalizationService {
             completeness: "complete" as const,
             manualReviewRequired: true,
             documentVersion,
-            snapshotReference: requestKey,
+            snapshotReference: generationRequestKey,
             documentStateId: documentState.id,
         };
 
-        const result = await this.documentJobService.enqueueInTransaction(tx, {
-            branchId: source.branchId,
-            clientId: source.clientId,
-            documentId: null,
-            jobType: "create_document",
-            source: "auto_finalize",
-            requestKey,
-            activeKey: `${INITIAL_FINALIZATION_REQUEST_PREFIX}${source.id}`,
-            payload,
-            payloadFingerprint,
-            // The provider worker is the generation principal. The user who
-            // confirmed the revision remains in the immutable revision row.
-            createdByUserId: null,
-        });
-        if (result.existing) {
-            this.assertFrozenGenerationJob(result.job, source, revisionId, requestKey);
+        let result: Awaited<ReturnType<EformsignDocumentJobService["enqueueInTransaction"]>>;
+        try {
+            result = await this.documentJobService.enqueueInTransaction(tx, {
+                branchId: source.branchId,
+                clientId: source.clientId,
+                documentId: null,
+                jobType: "create_document",
+                source: "auto_finalize",
+                requestKey: generationRequestKey,
+                activeKey: `${INITIAL_FINALIZATION_REQUEST_PREFIX}${source.id}`,
+                payload,
+                payloadFingerprint,
+                // The provider worker is the generation principal. The user who
+                // confirmed the revision remains in the immutable revision row.
+                createdByUserId: null,
+            });
+        } catch (error) {
+            if (regeneratedFromGeneration !== undefined && error instanceof Error
+                && ["EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT", "EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH"].includes(error.message)) {
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT");
+            }
+            throw error;
         }
+        if (result.existing) {
+            if (regeneratedFromGeneration !== undefined) {
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT");
+            }
+            this.assertFrozenGenerationJob(result.job, source, revisionId, generationRequestKey);
+        }
+        if (regeneratedFromGeneration !== undefined) {
+            const state = await this.editRepository.findRevisionDocumentStateForBranch(source.branchId, revisionId, documentState.id, { tx });
+            if (!state) throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_STATE_NOT_FOUND");
+            return { state, jobId: result.job.id, status: result.job.status };
+        }
+        return { state: { ...documentState, documentVersion }, jobId: result.job.id, status: result.job.status };
     }
 
     /**
@@ -1024,6 +1158,7 @@ export class ServiceRecordFinalizationService {
         immutablePayload: Record<string, unknown>,
         requestKey: string,
         documentVersion?: number | null,
+        regeneratedFromGeneration?: string,
     ): Promise<ServiceRecordRevisionDocumentState | null> {
         if (!this.editRepository || source.clientId === null) return null;
         return this.editRepository.createRevisionDocumentStateInTransaction({ tx }, {
@@ -1040,6 +1175,7 @@ export class ServiceRecordFinalizationService {
                 requestKey,
                 generationKind: "INITIAL_FINALIZATION",
                 formVersion: source.formVersion,
+                ...(regeneratedFromGeneration === undefined ? {} : { regeneratedFromGeneration }),
             },
             step: "capability_unverified",
             status: "capability_unverified",
@@ -1152,7 +1288,8 @@ export class ServiceRecordFinalizationService {
             : null;
         const immutablePayload = payload?.["immutablePayload"];
         if (
-            job.requestKey !== requestKey
+            !isInitialFinalizationRequestKeyFor(revisionId, requestKey)
+            || job.requestKey !== requestKey
             || job.branchId !== source.branchId
             || job.clientId !== source.clientId
             || job.jobType !== "create_document"
@@ -1190,6 +1327,7 @@ export class ServiceRecordFinalizationService {
         const recovered = await this.prisma.service_record_case.updateMany({
             where: {
                 status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 finalizationStartedAt: { lte: staleBefore },
                 snapshotChunks: {
                     none: {
@@ -1214,6 +1352,7 @@ export class ServiceRecordFinalizationService {
         const cases = await this.prisma.service_record_case.findMany({
             where: {
                 status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 eformsignDocs: {
                     some: { documentKind: "service_record_snapshot" },
                     none: {
@@ -1244,6 +1383,7 @@ export class ServiceRecordFinalizationService {
     private async promoteEligibleCases(referenceDate: Date, limit: number): Promise<void> {
         const candidates = await this.prisma.service_record_case.findMany({
             where: {
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END },
                     {

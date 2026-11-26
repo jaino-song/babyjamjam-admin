@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 import { ContractDataDto } from "application/dto/contract.dto";
+import { parseContractCopaymentReceivedDate } from "application/utils/contract-copayment-date";
 import type { StaffCompletionPrefillAmounts } from "application/services/eformsign.service";
 import {
     EformsignDocumentJobPayload,
@@ -157,6 +158,7 @@ export class EformsignDocumentJobService {
         // also called by internal retry/repair paths and must not persist an
         // identity value that cannot be canonicalized.
         assertContractDataPhones(params.contractData);
+        const copaymentReceivedDate = parseContractCopaymentReceivedDate(params.contractData);
         const payload: EformsignDocumentJobPayload = {
             clientId: params.clientId,
             contractData: params.contractData,
@@ -175,6 +177,7 @@ export class EformsignDocumentJobService {
             payload,
             payloadFingerprint: sha256CanonicalJson(payload),
             createdByUserId: params.createdByUserId,
+            ...(copaymentReceivedDate ? { copaymentReceivedDate } : {}),
         });
     }
 

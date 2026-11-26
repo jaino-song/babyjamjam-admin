@@ -16,6 +16,7 @@ import type { PrepareEformsignDispatchIntentInput } from "domain/repositories/ef
 import { lockAuthorityScope, compareAndSetAuthority, type AuthorityState, type AuthorityPatch } from "../utils/eformsign-contract-authority";
 
 import { assertLinkedIntent, intentIdentityWhere, linkedIntents, normalizeVerifiedAuthority } from "../utils/eformsign-contract-authority-release";
+import { saveContractCopaymentDate } from "../utils/save-contract-copayment-date";
 
 type Job = Prisma.eformsign_document_jobGetPayload<Record<string, never>>;
 type Intent = Prisma.eformsign_dispatch_intentGetPayload<Record<string, never>>;
@@ -143,9 +144,9 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
             claimEpoch: a.claimEpoch, claimUserId: a.claimUserId, claimExpiresAt: a.claimExpiresAt,
             creationIntent: await read(a.creationIntentId), draftIntent: await read(a.draftIntentId) };
     }
-    private async startIntent(tx: Prisma.TransactionClient, input: PrepareEformsignDispatchIntentInput) {
-        let row = await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: input.businessKey } });
-        if (!row) row = await tx.eformsign_dispatch_intent.create({ data: { ...input, status: "prepared" } });
+    private async startIntent(tx: Prisma.TransactionClient, input: PrepareEformsignDispatchIntentInput, copaymentReceivedDate?: Date) {
+        const existing = await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: input.businessKey } });
+        let row = existing ?? await tx.eformsign_dispatch_intent.create({ data: { ...input, status: "prepared" } });
         for (const key of ["branchId", "clientId", "localDocumentId", "assignmentId", "templateId", "action", "generation", "fingerprint"] as const) {
             if ((row[key] ?? null) !== (input[key] ?? null)) fail("REQUEST_CONFLICT");
         }
@@ -160,6 +161,9 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
         const updated = await tx.eformsign_dispatch_intent.updateMany({ where: { id: row.id, status: row.status, attemptCount: row.attemptCount },
             data: { status: "started", attemptCount: { increment: 1 }, startedAt: new Date(), uncertainAt: null, uncertainReason: null } });
         if (updated.count !== 1) fail();
+        if (!existing && copaymentReceivedDate && input.clientId != null) {
+            await saveContractCopaymentDate(tx, input.branchId, input.clientId, copaymentReceivedDate);
+        }
         return { intent: intentEntity({ ...row, status: "started", attemptCount: row.attemptCount + 1, startedAt: new Date() }), disposition: "claimed" as const };
     }
     async claimCreation(input: PrepareEformsignDispatchIntentInput, worker: ContractWorkerContext, effect: { contractData: unknown; force?: boolean; workflow?: unknown }) {
@@ -189,13 +193,13 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
             return result;
         });
     }
-    async claimLegacyCreation(input: PrepareEformsignDispatchIntentInput) {
+    async claimLegacyCreation(input: PrepareEformsignDispatchIntentInput, copaymentReceivedDate?: Date) {
         return this.prisma.$transaction(async tx => {
             if (!input.clientId) fail("REQUEST_CONFLICT");
             const authorities = await lockAuthorityScope(tx, input.branchId, [input.clientId]);
             for (const a of authorities) await normalizeVerifiedAuthority(tx, a);
             if (authorities.some(a => a.phase !== "closed")) fail("REQUEST_CONFLICT");
-            return this.startIntent(tx, input);
+            return this.startIntent(tx, input, copaymentReceivedDate);
         });
     }
     async claimProvider(input: PrepareEformsignDispatchIntentInput) {

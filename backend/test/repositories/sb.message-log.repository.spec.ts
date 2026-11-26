@@ -715,7 +715,9 @@ describe("SbMessageLogRepository", () => {
             txModel.updateMany.mockResolvedValue({ count: 1 });
             txModel.create.mockResolvedValue(pendingRow);
             txModel.findUnique.mockResolvedValue({ ...pendingRow, providerAcceptanceState: "started" });
-            const transaction = { message_log: txModel } as unknown as import("@prisma/client").Prisma.TransactionClient;
+            const transaction = {
+                message_log: txModel, message_trigger_job: { findFirst: jest.fn().mockResolvedValue(null) },
+            } as unknown as import("@prisma/client").Prisma.TransactionClient;
             const started = await repository.startRetryAttempt(source, retryDraft, "automatic", transaction);
             expect(started.kind).toBe("started");
             if (started.kind !== "started") throw new Error("Retry was not created");
@@ -736,37 +738,21 @@ describe("SbMessageLogRepository", () => {
             expect(messageLogModel.create).not.toHaveBeenCalled();
         });
 
-        it("atomically suppresses an automatic service-end retry when the client was already notified", async () => {
+        it("leaves service-end retry suppression to the occurrence admission boundary", async () => {
             source.templateKey = "service_end_notice_sms";
-            const sourceSnapshot = {
-                status: source.status,
-                nextRetryAt: source.nextRetryAt,
-                updatedAt: source.updatedAt,
-            };
-            queryRaw.mockResolvedValue([{
-                service_end_notice_sent_at: new Date("2026-09-16T03:00:00.000Z"),
-            }]);
             messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            messageLogModel.create.mockResolvedValue({
+                id: 78,
+                branchId: source.branchId,
+                templateKey: source.templateKey,
+                variables: retryDraft.variables,
+            });
 
             const result = await repository.startRetryAttempt(source, retryDraft, "automatic");
 
-            expect(queryRaw).toHaveBeenCalledTimes(1);
-            expect(messageLogModel.updateMany).toHaveBeenCalledWith({
-                where: {
-                    id: source.id,
-                    branchId: source.branchId,
-                    status: sourceSnapshot.status,
-                    nextRetryAt: sourceSnapshot.nextRetryAt,
-                    updatedAt: sourceSnapshot.updatedAt,
-                },
-                data: expect.objectContaining({
-                    status: "failed",
-                    errorMessage: "서비스 종료 안내가 이미 발송됨",
-                    nextRetryAt: null,
-                }),
-            });
-            expect(messageLogModel.create).not.toHaveBeenCalled();
-            expect(result).toEqual({ kind: "suppressed", log: source });
+            expect(queryRaw).not.toHaveBeenCalled();
+            expect(messageLogModel.create).toHaveBeenCalledTimes(1);
+            expect(result).toMatchObject({ kind: "started", log: { id: 78 } });
         });
 
         it("keeps explicit manual service-end retries available", async () => {

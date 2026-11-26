@@ -29,7 +29,8 @@ function dropDatabase() {
 try {
     dropDatabase();
     run("createdb", ["--host", "localhost", "--username", "postgres", databaseName]);
-    run("pnpm", ["exec", "prisma", "db", "push", "--skip-generate"]);
+    // Include SQL-only indexes and constraints used by the production send and retry paths.
+    run("pnpm", ["exec", "prisma", "migrate", "deploy"]);
     run("pnpm", ["run", "db:seed:e2e"]);
     // The directory path (not individual spec files) is passed so new specs
     // dropped into test/e2e/message-automation-cron are picked up without

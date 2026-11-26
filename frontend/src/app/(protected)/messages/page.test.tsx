@@ -1,10 +1,12 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 
 import { fireEvent, render as renderView, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createContext, useContext, type ReactElement, type ReactNode } from "react";
 import { AxiosError, AxiosHeaders } from "axios";
 import { MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
+import { messageDeliveryApi } from "@/services/api";
 
 import MessagesPage from "./page";
 
@@ -94,6 +96,7 @@ import {
 import type { MessageLogRecord, UpcomingMessageTriggerJob } from "@/features/message-triggers/types";
 
 const mockToast = jest.fn();
+const mockUseMessageTemplates = jest.fn();
 let mockDocumentJobsActive = false;
 
 jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {
@@ -189,7 +192,12 @@ jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
 }));
 
 jest.mock("@/features/message-templates/hooks/use-message-templates", () => ({
-  useMessageTemplates: () => ({ data: [], isLoading: false }),
+  useMessageTemplates: () => mockUseMessageTemplates(),
+}));
+
+jest.mock("@/services/api", () => ({
+  ...jest.requireActual("@/services/api"),
+  messageDeliveryApi: { checkSmsDuplicate: jest.fn(), sendSms: jest.fn() },
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
@@ -517,6 +525,7 @@ beforeEach(() => {
     isLoading: false,
   });
   mockUseAllClients.mockReturnValue({ data: [], isLoading: false });
+  mockUseMessageTemplates.mockReturnValue({ data: [], isLoading: false });
   mockUseSystemTemplates.mockReturnValue({ data: [], isLoading: false, isError: false });
   mockUseSystemTemplate.mockReturnValue({ data: undefined, isLoading: false, isError: false });
 
@@ -534,6 +543,47 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useResendMessageTriggerJob>);
 
   mockData();
+});
+
+describe("MessagesPage template identity on SMS send", () => {
+  const originalRandomUUID = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
+  beforeAll(() => Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: randomUUID }));
+  afterAll(() => {
+    if (originalRandomUUID) Object.defineProperty(globalThis.crypto, "randomUUID", originalRandomUUID);
+    else Reflect.deleteProperty(globalThis.crypto, "randomUUID");
+  });
+
+  it.each([
+    ["system", { kind: "system", key: "GREETING" }],
+    ["branch", { kind: "branch", id: "branch-greeting" }],
+  ] as const)("uses the selected %s reference in the duplicate check and send", async (kind, templateRef) => {
+    const message = "안녕하세요.";
+    const template = buildSystemTemplate({ name: "같은 인사", content: message });
+    mockUseSystemTemplates.mockReturnValue({ data: [template], isLoading: false, isError: false });
+    mockUseSystemTemplate.mockReturnValue({ data: template, isLoading: false, isError: false });
+    mockUseMessageTemplates.mockReturnValue({ data: [{ id: "branch-greeting", name: "같은 인사", content: message, variables: [] }] });
+    const check = jest.mocked(messageDeliveryApi.checkSmsDuplicate);
+    const send = jest.mocked(messageDeliveryApi.sendSms);
+    check.mockReset().mockResolvedValue({ checkedAt: "2026-11-06T12:00:00.000Z", matchIds: [], latestSentAt: null, payloadHash: "a".repeat(64) });
+    send.mockReset().mockResolvedValue({
+      provider: "aligo_sms", triggerType: "immediate", request: { receiver: "", msgType: "SMS", testMode: false },
+      result: { resultCode: 1, message: "accepted", successCount: 1, errorCount: 0 },
+    });
+    render(<MessagesPage />);
+    if (kind === "branch") fireEvent.click(screen.getByRole("button", { name: "지점 템플릿" }));
+    fireEvent.click(screen.getByRole("button", { name: /같은 인사/ }));
+    fireEvent.click(screen.getByRole("combobox", { name: "휴대 전화번호" }));
+    const phone = await screen.findByLabelText("휴대 전화번호 검색");
+    fireEvent.change(phone, { target: { value: "01011112222" } });
+    fireEvent.keyDown(phone, { key: "Enter" });
+    const submit = screen.getByRole("button", { name: "즉시 발송" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    const sent = send.mock.calls[0]?.[0];
+    expect(sent).toMatchObject({ receiver: "010-1111-2222", message, templateRef });
+    expect(check).toHaveBeenCalledWith(sent, "branch-test");
+  });
 });
 
 describe("MessagesPage template send responsive layout", () => {

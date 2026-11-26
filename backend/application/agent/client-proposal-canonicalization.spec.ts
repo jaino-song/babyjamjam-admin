@@ -155,7 +155,7 @@ function buildClientProvider(existingOverrides: Record<string, unknown> = {}) {
     };
     const serviceRecordLifecycle = {
         validatePeriodChange: jest.fn().mockResolvedValue(undefined),
-        ensureForClient: jest.fn().mockResolvedValue(undefined),
+        ensureAllForClient: jest.fn().mockResolvedValue([]),
     };
     const provider = new ClientWriteAgentCapabilitiesProvider(
         createClient as never,

@@ -4,6 +4,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { json } from "express";
 import request from "supertest";
 
+import { CanceledAutomationRetrySettingsService } from "application/services/canceled-automation-retry-settings.service";
 import { ClientService } from "application/services/client.service";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
@@ -24,9 +25,12 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
+    getServiceRecordLinkScheduledFor,
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
+import { ALIGO_SMS_API_PORT, IAligoSmsApiPort } from "domain/ports/aligo-sms-api.port";
 import { normalizePhone } from "domain/utils/normalize-phone";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import {
@@ -37,6 +41,7 @@ import {
     UnsupportedKoreanHolidayYearError,
 } from "domain/utils/business-days";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { RECORD_LINK_RECOVERY_REASON } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pipe";
 import { TenantModule } from "infrastructure/tenant/tenant.module";
@@ -106,6 +111,8 @@ describeE2E("BJJ-275 full connected flow", () => {
     let serviceRecordLinkService: ServiceRecordLinkService;
     let serviceRecordLinkReconciliationService: ServiceRecordLinkReconciliationService;
     let createDocumentSpy: jest.SpyInstance;
+    let sendSmsSpy: jest.SpyInstance;
+    let retrySettings: CanceledAutomationRetrySettingsService;
 
     const ownerJwtGuard = {
         canActivate: (context: ExecutionContext) => {
@@ -151,9 +158,12 @@ describeE2E("BJJ-275 full connected flow", () => {
         serviceRecordLinkReconciliationService = app.get(ServiceRecordLinkReconciliationService, { strict: false });
         const eformsign = app.get<IEformsignClientRepository>(EFORMSIGN_CLIENT_REPOSITORY);
         createDocumentSpy = jest.spyOn(eformsign, "createDocument");
+        sendSmsSpy = jest.spyOn(app.get<IAligoSmsApiPort>(ALIGO_SMS_API_PORT), "sendSms");
+        retrySettings = app.get(CanceledAutomationRetrySettingsService);
     });
 
     afterAll(async () => {
+        sendSmsSpy?.mockRestore();
         createDocumentSpy?.mockRestore();
         await app?.close();
     });
@@ -182,8 +192,11 @@ describeE2E("BJJ-275 full connected flow", () => {
         label: string,
         applyMessageAutomation: boolean,
         suppressGreetingSms: boolean,
-        bookingConfirmed = true,
+        bookingConfirmed = false,
     ): Promise<ScheduleFixture> => {
+        const today = isoDateInKorea();
+        const startDate = addBusinessDaysKr(today, 5);
+        const endDate = addBusinessDaysKr(startDate, 2);
         const uniqueDigits = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-7);
         const employee = await prisma.employee.create({
             data: {
@@ -205,8 +218,9 @@ describeE2E("BJJ-275 full connected flow", () => {
                 address: "E2E 자동화 불변식 테스트 주소",
                 phone: `0108${uniqueDigits}`,
                 duration: 3,
-                startDate: "2027-01-04",
-                endDate: "2027-01-06",
+                startDate,
+                endDate,
+                ...(bookingConfirmed ? { serviceStatus: "waiting" } : {}),
                 careCenter: false,
                 voucherClient: false,
                 breastPump: false,
@@ -214,17 +228,6 @@ describeE2E("BJJ-275 full connected flow", () => {
                 applyMessageAutomation,
             });
             clientId = client.id;
-            if (bookingConfirmed) {
-                // Rule 고객-04/기록-09: a new client starts 예약 전 and a 예약 전 client
-                // gets no service-record link. Store the confirmation directly (the
-                // state [예약 확정] leaves behind) instead of calling confirmBooking,
-                // which would itself schedule the link and defeat the
-                // automation-disabled and post-commit-failure fixtures.
-                await prisma.client.update({
-                    where: { id: client.id },
-                    data: { bookingConfirmedAt: new Date(), serviceStatus: "waiting" },
-                });
-            }
             const schedule = await prisma.employee_schedule.findFirstOrThrow({
                 where: {
                     clientId,
@@ -247,10 +250,38 @@ describeE2E("BJJ-275 full connected flow", () => {
         createScheduleFixture(label, false, true);
 
     const createPreBookingSchedule = (label: string): Promise<ScheduleFixture> =>
-        createScheduleFixture(label, true, false, false);
-
-    const createAutomationEnabledSchedule = (label: string): Promise<ScheduleFixture> =>
         createScheduleFixture(label, true, false);
+
+    const createEligibleSchedule = (label: string): Promise<ScheduleFixture> =>
+        createScheduleFixture(label, true, false, true);
+
+    const linkJobsFor = (scheduleId: number) => prisma.message_trigger_job.findMany({
+        where: { employeeScheduleId: scheduleId, ruleId: SERVICE_RECORD_LINK_RULE_ID },
+    });
+
+    const expectBlockedOriginal = async (scheduleId: number, recoveryEpoch: Date | null) => {
+        const { startDate } = await prisma.employee_schedule.findUniqueOrThrow({
+            where: { id: scheduleId },
+            select: { startDate: true },
+        });
+        const [original, ...others] = await linkJobsFor(scheduleId);
+        expect(others).toEqual([]);
+        expect(original).toMatchObject({
+            status: "canceled",
+            cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+            recoveryReason: RECORD_LINK_RECOVERY_REASON,
+            recoveryEpoch,
+            recoveryState: "awaiting_transition",
+            firstBlockedAt: expect.any(Date),
+            canceledByUser: false,
+            scheduledFor: getServiceRecordLinkScheduledFor(startDate),
+            sentAt: null,
+            originalJobId: null,
+        });
+        expect(await prisma.service_record_token.count({ where: { scheduleId } })).toBe(0);
+        if (!original) throw new Error("Missing pre-booking audit record");
+        return original;
+    };
 
     const ensureEmployeeAssignmentRule = async (label: string): Promise<{ id: string; created: boolean }> => {
         const existing = await prisma.message_trigger_rule.findFirst({
@@ -314,67 +345,32 @@ describeE2E("BJJ-275 full connected flow", () => {
     };
 
     it("does not repair an automation-disabled future schedule without a service-record job or token", async () => {
+        const callsBefore = sendSmsSpy.mock.calls.length;
         const fixture = await createAutomationDisabledSchedule("서비스기록-재조정-제외");
         try {
-            expect(await prisma.message_trigger_job.count({
-                where: {
-                    employeeScheduleId: fixture.scheduleId,
-                    ruleId: SERVICE_RECORD_LINK_RULE_ID,
-                },
-            })).toBe(0);
-            expect(await prisma.service_record_token.count({ where: { scheduleId: fixture.scheduleId } })).toBe(0);
-            expect(await prisma.message_trigger_job.count({
-                where: {
-                    ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
-                    OR: [
-                        { clientId: fixture.clientId },
-                        { employeeScheduleId: fixture.scheduleId },
-                    ],
-                },
-            })).toBe(0);
-
-            const branch = await prisma.branch.findUnique({
-                where: { id: BRANCH_ID },
-                select: { smsSenderApprovalStatus: true },
+            const original = await expectBlockedOriginal(fixture.scheduleId, null);
+            const intentWhere = { ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, clientId: fixture.clientId };
+            expect(await prisma.message_trigger_job.count({ where: intentWhere })).toBe(0);
+            const { smsAutomationEnabled } = await prisma.client.findUniqueOrThrow({
+                where: { id: fixture.clientId },
+                select: { smsAutomationEnabled: true },
             });
-            if (!branch) throw new Error(`test branch ${BRANCH_ID} does not exist`);
-            const restoreSmsApprovalStatus = branch.smsSenderApprovalStatus !== "approved";
-            if (restoreSmsApprovalStatus) {
-                await prisma.branch.update({
-                    where: { id: BRANCH_ID },
-                    data: { smsSenderApprovalStatus: "approved" },
-                });
-            }
-            try {
-                await serviceRecordLinkReconciliationService.reconcileMissingJobs(new Date());
-                await serviceRecordLinkReconciliationService.reconcileMissingJobs(
-                    new Date(Date.now() + 10 * 60 * 1000),
-                );
-            } finally {
-                if (restoreSmsApprovalStatus) {
-                    await prisma.branch.update({
-                        where: { id: BRANCH_ID },
-                        data: { smsSenderApprovalStatus: branch.smsSenderApprovalStatus },
-                    });
-                }
-            }
+            expect(smsAutomationEnabled).toBe(false);
 
-            expect(await prisma.message_trigger_job.count({
-                where: {
-                    employeeScheduleId: fixture.scheduleId,
-                    ruleId: SERVICE_RECORD_LINK_RULE_ID,
-                },
-            })).toBe(0);
+            await clientService.confirmBooking(BRANCH_ID, fixture.clientId);
+            await serviceRecordLinkReconciliationService.reconcileMissingJobs(original.scheduledFor);
+            await serviceRecordLinkService.sweepRecovery(original.scheduledFor);
+            const [retained, ...others] = await linkJobsFor(fixture.scheduleId);
+            expect(others).toEqual([]);
+            expect(retained).toMatchObject({
+                id: original.id, status: "canceled", scheduledFor: original.scheduledFor,
+                cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON, recoveryState: "ineligible_terminal",
+            });
+            await messageTriggerService.dispatchPendingJobNow(original.id, { expectedBranchId: BRANCH_ID });
+            expect(await prisma.message_trigger_job.count({ where: intentWhere })).toBe(0);
             expect(await prisma.service_record_token.count({ where: { scheduleId: fixture.scheduleId } })).toBe(0);
-            expect(await prisma.message_trigger_job.count({
-                where: {
-                    ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
-                    OR: [
-                        { clientId: fixture.clientId },
-                        { employeeScheduleId: fixture.scheduleId },
-                    ],
-                },
-            })).toBe(0);
+            expect(await prisma.message_log.count({ where: { triggerJobId: original.id } })).toBe(0);
+            expect(sendSmsSpy).toHaveBeenCalledTimes(callsBefore);
         } finally {
             await cleanupScheduleFixture(fixture);
         }
@@ -394,7 +390,7 @@ describeE2E("BJJ-275 full connected flow", () => {
                 .spyOn(serviceRecordLinkService, "scheduleForServiceStart")
                 .mockRejectedValueOnce(new Error("e2e service-record scheduling fault"));
 
-            fixture = await createAutomationEnabledSchedule("자동화-복구");
+            fixture = await createEligibleSchedule("자동화-복구");
             expect(fixture).toEqual({
                 clientId: expect.any(Number),
                 employeeId: expect.any(Number),
@@ -595,7 +591,7 @@ describeE2E("BJJ-275 full connected flow", () => {
         let employeeAssignmentRule: { id: string; created: boolean } | undefined;
         try {
             employeeAssignmentRule = await ensureEmployeeAssignmentRule("자동화-대체-종료");
-            fixture = await createAutomationEnabledSchedule("자동화-대체-종료");
+            fixture = await createEligibleSchedule("자동화-대체-종료");
 
             // Reconcile once so the assertion always starts with a persisted
             // pending assignment generation, even when schedule creation was
@@ -665,7 +661,7 @@ describeE2E("BJJ-275 full connected flow", () => {
                 return originalDeleteMany(args);
             });
 
-            fixture = await createAutomationEnabledSchedule("자동화-표식삭제-충돌");
+            fixture = await createEligibleSchedule("자동화-표식삭제-충돌");
             expect(deleteFaultInjected).toBe(true);
             expect(intentDeleteSpy).toHaveBeenCalled();
 
@@ -710,7 +706,7 @@ describeE2E("BJJ-275 full connected flow", () => {
             clientSyncSpy = jest
                 .spyOn(messageTriggerService, "syncClientRulesForClient")
                 .mockRejectedValueOnce(new Error("e2e client sync fault before concurrent retry"));
-            fixture = await createAutomationEnabledSchedule("자동화-동시-복구");
+            fixture = await createEligibleSchedule("자동화-동시-복구");
             expect(clientSyncSpy).toHaveBeenCalledTimes(1);
 
             clientSyncSpy.mockRestore();
@@ -756,36 +752,81 @@ describeE2E("BJJ-275 full connected flow", () => {
     }, 30_000);
 
     it("does not schedule a service-record link for a 예약 전 client, and schedules it once the booking is confirmed", async () => {
-        const fixture = await createPreBookingSchedule("서비스기록-예약전");
+        const callsBefore = sendSmsSpy.mock.calls.length;
+        const off = await createPreBookingSchedule("서비스기록-예약전-꺼짐");
+        let enabled: ScheduleFixture | undefined;
         try {
-            const linkJobWhere = {
-                employeeScheduleId: fixture.scheduleId,
-                ruleId: SERVICE_RECORD_LINK_RULE_ID,
-            };
-            await expect(serviceRecordLinkService.scheduleForServiceStart(fixture.scheduleId)).resolves.toBe(false);
-            expect(await prisma.message_trigger_job.count({ where: linkJobWhere })).toBe(0);
-            expect(await prisma.service_record_token.count({ where: { scheduleId: fixture.scheduleId } })).toBe(0);
+            const offOriginal = await expectBlockedOriginal(off.scheduleId, null);
+            await expect(serviceRecordLinkService.scheduleForServiceStart(off.scheduleId)).resolves.toBe(false);
 
-            await clientService.confirmBooking(BRANCH_ID, fixture.clientId);
-            expect(await prisma.message_trigger_job.count({
-                where: { ...linkJobWhere, status: "pending" },
-            })).toBe(1);
+            const { enabledAt } = await retrySettings.update(BRANCH_ID, SERVICE_RECORD_LINK_RULE_ID, true);
+            if (!enabledAt) throw new Error("Retry opt-in did not capture an epoch");
+            const epoch = new Date(enabledAt);
+            enabled = await createPreBookingSchedule("서비스기록-예약전-켜짐");
+            const enabledOriginal = await expectBlockedOriginal(enabled.scheduleId, epoch);
+            expect(enabledOriginal.firstBlockedAt?.getTime()).toBeGreaterThanOrEqual(epoch.getTime());
+
+            await clientService.confirmBooking(BRANCH_ID, off.clientId);
+            await clientService.confirmBooking(BRANCH_ID, enabled.clientId);
+            const confirmed = await prisma.client.findUniqueOrThrow({ where: { id: enabled.clientId } });
+            expect(confirmed.serviceStatus).toBe("waiting");
+            if (!confirmed.bookingConfirmedAt) throw new Error("Confirmation did not persist a booking timestamp");
+
+            await serviceRecordLinkService.sweepRecovery(new Date(enabledOriginal.scheduledFor.getTime() - 1));
+            expect(await linkJobsFor(enabled.scheduleId)).toEqual([expect.objectContaining({
+                id: enabledOriginal.id, status: "canceled", recoveryState: "eligible",
+                recoveryTransitionStatus: "waiting", scheduledFor: enabledOriginal.scheduledFor,
+            })]);
+            expect(await prisma.service_record_token.count({ where: { scheduleId: enabled.scheduleId } })).toBe(0);
+
+            await expect(serviceRecordLinkService.sweepRecovery(enabledOriginal.scheduledFor)).resolves.toBe(1);
+            await expect(serviceRecordLinkService.sweepRecovery(enabledOriginal.scheduledFor)).resolves.toBe(0);
+            const jobs = await linkJobsFor(enabled.scheduleId);
+            expect(jobs).toHaveLength(2);
+            expect(jobs).toContainEqual(expect.objectContaining({
+                id: enabledOriginal.id, status: "canceled", recoveryState: "admitted",
+                scheduledFor: enabledOriginal.scheduledFor,
+            }));
+            const successor = jobs.find((job) => job.originalJobId === enabledOriginal.id);
+            if (!successor) throw new Error("Missing successor linked to the pre-booking original");
+            expect(successor).toMatchObject({
+                dedupeKey: `record-retry:${enabledOriginal.id}`,
+                status: "pending",
+                recoveryReason: RECORD_LINK_RECOVERY_REASON,
+                recoveryEpoch: enabledOriginal.recoveryEpoch,
+                scheduledFor: enabledOriginal.scheduledFor,
+            });
+            expect(successor.scheduledFor.getTime()).toBeGreaterThanOrEqual(confirmed.bookingConfirmedAt.getTime());
             expect(await prisma.service_record_token.count({
-                where: { scheduleId: fixture.scheduleId, active: true, revokedAt: null },
+                where: { scheduleId: enabled.scheduleId, active: true, revokedAt: null },
             })).toBe(1);
+
+            expect(await linkJobsFor(off.scheduleId)).toEqual([expect.objectContaining({
+                id: offOriginal.id, status: "canceled", recoveryState: "ineligible_terminal",
+                recoveryEpoch: null, scheduledFor: offOriginal.scheduledFor,
+            })]);
+            expect(await prisma.service_record_token.count({ where: { scheduleId: off.scheduleId } })).toBe(0);
+            expect(await prisma.message_log.count({
+                where: { triggerJobId: { in: [offOriginal.id, enabledOriginal.id, successor.id] } },
+            })).toBe(0);
+            expect(sendSmsSpy).toHaveBeenCalledTimes(callsBefore);
         } finally {
-            await cleanupScheduleFixture(fixture);
+            await retrySettings.update(BRANCH_ID, SERVICE_RECORD_LINK_RULE_ID, false);
+            if (enabled) await cleanupScheduleFixture(enabled);
+            await cleanupScheduleFixture(off);
         }
     }, 30_000);
 
     it("converges concurrent service-start scheduling to one automatic job and active token", async () => {
-        const fixture = await createAutomationDisabledSchedule("서비스기록-동시-예약");
+        const scheduleOnce = jest.spyOn(serviceRecordLinkService, "scheduleForServiceStart")
+            .mockRejectedValueOnce(new Error("e2e fresh assignment scheduling fault"));
+        let fixture: ScheduleFixture | undefined;
         try {
-            // Warm the one-time rule/case setup so the race below isolates automatic
-            // job claiming and active-token reuse, rather than bootstrap upserts.
-            await expect(serviceRecordLinkService.scheduleForServiceStart(fixture.scheduleId)).resolves.toBe(true);
-            await prisma.message_trigger_job.deleteMany({ where: { employeeScheduleId: fixture.scheduleId } });
-            await prisma.service_record_token.deleteMany({ where: { scheduleId: fixture.scheduleId } });
+            fixture = await createEligibleSchedule("서비스기록-동시-예약");
+            expect(scheduleOnce).toHaveBeenCalledTimes(1);
+            scheduleOnce.mockRestore();
+            expect(await linkJobsFor(fixture.scheduleId)).toEqual([]);
+            expect(await prisma.service_record_token.count({ where: { scheduleId: fixture.scheduleId } })).toBe(0);
 
             const settledResults = await Promise.allSettled([
                 serviceRecordLinkService.scheduleForServiceStart(fixture.scheduleId),
@@ -817,16 +858,21 @@ describeE2E("BJJ-275 full connected flow", () => {
             });
             expect(activeTokens).toHaveLength(1);
         } finally {
-            await cleanupScheduleFixture(fixture);
+            scheduleOnce.mockRestore();
+            if (fixture) await cleanupScheduleFixture(fixture);
         }
     }, 30_000);
 
     it("repairs a durable scheduling marker without reviving a user-canceled job", async () => {
-        const repairFixture = await createAutomationDisabledSchedule("서비스기록-복구-표식");
-        const canceledFixture = await createAutomationDisabledSchedule("서비스기록-사용자-취소");
+        const repairFixture = await createEligibleSchedule("서비스기록-복구-표식");
+        const canceledFixture = await createEligibleSchedule("서비스기록-사용자-취소");
         try {
-            await expect(serviceRecordLinkService.scheduleForServiceStart(repairFixture.scheduleId)).resolves.toBe(true);
-            await expect(serviceRecordLinkService.scheduleForServiceStart(canceledFixture.scheduleId)).resolves.toBe(true);
+            const callsBefore = sendSmsSpy.mock.calls.length;
+            const [repairOriginal] = await linkJobsFor(repairFixture.scheduleId);
+            const [canceledOriginal] = await linkJobsFor(canceledFixture.scheduleId);
+            expect(repairOriginal).toMatchObject({ status: "pending", recoveryReason: null });
+            expect(canceledOriginal).toMatchObject({ status: "pending", recoveryReason: null });
+            if (!repairOriginal || !canceledOriginal) throw new Error("Missing fresh service-record jobs");
 
             await prisma.service_record_token.deleteMany({
                 where: { scheduleId: repairFixture.scheduleId },
@@ -842,19 +888,8 @@ describeE2E("BJJ-275 full connected flow", () => {
                     nextAttemptAt: new Date(Date.now() - 60_000),
                 },
             });
-            await prisma.message_trigger_job.updateMany({
-                where: {
-                    employeeScheduleId: canceledFixture.scheduleId,
-                    ruleId: SERVICE_RECORD_LINK_RULE_ID,
-                },
-                data: {
-                    status: "canceled",
-                    canceledAt: new Date(),
-                    cancelReason: "사용자가 발송을 취소함",
-                    canceledByUser: true,
-                    nextAttemptAt: null,
-                },
-            });
+            await expect(messageTriggerService.cancelJobByUser(BRANCH_ID, canceledOriginal.id))
+                .resolves.toEqual({ id: canceledOriginal.id, status: "canceled" });
             const canceledTokenCount = await prisma.service_record_token.count({
                 where: { scheduleId: canceledFixture.scheduleId, active: true, revokedAt: null },
             });
@@ -888,7 +923,9 @@ describeE2E("BJJ-275 full connected flow", () => {
                     dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${repairFixture.scheduleId}:primary`,
                 },
             });
-            expect(repairedJob.status).toBe("pending");
+            expect(repairedJob).toMatchObject({
+                id: repairOriginal.id, status: "pending", scheduledFor: repairOriginal.scheduledFor,
+            });
             expect(await prisma.service_record_token.count({
                 where: { scheduleId: repairFixture.scheduleId, active: true, revokedAt: null },
             })).toBe(1);
@@ -898,8 +935,12 @@ describeE2E("BJJ-275 full connected flow", () => {
                     dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${canceledFixture.scheduleId}:primary`,
                 },
             });
-            expect(canceledJob.status).toBe("canceled");
-            expect(canceledJob.canceledByUser).toBe(true);
+            expect(canceledJob).toMatchObject({
+                id: canceledOriginal.id, status: "canceled", canceledByUser: true,
+                cancelReason: "사용자가 발송을 취소함", scheduledFor: canceledOriginal.scheduledFor, sentAt: null,
+            });
+            await messageTriggerService.dispatchPendingJobNow(canceledJob.id, { expectedBranchId: BRANCH_ID });
+            expect(sendSmsSpy).toHaveBeenCalledTimes(callsBefore);
             expect(await prisma.service_record_token.count({
                 where: { scheduleId: canceledFixture.scheduleId, active: true, revokedAt: null },
             })).toBe(canceledTokenCount);
@@ -988,11 +1029,13 @@ describeE2E("BJJ-275 full connected flow", () => {
         expect(prepared.status).toBe(201);
         expect(prepared.body.preparedLinkToken).toEqual(expect.any(String));
 
+        const callsBefore = sendSmsSpy.mock.calls.length;
         const sent = await request(app.getHttpServer())
             .post(`/admin/service-records/schedules/${scheduleId}/send-link`)
             .send({ preparedLinkToken: prepared.body.preparedLinkToken, recipientPhone: employeePhone });
         expect(sent.status).toBe(201);
         expect(sent.body.status).toBe("sent");
+        expect(sendSmsSpy).toHaveBeenCalledTimes(callsBefore + 1);
         expect((await prisma.message_trigger_job.findUniqueOrThrow({ where: { id: sent.body.jobId } })).status).toBe("sent");
 
         const link = await request(app.getHttpServer()).get(`/service-record/link/${prepared.body.preparedLinkToken}`);
@@ -1045,7 +1088,13 @@ describeE2E("BJJ-275 full connected flow", () => {
         expect(acknowledged.status).toBe(201);
         expect(acknowledged.body.status).toBe("READY_TO_FINALIZE");
 
-        const serviceCase = await prisma.service_record_case.findUniqueOrThrow({ where: { clientId } });
+        const cases = await prisma.service_record_case.findMany({
+            where: { clientId, branchId: BRANCH_ID },
+            orderBy: { id: "asc" },
+        });
+        expect(cases).toHaveLength(1);
+        const [serviceCase] = cases;
+        if (!serviceCase) throw new Error("Expected the booked client's service-record case");
         const dueAt = new Date(Date.now() - 60_000);
         await prisma.service_record_case.update({
             where: { id: serviceCase.id },

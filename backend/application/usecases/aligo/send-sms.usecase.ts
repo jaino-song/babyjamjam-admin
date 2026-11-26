@@ -32,6 +32,7 @@ export class SendAligoSmsUsecase {
 
         const response = await this.aligoSmsApi.sendSms({
             sender: dto.senderPhone,
+            ...(dto.confidential ? { confidential: true } : {}),
             receiver,
             message: dto.message,
             title: msgType === "LMS" ? dto.title?.trim() || undefined : undefined,

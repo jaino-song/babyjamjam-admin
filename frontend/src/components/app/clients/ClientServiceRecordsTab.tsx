@@ -1,4 +1,10 @@
 "use client";
+
+import { serviceRecordResetTarget } from "@babyjamjam/shared/utils";
+import type { ServiceRecordLinkResetSelection } from "./ServiceRecordLinkResetDialog";
+
+import { ServiceRecordCasePicker } from "@/components/app/service-record/ServiceRecordCasePicker";
+import { serviceRecordEditorPath } from "@/features/service-records/utils/case-selection";
 import Link from "next/link";
 
 
@@ -31,12 +37,27 @@ import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
+import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
+import { InitialDocumentRecoveryDialog } from "@/features/document-jobs/InitialDocumentRecoveryDialog";
+import { initialDocumentStateLabel } from "@/features/document-jobs/failure-popup-copy";
+import {
+    INITIAL_DOCUMENT_RECOVERY_COPY,
+    isInitialRegenerationState,
+    strictestInitialRegenerationBlockedCopy,
+} from "@/features/document-jobs/service-record-recovery-copy";
+import { useActiveBranchId } from "@/features/system-templates/branch-context";
+import {
+    matchesInitialDocument,
+    type InitialDocumentAction,
+    type InitialRegenerationProjection,
+} from "@/lib/eformsign/initial-document-recovery-contract";
 import {
     SERVICE_RECORD_FORM_LAYOUT,
     SERVICE_RECORD_LAYOUT_ANSWER_KEYS,
     type ServiceRecordFieldDescriptor,
 } from "@/features/service-records/constants/form-layout";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
+import type { Client } from "@/features/clients/types";
 import { useKeepPeriodMismatch, useFitPeriodMismatch, useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
 import type {
     ServiceRecordAssignment,
@@ -53,11 +74,17 @@ import type {
     SignatureDocStatus,
 } from "@/features/service-records/types";
 import { dateDirectionParticle } from "./service-record-period-mismatch";
+import { LegacyCaseReconciliation } from "./LegacyCaseReconciliation";
 
 interface ClientServiceRecordsTabProps {
     "data-component": string;
     layout?: "desktop" | "mobile";
     overview?: ServiceRecordOverview;
+    householdOverview?: ServiceRecordOverview;
+    client?: Client;
+    reconciliationConfirmed?: boolean;
+    canReconcileNow?: () => boolean;
+    onReconcileRefresh?: (adoptedCaseId?: string) => void | Promise<void>;
     clientId: number | null;
     isLoading: boolean;
     isError: boolean;
@@ -78,6 +105,9 @@ interface ClientServiceRecordsTabProps {
     retryingDocumentKey?: string | null;
     /** Days this client accepts service on besides plain business days; absent means none. */
     serviceDays?: ServiceDayPolicy;
+    selectedCaseId?: string;
+    onSelectCase?: (caseId: string) => void;
+    onResetServiceRecordLink?: (selection: ServiceRecordLinkResetSelection) => void;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -136,6 +166,11 @@ export function ClientServiceRecordsTab({
 function ClientServiceRecordsTabContent({
     layout = "desktop",
     overview,
+    householdOverview,
+    client,
+    reconciliationConfirmed = true,
+    canReconcileNow,
+    onReconcileRefresh,
     clientId,
     isLoading,
     isError,
@@ -151,12 +186,39 @@ function ClientServiceRecordsTabContent({
     onRetryRevisionDocument,
     retryingDocumentKey = null,
     serviceDays,
+    selectedCaseId,
+    onSelectCase,
+    onResetServiceRecordLink,
 }: Omit<ClientServiceRecordsTabProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
     const { toast } = useToast();
     const sendLinkMutation = useSendServiceRecordLink();
     const assignments = overview?.assignments ?? [];
     const record = overview?.record ?? null;
+    const cases = householdOverview?.cases ?? overview?.cases ?? [];
+    const selectedCase = overview?.cases?.find((item) => item.caseId === record?.id);
+    const credentialTarget = overview && serviceRecordResetTarget(overview, selectedCaseId);
+    const groupTarget = credentialTarget && "members" in credentialTarget.request ? credentialTarget.request : undefined;
+    const matchesCredential = (assignment: ServiceRecordAssignment) => {
+        if (selectedCase?.retired || assignment.replaced) return false;
+        if (overview?.legacyLinkAssignment === undefined && !selectedCase?.babyId) return true;
+        return Boolean(credentialTarget?.scheduleId === assignment.scheduleId
+            && (!groupTarget || groupTarget.employeeId === assignment.employee.id));
+    };
+    const showPicker = cases.length > 1 || (!record && cases.length > 0);
+    const visibleCaseId = selectedCaseId ?? record?.id ?? (cases.length === 1 ? cases[0]?.caseId : undefined);
+    const picker = showPicker && onSelectCase ? (
+        <ServiceRecordCasePicker data-component={`${dataComponent}_case-picker`}
+            cases={cases} selectedCaseId={visibleCaseId} onSelect={onSelectCase} />
+    ) : null;
+    const householdCases = householdOverview?.cases;
+    const visibleCase = householdCases?.find(({ caseId }) => caseId === visibleCaseId);
+    const reconciliation = layout === "desktop" && client && client.id === clientId && householdCases && visibleCase ? (
+        <LegacyCaseReconciliation data-component={`${dataComponent}_legacy-reconciliation`}
+            client={client} record={visibleCase} householdCases={householdCases} detail={overview}
+            confirmed={reconciliationConfirmed && !isError && !isRefreshing}
+            canReconcileNow={canReconcileNow} onRefresh={onReconcileRefresh ?? onRefresh} />
+    ) : null;
     const scheduleProjection = overview?.scheduleProjection;
     const hasAuthoritativeProjection = scheduleProjection !== undefined;
     const isServiceRecordSourceUnavailable = scheduleProjection?.blockingReasons.some(
@@ -173,7 +235,8 @@ function ClientServiceRecordsTabContent({
     const projectionEntries = scheduleProjection && scheduleProjection.blockingReasons.length === 0
         ? scheduleProjection.entries
         : [];
-    const activeAssignment = assignments.find((assignment) => !assignment.replaced)
+    const activeAssignment = assignments.find(matchesCredential)
+        ?? assignments.find((assignment) => !assignment.replaced)
         ?? assignments[0]
         ?? null;
     // The confirmation remembers only which assignment it was opened for; the
@@ -198,6 +261,7 @@ function ClientServiceRecordsTabContent({
     });
 
     const sendLink = async (assignment: ServiceRecordAssignment): Promise<boolean> => {
+        if (!matchesCredential(assignment) || isRefreshing) return false;
         // The caller may hold an assignment captured before the latest refresh, so the
         // send itself checks the newest status instead of trusting the click handler.
         const latest = latestAssignmentsRef.current.find(
@@ -209,6 +273,7 @@ function ClientServiceRecordsTabContent({
             const result = await sendLinkMutation.mutateAsync({
                 scheduleId: assignment.scheduleId,
                 clientId: clientId ?? undefined,
+                ...(groupTarget ? { target: groupTarget } : selectedCaseId ? { caseId: selectedCaseId } : {}),
             });
             // The outcome is decided by the job status alone: `ok` is false for
             // every non-sent job, including one the scheduler is already
@@ -271,10 +336,6 @@ function ClientServiceRecordsTabContent({
         );
     }
 
-    if (isLoading) {
-        return <ClientServiceRecordsSkeleton layout={layout} />;
-    }
-
     // Failed read with nothing from an earlier successful load to show: the failure
     // state, never the "no assignments" empty text. With cached content (assignments,
     // a record, a schedule projection that renders, or revision-history rows that this
@@ -284,37 +345,34 @@ function ClientServiceRecordsTabContent({
     // alert, so one without blocking reasons is not cached content either.
     const hasCachedRevisionHistory = layout === "desktop" && revisionHistory !== undefined;
     const hasRenderedProjection = (scheduleProjection?.blockingReasons.length ?? 0) > 0;
-    if (
-        isError
+    const isFatalError = isError
         && assignments.length === 0
         && !record
         && !hasRenderedProjection
-        && !hasCachedRevisionHistory
-    ) {
-        return (
-            <QueryErrorState
-                dataComponent={`${dataComponent}_error`}
-                title="제공기록지 정보를 불러오지 못했습니다"
-                onRetry={() => onRefresh?.()}
-                isRetrying={isRefreshing}
-            />
-        );
-    }
-
+        && !hasCachedRevisionHistory;
     const hasRevisionHistoryState = revisionHistory !== undefined
         || isRevisionHistoryLoading
         || isRevisionHistoryError;
-    if (assignments.length === 0 && !record && !hasRevisionHistoryState && !hasAuthoritativeProjection) {
-        return (
-            <DetailEmptyState
-                message="제공기록지 배정 정보가 없습니다"
-            />
-        );
-    }
+    const showOnlyPicker = picker && !record && !selectedCaseId && !hasRevisionHistoryState;
+    const showEmpty = assignments.length === 0 && !record && !hasRevisionHistoryState && !hasAuthoritativeProjection;
 
-    return (
-        <>
-            <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+    const renderBody = () => {
+        if (isLoading) return <ClientServiceRecordsSkeleton layout={layout} />;
+        if (isFatalError) {
+            return (
+                <QueryErrorState
+                    dataComponent={`${dataComponent}_error`}
+                    title="제공기록지 정보를 불러오지 못했습니다"
+                    onRetry={() => onRefresh?.()}
+                    isRetrying={isRefreshing}
+                />
+            );
+        }
+        if (showOnlyPicker) return null;
+        if (showEmpty) return <DetailEmptyState message="제공기록지 배정 정보가 없습니다" />;
+
+        return (
+            <>
                 {isError ? (
                     <QueryErrorState
                         dataComponent={`${dataComponent}_refresh-error`}
@@ -337,7 +395,7 @@ function ClientServiceRecordsTabContent({
                                 record={record}
                                 isRefreshing={isTextRefreshing}
                                 viewHref={layout === "desktop" && clientId != null
-                                    ? `/service-record-admin/${encodeURIComponent(String(clientId))}`
+                                    ? serviceRecordEditorPath(clientId, selectedCaseId)
                                     : null}
                             />
                             {layout === "desktop" && (<ServiceRecordHeaderCard
@@ -350,6 +408,14 @@ function ClientServiceRecordsTabContent({
                                 <LinkStatusCard
                                     layout={layout}
                                     clientId={clientId}
+                                    caseId={selectedCaseId}
+                                    readOnly={!matchesCredential(activeAssignment) || (Boolean(groupTarget) && isRefreshing)}
+                                    onResetLink={selectedCase?.babyId && groupTarget && onResetServiceRecordLink && matchesCredential(activeAssignment)
+                                        ? () => onResetServiceRecordLink({
+                                            caseId: selectedCase.caseId,
+                                            scheduleId: activeAssignment.scheduleId,
+                                            employeeId: groupTarget.employeeId,
+                                        }) : undefined}
                                     assignment={activeAssignment}
                                     isRefreshing={isTextRefreshing}
                                     isPending={sendingSchedule?.scheduleId === activeAssignment.scheduleId
@@ -381,7 +447,8 @@ function ClientServiceRecordsTabContent({
                         {assignments.length > 1 && <AssignmentHistoryCard assignments={assignments} isRefreshing={isTextRefreshing} />}
                         <ServiceSessionsCard
                             clientId={clientId}
-                            enablePeriodMismatch
+                            caseId={selectedCaseId}
+                            enablePeriodMismatch={!selectedCase?.retired}
                             periodMismatchActionsLocked={PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES.has(record.status)}
                             startDate={record.startDate}
                             endDate={record.endDate}
@@ -418,6 +485,7 @@ function ClientServiceRecordsTabContent({
                             layout={layout}
                             clientId={clientId}
                             assignment={assignment}
+                            readOnly={!matchesCredential(assignment)}
                             isRefreshing={isTextRefreshing}
                             isPending={sendingSchedule?.scheduleId === assignment.scheduleId
                                 || (sendLinkMutation.isPending
@@ -468,33 +536,40 @@ function ClientServiceRecordsTabContent({
                     onRetry={onRetryRevisionDocument}
                     retryingDocumentKey={retryingDocumentKey}
                 />}
-            </div>
+                <TwoButtonModal
+                    open={pendingResendAssignment !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setPendingResendScheduleId(null);
+                    }}
+                    dataComponent={`${dataComponent}_resend-approval`}
+                    title="제공기록지 메시지를 재전송하시겠습니까?"
+                    description={isPendingResendSending
+                        ? SEND_LINK_BLOCKED_HINT
+                        : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
+                    isDescriptionVisuallyHidden={false}
+                    approvalLabel="메시지 재전송"
+                    pendingLabel="메시지 재전송 중"
+                    approvalDisabled={isPendingResendSending}
+                    isPending={sendLinkMutation.isPending}
+                    onApprove={() => void handleResendConfirm()}
+                />
+            </>
+        );
+    };
 
-            <TwoButtonModal
-                open={pendingResendAssignment !== null}
-                onOpenChange={(open) => {
-                    if (!open) setPendingResendScheduleId(null);
-                }}
-                dataComponent={`${dataComponent}_resend-approval`}
-                title="제공기록지 메시지를 재전송하시겠습니까?"
-                description={isPendingResendSending
-                    ? SEND_LINK_BLOCKED_HINT
-                    : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
-                isDescriptionVisuallyHidden={false}
-                approvalLabel="메시지 재전송"
-                pendingLabel="메시지 재전송 중"
-                approvalDisabled={isPendingResendSending}
-                isPending={sendLinkMutation.isPending}
-                onApprove={() => void handleResendConfirm()}
-            />
-        </>
+    return (
+        <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+            {picker}
+            {reconciliation}
+            {renderBody()}
+        </div>
     );
 }
 
 function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile" }) {
     const dataComponent = useClientServiceRecordsDataComponent();
     return (
-        <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+        <>
             <div
                 data-component={`${dataComponent}_overview-grid`}
                 className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
@@ -598,7 +673,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                     <ServiceRecordInfoRowSkeleton key={label} label={label} />
                 ))}
             </InfoCard>}
-        </div>
+        </>
     );
 }
 
@@ -793,7 +868,7 @@ const REVISION_DOCUMENT_REASON_LABELS: Record<string, string> = {
 
 function getRevisionDocumentReasonLabel(reasonCode: string | null): string | null {
     if (!reasonCode) return null;
-    return REVISION_DOCUMENT_REASON_LABELS[reasonCode] ?? null;
+    return initialDocumentStateLabel(reasonCode) ?? REVISION_DOCUMENT_REASON_LABELS[reasonCode] ?? null;
 }
 
 function RevisionHistoryCard({
@@ -821,6 +896,8 @@ function RevisionHistoryCard({
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("revision-history");
     const { toast } = useToast();
+    const { summary } = useDocumentJobs();
+    const branchId = useActiveBranchId();
 
     if (isLoading) {
         return (
@@ -866,6 +943,7 @@ function RevisionHistoryCard({
     }
 
     const revisions = history?.revisions ?? [];
+    const listComponent = `${dataComponent}_body_list`;
     return (
         <InfoCard
             data-component={dataComponent}
@@ -913,11 +991,11 @@ function RevisionHistoryCard({
                     확정된 수정본이 없습니다.
                 </div>
             ) : (
-                <div data-component={`${dataComponent}_list`} className="space-y-[calc(10px*var(--glint-ui-scale,1))]">
-                    {revisions.map((revision) => (
+                <div data-component={listComponent} className="space-y-[calc(10px*var(--glint-ui-scale,1))]">
+                    {revisions.map((revision, revisionIndex) => (
                         <div
                             key={revision.id}
-                            data-component={`${dataComponent}_revision`}
+                            data-component={`${listComponent}_revision-${revisionIndex + 1}`}
                             className="rounded-[calc(12px*var(--glint-ui-scale,1))] border border-v3-border bg-white/50 p-[calc(12px*var(--glint-ui-scale,1))]"
                         >
                             <div className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
@@ -934,12 +1012,22 @@ function RevisionHistoryCard({
                                     연결된 문서 작업이 없습니다.
                                 </div>
                             ) : (
-                                <div className="mt-[calc(8px*var(--glint-ui-scale,1))] space-y-[calc(8px*var(--glint-ui-scale,1))]">
-                                    {revision.documents.map((document) => (
+                                <div
+                                    className="mt-[calc(8px*var(--glint-ui-scale,1))] space-y-[calc(8px*var(--glint-ui-scale,1))]"
+                                    data-component={`${listComponent}_revision-${revisionIndex + 1}_documents`}
+                                    data-slot="revision-documents"
+                                >
+                                    {revision.documents.map((document, documentIndex) => (
                                         <RevisionDocumentRow
                                             key={document.id}
                                             revisionId={revision.id}
                                             document={document}
+                                            branchId={branchId}
+                                            isHistoryCurrent={!isError}
+                                            data-component={`${listComponent}_revision-${revisionIndex + 1}_documents_document-${documentIndex + 1}`}
+                                            regeneration={summary?.initialRegenerations?.find(projection => matchesInitialDocument(projection, {
+                                                stateId: document.id, revisionId: revision.id, generation: document.generation,
+                                            }))}
                                             onRetry={onRetry}
                                             retryingDocumentKey={retryingDocumentKey}
                                             onRetryError={() => {
@@ -966,9 +1054,17 @@ function RevisionDocumentRow({
     onRetry,
     retryingDocumentKey,
     onRetryError,
+    branchId,
+    isHistoryCurrent,
+    regeneration,
+    "data-component": base,
 }: {
     revisionId: string;
     document: ServiceRecordRevisionDocumentSummary;
+    branchId: string | null;
+    isHistoryCurrent: boolean;
+    regeneration?: InitialRegenerationProjection;
+    "data-component": string;
     onRetry?: (
         revisionId: string,
         documentStateId: string,
@@ -977,21 +1073,47 @@ function RevisionDocumentRow({
     retryingDocumentKey?: string | null;
     onRetryError: () => void;
 }) {
+    const [action, setAction] = useState<{ request: InitialDocumentAction; branchId: string | null } | null>(null);
+    const [isActionOpen, setActionOpen] = useState(false);
+    const trigger = useRef<HTMLButtonElement>(null);
+    const row = useRef<HTMLDivElement>(null);
     const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
     const reasonLabel = getRevisionDocumentReasonLabel(document.reasonCode);
+    const target = { stateId: document.id, revisionId, generation: document.generation };
+    const readiness = strictestInitialRegenerationBlockedCopy(
+        document.regenerationBlockedReason, regeneration?.reasonCode, document.reasonCode,
+    );
     const documentKey = `${revisionId}:${document.id}`;
     const isRetrying = retryingDocumentKey === documentKey;
-    const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);
+    const retryable = document.canRetry && !readiness && document.generation !== "unknown" && Boolean(onRetry);
+    const initial = document.operation === "record_snapshot"
+        && (regeneration !== undefined || isInitialRegenerationState(document.reasonCode));
+    const projection = document.noProviderDocumentConfirmable;
+    const confirmation = projection && matchesInitialDocument(projection, target) ? projection : undefined;
+    const isActionOffered = action && isHistoryCurrent && matchesInitialDocument(action.request.target, target)
+        && (action.request.kind === "regenerate" ? retryable && initial : Boolean(confirmation));
 
-    const handleRetry = () => {
+    const openAction = (request: InitialDocumentAction, button: HTMLButtonElement) => {
+        trigger.current = button;
+        setAction({ request, branchId });
+        setActionOpen(true);
+    };
+    const handleRetry = (button: HTMLButtonElement) => {
         if (!onRetry || !retryable || isRetrying) return;
+        if (initial) {
+            openAction({ kind: "regenerate", target }, button);
+            return;
+        }
         void onRetry(revisionId, document.id, document.generation).catch(onRetryError);
     };
 
     return (
         <div
-            data-component={`${useClientServiceRecordsDataComponent("revision-history")}_document`}
-            className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))] first:border-t-0 first:pt-0"
+            ref={row}
+            tabIndex={-1}
+            data-component={base}
+            data-slot="revision-document-row"
+            className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))] first:border-t-0 first:pt-0"
         >
             <div className="min-w-0 flex-1">
                 <div className="truncate text-[calc(11.8px*var(--glint-ui-scale,1))] font-medium text-v3-dark">
@@ -1003,6 +1125,11 @@ function RevisionDocumentRow({
                         {reasonLabel}
                     </div>
                 )}
+                {readiness && (
+                    <p data-component={`${base}_readiness`} data-slot="initial-document-readiness" className="mt-0.5 text-xs text-v3-text-muted">
+                        {readiness}
+                    </p>
+                )}
             </div>
             <StatusPill variant={statusMeta.variant}>{statusMeta.label}</StatusPill>
             {retryable && (
@@ -1010,14 +1137,35 @@ function RevisionDocumentRow({
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={handleRetry}
-                    disabled={isRetrying}
+                    data-component={`${base}_${initial ? "regenerate" : "retry"}`}
+                    data-slot="revision-document-retry"
+                    onClick={event => handleRetry(event.currentTarget)}
+                    disabled={isRetrying || (initial && !isHistoryCurrent)}
                     loading={isRetrying}
                     loadingLabel="재시도 중"
                 >
-                    다시 시도
+                    {initial ? INITIAL_DOCUMENT_RECOVERY_COPY.regenerateLabel : "다시 시도"}
                 </Button>
             )}
+            {confirmation && <Button type="button" variant="outline" size="sm"
+                data-component={`${base}_confirm-no-provider-document`} data-slot="initial-document-confirm"
+                disabled={!isHistoryCurrent}
+                onClick={event => openAction({ kind: "confirm-no-provider-document", target: confirmation }, event.currentTarget)}
+            >{INITIAL_DOCUMENT_RECOVERY_COPY.confirmLabel}</Button>}
+            {action && action.branchId === branchId && <InitialDocumentRecoveryDialog
+                action={action.request}
+                audience="admin"
+                branchId={action.branchId}
+                open={isActionOpen}
+                isOffered={Boolean(isActionOffered)}
+                data-component={`${base}_initial-document-action`}
+                onClose={() => setActionOpen(false)}
+                onCloseAutoFocus={event => {
+                    event.preventDefault();
+                    (trigger.current?.isConnected ? trigger.current : row.current)?.focus({ preventScroll: true });
+                    setAction(null);
+                }}
+            />}
         </div>
     );
 }
@@ -1033,20 +1181,26 @@ function getRecordStatusMeta(status: string): {
 function LinkStatusCard({
     layout = "desktop",
     clientId,
+    caseId,
+    readOnly,
     assignment,
     isRefreshing,
     isPending,
     isSendingResend = false,
     onSendLink,
+    onResetLink,
     showStatusBadge = true,
 }: {
     layout?: "desktop" | "mobile";
     clientId?: number | null;
+    caseId?: string;
+    readOnly?: boolean;
     assignment: ServiceRecordAssignment;
     isRefreshing: boolean;
     isPending: boolean;
     isSendingResend?: boolean;
     onSendLink: () => void;
+    onResetLink?: () => void;
     showStatusBadge?: boolean;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("overview-grid", "link-card");
@@ -1101,7 +1255,7 @@ function LinkStatusCard({
                             ? SEND_LINK_BLOCKED_HINT
                             : link.status === "canceled"
                             ? CANCELED_LINK_HINT
-                            : "서비스 시작 하루 전 12:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
+                            : "서비스 시작 전날 정오(한국 시간)에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
                     </p>
                 </div>
                 <Button
@@ -1114,7 +1268,7 @@ function LinkStatusCard({
                         "shrink-0 duration-500 ease-out motion-reduce:transition-none",
                         layout === "mobile" ? "w-full" : !usesResendLayout && "w-[calc(118px*var(--glint-ui-scale,1))]",
                     )}
-                    disabled={isPending || isLinkSending}
+                    disabled={readOnly || isPending || isLinkSending}
                     loading={isPending}
                     loadingLabel={isResend ? "메시지 재전송 중" : "링크 발송 중"}
                     onClick={onSendLink}
@@ -1124,9 +1278,15 @@ function LinkStatusCard({
                 >
                     {isResend ? "메시지 재전송" : layout === "mobile" ? "제공기록지 링크 발송" : "링크 수동 전송"}
                 </Button>
+                {onResetLink && canEditServiceRecord ? (
+                    <Button type="button" variant="outline" className="mt-2" disabled={readOnly}
+                        data-component={`${dataComponent}_actions_reset`} onClick={onResetLink}>
+                        제공기록지 링크 재설정
+                    </Button>
+                ) : null}
                 {layout === "mobile" && clientId != null && canEditServiceRecord && (
                     <Button asChild variant="outline" className="mt-2 w-full" data-component={`${dataComponent}_actions_edit`}>
-                        <Link href={`/service-record-admin/${clientId}`}>제공기록지 수정</Link>
+                        <Link href={serviceRecordEditorPath(clientId, caseId)}>제공기록지 수정</Link>
                     </Button>
                 )}
             </div>
@@ -1150,6 +1310,7 @@ const PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES = new Set<string>([
 
 function ServiceSessionsCard({
     clientId,
+    caseId,
     enablePeriodMismatch = false,
     periodMismatchActionsLocked = false,
     startDate,
@@ -1165,6 +1326,7 @@ function ServiceSessionsCard({
     onRefresh,
 }: {
     clientId: number;
+    caseId?: string;
     enablePeriodMismatch?: boolean;
     periodMismatchActionsLocked?: boolean;
     startDate: string | null;
@@ -1236,10 +1398,11 @@ function ServiceSessionsCard({
             if (action === "keep") {
                 await keepMutation.mutateAsync({
                     clientId,
+                    ...(caseId ? { caseId } : {}),
                     sessionIndexes: unkeptSessions.map((session) => session.sessionIndex),
                 });
             } else {
-                const result = await fitMutation.mutateAsync({ clientId });
+                const result = await fitMutation.mutateAsync({ clientId, ...(caseId ? { caseId } : {}) });
                 if (result.startDate === null || result.endDate === null) return;
                 const startChanged = result.startDate !== datePartOf(startDate);
                 const endChanged = result.endDate !== datePartOf(endDate);

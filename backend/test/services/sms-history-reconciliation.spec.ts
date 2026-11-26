@@ -369,6 +369,6 @@ describe("Aligo history service and eligibility", () => {
         const retry = { retry: jest.fn() };
         const scheduler = new MessageRetrySchedulerService({ findPendingRetriesSystemScope: async () => [row] } as unknown as IMessageLogRepository,
             retry as unknown as SmsRetryService, { holdsLease: () => true } as SchedulerLeaseService, undefined, history as unknown as SmsHistoryReconciliationService);
-        await scheduler.retryFailedMessages(); expect(retry.retry).toHaveBeenCalledWith(row, "automatic");
+        await scheduler.retryFailedMessages(); expect(retry.retry).toHaveBeenCalledWith(row, "automatic", expect.any(Function));
     });
 });

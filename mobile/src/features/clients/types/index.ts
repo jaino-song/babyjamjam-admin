@@ -50,6 +50,7 @@ export interface Client {
     fullPrice: string | null;
     grant: string | null;
     actualPrice: string | null;
+    readonly copaymentReceivedDate?: string | null;
     startDate: string | null;
     endDate: string | null;
     careCenter: boolean;
@@ -192,8 +193,13 @@ export type ContractStatus = ServiceStatus;
 
 export interface ServiceRecordMissingClientsResponse {
     count: number;
+    recordCount?: number;
     items: Array<{
         clientId: number;
+        caseId?: string;
+        rank?: number | null;
+        babyCount?: number | null;
+        legacyName?: string | null;
         clientName: string;
         primaryEmployeeName: string;
         unwrittenThroughSessionIndex: number;

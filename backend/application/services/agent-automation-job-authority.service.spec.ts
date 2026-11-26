@@ -50,7 +50,7 @@ function fixture(options: { serviceRecordUrl?: string; configBase?: string } = {
         replaced: false,
         terminatedAt: null,
         primaryEmployeeId: employeeId,
-        client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active" },
+        client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active", fetalConfirmation: null },
         primaryEmployee: { id: employeeId, name: "합성 관리사", phone: employeePhone, branchId, deletedAt: null },
     };
     const serviceRecordCase = {
@@ -147,7 +147,7 @@ function fixture(options: { serviceRecordUrl?: string; configBase?: string } = {
             : { ...schedule, startDate: new Date(schedule.startDate), endDate: new Date(schedule.endDate),
                 client: { ...schedule.client, createdAt: new Date(schedule.client.createdAt) },
                 primaryEmployee: { ...schedule.primaryEmployee } }) },
-        service_record_case: { findFirst: jest.fn().mockResolvedValue({ ...serviceRecordCase, startDate: new Date(startDate), endDate: new Date(endDate), updatedAt: new Date(now) }) },
+        service_record_case: { findMany: jest.fn().mockResolvedValue([{ ...serviceRecordCase, startDate: new Date(startDate), endDate: new Date(endDate), updatedAt: new Date(now) }]) },
         service_record_token: { findFirst: jest.fn().mockResolvedValue({ ...token, expiresAt: new Date(token.expiresAt), createdAt: new Date(token.createdAt) }) },
     };
     const authority = {

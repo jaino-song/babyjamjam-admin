@@ -34,6 +34,7 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
         plannedSessions: options.planned === undefined ? oldVector() : options.planned,
         version: 5, currentRevisionId: null as string | null,
     };
+    const records = [record];
     const client = {
         id: clientId, branchId, startDate: date(newDates[0]!), endDate: date("2026-12-31"),
         allowSaturdayService: options.saturday ?? false, allowSundayService: false, allowHolidayService: false,
@@ -66,12 +67,16 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
             updateMany: jest.fn(async ({ data }: { data: Partial<typeof client> }) => { Object.assign(client, data); return { count: 1 }; }),
         },
         service_record_case: {
-            findFirst: jest.fn().mockResolvedValue(record),
-            update: jest.fn(async ({ data }: { data: Partial<Omit<typeof record, "version">> & { version?: { increment: number } } }) => {
+            findMany: jest.fn().mockResolvedValue(records),
+            update: jest.fn(async ({ where, data }: {
+                where: { id: string };
+                data: Partial<Omit<typeof record, "version">> & { version?: { increment: number } };
+            }) => {
+                const target = records.find(({ id }) => id === where.id)!;
                 const { version, ...values } = data;
-                Object.assign(record, values);
-                record.version += version?.increment ?? 0;
-                return record;
+                Object.assign(target, values);
+                target.version += version?.increment ?? 0;
+                return target;
             }),
         },
         service_record_day: {
@@ -98,7 +103,8 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
             }),
         },
         service_record_assignment: {
-            findMany: jest.fn().mockResolvedValue(assignments),
+            findMany: jest.fn(async ({ where }: { where: { serviceRecordCaseId: string } }) =>
+                assignments.filter(({ serviceRecordCaseId }) => serviceRecordCaseId === where.serviceRecordCaseId)),
             updateMany: jest.fn(async ({ where, data }: { where: { id: string }; data: { startDate: Date; endDate: Date } }) => {
                 Object.assign(assignments.find((row) => row.id === where.id)!, data);
                 return { count: 1 };
@@ -114,11 +120,73 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
         branchId, clientId, decision: { mode, previousStartDate: date(oldDates[0]!), recordedSessionCount: days.length },
         newStartDate: date(start), actorUserId, calendar: KR_BUILTIN_CALENDAR,
     });
-    return { tx, service, apply, record, client, schedules, assignments, days, archive, fence };
+    return { tx, service, apply, record, records, client, schedules, assignments, days, archive, fence };
 }
 
 describe("ServiceRecordStartDateChangeService", () => {
     beforeEach(() => jest.clearAllMocks());
+
+    it("refuses to move any case when a confirmed sibling is missing", async () => {
+        const w = world();
+        const missingCaseId = "33333333-3333-4333-8333-333333333333";
+        const previousStartDate = w.record.startDate;
+
+        await expect(w.service.applyInTransaction(w.tx as never, {
+            branchId, clientId, newStartDate: date(newDates[0]!), calendar: KR_BUILTIN_CALENDAR,
+            decision: {
+                mode: "MOVE", previousStartDate, recordedSessionCount: w.days.length,
+                cases: [
+                    { caseId, previousStartDate, recordedSessionCount: w.days.length },
+                    { caseId: missingCaseId, previousStartDate, recordedSessionCount: 0 },
+                ],
+            },
+        })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
+
+        expect(w.tx.service_record_case.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { branchId, clientId, id: { in: [caseId, missingCaseId] } },
+        }));
+        expect(w.tx.service_record_day_archive.createMany).not.toHaveBeenCalled();
+        expect(w.tx.service_record_case.update).not.toHaveBeenCalled();
+        expect(w.tx.client.updateMany).not.toHaveBeenCalled();
+        expect(w.tx.employee_schedule.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["shorter case first", true],
+        ["longer case first", false],
+    ] as const)("merges sibling periods for the same schedule with the %s", async (_label, siblingFirst) => {
+        const w = world({ count: 0 });
+        const siblingCaseId = siblingFirst ? "21111111-1111-4111-8111-111111111111" : "33333333-3333-4333-8333-333333333333";
+        const siblingAssignment = { ...w.assignments[0]!, id: "sibling-a2", serviceRecordCaseId: siblingCaseId };
+        const sibling = {
+            ...w.record, id: siblingCaseId, startDate: date(oldDates[1]!), requiredSessionCount: 2,
+            plannedSessions: oldVector().slice(1).map((entry, index) => ({
+                ...entry, sessionIndex: index + 1, assignmentId: siblingAssignment.id,
+            })),
+        };
+        w.assignments.push(siblingAssignment);
+        if (siblingFirst) w.records.unshift(sibling);
+        else w.records.push(sibling);
+
+        const result = await w.service.applyInTransaction(w.tx as never, {
+            branchId, clientId, newStartDate: date(newDates[0]!), calendar: KR_BUILTIN_CALENDAR,
+            decision: {
+                mode: "CONFIRM_STARTED", previousStartDate: w.record.startDate, recordedSessionCount: 0,
+                cases: w.records.map(({ id, startDate }) => ({ caseId: id, previousStartDate: startDate, recordedSessionCount: 0 })),
+            },
+        });
+
+        expect(result).toEqual({
+            restoreRequiredSessionCount: null,
+            restoreByCase: new Map([[caseId, 3], [siblingCaseId, 2]]),
+        });
+        expect(w.tx.employee_schedule.updateMany.mock.calls.filter(([{ where }]) => where.id === 12)).toEqual([[
+            { where: { id: 12, branchId, clientId }, data: { startDate: date(newDates[0]!), endDate: date(newDates[2]!) } },
+        ]]);
+        expect(w.assignments[0]).toMatchObject({ startDate: date(newDates[1]!), endDate: date(newDates[2]!) });
+        expect(siblingAssignment).toMatchObject({ startDate: date(newDates[0]!), endDate: date(newDates[1]!) });
+        expect(w.client.endDate).toEqual(date(newDates[2]!));
+    });
 
     it("MOVE clears confirmation for changed dates and keeps it for unchanged dates", async () => {
         const w = world();
@@ -400,6 +468,8 @@ describe("ServiceRecordStartDateChangeService", () => {
             momName: "Mom", momBirth: "900101", babyName: "Baby", babyBirth: "261201", deliveryType: "natural", babyWeight: "3.2",
         };
         const tx = {
+            // This isolated tx has no persisted job storage.
+            eformsign_document_job: { findMany: jest.fn().mockResolvedValue([]) },
             service_record_case: {
                 findUnique: jest.fn(async (args: { select?: { branch?: unknown } }) => args.select?.branch ? { ...source, branch: { name: "Branch" } } : source),
                 updateMany: jest.fn(),
@@ -412,7 +482,7 @@ describe("ServiceRecordStartDateChangeService", () => {
         const snapshot = { executeCase: jest.fn() };
         const jobs = {
             findByRequestKeyInTransaction: jest.fn().mockResolvedValue(null),
-            enqueueInTransaction: jest.fn().mockResolvedValue({ existing: false }),
+            enqueueInTransaction: jest.fn().mockResolvedValue({ existing: false, job: { id: "frozen-job", status: "queued" } }),
         };
         const editRepository = {
             createRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue({ id: "state-1", documentVersion: 3 }),

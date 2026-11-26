@@ -236,21 +236,29 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
             const cB = await makeClient(branchA, "Bora Kim");
             const cA = await makeClient(branchA, "alice Park");
             const cC = await makeClient(branchA, "Chul Kim");
+            const cSameName = await makeClient(branchA, "Bora Kim");
             const cOther = await makeClient(branchB, "Bora Kim");
-            await makeItem(event, branchA, cB);
-            await makeItem(event, branchA, cA, { category: "risk" });
+            const bora = await makeItem(event, branchA, cB);
+            const alice = await makeItem(event, branchA, cA, { category: "risk" });
             await makeItem(event, branchA, cC, { status: "kept" });
+            const sameName = await makeItem(event, branchA, cSameName);
             await makeItem(event, branchB, cOther);
 
             const list = (filters: Parameters<SbHolidayReviewRepository["listEventItems"]>[2]) =>
                 asBranch(branchA, () => repository.listEventItems(branchA, event, filters));
 
-            expect((await list({ status: "open" })).map((i) => i.clientName)).toEqual(["alice Park", "Bora Kim"]);
+            // Match PostgreSQL's collation on both the CI and local clones.
+            const names = await raw.client.findMany({
+                where: { id: { in: [cA, cB] } }, orderBy: { name: "asc" }, select: { name: true },
+            });
+            const open = await list({ status: "open" });
+            expect(open.map(({ id }) => id)).toEqual(names.flatMap(({ name }) =>
+                name === "alice Park" ? [alice.id] : [bora.id, sameName.id].sort()));
             expect((await list({ status: "open", category: "risk" })).map((i) => i.clientName)).toEqual(["alice Park"]);
             expect((await list({ status: "kept" })).map((i) => i.clientId)).toEqual([cC]);
-            expect((await list({ q: "KIM" })).map((i) => i.clientName).sort()).toEqual(["Bora Kim", "Chul Kim"]);
+            expect((await list({ q: "KIM" })).map((i) => i.clientName).sort()).toEqual(["Bora Kim", "Bora Kim", "Chul Kim"]);
             expect(await list({ status: "fixed" })).toEqual([]);
-            expect((await list({ status: "open" }))[0]).toMatchObject({
+            expect(open.find(({ id }) => id === alice.id)).toMatchObject({
                 storedEnd: "2026-11-13",
                 recalculatedEnd: "2026-11-16",
                 category: "risk",

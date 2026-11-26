@@ -33,6 +33,7 @@ import {
 } from "@babyjamjam/shared";
 import {
   SYSTEM_TEMPLATE_KEYS,
+  systemTemplateKeySchema,
   resolveSystemTemplateDeliveryMode,
   type SystemTemplateDeliveryMode,
   type SystemTemplateKey,
@@ -1435,6 +1436,13 @@ export default function MessagesPage() {
   const selectedUserTemplate = userTemplateId ? userTemplates.find((template) => template.id === userTemplateId) : null;
   const SelectedBuiltinForm = builtinType ? FormComponents[builtinType] : null;
   const selectedSystemTemplateKey = isBuiltin ? selectedTemplateItem?.templateKey ?? "" : "";
+  const selectedSmsTemplateRef = useMemo(() => {
+    if (selectedUserTemplate) return { kind: "branch" as const, id: selectedUserTemplate.id };
+    const parsed = systemTemplateKeySchema.safeParse(selectedSystemTemplateKey);
+    return parsed.success && resolveSystemTemplateDeliveryMode(parsed.data) === "sms"
+      ? { kind: "system" as const, key: parsed.data }
+      : undefined;
+  }, [selectedSystemTemplateKey, selectedUserTemplate]);
   const {
     data: selectedSystemTemplateDetail,
     isLoading: isLoadingSystemTemplateDetail,
@@ -1581,8 +1589,9 @@ export default function MessagesPage() {
         <TemplateSendForm
           key={`${activeBranchId ?? "unavailable"}:${activeTemplateId}`}
           templateId={activeTemplateId ?? selectedTemplateTitle}
+          templateRef={selectedSmsTemplateRef}
           templateName={selectedTemplateTitle}
-          message={templatePreviewMessage}
+          message={serviceRecordLinkPreparation?.previewContent ?? templatePreviewMessage}
           branchId={activeBranchId}
           templateReady={templateReady}
           requiresRecipientName={requiresRecipientName}

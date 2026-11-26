@@ -100,4 +100,24 @@ describe("POST /api/admin/service-records/.../retry", () => {
             expect.objectContaining({ headers: { Authorization: "Bearer access-token" } }),
         );
     });
+
+    it.each([
+        "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS",
+        "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED",
+        "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED",
+        "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN",
+        "SERVICE_RECORD_INITIAL_JOB_IN_PROGRESS",
+    ])("maps the upstream INITIAL regeneration code %s to a public 409 reason", async reason => {
+        mockPost.mockRejectedValue({
+            response: { status: 409, data: { code: reason, diagnostic: "upstream-only details" } },
+        });
+
+        const response = await POST(createRequest({ expectedGeneration: "gen-7" }), {
+            params: Promise.resolve({ revisionId: "rev-1", documentStateId: "state-1" }),
+        });
+
+        expect(response.status).toBe(409);
+        expect(response.headers.get("Cache-Control")).toContain("no-store");
+        await expect(response.json()).resolves.toEqual({ code: "REQUEST_CONFLICT", reason });
+    });
 });

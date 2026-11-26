@@ -1,6 +1,6 @@
 "use client";
 
-
+import { legacyServiceRecordLinkAssignment, serviceRecordResetUrl } from "@babyjamjam/shared/utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -37,6 +37,7 @@ import {
     useClient,
 } from "@/features/clients/hooks/use-clients";
 import { useSendClientReceipt } from "@/features/clients/hooks/use-send-client-receipt";
+import { SendClientReceiptDialog } from "@/components/app/clients/SendClientReceiptDialog";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
@@ -71,7 +72,7 @@ import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button, ButtonLoadingContent } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
     StatsBar,
@@ -272,6 +273,7 @@ export default function ClientsPage() {
     const [urlSelectionSuppressed, setUrlSelectionSuppressed] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
+    const pendingEditReadRef = useRef<object | null>(null);
     const [maternityContractClient, setMaternityContractClient] = useState<Client | null>(null);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
@@ -285,9 +287,20 @@ export default function ClientsPage() {
     const [activeFilter, setActiveFilter] = useState<ClientListTab>("all");
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
     const [clientFormActiveStep, setClientFormActiveStep] = useState(0);
-    const [tabRequest, setTabRequest] = useState<{ clientId: number; tab: ClientDetailTabKey; nonce: number } | null>(null);
+    const [tabRequest, setTabRequest] = useState<{ clientId: number; tab: ClientDetailTabKey; nonce: number; caseId?: string } | null>(null);
     const tabRequestNonce = useRef(0);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
+    const [previousClientIdParam, setPreviousClientIdParam] = useState(clientIdParam);
+
+    // Resolve a new URL selection before committing the detail panel and its receipt action.
+    if (previousClientIdParam !== clientIdParam) {
+        setPreviousClientIdParam(clientIdParam);
+        setTabRequest(request => request?.clientId === Number(clientIdParam) ? request : null);
+        if (clientIdParam) {
+            setSelectedClient(null);
+            setUrlSelectionSuppressed(false);
+        }
+    }
 
     const [debouncedSearchQuery] = useDebounce(searchQuery.trim(), 300);
     const isSearchSettled = searchQuery.trim() === debouncedSearchQuery;
@@ -299,10 +312,8 @@ export default function ClientsPage() {
     // The stats bar describes the whole branch: searching the list must not change or reload it.
     const listSummary = useClientListSummary();
     const deleteClient = useDeleteClient();
-    const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
     const previousBranchIdRef = useRef<string | null | undefined>(undefined);
     const createdClientSelectionRef = useRef<Client | null>(null);
-    const previousClientIdParamRef = useRef(clientIdParam);
 
     const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
     const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
@@ -313,9 +324,7 @@ export default function ClientsPage() {
         isError: isClientFromParamError,
         isFetching: isClientFromParamFetching,
         refetch: refetchClientFromParam,
-    } = useClient(
-        effectiveClientIdParam ? Number(effectiveClientIdParam) : 0
-    );
+    } = useClient(selectedClient?.id ?? Number(effectiveClientIdParam ?? 0));
 
     const clients = useMemo(
         () => isSearchSettled && directory.isBranchContextReady ? directory.clients : [],
@@ -359,8 +368,16 @@ export default function ClientsPage() {
         && isClientFromParamError
         && clientFromParam === undefined
         && activeSelectedClient === null;
-    const panelFormClient = null;
-    const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
+    const panelFormClient = formDialogOpen ? null : editingClient;
+    const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm || panelFormClient !== null;
+    const receiptClientId = activeSection === "list" && !shouldShowClientFormPanel
+        ? activeSelectedClient?.id ?? null
+        : null;
+    const receipt = useSendClientReceipt(
+        activeBranchId,
+        receiptClientId,
+        clientFromParam?.id === receiptClientId ? clientFromParam?.copaymentReceivedDate : undefined,
+    );
 
     const isDirectoryInitialLoading = !isSearchSettled || directory.isInitialLoading;
     const isSummaryInitialLoading = listSummary.isInitialLoading;
@@ -372,6 +389,9 @@ export default function ClientsPage() {
         endingSoonCount: summary?.serviceEnd.count ?? "—",
     };
     const clearClientSelectionSources = useCallback(() => {
+        pendingEditReadRef.current = null;
+        setEditingClient(null);
+        setFormDialogOpen(false);
         setTabRequest(null);
         createdClientSelectionRef.current = null;
         setSelectedClient(null);
@@ -387,18 +407,6 @@ export default function ClientsPage() {
             setUrlSelectionSuppressed(false);
         }
     }, [clientIdParam, shouldOpenClientFormFromUrl, urlSelectionSuppressed]);
-    useEffect(() => {
-        // A new ?id= (e.g. from a notification) outranks a stale row selection.
-        if (previousClientIdParamRef.current === clientIdParam) {
-            return;
-        }
-        previousClientIdParamRef.current = clientIdParam;
-        setTabRequest(request => request?.clientId === Number(clientIdParam) ? request : null);
-        if (clientIdParam) {
-            setSelectedClient(null);
-            setUrlSelectionSuppressed(false);
-        }
-    }, [clientIdParam]);
     useEffect(() => {
         const previousBranchId = previousBranchIdRef.current;
         if (previousBranchId !== undefined && previousBranchId !== null && previousBranchId !== activeBranchId) {
@@ -444,9 +452,11 @@ export default function ClientsPage() {
         setIsCreatingClient(true);
     };
 
-    const handleSelectServiceRecordMissingClient = (clientId: number): boolean => {
+    const handleSelectServiceRecordMissingClient = (clientId: number, caseId?: string): boolean => {
         if (formDialogOpen || pendingCreateDiscard !== null) return false;
         if (shouldShowClientFormPanel && isCreateFormDirty) return false;
+        pendingEditReadRef.current = null;
+        setEditingClient(null);
         setActiveSection("list");
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
@@ -454,7 +464,7 @@ export default function ClientsPage() {
         setUrlSelectionSuppressed(false);
         // The URL owns selection, including when it already names this client.
         setSelectedClient(null);
-        setTabRequest({ clientId, tab: "service-records", nonce: ++tabRequestNonce.current });
+        setTabRequest({ clientId, tab: "service-records", nonce: ++tabRequestNonce.current, caseId });
         router.replace(`/clients?id=${clientId}`);
         return true;
     };
@@ -479,9 +489,19 @@ export default function ClientsPage() {
         applyClientSelection(client);
     };
 
-    const handleEdit = (client: Client) => {
-        setEditingClient(client);
-        setFormDialogOpen(true);
+    const handleEdit = async (client: Client, surface: "panel" | "dialog") => {
+        const read = {};
+        pendingEditReadRef.current = read;
+        const result = await refetchClientFromParam();
+        if (pendingEditReadRef.current !== read) return;
+        pendingEditReadRef.current = null;
+        if (!result.isSuccess || result.data.id !== client.id) {
+            toast({ variant: "destructive", description: "고객 정보를 불러오지 못했어요. 다시 시도해 주세요." });
+            return;
+        }
+        setEditingClient(result.data);
+        setFormDialogOpen(surface === "dialog");
+        setClientFormActiveStep(0);
     };
 
     const handleDeleteRequest = (id: number) => {
@@ -493,22 +513,22 @@ export default function ClientsPage() {
 
         setIsResettingLink(true);
         try {
-            const overview = await serviceRecordsApi.getClientOverview(resetLinkTargetClientId);
-            const assignments = overview.data.assignments ?? [];
-            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
-                ?? assignments[0]
-                ?? null;
+            const { data } = await serviceRecordsApi.getClientOverview(resetLinkTargetClientId);
+            const activeAssignment = legacyServiceRecordLinkAssignment(data);
+
             if (!activeAssignment) {
                 toast({
-                    description: "관리사 배정이 없어 링크를 재설정할 수 없어요",
+                    description: "현재 배정된 제공기록지를 선택해 주세요",
                     variant: "destructive",
                 });
                 return;
             }
 
             const reset = await serviceRecordsApi.resetLink(activeAssignment.scheduleId);
+            const url = serviceRecordResetUrl(reset.data, {});
+            if (!url) throw new Error("Unexpected service record reset target");
             setResetLinkTargetClientId(null);
-            setResetServiceRecordUrl(reset.data.serviceRecordUrl);
+            setResetServiceRecordUrl(url);
         } catch {
             toast({
                 description: "제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요",
@@ -644,6 +664,7 @@ export default function ClientsPage() {
         const createdClient = createdClientSelectionRef.current;
         createdClientSelectionRef.current = null;
         setIsCreatingClient(false);
+        setEditingClient(null);
         setClientFormActiveStep(0);
         setIsCreateFormDirty(false);
         setPendingCreateDiscard(null);
@@ -657,6 +678,7 @@ export default function ClientsPage() {
             return;
         }
 
+        if (panelFormClient) return;
         clearClientSelectionSources();
     };
 
@@ -685,6 +707,10 @@ export default function ClientsPage() {
             return;
         }
 
+        if (panelFormClient && action.type === "close") {
+            handleClientFormPanelClose();
+            return;
+        }
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
         if (action.type === "select") {
@@ -1001,7 +1027,7 @@ export default function ClientsPage() {
                                         </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end" className="min-w-[140px]">
-                                        <DropdownMenuItem onClick={() => handleEdit(activeSelectedClient)} className="gap-2">
+                                        <DropdownMenuItem onClick={() => void handleEdit(activeSelectedClient, "panel")} className="gap-2">
                                             <Pencil className="w-4 h-4" />
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
@@ -1017,16 +1043,11 @@ export default function ClientsPage() {
                                         )}
                                         <DropdownMenuItem
                                             data-component="desktop_clients_page_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
-                                            disabled={isSendingReceipt}
-                                            aria-busy={isSendingReceipt || undefined}
-                                            data-loading={isSendingReceipt ? "" : undefined}
-                                            onClick={() => void sendReceipt(activeSelectedClient.id)}
-                                            className={isSendingReceipt ? "relative gap-2" : "gap-2"}
+                                            onClick={receipt.open}
+                                            className="gap-2"
                                         >
-                                            <ButtonLoadingContent loading={isSendingReceipt} loadingLabel="영수증 발송 중">
-                                                <Send className="w-4 h-4" />
-                                                본인부담금 영수증 발송
-                                            </ButtonLoadingContent>
+                                            <Send className="w-4 h-4" />
+                                            본인부담금 영수증 발송
                                         </DropdownMenuItem>
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
@@ -1104,9 +1125,16 @@ export default function ClientsPage() {
                     open={detailModalOpen}
                     onClose={handleDetailModalClose}
                     client={activeSelectedClient}
-                    onEdit={handleEdit}
+                    onEdit={(client) => void handleEdit(client, "dialog")}
                     onDelete={handleDeleteRequest}
                 />
+
+            {receipt.dialog ? (
+                <SendClientReceiptDialog
+                    data-component="desktop_clients_page_receipt-send-dialog"
+                    dialog={receipt.dialog}
+                />
+            ) : null}
 
             <ClientFormDialog
                 data-component="desktop_clients_page_form-dialog"

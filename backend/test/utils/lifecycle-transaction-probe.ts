@@ -14,7 +14,7 @@ const BRANCH_ID = "11111111-1111-1111-1111-111111111111";
  * The calendar service reads through the root client, so a `forBranch` call made
  * while that window is open needs a second pooled connection. A caller that opens
  * its own `$transaction` must therefore resolve the calendar first and hand it to
- * `ensureForClient`; `state.forBranchWhileOpen` lists, per `forBranch` call, whether
+ * `ensureAllForClient`; `state.forBranchWhileOpen` lists, per `forBranch` call, whether
  * it happened inside that window.
  */
 export function createLifecycleTransactionProbe(options: { clientId?: number } = {}) {
@@ -35,8 +35,8 @@ export function createLifecycleTransactionProbe(options: { clientId?: number } =
             updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         service_record_case: {
-            findUnique: jest.fn().mockResolvedValue(null),
-            upsert: jest.fn().mockResolvedValue({ id: "case-1" }),
+            findMany: jest.fn().mockResolvedValue([]),
+            create: jest.fn().mockResolvedValue({ id: "case-1" }),
         },
         service_record_token: { updateMany: jest.fn() },
     };

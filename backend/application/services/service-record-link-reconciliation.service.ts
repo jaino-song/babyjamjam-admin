@@ -7,7 +7,6 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -52,27 +51,36 @@ export class ServiceRecordLinkReconciliationService {
         if (!runToken) return;
 
         try {
-            const repairedCount = await this.reconcileMissingJobs();
+            const recovered = await this.runRepairOperation("sweepRecovery", () => this.linkService.sweepRecovery());
+            const reconciled = await this.runRepairOperation("reconcileMissingJobs", () => this.reconcileMissingJobs());
+            const repairedCount = recovered + reconciled;
             if (repairedCount > 0) {
                 this.logger.log(
                     `[Service Record Link Repair] Recreated ${repairedCount} missing message jobs`,
                 );
             }
+        } finally {
+            this.executionGuard.finish(runToken);
+        }
+    }
+
+    private async runRepairOperation(operation: string, repair: () => Promise<number>): Promise<number> {
+        try {
+            return await repair();
         } catch (error) {
             captureServiceRecordError(error, {
                 operation: "link-schedule",
                 handled: true,
             });
             if (isTransientPrismaConnectivityError(error)) {
-                this.executionGuard.enterCooldown(summarizePrismaError(error));
-                return;
+                this.executionGuard.enterCooldown(`${operation}: ${summarizePrismaError(error)}`);
+            } else {
+                this.logger.error(
+                    `[Service Record Link Repair] ${operation} failed`,
+                    error instanceof Error ? error.stack : String(error),
+                );
             }
-            this.logger.error(
-                "[Service Record Link Repair] Run failed",
-                error instanceof Error ? error.stack : String(error),
-            );
-        } finally {
-            this.executionGuard.finish(runToken);
+            return 0;
         }
     }
 
@@ -115,7 +123,6 @@ export class ServiceRecordLinkReconciliationService {
                                 in: [
                                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                                     SERVICE_RECORD_LINK_ENDED_REASON,
-                                    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                                 ],
                             },
                         },
@@ -156,7 +163,6 @@ export class ServiceRecordLinkReconciliationService {
                                                         notIn: [
                                                             SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                                                             SERVICE_RECORD_LINK_ENDED_REASON,
-                                                            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                                                         ],
                                                     },
                                                 },

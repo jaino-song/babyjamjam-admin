@@ -70,6 +70,7 @@ describeAgentE2E("task automation durable retry and recovery", () => {
 
     async function cleanup(): Promise<void> {
         if (!prisma) return;
+        await prisma.message_occurrence_claim.deleteMany({ where: { branchId } });
         await prisma.message_log.deleteMany({ where: { branchId } });
         await prisma.message_trigger_job.deleteMany({ where: { branchId } });
         await prisma.agent_action.deleteMany({ where: { branchId } });

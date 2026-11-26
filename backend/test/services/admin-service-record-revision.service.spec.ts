@@ -6,10 +6,15 @@ import { ServiceRecordLinkService } from "application/services/service-record-li
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
+const branchId = "11111111-1111-4111-8111-111111111111";
+const caseId = "22222222-2222-4222-8222-222222222222";
+
 function createPrisma() {
     const tx = { $queryRaw: jest.fn() };
     return {
         client: { findFirst: jest.fn() },
+        client_baby: { findMany: jest.fn().mockResolvedValue([]) },
+        service_record_case: { findMany: jest.fn().mockResolvedValue([{ id: caseId, babyId: null }]) },
         tx,
         $transaction: jest.fn(async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx)),
     };
@@ -37,15 +42,15 @@ describe("AdminServiceRecordService revision status", () => {
             id: revisionId, revisionNumber: 2, confirmedAt: new Date("2026-10-16T00:00:00Z"), formVersionAtConfirm: 3,
             beforeSnapshot: { header: { momName: "A" } }, payload: { header: { momName: "B" } }, plannedSessions: [],
         });
-        const result = await createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 42, revisionId);
-        expect(findRevisionForChanges).toHaveBeenCalledWith("branch-1", 42, revisionId);
+        const result = await createService(prisma, { findRevisionForChanges }).getRevisionChanges(branchId, 42, revisionId);
+        expect(findRevisionForChanges).toHaveBeenCalledWith(branchId, 42, revisionId, caseId);
         expect(result.basicInfo).toEqual([{ path: "header.momName", before: "A", after: "B" }]);
     });
 
     it.each(["not-a-uuid", "", "x".repeat(256)])("returns 404 for malformed revision ID %s without querying", async (id) => {
         const prisma = createPrisma();
         const findRevisionForChanges = jest.fn();
-        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 42, id)).rejects.toBeInstanceOf(NotFoundException);
+        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges(branchId, 42, id)).rejects.toBeInstanceOf(NotFoundException);
         expect(findRevisionForChanges).not.toHaveBeenCalled();
     });
 
@@ -53,7 +58,7 @@ describe("AdminServiceRecordService revision status", () => {
         const prisma = createPrisma();
         prisma.client.findFirst.mockResolvedValue(null);
         const findRevisionForChanges = jest.fn();
-        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 99, revisionId)).rejects.toBeInstanceOf(NotFoundException);
+        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges(branchId, 99, revisionId)).rejects.toBeInstanceOf(NotFoundException);
         expect(findRevisionForChanges).not.toHaveBeenCalled();
     });
 
@@ -61,7 +66,7 @@ describe("AdminServiceRecordService revision status", () => {
         const prisma = createPrisma();
         prisma.client.findFirst.mockResolvedValue({ id: 42 });
         const findRevisionForChanges = jest.fn().mockResolvedValue(null);
-        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges("branch-1", 42, revisionId)).rejects.toBeInstanceOf(NotFoundException);
+        await expect(createService(prisma, { findRevisionForChanges }).getRevisionChanges(branchId, 42, revisionId)).rejects.toBeInstanceOf(NotFoundException);
     });
 
     describe("caregiver edit changes", () => {
@@ -79,8 +84,8 @@ describe("AdminServiceRecordService revision status", () => {
             const prisma = createPrisma();
             prisma.client.findFirst.mockResolvedValue({ id: 42 });
             const findCaregiverEditForChanges = jest.fn().mockResolvedValue(edit);
-            const result = await createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges("branch-1", 42, editId);
-            expect(findCaregiverEditForChanges).toHaveBeenCalledWith("branch-1", 42, editId);
+            const result = await createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges(branchId, 42, editId);
+            expect(findCaregiverEditForChanges).toHaveBeenCalledWith(branchId, 42, editId, caseId);
             expect(result).toEqual({
                 editId,
                 editedAt: "2026-10-28T01:02:03.000Z",
@@ -101,7 +106,7 @@ describe("AdminServiceRecordService revision status", () => {
         it.each(["not-a-uuid", "", "x".repeat(256)])("returns 404 for malformed edit ID %s without querying", async (id) => {
             const prisma = createPrisma();
             const findCaregiverEditForChanges = jest.fn();
-            await expect(createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges("branch-1", 42, id)).rejects.toBeInstanceOf(NotFoundException);
+            await expect(createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges(branchId, 42, id)).rejects.toBeInstanceOf(NotFoundException);
             expect(findCaregiverEditForChanges).not.toHaveBeenCalled();
         });
 
@@ -109,7 +114,7 @@ describe("AdminServiceRecordService revision status", () => {
             const prisma = createPrisma();
             prisma.client.findFirst.mockResolvedValue(null);
             const findCaregiverEditForChanges = jest.fn();
-            await expect(createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges("branch-1", 99, editId)).rejects.toBeInstanceOf(NotFoundException);
+            await expect(createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges(branchId, 99, editId)).rejects.toBeInstanceOf(NotFoundException);
             expect(findCaregiverEditForChanges).not.toHaveBeenCalled();
         });
 
@@ -117,8 +122,8 @@ describe("AdminServiceRecordService revision status", () => {
             const prisma = createPrisma();
             prisma.client.findFirst.mockResolvedValue({ id: 42 });
             const findCaregiverEditForChanges = jest.fn().mockResolvedValue(null);
-            await expect(createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges("branch-1", 42, editId)).rejects.toBeInstanceOf(NotFoundException);
-            expect(findCaregiverEditForChanges).toHaveBeenCalledWith("branch-1", 42, editId);
+            await expect(createService(prisma, { findCaregiverEditForChanges }).getCaregiverEditChanges(branchId, 42, editId)).rejects.toBeInstanceOf(NotFoundException);
+            expect(findCaregiverEditForChanges).toHaveBeenCalledWith(branchId, 42, editId, caseId);
         });
     });
 
@@ -128,7 +133,7 @@ describe("AdminServiceRecordService revision status", () => {
             const prisma = createPrisma();
             prisma.client.findFirst.mockResolvedValue({ id: 42 });
             const listRevisionHistory = jest.fn().mockResolvedValue(caregiverEdits === undefined ? base : { ...base, caregiverEdits });
-            return createService(prisma, { listRevisionHistory }).getRevisionHistory("branch-1", 42);
+            return createService(prisma, { listRevisionHistory }).getRevisionHistory(branchId, 42);
         }
 
         it("passes caregiverEdits through in the repository's order and drops any before/after payload", async () => {
@@ -160,6 +165,8 @@ describe("AdminServiceRecordService revision status", () => {
     it("uses the core list seam and preserves the safe history shape", async () => {
         const prisma = createPrisma();
         prisma.client.findFirst.mockResolvedValue({ id: 42 });
+        const noProviderDocumentConfirmable = { stateId: "state-2", revisionId: "revision-2",
+            generation: "generation-2", suffix: "[SR-12345678-r2-v3]", unlinkedChunkOrdinals: ["(1/2)"] };
         const listRevisionHistory = jest.fn().mockResolvedValue({
             caseId: "case-1",
             caseVersion: 8,
@@ -174,22 +181,43 @@ describe("AdminServiceRecordService revision status", () => {
                     id: "state-2",
                     operation: "record_snapshot",
                     generation: "generation-2",
-                    status: "waiting_for_completion",
-                    documentVersion: null,
+                    status: "manual_review",
+                    documentVersion: 3,
                     canRetry: false,
-                    reasonCode: null,
+                    reasonCode: "JOB_CANCELLED_AFTER_DISPATCH",
+                    noProviderDocumentConfirmable,
                 }],
             }],
         });
 
-        const result = await createService(prisma, { listRevisionHistory }).getRevisionHistory("branch-1", 42);
+        const result = await createService(prisma, { listRevisionHistory }).getRevisionHistory(branchId, 42);
 
         expect(result).toEqual(expect.objectContaining({
             caseId: "case-1",
             caseVersion: 8,
             currentRevisionId: "revision-2",
         }));
-        expect(listRevisionHistory).toHaveBeenCalledWith("branch-1", 42);
+        expect(result.revisions[0]?.documents[0]?.noProviderDocumentConfirmable).toEqual(noProviderDocumentConfirmable);
+        expect(listRevisionHistory).toHaveBeenCalledWith(branchId, 42, caseId);
+    });
+
+    it("preserves the computed regeneration blocker in a partial-dispatch history response", async () => {
+        const prisma = createPrisma();
+        prisma.client.findFirst.mockResolvedValue({ id: 42 });
+        const document = {
+            id: "state-2", operation: "record_snapshot", generation: "generation-2", status: "failed",
+            documentVersion: 3, canRetry: false, reasonCode: "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH",
+            regenerationBlockedReason: "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED",
+        };
+        const listRevisionHistory = jest.fn().mockResolvedValue({
+            caseId: "case-1", caseVersion: 8, currentRevisionId: "revision-2", currentUsableRevisionId: null,
+            revisions: [{
+                id: "revision-2", revisionNumber: 2, confirmedAt: "2026-09-08T01:02:03.000Z", isCurrent: true,
+                documents: [document],
+            }],
+        });
+        const result = await createService(prisma, { listRevisionHistory }).getRevisionHistory(branchId, 42);
+        expect(result.revisions[0]?.documents).toEqual([document]);
     });
 
     it("rejects a foreign client before consulting revision state", async () => {
@@ -198,7 +226,7 @@ describe("AdminServiceRecordService revision status", () => {
         const listRevisionHistory = jest.fn();
 
         await expect(
-            createService(prisma, { listRevisionHistory }).getRevisionHistory("branch-1", 99),
+            createService(prisma, { listRevisionHistory }).getRevisionHistory(branchId, 99),
         ).rejects.toBeInstanceOf(NotFoundException);
         expect(listRevisionHistory).not.toHaveBeenCalled();
     });
@@ -209,9 +237,9 @@ describe("AdminServiceRecordService revision status", () => {
         const listRevisionHistory = jest.fn().mockResolvedValue(null);
 
         await expect(
-            createService(prisma, { listRevisionHistory }).getRevisionHistory("branch-1", 42),
+            createService(prisma, { listRevisionHistory }).getRevisionHistory(branchId, 42),
         ).rejects.toBeInstanceOf(NotFoundException);
-        expect(listRevisionHistory).toHaveBeenCalledWith("branch-1", 42);
+        expect(listRevisionHistory).toHaveBeenCalledWith(branchId, 42, caseId);
     });
 
     it("resolves client scope through the core branch lookup before retry CAS", async () => {
@@ -237,7 +265,7 @@ describe("AdminServiceRecordService revision status", () => {
             findRevisionDocumentStateForBranch,
             retryRevisionDocumentStateInTransaction,
         }).retryRevisionDocument(
-            "branch-1",
+            branchId,
             "revision-1",
             "state-1",
             "generation-1",
@@ -254,12 +282,12 @@ describe("AdminServiceRecordService revision status", () => {
             reasonCode: null,
         });
         expect(findRevisionDocumentStateForBranch).toHaveBeenCalledWith(
-            "branch-1",
+            branchId,
             "revision-1",
             "state-1",
         );
         expect(retryRevisionDocumentStateInTransaction).toHaveBeenCalledWith({ tx: prisma.tx }, {
-            branchId: "branch-1",
+            branchId,
             clientId: 42,
             revisionId: "revision-1",
             stateId: "state-1",
@@ -275,7 +303,7 @@ describe("AdminServiceRecordService revision status", () => {
         await expect(createService(prisma, {
             findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
             retryRevisionDocumentStateInTransaction,
-        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+        }).retryRevisionDocument(branchId, "revision-1", "state-1", "generation-1", "admin-1"))
             .rejects.toMatchObject({ status: 409, response: { code: "REQUEST_CONFLICT" } });
     });
 
@@ -295,10 +323,10 @@ describe("AdminServiceRecordService revision status", () => {
             await expect(createService(prisma, {
                 findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
                 retryRevisionDocumentStateInTransaction: noOpRetry,
-            }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+            }).retryRevisionDocument(branchId, "revision-1", "state-1", "generation-1", "admin-1"))
                 .rejects.toMatchObject({ status: 409, response: { code: "REQUEST_CONFLICT" } });
             expect(noOpRetry).toHaveBeenCalledWith({ tx: prisma.tx }, expect.objectContaining({
-                branchId: "branch-1", clientId: 42, revisionId: "revision-1", stateId: "state-1",
+                branchId, clientId: 42, revisionId: "revision-1", stateId: "state-1",
                 expectedGeneration: "generation-1",
             }));
             const [caseQuery, stateQuery] = prisma.tx.$queryRaw.mock.calls.map(([query]) => query);
@@ -306,8 +334,8 @@ describe("AdminServiceRecordService revision status", () => {
             expect(stateQuery.sql).toContain('FROM "service_record_revision_document_state"');
             expect(caseQuery.sql).toContain("FOR UPDATE");
             expect(stateQuery.sql).toContain("FOR UPDATE");
-            expect(caseQuery.values).toEqual(["case-1", "branch-1", 42]);
-            expect(stateQuery.values).toEqual(["state-1", "branch-1", 42, "case-1", "revision-1", "generation-1"]);
+            expect(caseQuery.values).toEqual(["case-1", branchId, 42]);
+            expect(stateQuery.values).toEqual(["state-1", branchId, 42, "case-1", "revision-1", "generation-1"]);
         },
     );
 
@@ -321,7 +349,7 @@ describe("AdminServiceRecordService revision status", () => {
         await expect(createService(prisma, {
             findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
             retryRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue({ ...state, version: 4 }),
-        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+        }).retryRevisionDocument(branchId, "revision-1", "state-1", "generation-1", "admin-1"))
             .resolves.toMatchObject({ id: "state-1", status: "pending" });
     });
 
@@ -336,7 +364,7 @@ describe("AdminServiceRecordService revision status", () => {
         await expect(createService(prisma, {
             findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
             retryRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue({ ...state, status: "pending", version: 5 }),
-        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+        }).retryRevisionDocument(branchId, "revision-1", "state-1", "generation-1", "admin-1"))
             .resolves.toMatchObject({ id: "state-1", status: "pending" });
     });
 
@@ -350,7 +378,7 @@ describe("AdminServiceRecordService revision status", () => {
                 clientId: 42, serviceRecordCaseId: "case-1", generation: "generation-1",
             }),
             retryRevisionDocumentStateInTransaction,
-        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+        }).retryRevisionDocument(branchId, "revision-1", "state-1", "generation-1", "admin-1"))
             .rejects.toMatchObject({ status: 409, response: { code: "REQUEST_CONFLICT" } });
         expect(retryRevisionDocumentStateInTransaction).not.toHaveBeenCalled();
     });
@@ -365,7 +393,7 @@ describe("AdminServiceRecordService revision status", () => {
                 findRevisionDocumentStateForBranch,
                 retryRevisionDocumentStateInTransaction,
             }).retryRevisionDocument(
-                "branch-1",
+                branchId,
                 "revision-1",
                 "state-1",
                 "generation-1",
@@ -389,7 +417,7 @@ describe("AdminServiceRecordService revision status", () => {
                 findRevisionDocumentStateForBranch,
                 retryRevisionDocumentStateInTransaction,
             }).retryRevisionDocument(
-                "branch-1",
+                branchId,
                 "revision-1",
                 "state-1",
                 "generation-stale",

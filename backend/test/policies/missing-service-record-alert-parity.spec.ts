@@ -9,6 +9,7 @@ const branchId = "branch-parity";
 const threshold = new Date("2026-09-08T18:00:00+09:00");
 const expectedAlert = [{
     clientId: 10, clientName: "김산모", primaryEmployeeName: "이관리", scheduleId: 55,
+    caseId: "case-parity", rank: null, babyCount: null, legacyName: null,
 }];
 const date = (value: string) => new Date(value);
 
@@ -39,18 +40,23 @@ function fixture() {
         assignmentId: "assignment-55", scheduleId: 55, employeeId: 9, provenanceVersion: "7",
     }));
     const record = {
-        id: "case-parity", clientId: 10, branchId, version: 7, requiredSessionCount: 3,
+        id: "case-parity", babyId: null, babyName: null, clientId: 10, branchId, version: 7, requiredSessionCount: 3,
         startDate: date("2026-09-07"), endDate: date("2026-09-09"), plannedSessions,
     };
+    const findSchedules = jest.fn().mockResolvedValue([schedule()]);
     const db = {
         client: { findMany: jest.fn().mockResolvedValue([{
             id: 10, branchId, name: "김산모", duration: 3,
             startDate: date("2026-09-07"), endDate: date("2026-09-09"), serviceStatus: "completed",
             allowSaturdayService: false, allowSundayService: false, allowHolidayService: false,
         }]) },
-        employee_schedule: { findMany: jest.fn().mockResolvedValue([schedule()]) },
+        employee_schedule: { findMany: findSchedules },
         service_record_case: { findMany: jest.fn().mockResolvedValue([record]) },
         service_record_day: { findMany: jest.fn().mockResolvedValue([]) },
+        client_baby: { findMany: jest.fn().mockResolvedValue([]) },
+        service_record_assignment: { findMany: jest.fn(async () =>
+            (await findSchedules()).map((item: ReturnType<typeof schedule>) => item.serviceRecordAssignment)) },
+
     };
     const repository = new SbClientRepository(db as unknown as PrismaService);
     return { db, record, load: () => repository.findServiceRecordAlertCandidates(branchId) };

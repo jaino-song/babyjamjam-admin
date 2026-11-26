@@ -1,4 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import {
+    allocationConflict, closeScheduleAllocation, loadClientAllocations,
+} from "application/services/client-allocation.service";
 import { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
@@ -91,16 +94,9 @@ export class UpdateEmployeeScheduleUsecase {
             // updates lock the client/employees and validate eligibility and
             // overlap before the repository write.
             if (tx && tx.employee?.findMany) {
-                const existingCase = tx.service_record_case?.findUnique
-                    ? await tx.service_record_case.findUnique({
-                        where: { clientId: updated.clientId },
-                        select: { id: true },
-                    })
-                    : null;
                 await lockServiceRecordWriteSet(tx, {
                     branchId: branchid,
                     clientId: updated.clientId,
-                    caseId: existingCase?.id,
                     scheduleIds: [schedule.id],
                     employeeIds: [
                         schedule.primaryEmployeeId,
@@ -123,6 +119,15 @@ export class UpdateEmployeeScheduleUsecase {
                     || lockedSchedule.secondaryEmployeeId !== schedule.secondaryEmployeeId
                 ) {
                     throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+                }
+                const snapshot = (await loadClientAllocations(tx, branchid, [updated.clientId])).get(updated.clientId);
+                const configured = snapshot?.fetalConfirmation === "CONFIRMED";
+                if (configured) {
+                    // Staff handover needs a successor; this in-place endpoint
+                    // edits periods/addresses only and cannot reopen history.
+                    if (updated.primaryEmployeeId !== lockedSchedule.primaryEmployeeId) allocationConflict("/primaryEmployeeId");
+                    if (updated.secondaryEmployeeId !== lockedSchedule.secondaryEmployeeId) allocationConflict("/secondaryEmployeeId");
+                    if (lockedSchedule.replaced && !updated.replaced) allocationConflict("/replaced");
                 }
                 const employeeIds = [...new Set(
                     [updated.primaryEmployeeId, updated.secondaryEmployeeId]
@@ -151,7 +156,13 @@ export class UpdateEmployeeScheduleUsecase {
                     employees,
                     retainedEmployeeIds,
                 );
-                await assertEmployeeScheduleWriteIsAvailable(tx, updated, branchid, updated.id);
+                await assertEmployeeScheduleWriteIsAvailable(
+                    tx, updated, branchid, updated.id,
+                    lockedSchedule.providers?.filter(({ slot }) => slot > 1).map(({ employeeId }) => employeeId),
+                );
+                if (configured && !lockedSchedule.replaced && updated.replaced) {
+                    await closeScheduleAllocation(tx, { branchId: branchid, clientId: updated.clientId }, updated.id);
+                }
             }
 
             return this.employeeScheduleRepository.update(branchid, updated, tx);

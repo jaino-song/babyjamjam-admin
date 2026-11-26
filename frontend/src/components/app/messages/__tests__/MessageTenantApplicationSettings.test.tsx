@@ -1033,12 +1033,14 @@ describe("canonical policy draft", () => {
     fireEvent.click(screen.getAllByText(title)[0]);
     return view;
   }
-  it.each([[false, false, 7], [false, true, 7], [true, false, 6], [true, true, 6]] as const)("retains conditional items approved=%s manager=%s", (approved, manager, count) => {
+  it.each([[false, false, 8], [false, true, 8], [true, false, 7], [true, true, 7]] as const)("retains conditional items approved=%s manager=%s", (approved, manager, count) => {
     mockSettingsQueries(approved, { ...policies, canManageActivation: manager });
     const { container } = render(<MessageTenantApplicationSettings />);
     const list = container.querySelector('[data-component="desktop_messages_sections_split-layout_list-panel-2"]')!;
     expect(within(list as HTMLElement).getByText(`${count}개`)).toBeInTheDocument();
     expect(within(list as HTMLElement).getAllByText("심야 시간 메세지 전송 금지")).toHaveLength(1);
+    expect(within(list as HTMLElement).getAllByText("취소 자동화 재시도")).toHaveLength(1);
+    expect(within(list as HTMLElement).queryByRole("switch", { name: "취소 자동화 재시도 활성화" })).not.toBeInTheDocument();
     expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
     expect(within(list as HTMLElement).queryByText("메시지 발송 기능 신청") !== null).toBe(!approved);
   });

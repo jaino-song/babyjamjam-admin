@@ -51,6 +51,8 @@ import {
 import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { observePreBookingRecordLinkAssignment } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
@@ -182,6 +184,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
         @Optional()
         private readonly notificationService?: NotificationService,
+        @Optional() private readonly messageAutomationBranchLock?: MessageAutomationBranchLockService,
     ) {}
 
     async execute(
@@ -891,6 +894,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 document.templateName,
                             )
                             : null;
+                        await this.messageAutomationBranchLock?.runExclusive(creationBranchId, async () => undefined, transaction);
                         const authorityOwners = await discoverAuthorityClientIds(transaction, creationBranchId, [document.documentId]);
                         if (authorityOwners.length) await assertAuthorityPointerWrite(transaction, { branchId: creationBranchId, clientIds: authorityOwners, documentIds: [document.documentId] });
                         if (!completeLockSurface && !await this.lockExpectedMirrorGeneration(transaction, params.documentId, params.expectedMirrorGeneration, creationBranchId, document.branchId)) throw new MirrorGenerationConflict();
@@ -935,6 +939,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 candidate,
                             },
                         );
+                        if (scheduleId !== null && this.messageAutomationBranchLock) {
+                            await observePreBookingRecordLinkAssignment(transaction, creationBranchId, scheduleId);
+                        }
                         if (params.initializeLifecycle) {
                             await this.ensureServiceRecordLifecycle(client.id, transaction, true, calendar);
                         }
@@ -1226,18 +1233,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             },
             orderBy: { id: "asc" },
         });
-        const initialCase = await transaction.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            select: { id: true, branchId: true, clientId: true },
-        });
-        const caseId = initialCase?.branchId === branchId && initialCase.clientId === params.clientId
-            ? initialCase.id
-            : null;
-
         await lockServiceRecordWriteSet(transaction, {
             branchId,
             clientId: params.clientId,
-            caseId,
             expectedScheduleIds: initialSchedules.map((schedule) => schedule.id),
             scheduleIds: initialSchedules.map((schedule) => schedule.id),
             employeeIds: initialSchedules.flatMap((schedule) => [
@@ -1254,21 +1252,14 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (!rereadClient || rereadClient.branchId !== branchId) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
-        const rereadCase = await transaction.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            select: { id: true, branchId: true, clientId: true },
+        const cases = await transaction.service_record_case.findMany({
+            where: { branchId, clientId: params.clientId }, select: { id: true },
         });
-        if (
-            rereadCase
-            && (rereadCase.branchId !== branchId || rereadCase.clientId !== params.clientId)
-        ) {
-            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
-        }
         return {
             branchId,
             client: rereadClient,
             schedules: initialSchedules,
-            caseId: rereadCase?.id ?? null,
+            caseId: cases.length === 1 ? cases[0]!.id : null,
         };
     }
 
@@ -1752,6 +1743,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             eDocId: string | null;
         },
     ): Promise<boolean> {
+        if (!client.branchId) return false;
         const currentDocument = await transaction.eformsign_doc.findUnique({
             where: { documentId: document.documentId },
             select: {
@@ -1777,8 +1769,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             )
         ) return false;
 
-        const ownerCase = await transaction.service_record_case.findUnique({
-            where: { clientId: client.id },
+        const cases = await transaction.service_record_case.findMany({
+            where: { branchId: client.branchId, clientId: client.id },
             select: {
                 id: true,
                 branchId: true,
@@ -1788,6 +1780,12 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 currentUsableDocumentVersion: true,
             },
         });
+        if (cases.length > 1) {
+            return (currentDocument.serviceRecordCaseId ?? null) === null && (currentDocument.revisionId ?? null) === null
+                && cases.every((record) => record.currentRevisionId === null
+                    && record.currentUsableRevisionId === null && record.currentUsableDocumentVersion === null);
+        }
+        const [ownerCase] = cases;
         if (!ownerCase) {
             return (currentDocument.revisionId ?? null) === null
                 && (currentDocument.serviceRecordCaseId ?? null) === null;
@@ -2001,9 +1999,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (!this.serviceRecordLifecycleService) return;
         try {
             if (transaction) {
-                await this.serviceRecordLifecycleService.ensureForClient(clientId, transaction, calendar);
+                await this.serviceRecordLifecycleService.ensureAllForClient(clientId, transaction, calendar);
             } else {
-                await this.serviceRecordLifecycleService.ensureForClient(clientId);
+                await this.serviceRecordLifecycleService.ensureAllForClient(clientId);
             }
         } catch (error) {
             const errorType = error instanceof Error ? error.name : "UnknownError";

@@ -408,6 +408,33 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         )).resolves.toBe(true);
     });
 
+    it("preserves revision linkage when marking a document deleted so it still blocks snapshot completion", async () => {
+        const document = {
+            id: 11, detailPayload: null, revisionId: "revision-1",
+            branchId: "branch-1", serviceRecordCaseId: "case-1",
+            snapshotVersion: 3, snapshotChunkIndex: 1, statusType: "070",
+        };
+        const prisma = {
+            $queryRaw: jest.fn().mockResolvedValue([document]),
+            eformsign_doc: { update: jest.fn().mockImplementation(({ data }) =>
+                Promise.resolve(Object.assign(document, data))) },
+        };
+        const repository = new SbEformsignDocumentMirrorRepository({
+            ...prisma, $transaction: transactionMock(prisma),
+        } as never);
+
+        await repository.markDeleted(["doc-1"], syncedAt);
+
+        expect(prisma.eformsign_doc.update).toHaveBeenCalledWith({
+            where: { id: 11 },
+            data: expect.objectContaining({ statusType: "049" }),
+        });
+        expect(document).toMatchObject({
+            statusType: "049", revisionId: "revision-1", branchId: "branch-1",
+            serviceRecordCaseId: "case-1", snapshotVersion: 3, snapshotChunkIndex: 1,
+        });
+    });
+
     it("purges files, mirrored PII, and client/service-record associations while retaining an authorization tombstone", async () => {
         const prisma = {
             eformsign_doc: {
@@ -464,6 +491,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
             where: {
                 clientId: 31,
                 sentAt: null,
+                standaloneRequestId: null,
                 logs: { none: {} },
             },
         });
@@ -475,6 +503,8 @@ describe("SbEformsignDocumentMirrorRepository", () => {
                     none: { id: { notIn: [11] } },
                 },
                 employeeSchedules: { none: {} },
+                babies: { none: {} },
+                recordTeamSlots: { none: {} },
                 callRecords: { none: {} },
                 clientDrafts: { none: {} },
                 scheduleChangeRequests: { none: {} },
@@ -504,13 +534,15 @@ describe("SbEformsignDocumentMirrorRepository", () => {
                     none: { id: { notIn: [11] } },
                 },
                 employeeSchedules: { none: {} },
+                babies: { none: {} },
+                recordTeamSlots: { none: {} },
                 callRecords: { none: {} },
                 clientDrafts: { none: {} },
                 scheduleChangeRequests: { none: {} },
                 messageLogs: { none: {} },
                 eformsignDocumentJobs: { none: {} },
                 messageTriggerJobs: { none: {} },
-                serviceRecordCase: { is: null },
+                serviceRecordCases: { none: {} },
             },
         });
         expect(prisma.eformsign_doc_file.deleteMany).toHaveBeenCalledWith({
@@ -530,6 +562,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
                 documentKind: null,
                 employeeScheduleId: null,
                 serviceRecordCaseId: null,
+                revisionId: null,
                 snapshotVersion: null,
                 snapshotChunkIndex: null,
                 detailPayload: Prisma.DbNull,

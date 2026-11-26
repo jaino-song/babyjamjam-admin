@@ -108,6 +108,7 @@ import type {
     MessageTriggerRuleGroupView, CreateMessageTriggerRuleGroupDto,
     UpdateMessageTriggerRuleGroupDto, PreviewMessageTriggerRuleGroupDto,
     MessageTriggerRuleGroupPreviewResponse,
+    CanceledAutomationRetrySettings, CanceledAutomationRetryRoutine, UpdateCanceledAutomationRetryRequest,
 } from "@babyjamjam/shared/types/message";
 export type {
     MessageAutomationPolicyConfiguration, MessageAutomationPolicyConfigResponse,
@@ -119,6 +120,12 @@ export type {
 
 const branchOptions = (expectedBranchId: string) => ({ params: { expectedBranchId } });
 export const messagePolicyApi = {
+    async listCanceledAutomationRetries(branchId: string, signal: AbortSignal): Promise<CanceledAutomationRetrySettings> {
+        return (await api.get("/settings/message-automation-policies/canceled-retry", { ...branchOptions(branchId), signal })).data;
+    },
+    async updateCanceledAutomationRetry(id: string, input: UpdateCanceledAutomationRetryRequest, branchId: string): Promise<CanceledAutomationRetryRoutine> {
+        return (await api.put(`/settings/message-automation-policies/canceled-retry/${encodeURIComponent(id)}`, input, branchOptions(branchId))).data;
+    },
     async getConfiguration(branchId: string): Promise<MessageAutomationPolicyConfigResponse> {
         return (await api.get("/settings/message-automation-policies/config", branchOptions(branchId))).data;
     },

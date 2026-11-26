@@ -51,6 +51,7 @@ export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
         "serviceEndDate",
         "buttonUrl",
         "serviceRecordUrl",
+        "serviceRecordLinks",
     ],
     [MessageTriggerTemplateKey.CLIENT_GREETING]: ["name", "clientName", "phone"],
     [MessageTriggerTemplateKey.PRICE_INFO]: [

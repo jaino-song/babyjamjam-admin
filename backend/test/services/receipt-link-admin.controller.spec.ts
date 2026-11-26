@@ -1,4 +1,8 @@
-import { BadRequestException, ExecutionContext, INestApplication, NotFoundException } from "@nestjs/common";
+import { HttpAdapterHost } from "@nestjs/core";
+import { StandaloneReceiptIssueService } from "application/services/standalone-receipt-issue.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { ServiceRecordSentryExceptionFilter } from "infrastructure/observability/service-record-sentry-exception.filter";
+import { BadRequestException, ExecutionContext, ForbiddenException, INestApplication, NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -11,6 +15,7 @@ const BRANCH = "11111111-1111-1111-1111-111111111111";
 
 describe("ReceiptLinkAdminController", () => {
     let app: INestApplication;
+    const standaloneIssue = { issue: jest.fn() };
     const manualSendService = { send: jest.fn(), prepare: jest.fn() };
 
     beforeAll(async () => {
@@ -22,14 +27,17 @@ describe("ReceiptLinkAdminController", () => {
             canActivate: (context: ExecutionContext) => {
                 const req = context.switchToHttp().getRequest();
                 req.user = { userId: "user-1" };
-                req.tenant = { branchId: BRANCH };
+                req.tenant = { branchId: BRANCH, userId: "user-1", branchRole: req.headers["x-test-role"] ?? "manager" };
                 return true;
             },
         };
 
         const moduleRef = await Test.createTestingModule({
             controllers: [ReceiptLinkAdminController],
-            providers: [{ provide: ReceiptLinkManualSendService, useValue: manualSendService }],
+            providers: [
+                { provide: ReceiptLinkManualSendService, useValue: manualSendService },
+                { provide: StandaloneReceiptIssueService, useValue: standaloneIssue },
+            ],
         })
             .overrideGuard(JwtGuard)
             .useValue(mockGuard)
@@ -41,6 +49,7 @@ describe("ReceiptLinkAdminController", () => {
         // Same pipe options as main.ts:61, so this test app's validation behavior
         // (whitelist + forbidNonWhitelisted + transform) matches production exactly.
         app.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+        app.useGlobalFilters(new ServiceRecordSentryExceptionFilter(app.get(HttpAdapterHost)));
         await app.init();
     });
 
@@ -153,4 +162,32 @@ describe("ReceiptLinkAdminController", () => {
             expectedRecipientPhone: "01012345678",
         });
     });
+
+    const standaloneInput = {
+        clientId: 7, copaymentReceivedDate: "2026-01-02", requestId: "c5555555-a111-4111-8111-111111111111",
+    };
+
+    it("returns the exact 200 response for fresh and repeated standalone requests", async () => {
+        standaloneIssue.issue.mockResolvedValue({ jobId: "job-1", queued: true });
+        for (let attempt = 0; attempt < 2; attempt++) {
+            await request(app.getHttpServer()).post("/receipt-links/standalone")
+                .set("X-Expected-Branch-Id", BRANCH).send(standaloneInput).expect(200, { jobId: "job-1", queued: true });
+        }
+        expect(standaloneIssue.issue).toHaveBeenCalledWith({ ...standaloneInput, branchId: BRANCH, userId: "user-1" });
+    });
+
+    it("keeps the artwork refusal as a top-level ACCESS_DENIED code through the production filter", async () => {
+        standaloneIssue.issue.mockRejectedValue(new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED")));
+        const res = await request(app.getHttpServer()).post("/receipt-links/standalone").send(standaloneInput).expect(403);
+        expect(res.body).toMatchObject({ code: "ACCESS_DENIED" });
+    });
+
+    it("rejects a changed branch, a non-staff role and caller-supplied branding before admission", async () => {
+        const issue = () => request(app.getHttpServer()).post("/receipt-links/standalone");
+        await issue().set("X-Expected-Branch-Id", "foreign").send(standaloneInput).expect(403);
+        await issue().set("x-test-role", "user").send(standaloneInput).expect(403);
+        await issue().send({ ...standaloneInput, issuerName: "other" }).expect(400);
+        expect(standaloneIssue.issue).not.toHaveBeenCalled();
+    });
+
 });

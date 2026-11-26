@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
+import { CanceledAutomationRetrySettings } from "./CanceledAutomationRetrySettings";
 import { isTriggerRuleInChannel } from "@/features/message-triggers/channel";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
@@ -136,7 +137,7 @@ type TenantApplicationListItem = {
   subtitle: string;
   statusLabel: string;
   icon: typeof Building2;
-  kind: "tenant-application" | "automation-policy" | "duplicate-send-policy";
+  kind: "tenant-application" | "automation-policy" | "duplicate-send-policy" | "canceled-retry";
   active: boolean;
   requiresApproval: boolean;
   activationUnavailable?: boolean;
@@ -442,6 +443,15 @@ export function MessageTenantApplicationSettings() {
       }, {
         id: QUIET_POLICY_ID, title: "심야 시간 메세지 전송 금지", subtitle: "지정한 한국 시간 동안 SMS/LMS 전송을 제한합니다.",
         statusLabel: !configuration || configQuery.isError ? "확인 필요" : configuration.quietHours.enabled ? "활성" : "비활성", icon: Clock3, kind: "automation-policy", active: configuration?.quietHours.enabled === true, requiresApproval: false, activationUnavailable: !configuration || configQuery.isError,
+      }, {
+        id: "canceled-retry",
+        title: "취소 자동화 재시도",
+        subtitle: "취소 사유가 해소됐을 때 다시 시도할 루틴을 설정해요.",
+        statusLabel: "",
+        icon: Repeat2,
+        kind: "canceled-retry",
+        active: false,
+        requiresApproval: false,
       });
 
       return items;
@@ -728,7 +738,7 @@ export function MessageTenantApplicationSettings() {
                 title={item.title}
                 subtitle={item.subtitle}
                 status={
-                  item.kind === "tenant-application" ? (
+                  item.kind === "canceled-retry" ? undefined : item.kind === "tenant-application" ? (
                     <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
                       {item.statusLabel}
                     </span>
@@ -761,7 +771,23 @@ export function MessageTenantApplicationSettings() {
         />
       </ListPanel>
 
-      {selectedItem?.kind === "automation-policy" ? (
+      {selectedItem?.kind === "canceled-retry" ? (
+        <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-2"
+          title={selectedItem.title}
+          subtitle={selectedItem.subtitle}
+        >
+          {branchId ? (
+            <CanceledAutomationRetrySettings
+              key={branchId}
+              branchId={branchId}
+              canManageActivation={isAdminOrOwner}
+              data-component="desktop_messages_sections_split-layout_detail-panel-2_canceled-retry"
+            />
+          ) : (
+            <LoadingState data-component="desktop_messages_sections_split-layout_detail-panel-2_branch-loading" label="지점 정보를 불러오는 중" />
+          )}
+        </DetailPanel>
+      ) : selectedItem?.kind === "automation-policy" ? (
         <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-2"
           avatar={
             <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">

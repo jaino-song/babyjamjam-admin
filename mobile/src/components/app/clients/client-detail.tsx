@@ -1,5 +1,6 @@
 "use client";
 
+import { serviceRecordResetTarget, serviceRecordResetUrl } from "@babyjamjam/shared/utils";
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CalendarCheck, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
@@ -29,7 +30,7 @@ import { useConfirmBooking } from "@/features/clients";
 import { canEditServiceRecordSchedule } from "@/features/clients/types";
 import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
 import { LoadingState } from "@/components/app/ui/LoadingState";
-import { Button, ButtonLoadingContent } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -70,13 +71,14 @@ import {
   MobileDetailTabPanel,
 } from "@/components/app/mobile-redesign/detail-sheet";
 import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
-import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
+import { ClientServiceRecords, type ServiceRecordLinkResetSelection } from "@/components/app/clients/client-service-records";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceRecordScheduleSheet } from "@/components/app/service-record/ServiceRecordScheduleSheet";
 import { scheduleText } from "@/components/app/service-record/service-record-schedule-messages";
 import { useLocale } from "@/providers/LocaleProvider";
 import type { ContractReissueOptions } from "@/hooks/useIssueContract";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
+import { SendClientReceiptDialog } from "./SendClientReceiptDialog";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useResendMessageTriggerJob, useRetryMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { canRetryFailedHistory, getResendableJobId, retryMessageHistory } from "@/features/message-triggers/retry-history";
@@ -812,36 +814,40 @@ export function ClientDetailContent({
     setMessageRetryTarget(null);
     setSelectedEntry(null);
   };
-  const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
+  const resetInFlight = useRef(false);
+  const [resetLinkTarget, setResetLinkTarget] = useState<{ clientId: number; selection?: ServiceRecordLinkResetSelection } | null>(null);
   const [recordScheduleSheetOpen, setRecordScheduleSheetOpen] = useState(false);
   const locale = useLocale();
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
   const [isResettingLink, setIsResettingLink] = useState(false);
-  const [receiptSendConfirmOpen, setReceiptSendConfirmOpen] = useState(false);
-  const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
+  const receipt = useSendClientReceipt(client.id);
   const confirmBookingMutation = useConfirmBooking();
   const confirmBookingInFlightRef = useRef(false);
   const [confirmBookingOpen, setConfirmBookingOpen] = useState(false);
 
   const handleResetServiceRecordLink = async () => {
+    if (!resetLinkTarget || resetLinkTarget.clientId !== client.id || resetInFlight.current) return;
+    resetInFlight.current = true;
     setIsResettingLink(true);
     try {
-      const overview = await fetchClientServiceRecords(client.id);
-      const assignments = overview.assignments ?? [];
-      const activeAssignment = assignments.find((assignment) => !assignment.replaced)
-        ?? assignments[0]
-        ?? null;
-      if (!activeAssignment) {
-        toast({
-          description: "관리사 배정이 없어 링크를 재설정할 수 없어요",
-          variant: "destructive",
-        });
+      const { selection } = resetLinkTarget;
+      const overview = await fetchClientServiceRecords(client.id, selection?.caseId);
+      const target = serviceRecordResetTarget(overview, selection?.caseId);
+      const matchesSelection = target && ("members" in target.request
+        ? selection?.scheduleId === target.scheduleId && selection.employeeId === target.request.employeeId
+        : !selection);
+      if (!target || !matchesSelection) {
+        toast({ description: "현재 배정된 제공기록지를 선택해 주세요", variant: "destructive" });
         return;
       }
 
-      const reset = await resetServiceRecordLink(activeAssignment.scheduleId);
-      setResetLinkModalOpen(false);
-      setResetServiceRecordUrl(reset.serviceRecordUrl);
+      const reset = await resetServiceRecordLink(target.scheduleId, target.request);
+      const url = serviceRecordResetUrl(reset, target.request);
+      if (!url) throw new Error("Unexpected service record reset target");
+      setResetLinkTarget(null);
+      setResetServiceRecordUrl(url);
+      if (selection?.refresh) selection.refresh();
+      else void serviceRecordsQuery.refetch();
     } catch {
       toast({
         description: "제공기록지 링크를 재설정하지 못했어요. 잠시 후 다시 시도해 주세요",
@@ -849,6 +855,7 @@ export function ClientDetailContent({
       });
     } finally {
       setIsResettingLink(false);
+      resetInFlight.current = false;
     }
   };
 
@@ -874,11 +881,6 @@ export function ClientDetailContent({
         variant: "destructive",
       });
     }
-  };
-
-  const handleConfirmReceiptSend = async () => {
-    await sendReceipt(client.id);
-    setReceiptSendConfirmOpen(false);
   };
 
   // 고객-04: the client stays 예약 전 until an admin presses [예약 확정]. The open detail renders from
@@ -1195,17 +1197,12 @@ export function ClientDetailContent({
                 수정
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={isSendingReceipt}
-                aria-busy={isSendingReceipt || undefined}
-                data-loading={isSendingReceipt ? "" : undefined}
-                onClick={() => setReceiptSendConfirmOpen(true)}
-                className="relative min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                onClick={receipt.open}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                 data-component={`${dataComponent}_header_menu_send-copayment-receipt`}
               >
-                <ButtonLoadingContent loading={isSendingReceipt} loadingLabel="영수증 발송 중">
-                  <Send className="size-[15px]" strokeWidth={2} />
-                  본인부담금 영수증 발송
-                </ButtonLoadingContent>
+                <Send className="size-[15px]" strokeWidth={2} />
+                본인부담금 영수증 발송
               </DropdownMenuItem>
               {canManageBranchFeatures && canEditServiceRecordSchedule(client) ? (
                 <DropdownMenuItem
@@ -1219,7 +1216,7 @@ export function ClientDetailContent({
               ) : null}
               {canManageBranchFeatures ? (
                 <DropdownMenuItem
-                  onClick={() => setResetLinkModalOpen(true)}
+                  onClick={() => setResetLinkTarget({ clientId: client.id })}
                   className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                   data-component={`${dataComponent}_header_menu_reset-service-record-link`}
                 >
@@ -1300,10 +1297,10 @@ export function ClientDetailContent({
       />
 
       <ApprovalTwoButtonModal
-        open={resetLinkModalOpen}
+        open={resetLinkTarget?.clientId === client.id}
         onOpenChange={(open) => {
           if (!open && !isResettingLink) {
-            setResetLinkModalOpen(open);
+            setResetLinkTarget(null);
           }
         }}
         data-component={`${dataComponent}_reset-link-approval-modal`}
@@ -1316,22 +1313,12 @@ export function ClientDetailContent({
         onApprove={() => void handleResetServiceRecordLink()}
       />
 
-      <ApprovalTwoButtonModal
-        open={receiptSendConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open && !isSendingReceipt) {
-            setReceiptSendConfirmOpen(false);
-          }
-        }}
-        data-component={`${dataComponent}_receipt-send-approval-modal`}
-        title="본인부담금 영수증 전송"
-        description={`${client.name} 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?`}
-        isDescriptionVisuallyHidden={false}
-        approvalLabel="발송하기"
-        pendingLabel="발송 중"
-        isPending={isSendingReceipt}
-        onApprove={() => void handleConfirmReceiptSend()}
-      />
+      {receipt.dialog ? (
+        <SendClientReceiptDialog
+          data-component={`${dataComponent}_receipt-send-dialog`}
+          dialog={receipt.dialog}
+        />
+      ) : null}
 
       {recordScheduleSheetOpen ? (
         <ServiceRecordScheduleSheet
@@ -1632,6 +1619,9 @@ export function ClientDetailContent({
           isError={serviceRecordsQuery.isError}
           isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
           onRefresh={() => void serviceRecordsQuery.refetch()}
+          onResetServiceRecordLink={canManageBranchFeatures
+            ? (selection) => setResetLinkTarget({ clientId: client.id, selection })
+            : undefined}
           onPeriodFitted={async () => {
             try {
               onClientUpdated(await fetchClient(client.id));

@@ -1,3 +1,4 @@
+import { OCCURRENCE_ALREADY_ACCEPTED, OCCURRENCE_ON_HOLD } from "domain/entities/message-occurrence";
 import { ConflictException, Inject, Injectable, InternalServerErrorException, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
@@ -49,6 +50,12 @@ export function buildSmsProviderAcceptanceFingerprint(input: Record<string, unkn
     return digest(input);
 }
 
+export class SmsOccurrenceBlockedError extends Error {
+    constructor(readonly disposition: "accepted" | "held") {
+        super(disposition === "accepted" ? OCCURRENCE_ALREADY_ACCEPTED : OCCURRENCE_ON_HOLD);
+    }
+}
+
 export type SmsProviderReconciliationOutcome = "delivered" | "not-delivered";
 
 export interface SmsProviderReconciliationInput {
@@ -73,20 +80,21 @@ export class SmsProviderAcceptanceService {
         private readonly logRepository: IMessageLogRepository,
     ) {}
 
-    async prepare(log: MessageLogEntity): Promise<MessageLogEntity> {
+    async prepare(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
         if (log.providerAcceptanceState !== "prepared") {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         const repository = this.logRepository as IMessageLogRepository & {
-            prepareProviderAttempt?: (attempt: MessageLogEntity) => Promise<MessageLogEntity>;
+            prepareProviderAttempt?: (attempt: MessageLogEntity, transaction?: Prisma.TransactionClient) => Promise<MessageLogEntity>;
         };
         if (typeof repository.prepareProviderAttempt === "function") {
-            return repository.prepareProviderAttempt(log);
+            return transaction ? repository.prepareProviderAttempt(log, transaction) : repository.prepareProviderAttempt(log);
         }
 
         // Compatibility fallback for isolated unit doubles and legacy
         // repository implementations. Production uses the transactional
         // implementation above.
+        if (transaction) throw new Error("Transactional SMS preparation is unavailable");
         return this.logRepository.save(log);
     }
 
@@ -102,13 +110,14 @@ export class SmsProviderAcceptanceService {
             claimProviderAttempt?: (
                 attempt: MessageLogEntity,
                 transaction?: Prisma.TransactionClient,
-            ) => Promise<MessageLogEntity | null>;
+            ) => Promise<MessageLogEntity | "accepted" | "held" | null>;
         };
         if (typeof repository.claimProviderAttempt === "function") {
             const claimed = await repository.claimProviderAttempt(log, transaction);
             if (!claimed) {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
+            if (typeof claimed === "string") throw new SmsOccurrenceBlockedError(claimed);
             return claimed;
         }
 

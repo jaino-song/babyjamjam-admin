@@ -1,13 +1,18 @@
 import { NextRequest } from "next/server";
 
+import { allowServiceRecordLinkRequest } from "@babyjamjam/shared/api";
+
 import { serverAPIClient } from "@/lib/api/server";
 import {
     backendJsonResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
+    withNoStore,
+    readJsonObjectBody,
+    invalidJsonResponse,
 } from "@/lib/api/route-utils";
-import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
+import { unauthorizedProblemResponse, validationProblemResponse } from "@/lib/api/problem-responses";
 
 import { invalidScheduleIdResponse, isPositiveScheduleId } from "../../link-route-utils";
 
@@ -25,13 +30,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             return invalidScheduleIdResponse();
         }
 
+        const payload = allowServiceRecordLinkRequest("prepare", await readJsonObjectBody(request));
+        if ("pointer" in payload) {
+            return validationProblemResponse("Invalid service record link selection", [
+                { pointer: payload.pointer, code: "INVALID_FORMAT", detail: "입력 형식이 올바르지 않아요.", location: "body" },
+            ]);
+        }
+
         const response = await serverAPIClient.post(
             `/admin/service-records/schedules/${scheduleId}/prepare-link`,
-            {},
+            payload.body,
             { headers: getAuthHeaders(token) },
         );
-        return backendJsonResponse(response);
+        return withNoStore(backendJsonResponse(response));
     } catch (error) {
-        return errorResponse(error, "prepare service record link");
+        return invalidJsonResponse(error) ?? errorResponse(error, "prepare service record link");
     }
 }

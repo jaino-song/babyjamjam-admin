@@ -25,6 +25,19 @@ function isOperatorObject(value: unknown): value is Record<string, unknown> {
 }
 
 function matchesOperators(fieldValue: unknown, operators: Record<string, unknown>): boolean {
+    // Prisma JSON path filters compare the selected scalar, not the whole payload.
+    if ("path" in operators) {
+        const { path, ...comparison } = operators;
+        if (!Array.isArray(path) || !path.every((part) => typeof part === "string")
+            || Object.keys(comparison).length !== 1 || !("equals" in comparison)) {
+            throw new Error("prisma-where-evaluator: unsupported JSON path filter");
+        }
+        let selected = fieldValue;
+        for (const part of path) {
+            selected = isOperatorObject(selected) ? selected[part] : undefined;
+        }
+        return matchesOperators(selected, comparison);
+    }
     return Object.entries(operators).every(([operator, operand]) => {
         if (!OPERATORS.has(operator)) {
             throw new Error(`prisma-where-evaluator: unsupported operator "${operator}"`);
@@ -52,18 +65,23 @@ function asList<T>(value: T | T[]): T[] {
     return Array.isArray(value) ? value : [value];
 }
 
-export function matchesWhere(row: Row, where: Row | undefined): boolean {
+export function matchesWhere(
+    row: Row,
+    where: Row | undefined,
+    matchesRelation?: (key: string, condition: Row) => boolean | undefined,
+): boolean {
     if (!where) return true;
     return Object.entries(where).every(([key, condition]) => {
         if (COMBINATORS.has(key)) {
             const clauses = asList(condition as Row | Row[]);
-            if (key === "AND") return clauses.every((clause) => matchesWhere(row, clause));
-            if (key === "OR") return clauses.some((clause) => matchesWhere(row, clause));
-            return !clauses.some((clause) => matchesWhere(row, clause));
+            const matches = (clause: Row) => matchesWhere(row, clause, matchesRelation);
+            if (key === "AND") return clauses.every(matches);
+            if (key === "OR") return clauses.some(matches);
+            return !clauses.some(matches);
         }
         const fieldValue = row[key];
         if (condition === null) return fieldValue === null || fieldValue === undefined;
-        if (isOperatorObject(condition)) return matchesOperators(fieldValue, condition);
+        if (isOperatorObject(condition)) return matchesRelation?.(key, condition) ?? matchesOperators(fieldValue, condition);
         if (fieldValue === null || fieldValue === undefined) return false;
         return comparable(fieldValue) === comparable(condition);
     });

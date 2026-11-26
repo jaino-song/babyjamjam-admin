@@ -38,6 +38,8 @@ export interface TwoButtonModalProps {
   layer?: "default" | "nested";
   onCloseAutoFocus?: (event: Event) => void;
   "data-component"?: string;
+  /** @internal Zero-DOM wrapper ownership only. */
+  sourceComponent?: typeof SOURCE_COMPONENT | "InitialDocumentRecoveryDialog";
   dataComponent?: string;
   headerDataComponent?: string;
   titleDataComponent?: string;
@@ -67,6 +69,7 @@ export function TwoButtonModal({
   layer = "default",
   onCloseAutoFocus,
   "data-component": canonicalDataComponent,
+  sourceComponent = SOURCE_COMPONENT,
   dataComponent: legacyDataComponent,
   headerDataComponent,
   titleDataComponent,
@@ -93,7 +96,7 @@ export function TwoButtonModal({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         data-component={dataComponent}
-        data-source-component={SOURCE_COMPONENT}
+        data-source-component={sourceComponent}
         onCloseAutoFocus={onCloseAutoFocus}
         overlayClassName={layer === "nested" ? "z-[1009]" : undefined}
         className={cn(

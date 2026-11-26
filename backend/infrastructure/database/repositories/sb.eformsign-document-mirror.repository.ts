@@ -474,6 +474,8 @@ implements IEformsignDocumentMirrorRepository {
                     where: { id: row.id },
                     data: {
                         statusType: "049",
+                        // Keep deleted snapshots in revision readiness checks so a
+                        // completed sibling cannot hide this terminal chunk.
                         statusDetail: "삭제",
                         updatedDate: deletedAt,
                         expired: false,
@@ -605,20 +607,23 @@ implements IEformsignDocumentMirrorRepository {
                     FOR UPDATE
                 `);
                 if (lockedClient.length !== 1) continue;
-                const rollbackEligibleClient = await tx.client.findFirst({
-                    where: {
-                        id: clientId,
-                        eDocId: { in: purgedDocumentIds },
-                        eformsignDocs: {
-                            none: { id: { notIn: rowIds } },
-                        },
-                        employeeSchedules: { none: {} },
-                        callRecords: { none: {} },
-                        clientDrafts: { none: {} },
-                        scheduleChangeRequests: { none: {} },
-                        messageLogs: { none: {} },
-                        eformsignDocumentJobs: { none: {} },
+                const rollbackEligibleWhere: Prisma.clientWhereInput = {
+                    id: clientId,
+                    eDocId: { in: purgedDocumentIds },
+                    eformsignDocs: {
+                        none: { id: { notIn: rowIds } },
                     },
+                    employeeSchedules: { none: {} },
+                    babies: { none: {} },
+                    recordTeamSlots: { none: {} },
+                    callRecords: { none: {} },
+                    clientDrafts: { none: {} },
+                    scheduleChangeRequests: { none: {} },
+                    messageLogs: { none: {} },
+                    eformsignDocumentJobs: { none: {} },
+                };
+                const rollbackEligibleClient = await tx.client.findFirst({
+                    where: rollbackEligibleWhere,
                     select: { id: true },
                 });
                 if (!rollbackEligibleClient) continue;
@@ -629,6 +634,7 @@ implements IEformsignDocumentMirrorRepository {
                     where: {
                         clientId,
                         sentAt: null,
+                        standaloneRequestId: null,
                         logs: { none: {} },
                     },
                 });
@@ -650,19 +656,9 @@ implements IEformsignDocumentMirrorRepository {
                 });
                 await tx.client.deleteMany({
                     where: {
-                        id: clientId,
-                        eDocId: { in: purgedDocumentIds },
-                        eformsignDocs: {
-                            none: { id: { notIn: rowIds } },
-                        },
-                        employeeSchedules: { none: {} },
-                        callRecords: { none: {} },
-                        clientDrafts: { none: {} },
-                        scheduleChangeRequests: { none: {} },
-                        messageLogs: { none: {} },
-                        eformsignDocumentJobs: { none: {} },
+                        ...rollbackEligibleWhere,
                         messageTriggerJobs: { none: {} },
-                        serviceRecordCase: { is: null },
+                        serviceRecordCases: { none: {} },
                     },
                 });
             }
@@ -701,6 +697,8 @@ implements IEformsignDocumentMirrorRepository {
                     documentKind: null,
                     employeeScheduleId: null,
                     serviceRecordCaseId: null,
+                    // The revision scope CHECK requires a case for any retained revision.
+                    revisionId: null,
                     snapshotVersion: null,
                     snapshotChunkIndex: null,
                     detailPayload: Prisma.DbNull,

@@ -18,6 +18,7 @@
         "src/agent/message-parts.ts",
         "src/agent/task-projection.ts",
         "src/agent/task-types.ts",
+        "src/client/baby-record-allocation.ts",
         "src/constants/service-record-form-layout.ts",
         "src/utils/business-days.ts",
         "src/utils/holiday-calendar.ts",
@@ -27,6 +28,7 @@
         "src/types/service-record.ts",
         "src/types/start-date-change.ts",
         "src/errors/problem-details.ts",
+        "src/message/service-record-links.ts",
         "src/types/system-template.ts"
     ]
 }

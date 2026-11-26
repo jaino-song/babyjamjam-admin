@@ -1,4 +1,5 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
+import { hasAllocationInput } from "application/services/client-allocation.service";
+import { BadRequestException, Body, Controller, Delete, Get, Header, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import {
     CLIENT_LIST_TAB_VALUES,
@@ -53,7 +54,7 @@ export class ClientController {
         return this.clientService.create(branchId, {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
-            secondaryEmployeeId: dto.secondaryEmployeeId ?? null,
+            secondaryEmployeeId: dto.providers === undefined ? dto.secondaryEmployeeId ?? null : dto.secondaryEmployeeId,
             address: dto.address ?? null,
             phone: dto.phone ?? null,
             type: dto.type ?? null,
@@ -81,6 +82,13 @@ export class ClientController {
             smsAutomationEnabled: dto.smsAutomationEnabled,
             reuseExistingClient: dto.reuseExistingClient,
             source: dto.source,
+            ...(hasAllocationInput(dto) ? {
+                fetalType: dto.fetalType,
+                babyCount: dto.babyCount,
+                providers: dto.providers,
+                babyAssignments: dto.babyAssignments,
+                voucherIssuanceYear: dto.voucherIssuanceYear,
+            } : {}),
         });
     }
 
@@ -160,6 +168,12 @@ export class ClientController {
         return { exists: await this.clientService.checkPhoneExists(tenant.branchId ?? "", phone) };
     }
 
+    @Get("baby-record-capability")
+    @Header("Cache-Control", "private, no-store")
+    getBabyRecordCapability(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.clientService.getBabyRecordCapability(tenant.branchId ?? "");
+    }
+
     @Get(":id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
         return this.clientService.findById(tenant.branchId ?? "", id);
@@ -199,6 +213,14 @@ export class ClientController {
             allowHolidayService: dto.allowHolidayService,
             areaId: dto.areaId,
             expectedEndDate: dto.expectedEndDate,
+            ...(hasAllocationInput(dto) ? {
+                fetalType: dto.fetalType,
+                babyCount: dto.babyCount,
+                providers: dto.providers,
+                babyAssignments: dto.babyAssignments,
+                voucherIssuanceYear: dto.voucherIssuanceYear,
+                expectedAllocationVersion: dto.expectedAllocationVersion,
+            } : {}),
             smsAutomationEnabled: dto.smsAutomationEnabled,
         });
     }

@@ -48,6 +48,16 @@ describe("MessageDeliveryController", () => {
         message_log: { create: jest.Mock; update: jest.Mock };
     };
 
+    it.each(["sendSms", "checkSmsDuplicates"] as const)("rejects a template ref with multiple recipients at %s", async endpoint => {
+        await expect(controller[endpoint]({ branchId: "branch-a" }, {
+            receiver: "01012345678,01099990000",
+            message: "비용 안내",
+            templateRef: { kind: "system", key: "PRICE_INFO" },
+        })).rejects.toBeInstanceOf(BadRequestException);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(duplicateHistory).not.toHaveBeenCalled();
+    });
+
     beforeEach(() => {
         aligoService = {
             sendSms: jest.fn(),

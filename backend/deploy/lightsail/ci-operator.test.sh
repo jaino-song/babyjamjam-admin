@@ -96,26 +96,72 @@ pull_release_image "$valid_sha" "$valid_digest"
 [[ "$image_invocations" == *"pull $IMAGE_REPOSITORY@$valid_digest"* ]] || fail "immutable image was not pulled"
 [[ "$image_invocations" == *"tag $IMAGE_REPOSITORY@$valid_digest $LOCAL_IMAGE_REPOSITORY:$valid_sha"* ]] || fail "verified image was not tagged locally"
 
-migration_invocation=""
-
-run_as_root() {
-    migration_invocation="$*"
-}
-
+(
 configure_environment preview
-hostile_compose_cwd="$(mktemp -d)"
+migration_fixture="$(mktemp -d)"
+trap 'rm -rf "$migration_fixture"' EXIT
+hostile_compose_cwd="$migration_fixture/caller"
+image_cwd="$migration_fixture/image"
+mkdir -p "$hostile_compose_cwd" "$image_cwd/node_modules/prisma/build" "$image_cwd/prisma/scripts"
 printf '%s\n' \
     'BACKEND_IMAGE_TAG=hostile' \
     'VALKEY_MEMORY_LIMIT=99g' \
     >"$hostile_compose_cwd/.env"
-original_test_cwd="$PWD"
+cat >"$image_cwd/node_modules/prisma/build/index.js" <<'JS'
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync("prisma-invocations", args.join(" ") + "\n");
+console.error("fixture Prisma output");
+if (args[0] === "db" && fs.existsSync("reject-guard")) process.exit(1);
+JS
+
+run_as_root() {
+    local isolated_node=/usr/local/bin/node
+    local fixture_node='"$1"'
+    local -a compose_args=()
+    while [[ "$1" != --entrypoint ]]; do
+        compose_args+=("$1")
+        shift
+    done
+    assert_equals "/usr/bin/env BACKEND_ENV_FILE=$STATE_DIRECTORY/backend.env BACKEND_IMAGE=$LOCAL_IMAGE_REPOSITORY BACKEND_IMAGE_TAG=$valid_sha BACKEND_CPU_LIMIT=0.5 BACKEND_MEMORY_LIMIT=1g BACKEND_NETWORK_ALIAS=api-preview COMPOSE_PROJECT_NAME=babyjamjam-backend-preview LIGHTSAIL_EDGE_NETWORK=babyjamjam-edge-preview VALKEY_DATA_VOLUME=babyjamjam-backend-preview_valkey_data /usr/bin/docker compose --env-file $ROOT_COMPOSE_ENV_FILE --project-directory $ROOT_ARTIFACT_DIRECTORY -f $ROOT_COMPOSE_ARTIFACT run --rm --no-deps" "${compose_args[*]}" || return 1
+    assert_equals "--entrypoint /bin/sh api -c" "$1 $2 $3 $4" || return 1
+    shift 4
+    (
+        cd "$image_cwd"
+        /bin/sh -c "${1//"$isolated_node"/"$fixture_node"}" fixture "$(command -v node)"
+    )
+}
+
 cd "$hostile_compose_cwd"
+export BACKEND_IMAGE_TAG=hostile VALKEY_MEMORY_LIMIT=99g
+deploy_args="migrate deploy --schema prisma/schema.prisma"
+guard_path="prisma/scripts/verify-baby-case-stage-before-release.sql"
+guard_args="db execute --schema prisma/schema.prisma --file $guard_path"
+invocations="$image_cwd/prisma-invocations"
+
+# Older images run only the original command, even with hostile caller values.
+assert_equals "" "$(run_release_migrations "$valid_sha" 2>&1)"
+assert_equals "$deploy_args" "$(<"$invocations")"
+
+# A tagged image with the canonical migration requires the guard to be packaged.
+mkdir -p "$image_cwd/prisma/migrations/20261126010000_baby_case_keys"
+touch "$image_cwd/prisma/migrations/20261126010000_baby_case_keys/migration.sql"
+: >"$invocations"
+assert_fails run_release_migrations "$valid_sha"
+assert_equals "" "$(<"$invocations")"
+: >"$image_cwd/$guard_path"
+assert_fails run_release_migrations "$valid_sha"
+assert_equals "" "$(<"$invocations")"
+
+cp "$SCRIPT_DIR/../../$guard_path" "$image_cwd/$guard_path"
 run_release_migrations "$valid_sha"
-cd "$original_test_cwd"
-rm -rf "$hostile_compose_cwd"
-assert_equals "/usr/bin/env BACKEND_ENV_FILE=$STATE_DIRECTORY/backend.env BACKEND_IMAGE=$LOCAL_IMAGE_REPOSITORY BACKEND_IMAGE_TAG=$valid_sha BACKEND_CPU_LIMIT=0.5 BACKEND_MEMORY_LIMIT=1g BACKEND_NETWORK_ALIAS=api-preview COMPOSE_PROJECT_NAME=babyjamjam-backend-preview LIGHTSAIL_EDGE_NETWORK=babyjamjam-edge-preview VALKEY_DATA_VOLUME=babyjamjam-backend-preview_valkey_data /usr/bin/docker compose --env-file $ROOT_COMPOSE_ENV_FILE --project-directory $ROOT_ARTIFACT_DIRECTORY -f $ROOT_COMPOSE_ARTIFACT run --rm --no-deps --entrypoint /usr/local/bin/node api node_modules/prisma/build/index.js migrate deploy --schema prisma/schema.prisma" "$migration_invocation"
-[[ "$migration_invocation" != *hostile* && "$migration_invocation" != *99g* ]] \
-    || fail "working-directory .env values reached the protected Compose invocation"
+assert_equals "$guard_args"$'\n'"$deploy_args" "$(<"$invocations")"
+
+: >"$invocations"
+touch "$image_cwd/reject-guard"
+assert_fails run_release_migrations "$valid_sha"
+assert_equals "$guard_args" "$(<"$invocations")"
+)
 
 rollback_invocation=""
 

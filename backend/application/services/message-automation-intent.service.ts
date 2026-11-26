@@ -1,3 +1,4 @@
+import { BabyRecordRolloutPausedException } from "application/policies/baby-record-rollout.policy";
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Prisma } from "@prisma/client";
@@ -85,10 +86,14 @@ export class MessageAutomationIntentService {
             includePast: boolean;
             intentAt: Date;
             replaceExisting?: boolean;
+            freshAssignment?: boolean;
             taskOrigin?: boolean;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<void> {
+        if (params.freshAssignment) {
+            await this.serviceRecordLinkService.observeAssignmentInTransaction(transaction, params.branchId, params.scheduleId);
+        }
         await persistScheduleMessageAutomationIntent(transaction, params);
     }
 
@@ -177,6 +182,10 @@ export class MessageAutomationIntentService {
                     params.scheduleId,
                     { taskAutomationReference: params.taskAutomationReference },
                 );
+            } else if (params.taskOrigin) {
+                // Unsealed task lineage cannot turn into a branch automation send.
+                await this.releaseIntent(claim);
+                return false;
             } else if (params.refreshServiceRecordLink) {
                 await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId, {
                     rescheduleAutomatic: true, branchId: params.branchId,
@@ -186,6 +195,10 @@ export class MessageAutomationIntentService {
             }
             return this.deleteClaimedIntent(claim);
         } catch (error) {
+            if (error instanceof BabyRecordRolloutPausedException) {
+                await this.releaseIntent(claim);
+                return false;
+            }
             await this.releaseAfterFailure(claim, error);
             throw error;
         }
