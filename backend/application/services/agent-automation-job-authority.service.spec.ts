@@ -50,7 +50,7 @@ function fixture(options: { serviceRecordUrl?: string; configBase?: string } = {
         replaced: false,
         terminatedAt: null,
         primaryEmployeeId: employeeId,
-        client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active" },
+        client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active", fetalConfirmation: null },
         primaryEmployee: { id: employeeId, name: "합성 관리사", phone: employeePhone, branchId, deletedAt: null },
     };
     const serviceRecordCase = {

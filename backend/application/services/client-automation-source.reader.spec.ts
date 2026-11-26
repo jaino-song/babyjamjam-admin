@@ -37,7 +37,7 @@ function setup(links: Array<{ token: ServiceRecordLinkTokenSource | null }>, ser
                 replaced: false,
                 terminatedAt: null,
                 primaryEmployeeId: 71,
-                client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active" },
+                client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active", fetalConfirmation: null },
                 primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071", branchId, deletedAt: null },
                 serviceRecordTokens: token ? [token] : [],
             }))),
