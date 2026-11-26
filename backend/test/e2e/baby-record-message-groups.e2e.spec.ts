@@ -597,7 +597,7 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         expect(calls().length).toBe(1);
     });
 
-    async function reserveScalarSingleton() {
+    async function reserveScalarSingleton(ownership: "automatic" | "manual" = "automatic") {
         const employee = { id: staff[0]!, branchId };
         await db.employee.update({ where: employee, data: { smsAutomationEnabled: false } });
         const family = await book([0], { auto: false });
@@ -607,11 +607,12 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
             employeeId: staff[0]!, expectedPhone: phone(0), expiresAt: getServiceRecordTokenExpiresAt(family.schedule.endDate),
         });
         const url = `https://example.test/service-record/${linkToken}`;
+        const automaticDedupeKey = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${family.schedule.id}:primary`;
         const job = await db.message_trigger_job.create({ data: {
             branchId, clientId: family.clientId, employeeScheduleId: family.schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID,
             scheduledFor: getServiceRecordLinkScheduledFor(family.schedule.startDate), recipientType: "PRIMARY_EMPLOYEE",
             recipientPhone: phone(0), templateKey: key,
-            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${family.schedule.id}:primary`,
+            dedupeKey: ownership === "manual" ? `${automaticDedupeKey}:manual:${randomUUID()}` : automaticDedupeKey,
             payload: { employeeId: staff[0]!, recipientName: "QA-Caregiver 1", recipientPhone: phone(0),
                 memberId: `employee:${staff[0]}`, buttonUrl: url, templateVariables: {
                     employeeName: "QA-Caregiver 1", clientName: "QA-Household", serviceStartDate: dateAt(0), serviceRecordUrl: url,
@@ -620,8 +621,8 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         return { family, job, linkToken, url };
     }
 
-    it("removes a refused v1 automatic retry from the due scan after grouped admission", async () => {
-        const { family, job } = await reserveScalarSingleton();
+    it.each(["automatic", "manual"] as const)("removes a refused v1 automatic retry from the due scan after grouped admission (%s job)", async ownership => {
+        const { family, job } = await reserveScalarSingleton(ownership);
         stub.script(phone(0), "transientReject");
         await dispatch(job.id);
         stub.clearScripts();
@@ -636,7 +637,10 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
 
         const source = (await logs.findPendingRetriesSystemScope()).find(log => log.id === due.id);
         expect(source).toBeDefined();
-        expect(await app.get(SmsRetryService).retry(source!, "automatic")).toBeNull();
+        const retry = app.get(SmsRetryService);
+        expect(await retry.retry(source!, "manual")).toBeNull();
+        expect(await getLogs(job.id)).toEqual([due]);
+        expect(await retry.retry(source!, "automatic")).toBeNull();
 
         const [retired] = await getLogs(job.id);
         expect(retired).toEqual({ ...due, nextRetryAt: null, updatedAt: retired?.updatedAt });

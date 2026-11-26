@@ -304,21 +304,7 @@ export class SmsRetryService {
                 async (transaction, rulePolicy): Promise<AutomaticRetryBoundary> => {
                     if ((grouped && !await isBabyRecordRolloutEnabled(transaction, sourceLog.branchId!))
                         || !await this.permitsRecordLinkRetry(sourceLog, transaction, invocation)) {
-                        if (!grouped && sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY && sourceLog.nextRetryAt) {
-                            // Retire the automatic retry without rewriting the provider evidence
-                            // or clearing a schedule another worker has since updated.
-                            await transaction.message_log.updateMany({
-                                where: {
-                                    id: sourceLog.id,
-                                    branchId: sourceLog.branchId,
-                                    status: sourceLog.status,
-                                    providerAcceptanceState: sourceLog.providerAcceptanceState,
-                                    nextRetryAt: sourceLog.nextRetryAt,
-                                    updatedAt: sourceLog.updatedAt,
-                                },
-                                data: { nextRetryAt: null },
-                            });
-                        }
+                        await this.retireRefusedAutomaticLegacyRecordLinkRetry(sourceLog, transaction, invocation, grouped);
                         return { kind: "claimed", log: null };
                     }
                     const policySkip = await this.supersedeForRulePolicy(transaction, sourceLog, rulePolicy);
@@ -449,7 +435,10 @@ export class SmsRetryService {
         const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
         const start = async (tx?: Prisma.TransactionClient) => {
             if (grouped && (!tx || !await isBabyRecordRolloutEnabled(tx, sourceLog.branchId!))) return null;
-            if (tx && !await this.permitsRecordLinkRetry(sourceLog, tx, invocation)) return null;
+            if (tx && !await this.permitsRecordLinkRetry(sourceLog, tx, invocation)) {
+                await this.retireRefusedAutomaticLegacyRecordLinkRetry(sourceLog, tx, invocation, grouped);
+                return null;
+            }
             await this.checkQuietRetryBeforeStart(sourceLog, tx);
             const retryStart = await this.logRepository.startRetryAttempt(
                 sourceLog,
@@ -493,6 +482,29 @@ export class SmsRetryService {
         if (!providerAttempt) return this.quietDeferredLogs.has(retryLog) ? this.logRepository.findByIdInBranch(retryLog.branchId!, retryLog.id) : retryLog;
 
         return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation, retryDelayMs, standaloneSnapshot);
+    }
+
+    private async retireRefusedAutomaticLegacyRecordLinkRetry(
+        source: MessageLogEntity,
+        tx: Prisma.TransactionClient,
+        invocation: MessageRetryInvocation,
+        grouped: boolean,
+    ): Promise<void> {
+        if (invocation !== "automatic" || grouped || source.templateKey !== SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY
+            || !source.branchId || !source.nextRetryAt) return;
+
+        // Retire the retry without rewriting provider evidence or clearing a concurrent update.
+        await tx.message_log.updateMany({
+            where: {
+                id: source.id,
+                branchId: source.branchId,
+                status: source.status,
+                providerAcceptanceState: source.providerAcceptanceState,
+                nextRetryAt: source.nextRetryAt,
+                updatedAt: source.updatedAt,
+            },
+            data: { nextRetryAt: null },
+        });
     }
 
     private async isGroupedRetrySource(source: MessageLogEntity): Promise<boolean> {
