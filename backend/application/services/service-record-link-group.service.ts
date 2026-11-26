@@ -24,7 +24,7 @@ import { MessageAutomationActivationService } from "./message-automation-activat
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL } from "./service-record-link-automation-effect-recipe";
 import {
-    canSendRecordLinkGroup, readRecordLinkGroupSource, recordLinkGroupCarrierEvidence, recordLinkGroupSourceHash,
+    canHandOverAcceptedLegacyLink, canSendRecordLinkGroup, readRecordLinkGroupSource, recordLinkGroupCarrierEvidence, recordLinkGroupSourceHash,
     recordLinkGroupSupersededReasons, recordLinkGroupVariables,
     recordLinkHash, recordLinkPhone, RECORD_LINK_GROUP_KEY_PREFIX,
     type RecordLinkGroupMember, type RecordLinkGroupSource, unreservedRecordLinkMembers,
@@ -234,16 +234,21 @@ export class ServiceRecordLinkGroupService {
     }
 
     private async releaseLegacyCredential(
-        tx: Prisma.TransactionClient, { scope, schedule, householdBabyCount }: RecordLinkGroupSource,
+        tx: Prisma.TransactionClient, source: RecordLinkGroupSource,
         members: RecordLinkGroupMember[], manual: boolean,
     ): Promise<boolean> {
+        const { scope, schedule, householdBabyCount } = source;
         const member = members[0]!;
         const phone = recordLinkPhone(member.employee.phone)!;
         const legacy = await readLegacyLinkOccurrence(tx, { ...scope, scheduleId: schedule.id,
             incarnationId: schedule.incarnationId, employeeId: member.employeeId, phone });
-        if (legacy.blocked || legacy.jobs.some(job => (!manual && job.canceledByUser)
+        if (legacy.jobs.some(job => (!manual && job.canceledByUser)
             || (householdBabyCount === 1 && member.employeeId === schedule.primaryEmployeeId
                 && pendingStatuses.includes(job.status)))) return false;
+        if (legacy.blocked) {
+            // Activation checks the active challenge before retiring this URL.
+            return manual && canHandOverAcceptedLegacyLink(tx, source, members, legacy.acceptedCredential);
+        }
 
         const legacyTokens = { branchId: scope.branchId, scheduleId: schedule.id, employeeId: member.employeeId,
             active: true, revokedAt: null, NOT: { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } },

@@ -74,29 +74,45 @@ export async function readLegacyLinkOccurrence(tx: Prisma.TransactionClient, occ
     `);
     const logs = ids.length ? await tx.message_log.findMany({
         where: { branchId, id: { in: ids.map(({ id }) => id) } },
-        select: { id: true, status: true, variables: true, messageBody: true, aligoMid: true,
+        select: { id: true, triggerJobId: true, status: true, variables: true, messageBody: true, aligoMid: true,
             providerAcceptanceState: true, providerAcceptedAt: true, providerCallStartedAt: true, carrierResultState: true,
             occurrenceClaimsAccepted: { where: { branchId, state: "accepted" }, take: 1, select: { occurrenceKey: true } } },
     }) : [];
     const reconciledParents = new Set(logs.filter(log => log.providerAcceptanceState === "reconciled_not_delivered")
         .map(log => (log.variables as Prisma.JsonObject | null)?.["retryOfLogId"]));
     const rejected = [];
-    let blocked = jobs.some(job => job.status === "sent" || job.status === "dispatching");
+    const acceptedCredentials = new Set<string>();
+    const acceptedJobs = new Set<string>();
+    let unresolved = jobs.some(job => job.status === "dispatching");
     for (const log of logs) {
-        const safety = (log.variables as Prisma.JsonObject | null)?.["retrySafety"];
-        if (log.status === "sent" || log.providerAcceptedAt || log.occurrenceClaimsAccepted.length
-            || ["delivered", "failed"].includes(log.carrierResultState ?? "")
-            || ["accepted", "reconciled_delivered"].includes(log.providerAcceptanceState)
+        const variables = log.variables as Prisma.JsonObject | null;
+        const safety = variables?.["retrySafety"];
+        const accepted = log.providerAcceptedAt || log.occurrenceClaimsAccepted.length > 0
+            || log.carrierResultState === "delivered" || ["accepted", "reconciled_delivered"].includes(log.providerAcceptanceState);
+        if (accepted || log.status === "sent" || log.carrierResultState === "failed"
             || safety === "partial" || safety === "delivered" || safety === "accepted") {
-            blocked = true;
+            const credential = accepted ? recordLinkCredential(log.messageBody) : null;
+            if (!credential || safety === "uncertain" || safety === "partial"
+                || !["legacy", "accepted", "reconciled_delivered"].includes(log.providerAcceptanceState)
+                || Object.prototype.hasOwnProperty.call(variables ?? {}, RECORD_LINK_GROUP_LOG_MARKER)) {
+                unresolved = true;
+                continue;
+            }
+            acceptedCredentials.add(credential);
+            if (log.triggerJobId) acceptedJobs.add(log.triggerJobId);
         } else if (log.status === "failed" && ["rejected", "reconciled_not_delivered"].includes(log.providerAcceptanceState)) {
             if (safety === "uncertain" && !reconciledParents.has(String(log.id))) {
-                blocked = true;
+                unresolved = true;
             }
             rejected.push({ id: log.id, messageBody: log.messageBody, credential: recordLinkCredential(log.messageBody) });
         } else if (log.providerAcceptanceState !== "prepared" || log.providerCallStartedAt || log.aligoMid) {
-            blocked = true;
+            // A prepared retry already carries retrySafety=uncertain before its provider call starts.
+            unresolved = true;
         }
     }
-    return { jobs, blocked, rejected };
+    const sentJobs = jobs.filter(job => job.status === "sent");
+    // Every independent attempt must be resolved before a confirmed scalar URL can be handed over.
+    const acceptedCredential = !unresolved && acceptedCredentials.size === 1 && sentJobs.every(job => acceptedJobs.has(job.id))
+        ? [...acceptedCredentials][0]! : null;
+    return { jobs, blocked: unresolved || sentJobs.length > 0 || acceptedCredentials.size > 0, rejected, acceptedCredential };
 }
