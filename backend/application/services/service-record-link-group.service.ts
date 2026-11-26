@@ -11,7 +11,6 @@ import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/c
 import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
-    isServiceRecordLinkManualDedupeKey,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
 } from "domain/constants/service-record-link-message";
@@ -313,9 +312,9 @@ export class ServiceRecordLinkGroupService {
             const payload = job.payload as unknown as MessageTriggerJobPayload;
             return payload.recordLinkGroup?.sourceHash === sourceHash;
         });
-        // 자동 발송을 취소한 뒤에는 명시적인 수동 발송만 새 작업을 만들 수 있다.
+        // 사용자 취소는 자동 재생성을 막고, 명시적인 수동 발송은 발송 증거가 없는 경우 새 작업을 만들 수 있다.
         const blocksReplacement = (job: typeof jobs[number]) => job.status === "sent" || job.status === "dispatching"
-            || job.logs.length > 0 || (job.canceledByUser && (!manual || isServiceRecordLinkManualDedupeKey(job.dedupeKey)));
+            || job.logs.length > 0 || (!manual && job.canceledByUser);
         const acceptedOrPending = exact.find(job => blocksReplacement(job)
             || (!manual && (pendingStatuses.includes(job.status) || (job.status === "canceled"
                 && (job.cancelReason === null || !recordLinkGroupSupersededReasons.includes(job.cancelReason)))))
