@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import request from "supertest";
 
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordLinkGroupService } from "application/services/service-record-link-group.service";
@@ -32,10 +33,12 @@ import { MessageDeliveryModule } from "module/message-delivery.module";
 import { SchedulerLeaseModule } from "module/scheduler-lease.module";
 
 import { serviceRecordResetTarget } from "../../../packages/shared/src/utils/service-record-link-selection";
+import { pinToday, unpinToday } from "../utils/pin-today";
 import { issueAdminServiceRecordEditHttpToken } from "./helpers/admin-service-record-edit-http.helper";
 import { ScriptedAligoStub } from "./helpers/scripted-aligo.stub";
 
-const allowed = new Set(["work", "verify"].map(name =>
+const oldKeyTarget = "postgresql://bjj_revision_test@127.0.0.1:62295/throwaway_baby_cutover_old_keys";
+const allowed = new Set(["work", "verify", "old_keys"].map(name =>
     `postgresql://bjj_revision_test@127.0.0.1:62295/throwaway_baby_cutover_${name}`));
 const target = process.env["DATABASE_URL"];
 const describeRollout = process.env["E2E_VENDOR_STUBS"] === "1" || (target && allowed.has(target))
@@ -45,16 +48,11 @@ const settingKey = (branch: string) => `branch:${branch}:baby_service_records:en
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 async function setRollout(tx: Prisma.TransactionClient, branchId: string, value: string) {
-    // The SQL in the operator guide. No service call or mock stands in for the operator.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('babyjamjam:message-automation-branch:' || ${branchId}::uuid::text, 0))`;
-    await tx.$executeRaw`
-        INSERT INTO system_setting (key, value, updated_at)
-        VALUES ('branch:' || ${branchId}::uuid::text || ':baby_service_records:enabled', ${value}, now())
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
-    `;
+    const key = settingKey(branchId);
+    await tx.system_setting.upsert({ where: { key }, create: { key, value }, update: { value } });
 }
 
-describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", () => {
+describeRollout("default baby records over authenticated Nest routes and PostgreSQL", () => {
     jest.setTimeout(65_000);
     const carrier = new ScriptedAligoStub();
     let app: INestApplication;
@@ -243,55 +241,99 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
             clientSignature: "data:image/png;base64,aGVsbG8=",
         });
 
-    it("scopes the trusted capability and registration by branch", async () => {
+    if (target === oldKeyTarget) {
+        it.each(["missing", "false", "true"])("preserves the draft with the original unique keys and a %s setting", async setting => {
+            const [keys] = await db.$queryRaw<Array<{ count: bigint }>>`
+                SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname IN (
+                    'service_record_case_client_id_key', 'service_record_schedule_id_key',
+                    'service_record_assignment_schedule_id_key', 'service_record_day_schedule_id_session_index_key'
+                )
+            `;
+            expect(keys?.count).toBe(4n);
+            if (setting !== "missing") await db.$transaction(tx => setRollout(tx, off.id, setting));
+            await http(off).get("/clients/baby-record-capability").expect(200, { enabled: true });
+            const who = { ...off, employees: [off.employees[1]!] };
+            const singleton = await http(who).post("/clients").send(configure([0], who, "A가2형", "SINGLETON")).expect(201);
+            await confirm(singleton.body.id, off).expect(200);
+
+            const clientId = await register([0, 0], off);
+            const scope = { branchId: off.id, clientId };
+            const owner = () => db.service_record_baby_assignment.findMany({ where: { ...scope, activeOwner: true }, orderBy: { id: "asc" } });
+            const before = await owner();
+            expect(before.map(row => row.employeeId)).toEqual([off.employees[0]!.id, off.employees[0]!.id]);
+            const response = await confirm(clientId, off).expect(409);
+            expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT", reason: "SERVICE_RECORD_CASE_KEYS_NOT_STAGED", outcome: "NOT_APPLIED" });
+            expect(await db.client.findUniqueOrThrow({ where: { id: clientId }, select: { bookingConfirmedAt: true, serviceStatus: true } }))
+                .toEqual({ bookingConfirmedAt: null, serviceStatus: "pre_booking" });
+            expect(await owner()).toEqual(before);
+            expect(await db.client_baby.count({ where: { ...scope, active: true } })).toBe(2);
+            expect(await db.service_record_case.count({ where: scope })).toBe(0);
+            expect(await db.message_trigger_job.count({ where: scope })).toBe(0);
+            expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
+            expect(await db.service_record_token.count({ where: { branchId: off.id, schedule: scope } })).toBe(0);
+
+            const direct = { ...off, employees: [off.employees[2]!] };
+            const name = "QA-Atomic booked registration";
+            const countJobs = () => db.message_trigger_job.count({ where: { branchId: off.id } });
+            const jobsBefore = await countJobs();
+            const immediate = await http(direct).post("/clients").send({
+                ...configure([0, 0], direct), name, serviceStatus: "active",
+            }).expect(409);
+            expect(immediate.body).toMatchObject({ code: "REQUEST_CONFLICT", reason: "SERVICE_RECORD_CASE_KEYS_NOT_STAGED" });
+            expect(await db.client.count({ where: { branchId: off.id, name } })).toBe(0);
+            expect(await countJobs()).toBe(jobsBefore);
+            expect(carrier.sendCalls).toHaveLength(0);
+        });
+        return;
+    }
+
+    it("scopes the trusted capability and registration by authenticated membership", async () => {
         const path = "/clients/baby-record-capability";
         await raw().get(path).expect(401);
         await http().get(path).expect(200, { enabled: true }).expect("Cache-Control", "private, no-store");
-        await http(off).get(path).query({ branchId: active.id, key: settingKey(active.id) }).expect(200, { enabled: false });
-        await http().get(path).query({ branchId: off.id }).expect(200, { enabled: true });
-        for (const [type, fetalType, slots] of [
-            ["A가2형", "SINGLETON", [0]],
-            ["B-가-2형", "TWINS", [0, 0]],
-            ["C가2형", "TRIPLETS", [0, 0, 0]],
-            ["D가2형", "QUADRUPLETS_PLUS", [0, 0, 0, 0]],
-        ] as const) {
-            await http(off).post("/clients").send(configure([...slots], off, type, fetalType)).expect(409);
-        }
+        await http(off).get(path).query({ branchId: active.id, key: settingKey(active.id) }).expect(200, { enabled: true });
+        await http(off).post("/clients").send(configure([0, 0], active)).expect(400);
         expect(await db.client.count({ where: { branchId: off.id } })).toBe(0);
-        expect(await db.employee_schedule.count({ where: { branchId: off.id } })).toBe(0);
-        for (const invalid of ["TRUE", " true", "false"]) {
-            await db.$transaction(tx => setRollout(tx, off.id, invalid));
-            await http(off).get(path).expect(200, { enabled: false });
-            await http(off).post("/clients").send(configure([0, 0], off)).expect(409);
-        }
-        const awaiting = await register([0, 0]);
-        await set("false");
-        await confirm(awaiting).expect(409);
-        await http().post("/employee-schedules").send({
-            clientId: awaiting, primaryEmployeeId: active.employees[2]!.id,
-            workAddress: "QA-Schedule", startDate: dateAt(1), endDate: dateAt(15),
-        }).expect(409);
-        const scope = { branchId: active.id, clientId: awaiting };
-        expect(await db.client.findFirstOrThrow({ where: { id: awaiting, branchId: active.id }, select: { bookingConfirmedAt: true } }))
-            .toEqual({ bookingConfirmedAt: null });
-        expect(await db.service_record_case.count({ where: scope })).toBe(0);
-        expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
-        await app.get(ServiceRecordLifecycleService).ensureAllForClient(awaiting);
-        expect(await db.service_record_case.count({ where: scope })).toBe(0);
-        await set("true");
-        await confirm(awaiting).expect(200);
-        expect(await db.service_record_case.count({ where: scope })).toBe(2);
-        const [job] = await jobs(awaiting);
-        expect(job?.recordMembers).toHaveLength(2);
-
-        const { body: singleton } = await http().post("/clients").send({
-            ...configure([0], { ...active, employees: [active.employees[1]!] }, "A가2형", "SINGLETON"),
-        }).expect(201);
-        await confirm(singleton.id).expect(200);
-        expect((await jobs(singleton.id)).map(row => row.recordMembers.length)).toEqual([1]);
+        const clientId = await register([0, 0], off);
+        await confirm(clientId, active).expect(404);
+        const clientPath = `/clients/${clientId}`;
+        const own = await http(off).get(clientPath).expect(200);
+        expect(own.body.id).toBe(clientId);
+        await http().get(clientPath).expect(200, "");
+        await db.user_branch.deleteMany({ where: { branchId: off.id, userId: off.userId } });
+        await http(off).get(path).query({ branchId: active.id }).expect(403);
     });
 
-    it("keeps signed cases usable and revokes a departed assignee during pause", async () => {
+    it.each(["missing", "false", "true"])("registers and books per-baby cases with a %s setting", async setting => {
+        if (setting !== "missing") await db.$transaction(tx => setRollout(tx, off.id, setting));
+        await http(off).get("/clients/baby-record-capability").expect(200, { enabled: true });
+        const shapes = [
+            ["A가2형", "SINGLETON", 1],
+            ["B-가-2형", "TWINS", 2],
+            ["C가2형", "TRIPLETS", 3],
+            ["D가2형", "QUADRUPLETS_PLUS", 4],
+        ] as const;
+        for (const [employeeIndex, [type, fetalType, count]] of shapes.entries()) {
+            const who = { ...off, employees: [off.employees[employeeIndex]!] };
+            const { body } = await http(who).post("/clients")
+                .send(configure(Array(count).fill(0), who, type, fetalType)).expect(201);
+            const scope = { branchId: off.id, clientId: body.id as number };
+            const babies = await db.client_baby.findMany({ where: { ...scope, active: true }, orderBy: { ordinal: "asc" } });
+            expect(babies.map(row => row.ordinal)).toEqual(Array.from({ length: count }, (_, index) => index + 1));
+            await app.get(ServiceRecordLifecycleService).ensureAllForClient(scope.clientId);
+            expect(await db.service_record_case.count({ where: scope })).toBe(0);
+            expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
+            await confirm(scope.clientId, off).expect(200);
+            const records = await db.service_record_case.findMany({ where: scope });
+            expect(records.map(row => row.babyId).sort()).toEqual(babies.map(row => row.id).sort());
+            const owners = await db.service_record_baby_assignment.findMany({ where: { ...scope, activeOwner: true } });
+            expect(owners.map(row => row.employeeId)).toEqual(Array(count).fill(who.employees[0]!.id));
+            expect(await db.service_record_job_member.count({ where: scope })).toBe(count);
+        }
+        expect(carrier.sendCalls).toHaveLength(0);
+    });
+
+    it("keeps signed cases usable and revokes a departed assignee with a false setting", async () => {
         const family = await book([0, 1]);
         const [first, second] = family.cases;
         for (const { id: serviceRecordCaseId } of family.cases) {
@@ -336,17 +378,21 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         await http(off).patch(`/clients/${family.clientId}`).send({ breastPump: true }).expect(404);
         await link(family.scheduleId, "prepare", { employeeId: active.employees[0]!.id, caseIds: [first!.id] }, off).expect(404);
         await http().patch(`/clients/${family.clientId}`).send({ breastPump: true }).expect(200);
+        await http(off).patch(`/clients/${family.clientId}/terminate`).send({}).expect(404);
         await http().patch(`/clients/${family.clientId}/request-replacement`).send({
             newPrimaryEmployeeId: active.employees[2]!.id, newSecondaryEmployeeId: active.employees[3]!.id,
-        }).expect(409);
-        await context(firstAccess).expect(200);
-        await context(secondAccess).expect(200);
-        await http(off).patch(`/clients/${family.clientId}/terminate`).send({}).expect(404);
-        await http().patch(`/clients/${family.clientId}/terminate`).send({ reason: "QA-Safety closure" }).expect(200);
+        }).expect(200);
+        const nextOwners = await db.service_record_baby_assignment.findMany({
+            where: { branchId: active.id, clientId: family.clientId, activeOwner: true },
+            select: { scheduleId: true, employeeId: true },
+            orderBy: { employeeId: "asc" },
+        });
+        expect(nextOwners.map(row => row.employeeId)).toEqual([active.employees[2]!.id, active.employees[3]!.id]);
+        expect(nextOwners.every(row => row.scheduleId !== family.scheduleId)).toBe(true);
         await context(firstAccess).expect(401);
         await context(secondAccess).expect(401);
         const revoked = await db.service_record_token.findFirstOrThrow({
-            where: { branchId: active.id, serviceRecordCaseId: second!.id },
+            where: { branchId: active.id, serviceRecordCaseId: second!.id, scheduleId: family.scheduleId },
             select: { active: true, revokedAt: true, accessTokenHash: true },
         });
         expect({ active: revoked.active, revoked: Boolean(revoked.revokedAt), sessionCleared: !revoked.accessTokenHash })
@@ -357,7 +403,7 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(await signedFacts()).toEqual(before);
     });
 
-    it("fences queued manual and automatic delivery without replaying accepted or unknown recipients on resume", async () => {
+    it("dispatches eligible queued work and retries without replaying accepted or unknown deliveries", async () => {
         const family = await book([0, 1]);
         const outstanding = await book([0, 0], [2]);
         const rejected = await book([0, 1], [3, 4]);
@@ -380,7 +426,6 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         await dispatch(unknownJob.id);
         carrier.script(active.employees[3]!.phone!, "transientReject");
         await dispatch(failedJob.id);
-        await dispatch(siblingJob.id);
         const accepted = await history(acceptedJob.id);
         const unknown = await history(unknownJob.id);
         const [failed] = await history(failedJob.id);
@@ -389,26 +434,16 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(failed?.providerAcceptanceState).toBe("rejected");
         const before = calls();
         await set("false");
-        await link(outstanding.scheduleId, "prepare", manualInput).expect(409);
-        await link(outstanding.scheduleId, "send", sendSelection).expect(409);
-        const resetSelection = {
-            employeeId: sendSelection.employeeId,
-            members: sendSelection.members.map(({ caseId, assignmentVersion }: { caseId: string; assignmentVersion: number }) => ({ caseId, assignmentVersion })),
-        };
-        await link(outstanding.scheduleId, "reset", resetSelection).expect(409);
-        await expect(retries.retryById(active.id, failed!.id)).rejects.toMatchObject({ status: 409 });
-        const source = await logs.findByIdInBranch(active.id, failed!.id);
-        await retries.retry(source!, "automatic");
-        expect(await history(failedJob.id)).toEqual([failed]);
-        await dispatch(manualJob.jobId);
-        await trigger.dispatchDueJobs();
-        expect((await jobs(outstanding.clientId)).find(job => job.id === manualJob.jobId)?.status).toBe("pending");
-        expect(await history(manualJob.jobId)).toEqual([]);
-        expect(calls()).toBe(before);
-
         carrier.clearScripts();
-        await set("true");
+        await link(outstanding.scheduleId, "prepare", manualInput).expect(201);
         await dispatch(manualJob.jobId);
+        await db.message_trigger_job.update({
+            where: { id: siblingJob.id }, data: { scheduledFor: new Date(Date.now() - 1_000), nextAttemptAt: null },
+        });
+        await trigger.dispatchDueJobs();
+        expect((await history(siblingJob.id)).map(row => row.providerAcceptanceState)).toEqual(["accepted"]);
+        await db.message_log.update({ where: { id: failed!.id }, data: { nextRetryAt: new Date(Date.now() - 1_000) } });
+        expect((await logs.findPendingRetriesSystemScope()).map(log => log.id)).toContain(failed!.id);
         await expect(retries.retryById(active.id, unknown[0]!.id)).rejects.toMatchObject({ status: 409 });
         await retries.retryById(active.id, failed!.id);
         expect((await history(failedJob.id)).map(row => row.providerAcceptanceState)).toEqual(["rejected", "accepted"]);
@@ -417,10 +452,10 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(await history(acceptedJob.id)).toEqual(accepted);
         expect(await history(unknownJob.id)).toEqual(unknown);
         expect((await history(manualJob.jobId)).map(row => row.providerAcceptanceState)).toEqual(["accepted"]);
-        expect(calls()).toBe(before + 2);
+        expect(calls()).toBe(before + 3);
     });
 
-    it("serializes branch pause with admission and resumes only outstanding eligible work", async () => {
+    it("honors the quiet hold and dispatches the same prepared attempt after release", async () => {
         const family = await book([0, 1]);
         const current = await jobs(family.clientId);
         const first = current.find(job => job.recipientEmployeeId === active.employees[0]!.id)!;
@@ -460,26 +495,8 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         try {
             await Promise.race([inCarrier, admitted.then(() => { throw new Error("Admission never reached the stub"); })]);
             expect((await history(first.id)).map(row => row.providerAcceptanceState)).toEqual(["started"]);
-            const competing = db.$transaction(async tx => {
-                await setRollout(tx, active.id, "false");
-                // Wait for the live dispatcher connection to block on the
-                // operator's lock before allowing the setting to commit.
-                const attempt = dispatch(second.id);
-                const deadline = Date.now() + 4_000;
-                for (;;) {
-                    const [waiter] = await tx.$queryRaw<Array<{ blocked: boolean }>>`
-                        SELECT EXISTS (SELECT 1 FROM pg_locks
-                            WHERE locktype = 'advisory' AND NOT granted
-                              AND pg_backend_pid() = ANY(pg_blocking_pids(pid))) AS blocked
-                    `;
-                    if (waiter?.blocked) break;
-                    if (Date.now() >= deadline) throw new Error("No dispatcher acquired a competing admission connection");
-                    await new Promise(resolve => setTimeout(resolve, 20));
-                }
-                return { dispatch: attempt };
-            });
-            const { dispatch: denied } = await competing;
-            await denied;
+            await set("false");
+            await trigger.dispatchDueJobs();
             expect(calls()).toBe(0);
             expect(await history(second.id)).toEqual(prepared);
             const pending = (await jobs(family.clientId)).find(job => job.id === second.id);
@@ -494,19 +511,22 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(accepted.map(row => row.providerAcceptanceState)).toEqual(["accepted"]);
         const before = (await jobs(family.clientId)).map(job => ({ id: job.id, members: job.recordMembers }));
         await expect(dispatch(second.id, off)).rejects.toMatchObject({ status: 404 });
-        await set("true");
-        // Let the actual preexisting quiet hold become due under the real clock.
-        await new Promise(resolve => setTimeout(resolve, Math.max(0, release - Date.now()) + 50));
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-            await set("true");
-            await dispatch(second.id);
-            await dispatch(first.id);
+        // Advance the application clock to the recorded release without changing
+        // the real PostgreSQL transactions or the prepared acceptance row.
+        pinToday(new Date(release + 50).toISOString());
+        try {
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                await dispatch(second.id);
+                await dispatch(first.id);
+            }
+        } finally {
+            unpinToday();
         }
         expect(calls()).toBe(2);
         expect(await history(first.id)).toEqual(accepted);
         expect((await history(second.id)).map(row => [row.id, row.providerAcceptanceState])).toEqual([[prepared[0]!.id, "accepted"]]);
         expect((await jobs(family.clientId)).map(job => ({ id: job.id, members: job.recordMembers }))).toEqual(before);
-    }, 150_000);
+    });
 
     it("keeps legacy draft and booking flows usable without synthesizing babies", async () => {
         const scope = { branchId: off.id };
@@ -628,7 +648,7 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(carrier.sendCalls.filter(call => call.receiver === off.employees[0]!.phone)).toHaveLength(2);
     });
 
-    it.each(["handover", "reuse", "replacement"] as const)("allows legacy %s only for the backfilled singleton while paused", async operation => {
+    it.each(["handover", "reuse", "replacement"] as const)("preserves allocation provenance after %s with a false setting", async operation => {
         const historicalPhone = `010${++phoneBase}`;
         const explicitPhone = `010${++phoneBase}`;
         const { scope, schedule, original, baby, days, originalDays } = await backfillHistoricBooking(dateAt(-1), historicalPhone);
@@ -653,10 +673,16 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
             return http(who).patch(`/clients/${clientId}`).send({ primaryEmployeeId: employeeId });
         };
         const explicitScope = { branchId: active.id, clientId: explicit.id as number };
-        const before = await db.employee_schedule.findMany({ where: explicitScope });
-        expect(before).toHaveLength(1);
-        await change(active, explicit.id, explicitPhone).expect(409);
-        expect(await db.employee_schedule.findMany({ where: explicitScope })).toEqual(before);
+        const explicitOriginal = await db.service_record_case.findFirstOrThrow({ where: explicitScope });
+        await change(active, explicit.id, explicitPhone).expect(operation === "reuse" ? 201 : 200);
+        const explicitSuccessor = await db.employee_schedule.findFirstOrThrow({ where: { ...explicitScope, replaced: false } });
+        expect(await db.service_record_baby_assignment.findMany({ where: { ...explicitScope, activeOwner: true } }))
+            .toEqual([expect.objectContaining({
+                babyId: explicitOriginal.babyId, scheduleId: explicitSuccessor.id,
+                employeeId: active.employees[1]!.id, legacyBackfilled: false,
+            })]);
+        const explicitCases = await db.service_record_case.findMany({ where: explicitScope, select: { id: true, babyId: true } });
+        expect(explicitCases).toEqual([{ id: explicitOriginal.id, babyId: explicitOriginal.babyId }]);
 
         await change(off, scope.clientId, historicalPhone).expect(operation === "reuse" ? 201 : 200);
         const successor = await db.employee_schedule.findFirstOrThrow({ where: { ...scope, replaced: false } });
@@ -672,11 +698,11 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
     });
 
-    it.each(["missing", "false"])("keeps signed backfilled singleton writes scalar with a %s setting", async setting => {
+    it.each(["missing", "false", "true"])("keeps signed backfilled singleton writes scalar with a %s setting", async setting => {
         const { scope, schedule, original, baby, days, originalDays } = await backfillHistoricBooking();
         expect(originalDays).toHaveLength(1);
         expect(originalDays[0]).toMatchObject({ locked: true });
-        if (setting === "false") await db.$transaction(tx => setRollout(tx, off.id, "false"));
+        if (setting !== "missing") await db.$transaction(tx => setRollout(tx, off.id, setting));
         // Exercise booking with the backfilled case and allocation already in place.
         await db.client.update({ where: { id: scope.clientId }, data: { bookingConfirmedAt: null, serviceStatus: "pre_booking" } });
         await confirm(scope.clientId, off).expect(200);
@@ -685,8 +711,13 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         const { body: overview } = await http(off).get(editor).expect(200);
         const target = serviceRecordResetTarget(overview, original.id);
         expect(target).toEqual({ scheduleId: schedule.id, request: {} });
+        const issued = await db.service_record_token.findFirstOrThrow({
+            where: { branchId: off.id, scheduleId: schedule.id, active: true, revokedAt: null },
+            select: { linkTokenHash: true },
+        });
         const { body: prepared } = await link(schedule.id, "prepare", { caseId: original.id }, off).expect(201);
         expect(prepared.kind).toBe("legacy");
+        expect(prepared.preparedLinkToken === issued.linkTokenHash).toBe(true);
         const { body: sent } = await link(schedule.id, "send", { preparedLinkToken: prepared.preparedLinkToken }, off).expect(201);
         expect(sent.status).toBe("sent");
         expect(await db.message_log.count({ where: { branchId: off.id, triggerJobId: sent.jobId, providerAcceptanceState: "accepted" } })).toBe(1);
@@ -725,7 +756,7 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
     });
 
     it.each(["adopted", "mixed", "group prepared", "no current owner", "retired baby"])(
-        "keeps a %s historical household fenced after pause", async mode => {
+        "uses persisted provenance for a %s historical household", async mode => {
         const { scope, schedule, original, baby } = await backfillHistoricBooking(dateAt(4));
         await db.$transaction(tx => setRollout(tx, off.id, "true"));
         const employeeId = off.employees[0]!.id;
@@ -760,24 +791,26 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
             if (mode === "retired baby") await db.client_baby.update({ where: { id: baby.id }, data: { active: false } });
         }
         await db.$transaction(tx => setRollout(tx, off.id, "false"));
-        await link(schedule.id, "prepare", {}, off).expect(409);
-        await link(schedule.id, "prepare", selection, off).expect(409);
-        await link(schedule.id, "send", { preparedLinkToken: preparedGroup?.preparedLinkToken }, off).expect(409);
-        await link(schedule.id, "reset", {}, off).expect(409);
-        if (preparedGroup) await link(schedule.id, "send", { employeeId, members: [preparedGroup] }, off).expect(409);
-        await http(off).post("/employee-schedules").send({
-            clientId: scope.clientId, primaryEmployeeId: employeeId, workAddress: "QA-Rollout schedule",
-            startDate: dateAt(20), endDate: dateAt(25),
-        }).expect(409);
-        await db.client.update({ where: { id: scope.clientId }, data: { bookingConfirmedAt: null, serviceStatus: "pre_booking" } });
-        await confirm(scope.clientId, off).expect(409);
-        expect((await db.client.findUniqueOrThrow({ where: { id: scope.clientId } })).bookingConfirmedAt).toBeNull();
+        expect(await readBackfilledScalarHousehold(db, scope)).toBeNull();
+        if (mode === "no current owner" || mode === "retired baby") {
+            await link(schedule.id, "prepare", {}, off).expect(409);
+            await link(schedule.id, "prepare", selection, off).expect(409);
+            await link(schedule.id, "reset", {}, off).expect(409);
+        } else {
+            const { body } = await link(schedule.id, "prepare", selection, off).expect(201);
+            expect(body.members).toEqual([expect.objectContaining({ caseId: original.id })]);
+            if (preparedGroup) {
+                await link(schedule.id, "prepare", {}, off).expect(409);
+                await link(schedule.id, "send", { preparedLinkToken: preparedGroup.preparedLinkToken }, off).expect(409);
+                expect(body.members[0].preparedLinkToken).toBe(preparedGroup.preparedLinkToken);
+            }
+        }
         expect(await db.service_record_case.findFirstOrThrow({ where: scope })).toMatchObject({ id: original.id, babyId: baby.id });
         expect(carrier.sendCalls).toHaveLength(0);
     });
 
     it.each([[1, "A가2형", "SINGLETON"], [2, "B-가-2형", "TWINS"]] as const)(
-        "refuses new scalar and grouped link writes for an explicitly configured %i-baby household during pause",
+        "allows scoped link preparation for a configured %i-baby household with a false setting",
         async (count, type, fetalType) => {
             const { body } = await http().post("/clients").send(configure(Array(count).fill(0), active, type, fetalType)).expect(201);
             await confirm(body.id).expect(200);
@@ -785,12 +818,11 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
             const schedule = await db.employee_schedule.findFirstOrThrow({ where: { ...scope, replaced: false } });
             const cases = await db.service_record_case.findMany({ where: scope });
             await set("false");
-            await link(schedule.id, "prepare", {}, active).expect(409);
-            await link(schedule.id, "prepare", { employeeId: active.employees[0]!.id, caseIds: cases.map(record => record.id) }).expect(409);
-            await http().post("/employee-schedules").send({
-                clientId: body.id, primaryEmployeeId: active.employees[0]!.id, workAddress: "QA-Rollout schedule",
-                startDate: dateAt(20), endDate: dateAt(25),
-            }).expect(409);
+            const groupSelection = { employeeId: active.employees[0]!.id, caseIds: cases.map(record => record.id) };
+            if (count > 1) await link(schedule.id, "prepare", {}, active).expect(409);
+            await link(schedule.id, "prepare", groupSelection, off).expect(404);
+            const { body: prepared } = await link(schedule.id, "prepare", groupSelection, active).expect(201);
+            expect(prepared.members).toHaveLength(count);
             expect(await db.service_record_case.count({ where: scope })).toBe(count);
             expect(calls()).toBe(0);
         },

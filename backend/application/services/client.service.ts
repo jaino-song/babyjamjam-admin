@@ -1,4 +1,4 @@
-import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { BadRequestException, ConflictException, Injectable, Inject, InternalServerErrorException, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -57,7 +57,7 @@ import {
     assertStaffEligibility,
     type EmployeeAssignmentCandidate,
 } from "application/policies/employee-assignment-eligibility.policy";
-import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, codeOnlyProblemException, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
 import {
     assertNoActiveEmployeeScheduleOverlap,
     employeeScheduleHandoverPeriod,
@@ -1366,7 +1366,8 @@ export class ClientService {
     }
 
     async getBabyRecordCapability(branchId: string): Promise<{ enabled: boolean }> {
-        return { enabled: await isBabyRecordRolloutEnabled(this.prismaService, branchId) };
+        if (!branchId) throw codeOnlyProblemException("ACCESS_DENIED");
+        return { enabled: true };
     }
 
     async create(branchid: string, params: ClientAllocationInput & {
@@ -1408,9 +1409,6 @@ export class ClientService {
         // checks, automation, or any other write/provider side effect.
         assertClientPhoneInput(params.phone);
         const configured = hasAllocationInput(params);
-        if (configured && !await isBabyRecordRolloutEnabled(this.prismaService, branchid)) {
-            throw new BabyRecordRolloutPausedException();
-        }
         assertAllocationStaffInput(params);
         const startDate = parseClientDate(params.startDate, "startDate") ?? null;
         const endDate = parseClientDate(params.endDate, "endDate") ?? null;
@@ -1609,7 +1607,6 @@ export class ClientService {
         const automationIntentAt = new Date();
         if (primaryEmployeeId !== null) {
             const result = await this.withRecordLinkWrite(branchid, async (transaction) => {
-                if (configured) await requireBabyRecordRollout(transaction, branchid);
                 const allocation = configured ? await planClientAllocation(transaction, params, createParams) : null;
                 const prelockedAuthorityOwnerIds = createParams.eDocId === null ? []
                     : await discoverAuthorityClientIds(transaction, branchid, [createParams.eDocId]);
@@ -1727,7 +1724,6 @@ export class ClientService {
             createdScheduleId = result.scheduleId;
         } else {
             client = await this.withRecordLinkWrite(branchid, async (transaction) => {
-                if (configured) await requireBabyRecordRollout(transaction, branchid);
                 const allocation = configured ? await planClientAllocation(transaction, params, createParams) : null;
                 const created = await this.createClientUsecase.execute(
                     branchid,
@@ -3387,11 +3383,8 @@ export class ClientService {
                 return refuse("서비스 시작일과 종료일을 먼저 입력해 주세요.");
             }
             const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
-            const requiresRollout = snapshot?.fetalConfirmation === "CONFIRMED"
+            const hasBabyAllocation = snapshot?.fetalConfirmation === "CONFIRMED"
                 && !await readBackfilledScalarHousehold(transaction, { branchId: branchid, clientId });
-            if (requiresRollout) {
-                await requireBabyRecordRollout(transaction, branchid);
-            }
             const now = new Date();
             const updateResult = await transaction.client.updateMany({
                 where: { id: clientId, branchId: branchid },
@@ -3403,7 +3396,7 @@ export class ClientService {
             if (updateResult.count === 0) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
-            if (requiresRollout) {
+            if (hasBabyAllocation) {
                 configuredScheduleId = snapshot.employeeSchedules[0]?.id ?? null;
             } else {
                 await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);

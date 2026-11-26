@@ -1,6 +1,6 @@
 import {
-    BACKFILLED_SCALAR_LINK_PREFIX, GROUP_RECORD_LINK_PREFIX, readBackfilledLinkPolicy, requireBabyRecordRollout,
-} from "application/policies/baby-record-rollout.policy";
+    BACKFILLED_SCALAR_LINK_PREFIX, GROUP_RECORD_LINK_PREFIX, readBackfilledLinkPolicy,
+} from "application/policies/baby-record-provenance.policy";
 import { BadRequestException, ConflictException, Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
@@ -68,7 +68,7 @@ interface ServiceRecordLinkTokenParams {
     expiresAt: Date;
     resetChallenge?: boolean;
     grouped?: boolean;
-    requireRollout?: boolean;
+    taskAutomation?: boolean;
 }
 
 /** A change in caregiver history leaves an unbound case for explicit adoption. */
@@ -247,13 +247,13 @@ export class ServiceRecordTokenService {
         };
     }
 
-    private async authorizeLinkWrite(
+    private async usesBackfilledScalarCredential(
         tx: Prisma.TransactionClient,
         params: ServiceRecordLinkTokenParams,
         current: NonNullable<Awaited<ReturnType<ServiceRecordTokenService["currentProvider"]>>>,
     ) {
         if (!current.configured) return false;
-        if (!params.grouped && !params.requireRollout) {
+        if (!params.grouped && !params.taskAutomation) {
             const historical = await readBackfilledLinkPolicy(tx, { branchId: params.branchId, clientId: current.clientId });
             if (historical?.caseId === current.target.caseId
                 && historical.scheduleId === params.scheduleId && historical.employeeId === params.employeeId) {
@@ -261,7 +261,6 @@ export class ServiceRecordTokenService {
                 return true;
             }
         }
-        await requireBabyRecordRollout(tx, params.branchId);
         return false;
     }
 
@@ -313,7 +312,7 @@ export class ServiceRecordTokenService {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
 
-            const historical = await this.authorizeLinkWrite(tx, params, current);
+            const historical = await this.usesBackfilledScalarCredential(tx, params, current);
             const scope = await this.credentialScope(tx, params, current);
             if (params.grouped && current.configured && activate) {
                 await this.retireBackfilledScalarLinks(tx, params, current, scope, !params.resetChallenge);
@@ -361,7 +360,7 @@ export class ServiceRecordTokenService {
         const reuse = async (tx: Prisma.TransactionClient) => {
             const current = await this.currentProvider(params, tx, { lockCase: true });
             if (!current || current.phoneHash !== this.hash(this.normalizePhone(params.expectedPhone))) return null;
-            await this.authorizeLinkWrite(tx, params, current);
+            await this.usesBackfilledScalarCredential(tx, params, current);
             const where = {
                 ...await this.credentialScope(tx, params, current),
                 expectedPhoneHash: current.phoneHash,
@@ -397,7 +396,7 @@ export class ServiceRecordTokenService {
 
             const current = await this.currentProvider(params, tx, { lockCase: true });
             if (!current || current.phoneHash !== expectedPhoneHash) return false;
-            await this.authorizeLinkWrite(tx, params, current);
+            await this.usesBackfilledScalarCredential(tx, params, current);
             const scope = await this.credentialScope(tx, params, current);
             const record = await tx.service_record_token.findFirst({
                 where: { ...scope, id: candidate.id },

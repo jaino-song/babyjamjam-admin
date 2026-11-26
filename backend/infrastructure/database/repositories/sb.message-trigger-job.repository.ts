@@ -1,5 +1,4 @@
-import { babyRecordRolloutEnabledSql } from "application/policies/baby-record-rollout.policy";
-import { isRecordLinkGroup, recordLinkGroupJobSql } from "application/services/service-record-link-group-source";
+import { isRecordLinkGroup } from "application/services/service-record-link-group-source";
 import { RECEIPT_RECOVERY_REASONS, RECEIPT_RECOVERY_REFUSED } from "domain/constants/receipt-job-recovery";
 import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { hasAcceptedJobOccurrence } from "./message-occurrence-ledger";
@@ -620,7 +619,6 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             WHERE job.status = 'pending' AND job.branch_id IS NOT NULL
               AND job.scheduled_for <= ${now} AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
               AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
-              AND (NOT ${recordLinkGroupJobSql(Prisma.sql`job`)} OR ${babyRecordRolloutEnabledSql(Prisma.sql`job.branch_id`)})
         `);
         return rows.map(row => row.branch_id);
     }
@@ -711,7 +709,6 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM message_trigger_job job
                 INNER JOIN policy ON policy.branch_id = job.branch_id
                 WHERE job.status = 'pending' AND job.attempts = 0 AND job.branch_id IS NOT NULL
-                  AND (NOT ${recordLinkGroupJobSql(Prisma.sql`job`)} OR ${babyRecordRolloutEnabledSql(Prisma.sql`job.branch_id`)})
                   AND (policy.automatic_enabled OR ${manualJob})
                   AND job.claim_token IS NULL AND job.processing_deadline_at IS NULL
                   AND job.scheduled_for <= ${now} AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
@@ -765,7 +762,6 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 WHERE job.status = 'pending' AND job.scheduled_for <= ${now}
                   ${excludedJobs}
                   AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
-                  AND (NOT ${recordLinkGroupJobSql(Prisma.sql`job`)} OR ${babyRecordRolloutEnabledSql(Prisma.sql`job.branch_id`)})
                   AND (policy.automatic_enabled OR ${manualJob})
                   AND (policy.retry_enabled OR (job.attempts = 0 AND (
                       job.next_attempt_at IS NULL OR (

@@ -1,4 +1,4 @@
-import { isBabyRecordRolloutEnabled, readBackfilledScalarHousehold } from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
 import { resolveAdminServiceRecordTarget } from "./admin-service-record-target";
 import { IMMUTABLE_FINALIZATION_STATUSES, SERVICE_RECORD_CASE_STATUS } from "./service-record-lifecycle.service";
 import { ServiceRecordFinalizationService } from "./service-record-finalization.service";
@@ -279,7 +279,6 @@ export class AdminServiceRecordService {
             && record.status !== SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED;
         const historical = canUseCurrentSchedule && client.fetalConfirmation === "CONFIRMED"
             && caseRows.length === 1 && caseRows[0]?.babyId && isWritable(caseRows[0])
-            && !await isBabyRecordRolloutEnabled(this.prisma, branchId)
             ? await readBackfilledScalarHousehold(this.prisma, scope) : null;
         const cases: AdminServiceRecordCaseSummary[] = caseRows.map((record) => {
             const rank = activeBabies.findIndex(({ id }) => id === record.babyId) + 1;

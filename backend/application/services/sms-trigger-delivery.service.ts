@@ -1,4 +1,3 @@
-import { isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
 import { renderServiceRecordLinks } from "@babyjamjam/shared/message/service-record-links";
 import { ConfigService } from "@nestjs/config";
 import { MESSAGE_AUTOMATION_DATABASE, type MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
@@ -774,7 +773,6 @@ export class SmsTriggerDeliveryService {
             ? await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver,
                 async (_decision, tx) => {
                     if (!tx || !this.acceptanceService) throw new AgentAutomationDispatchUncertainError();
-                    if (await this.releaseGroupedJobIfPaused(tx, job)) return null;
                     const claim = await tx.message_trigger_job.findFirst({
                         where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken },
                         select: { id: true },
@@ -785,11 +783,6 @@ export class SmsTriggerDeliveryService {
             : manualLog ?? (this.acceptanceService
                 ? await this.acceptanceService.prepare(pendingAttempt)
                 : await this.logRepository.save(pendingAttempt)) ?? pendingAttempt;
-        if (!persistedAttempt) {
-            this.markGroupReleasedForPause(job);
-            return false;
-        }
-
         // A duplicate dispatch converges on the existing durable row. Never
         // cross the provider boundary again once that row is started,
         // uncertain, or already has a result.
@@ -810,7 +803,6 @@ export class SmsTriggerDeliveryService {
                 | { kind: "receipt-fenced"; result: "canceled" | "released" }
                 | { kind: "ready"; attempt: MessageLogEntity }
                 | { kind: "held"; hold: MessageQuietHold }
-                | { kind: "rollout-paused" }
                 | { kind: "standalone-denied"; reason: string }
                 | { kind: "duplicate" }
                 | { kind: "occurrence"; disposition: "accepted" | "held"; at: Date }
@@ -860,7 +852,7 @@ export class SmsTriggerDeliveryService {
                     throw new AgentAutomationDispatchUncertainError();
                 }
                 if (isRecordLinkGroup(job)) {
-                    if (await this.releaseGroupedJobIfPaused(transaction, job)) return { kind: "rollout-paused" };
+                    if (!job.branchId || !job.claimToken) throw new AgentAutomationDispatchUncertainError();
                     const group = await resolveRecordLinkGroup(transaction, job, true);
                     await lockRecordLinkSchedule(transaction, job.employeeScheduleId!);
                     const senderApproved = await hasApprovedRecordLinkSender(transaction, job.branchId!);
@@ -1033,10 +1025,6 @@ export class SmsTriggerDeliveryService {
                 // transaction so its actual clock is sampled immediately before CAS.
                 return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver, finish, transaction, currentHold?.releaseAt);
             });
-        if (admission.kind === "rollout-paused") {
-            this.markGroupReleasedForPause(job);
-            return false;
-        }
         if (admission.kind === "receipt-fenced") {
             // The source/epoch transaction already persisted the disposition.
             job.status = admission.result === "released" ? "pending" : "canceled";
@@ -1162,23 +1150,6 @@ export class SmsTriggerDeliveryService {
             if (snapshot.standaloneLink || recordGroup) throw new Error(errorMessage);
             throw error;
         }
-    }
-
-    private async releaseGroupedJobIfPaused(tx: Prisma.TransactionClient, job: MessageTriggerJobEntity): Promise<boolean> {
-        if (!job.branchId || !job.claimToken) throw new AgentAutomationDispatchUncertainError();
-        if (await isBabyRecordRolloutEnabled(tx, job.branchId)) return false;
-        const released = await tx.message_trigger_job.updateMany({
-            where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken },
-            data: { status: job.cancelReason ? "needs_setup" : "pending", claimToken: null, processingDeadlineAt: null },
-        });
-        if (released.count !== 1) throw new AgentAutomationDispatchUncertainError();
-        return true;
-    }
-
-    private markGroupReleasedForPause(job: MessageTriggerJobEntity): void {
-        job.status = job.cancelReason ? "needs_setup" : "pending";
-        job.claimToken = null;
-        job.processingDeadlineAt = null;
     }
 
     private matchesQuietCancellationJob(job: MessageTriggerJobEntity,

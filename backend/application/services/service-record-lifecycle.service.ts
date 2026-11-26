@@ -1,4 +1,3 @@
-import { lockEnabledBabyRecordRollout, readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -31,7 +30,7 @@ import { getEffectiveClientServiceStatus } from "domain/repositories/client.repo
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, codeOnlyProblemException } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { INITIAL_PROVIDER_SETTLE_MS } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import {
@@ -77,6 +76,17 @@ type InitialSnapshotTerminalOutcomeInput = {
 };
 
 const initialTombstoneSettledSql = Prisma.sql`doc.updated_date <= now() - (${INITIAL_PROVIDER_SETTLE_MS}::int * interval '1 millisecond')`;
+// Staged keys include the case or baby ID. A single-column collision here
+// means this database still has a pre-cutover key on a case artifact.
+function isLegacyBabyCaseKeyConflict(error: unknown): boolean {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
+    const model = error.meta?.["modelName"];
+    const columns = error.meta?.["target"];
+    if (!Array.isArray(columns) || columns.length !== 1) return false;
+    return (model === "service_record_case" && columns[0] === "client_id")
+        || ((model === "service_record" || model === "service_record_assignment") && columns[0] === "schedule_id");
+}
+
 type ServiceRecordCaseRecord = Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
 
 const lifecycleClientSelect = {
@@ -492,10 +502,7 @@ export class ServiceRecordLifecycleService {
                 orderBy: [{ version: "desc" }, { id: "asc" }],
             })
             : [];
-        const canCreateBabyArtifacts = babies.length > 0 && !unbound && !isPreBooking
-            && !!tx && await lockEnabledBabyRecordRollout(tx, branchId);
-        const historicalCaseId = !canCreateBabyArtifacts && !isPreBooking && !!tx && babies.length === 1 && !unbound
-            ? (await readBackfilledScalarHousehold(tx, scope))?.caseId : undefined;
+        const canCreateBabyArtifacts = !!tx && !isPreBooking && !unbound;
         const records: ServiceRecordCaseRecord[] = [];
         for (const target of targets) {
             if (!target.existing && (isPreBooking || (target.babyId !== null && !canCreateBabyArtifacts))) continue;
@@ -505,11 +512,18 @@ export class ServiceRecordLifecycleService {
                     && candidate.scheduleId === schedule.id && (schedule.replaced || candidate.activeOwner === true));
                 return [{ schedule, employee: owner?.employee ?? null }];
             });
-            records.push(await this.syncCase(db, tx, {
-                ...scope, ...target, client, ownedSchedules, resolveCalendar,
-                legacyArtifacts: target.babyId === null && existing.length <= 1,
-                canCreateBabyArtifacts: canCreateBabyArtifacts || (!!historicalCaseId && target.existing?.id === historicalCaseId),
-            }));
+            try {
+                records.push(await this.syncCase(db, tx, {
+                    ...scope, ...target, client, ownedSchedules, resolveCalendar,
+                    legacyArtifacts: target.babyId === null && existing.length <= 1,
+                    canCreateBabyArtifacts,
+                }));
+            } catch (error) {
+                if (target.babyId !== null && isLegacyBabyCaseKeyConflict(error)) {
+                    throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_CASE_KEYS_NOT_STAGED" });
+                }
+                throw error;
+            }
         }
         return records;
     }
@@ -681,7 +695,6 @@ export class ServiceRecordLifecycleService {
         if (target.babyId !== null || await tx.service_record_case.count({ where: { ...scope, babyId: baby.id } })) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
-        await requireBabyRecordRollout(tx, branchId);
         const changed = await tx.service_record_case.updateMany({
             where: { ...scope, id: target.caseId, babyId: null },
             data: { babyId: baby.id },
