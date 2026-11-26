@@ -456,3 +456,43 @@ it("a delayed adoption cannot refresh or replace the next customer's deliberate 
     expect(get.mock.calls.filter(([path]) => path.startsWith(otherPath))).toHaveLength(requests);
     expect(post).toHaveBeenCalledTimes(1);
 });
+
+it.each(["success", "conflict"] as const)(
+    "ignores %s for pending adoption after the authenticated session changes", async (outcome) => {
+        const adoption = deferred<{ caseId: string; babyId: string }>();
+        const signed = overview(cases, record(HISTORIC));
+        const get = mockReads((path) => path === RECORDS_PATH || path === casePath(HISTORIC) ? signed : undefined);
+        const post = jest.spyOn(api, "post").mockImplementation(async () => {
+            const response = await adoption.response;
+            if (outcome === "conflict") throw { response: { status: 409 } };
+            return response;
+        });
+        const { queryClient } = setup(<Panel caseId={HISTORIC} />);
+        await screen.findByRole("link", { name: "제공기록지 보기" });
+        await screen.findByRole("combobox", { name: "연결할 아기" });
+        await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+
+        const select = choice();
+        const branchCookie = document.cookie;
+        fireEvent.change(select, { target: { value: SECOND } });
+        fireEvent.click(connect());
+        expect(post.mock.calls).toEqual([[`${RECORDS_PATH}/cases/${HISTORIC}/adopt`, { babyId: SECOND }]]);
+        expect(select).toBeDisabled();
+
+        // The cache observes the new session before the mounted form's auth hook updates.
+        act(() => {
+            queryClient.setQueryData(AUTH_USER_QUERY_KEY, { ...mockAuth.data!, id: "next-qa-user" });
+        });
+        expect(choice()).toBe(select);
+        expect(select).toBeDisabled();
+        const readsBeforeResponse = get.mock.calls.length;
+        await act(async () => adoption.resolve({ caseId: HISTORIC, babyId: SECOND }));
+
+        expect(get).toHaveBeenCalledTimes(readsBeforeResponse);
+        expect(choice()).toBe(select);
+        expect(select).toBeEnabled();
+        expect(screen.queryByText("기존 제공기록지를 선택한 아기에 연결했어요.")).not.toBeInTheDocument();
+        expect(screen.queryByText(/연결 대상이 변경되었어요/)).not.toBeInTheDocument();
+        expect(document.cookie).toBe(branchCookie);
+    },
+);
