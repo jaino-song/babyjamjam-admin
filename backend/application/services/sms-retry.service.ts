@@ -304,6 +304,21 @@ export class SmsRetryService {
                 async (transaction, rulePolicy): Promise<AutomaticRetryBoundary> => {
                     if ((grouped && !await isBabyRecordRolloutEnabled(transaction, sourceLog.branchId!))
                         || !await this.permitsRecordLinkRetry(sourceLog, transaction, invocation)) {
+                        if (!grouped && sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY && sourceLog.nextRetryAt) {
+                            // Retire the automatic retry without rewriting the provider evidence
+                            // or clearing a schedule another worker has since updated.
+                            await transaction.message_log.updateMany({
+                                where: {
+                                    id: sourceLog.id,
+                                    branchId: sourceLog.branchId,
+                                    status: sourceLog.status,
+                                    providerAcceptanceState: sourceLog.providerAcceptanceState,
+                                    nextRetryAt: sourceLog.nextRetryAt,
+                                    updatedAt: sourceLog.updatedAt,
+                                },
+                                data: { nextRetryAt: null },
+                            });
+                        }
                         return { kind: "claimed", log: null };
                     }
                     const policySkip = await this.supersedeForRulePolicy(transaction, sourceLog, rulePolicy);

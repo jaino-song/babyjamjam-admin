@@ -1,5 +1,5 @@
 import { babyRecordRolloutEnabledSql } from "application/policies/baby-record-rollout.policy";
-import { isRecordLinkGroup, recordLinkGroupCarrierEvidence, recordLinkGroupJobSql } from "application/services/service-record-link-group-source";
+import { isRecordLinkGroup, recordLinkGroupJobSql } from "application/services/service-record-link-group-source";
 import { RECEIPT_RECOVERY_REASONS, RECEIPT_RECOVERY_REFUSED } from "domain/constants/receipt-job-recovery";
 import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { hasAcceptedJobOccurrence } from "./message-occurrence-ledger";
@@ -1615,19 +1615,6 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             });
             if (result.count !== 1) return false;
             const current = await transaction.message_trigger_job.findFirst({ where: { id, branchId, status: "canceled", canceledByUser: true } });
-            if (current?.recipientEmployeeId && isRecordLinkGroup(current) && this.toPayload(current.payload).sentByUserId) {
-                // A cancellation of the unsent manual replacement also cancels
-                // any unsent remainder of the reservation it replaced.
-                await transaction.message_trigger_job.updateMany({
-                    where: { branchId, clientId: current.clientId, employeeScheduleId: current.employeeScheduleId,
-                        ruleId: current.ruleId, recipientEmployeeId: current.recipientEmployeeId,
-                        status: { in: ["pending", "processing", "needs_setup"] },
-                        payload: { path: ["residualOfManualJobId"], equals: id },
-                        logs: { none: recordLinkGroupCarrierEvidence } },
-                    data: { status: "canceled", canceledAt: new Date(), cancelReason: reason,
-                        canceledByUser: true, claimToken: null, nextAttemptAt: null, processingDeadlineAt: null },
-                });
-            }
             if (current?.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
                 const payload = this.toPayload(current.payload);
                 const cleared = await transaction.message_trigger_job.updateMany({ where: { id, branchId, status: "canceled", claimToken: null,
