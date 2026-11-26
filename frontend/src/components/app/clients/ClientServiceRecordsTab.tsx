@@ -57,6 +57,7 @@ import {
     type ServiceRecordFieldDescriptor,
 } from "@/features/service-records/constants/form-layout";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
+import type { Client } from "@/features/clients/types";
 import { useKeepPeriodMismatch, useFitPeriodMismatch, useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
 import type {
     ServiceRecordAssignment,
@@ -73,11 +74,17 @@ import type {
     SignatureDocStatus,
 } from "@/features/service-records/types";
 import { dateDirectionParticle } from "./service-record-period-mismatch";
+import { LegacyCaseReconciliation } from "./LegacyCaseReconciliation";
 
 interface ClientServiceRecordsTabProps {
     "data-component": string;
     layout?: "desktop" | "mobile";
     overview?: ServiceRecordOverview;
+    householdOverview?: ServiceRecordOverview;
+    client?: Client;
+    reconciliationConfirmed?: boolean;
+    canReconcileNow?: () => boolean;
+    onReconcileRefresh?: (adoptedCaseId?: string) => void | Promise<void>;
     clientId: number | null;
     isLoading: boolean;
     isError: boolean;
@@ -159,6 +166,11 @@ export function ClientServiceRecordsTab({
 function ClientServiceRecordsTabContent({
     layout = "desktop",
     overview,
+    householdOverview,
+    client,
+    reconciliationConfirmed = true,
+    canReconcileNow,
+    onReconcileRefresh,
     clientId,
     isLoading,
     isError,
@@ -183,8 +195,8 @@ function ClientServiceRecordsTabContent({
     const sendLinkMutation = useSendServiceRecordLink();
     const assignments = overview?.assignments ?? [];
     const record = overview?.record ?? null;
-    const cases = overview?.cases ?? [];
-    const selectedCase = cases.find((item) => item.caseId === record?.id);
+    const cases = householdOverview?.cases ?? overview?.cases ?? [];
+    const selectedCase = overview?.cases?.find((item) => item.caseId === record?.id);
     const credentialTarget = overview && serviceRecordResetTarget(overview, selectedCaseId);
     const groupTarget = credentialTarget && "members" in credentialTarget.request ? credentialTarget.request : undefined;
     const matchesCredential = (assignment: ServiceRecordAssignment) => {
@@ -194,9 +206,18 @@ function ClientServiceRecordsTabContent({
             && (!groupTarget || groupTarget.employeeId === assignment.employee.id));
     };
     const showPicker = cases.length > 1 || (!record && cases.length > 0);
+    const visibleCaseId = selectedCaseId ?? record?.id ?? (cases.length === 1 ? cases[0]?.caseId : undefined);
     const picker = showPicker && onSelectCase ? (
         <ServiceRecordCasePicker data-component={`${dataComponent}_case-picker`}
-            cases={cases} selectedCaseId={selectedCaseId} onSelect={onSelectCase} />
+            cases={cases} selectedCaseId={visibleCaseId} onSelect={onSelectCase} />
+    ) : null;
+    const householdCases = householdOverview?.cases;
+    const visibleCase = householdCases?.find(({ caseId }) => caseId === visibleCaseId);
+    const reconciliation = layout === "desktop" && client && client.id === clientId && householdCases && visibleCase ? (
+        <LegacyCaseReconciliation data-component={`${dataComponent}_legacy-reconciliation`}
+            client={client} record={visibleCase} householdCases={householdCases} detail={overview}
+            confirmed={reconciliationConfirmed && !isError && !isRefreshing}
+            canReconcileNow={canReconcileNow} onRefresh={onReconcileRefresh ?? onRefresh} />
     ) : null;
     const scheduleProjection = overview?.scheduleProjection;
     const hasAuthoritativeProjection = scheduleProjection !== undefined;
@@ -315,10 +336,6 @@ function ClientServiceRecordsTabContent({
         );
     }
 
-    if (isLoading) {
-        return <ClientServiceRecordsSkeleton layout={layout} />;
-    }
-
     // Failed read with nothing from an earlier successful load to show: the failure
     // state, never the "no assignments" empty text. With cached content (assignments,
     // a record, a schedule projection that renders, or revision-history rows that this
@@ -328,40 +345,34 @@ function ClientServiceRecordsTabContent({
     // alert, so one without blocking reasons is not cached content either.
     const hasCachedRevisionHistory = layout === "desktop" && revisionHistory !== undefined;
     const hasRenderedProjection = (scheduleProjection?.blockingReasons.length ?? 0) > 0;
-    if (
-        isError
+    const isFatalError = isError
         && assignments.length === 0
         && !record
         && !hasRenderedProjection
-        && !hasCachedRevisionHistory
-    ) {
-        return (
-            <QueryErrorState
-                dataComponent={`${dataComponent}_error`}
-                title="제공기록지 정보를 불러오지 못했습니다"
-                onRetry={() => onRefresh?.()}
-                isRetrying={isRefreshing}
-            />
-        );
-    }
-
-    if (picker && !record && !selectedCaseId) return picker;
-
+        && !hasCachedRevisionHistory;
     const hasRevisionHistoryState = revisionHistory !== undefined
         || isRevisionHistoryLoading
         || isRevisionHistoryError;
-    if (assignments.length === 0 && !record && !hasRevisionHistoryState && !hasAuthoritativeProjection) {
-        return (
-            <DetailEmptyState
-                message="제공기록지 배정 정보가 없습니다"
-            />
-        );
-    }
+    const showOnlyPicker = picker && !record && !selectedCaseId && !hasRevisionHistoryState;
+    const showEmpty = assignments.length === 0 && !record && !hasRevisionHistoryState && !hasAuthoritativeProjection;
 
-    return (
-        <>
-            <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
-                {picker}
+    const renderBody = () => {
+        if (isLoading) return <ClientServiceRecordsSkeleton layout={layout} />;
+        if (isFatalError) {
+            return (
+                <QueryErrorState
+                    dataComponent={`${dataComponent}_error`}
+                    title="제공기록지 정보를 불러오지 못했습니다"
+                    onRetry={() => onRefresh?.()}
+                    isRetrying={isRefreshing}
+                />
+            );
+        }
+        if (showOnlyPicker) return null;
+        if (showEmpty) return <DetailEmptyState message="제공기록지 배정 정보가 없습니다" />;
+
+        return (
+            <>
                 {isError ? (
                     <QueryErrorState
                         dataComponent={`${dataComponent}_refresh-error`}
@@ -525,33 +536,40 @@ function ClientServiceRecordsTabContent({
                     onRetry={onRetryRevisionDocument}
                     retryingDocumentKey={retryingDocumentKey}
                 />}
-            </div>
+                <TwoButtonModal
+                    open={pendingResendAssignment !== null}
+                    onOpenChange={(open) => {
+                        if (!open) setPendingResendScheduleId(null);
+                    }}
+                    dataComponent={`${dataComponent}_resend-approval`}
+                    title="제공기록지 메시지를 재전송하시겠습니까?"
+                    description={isPendingResendSending
+                        ? SEND_LINK_BLOCKED_HINT
+                        : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
+                    isDescriptionVisuallyHidden={false}
+                    approvalLabel="메시지 재전송"
+                    pendingLabel="메시지 재전송 중"
+                    approvalDisabled={isPendingResendSending}
+                    isPending={sendLinkMutation.isPending}
+                    onApprove={() => void handleResendConfirm()}
+                />
+            </>
+        );
+    };
 
-            <TwoButtonModal
-                open={pendingResendAssignment !== null}
-                onOpenChange={(open) => {
-                    if (!open) setPendingResendScheduleId(null);
-                }}
-                dataComponent={`${dataComponent}_resend-approval`}
-                title="제공기록지 메시지를 재전송하시겠습니까?"
-                description={isPendingResendSending
-                    ? SEND_LINK_BLOCKED_HINT
-                    : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
-                isDescriptionVisuallyHidden={false}
-                approvalLabel="메시지 재전송"
-                pendingLabel="메시지 재전송 중"
-                approvalDisabled={isPendingResendSending}
-                isPending={sendLinkMutation.isPending}
-                onApprove={() => void handleResendConfirm()}
-            />
-        </>
+    return (
+        <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+            {picker}
+            {reconciliation}
+            {renderBody()}
+        </div>
     );
 }
 
 function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile" }) {
     const dataComponent = useClientServiceRecordsDataComponent();
     return (
-        <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+        <>
             <div
                 data-component={`${dataComponent}_overview-grid`}
                 className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
@@ -655,7 +673,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                     <ServiceRecordInfoRowSkeleton key={label} label={label} />
                 ))}
             </InfoCard>}
-        </div>
+        </>
     );
 }
 

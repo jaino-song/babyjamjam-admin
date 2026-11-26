@@ -12,6 +12,7 @@ jest.mock("@/hooks/useVoucherData", () => ({
   useVoucherPriceInfos: () => ({ data: [] }),
 }));
 jest.mock("@/features/clients/hooks/use-clients", () => ({
+    useClient: () => ({}),
   useConfirmBooking: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({

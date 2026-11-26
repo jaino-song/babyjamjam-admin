@@ -5,6 +5,7 @@ import type { ResetServiceRecordLinkRequest } from "@babyjamjam/shared/types/ser
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { clientKeys } from "@/features/clients/hooks/keys";
+import { isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { dashboardQueryKeys } from "@/hooks/useDashboardStats";
 
 import { serviceRecordsApi } from "../api/service-records.api";
@@ -19,17 +20,22 @@ import { serviceRecordKeys } from "./keys";
 
 export function useClientServiceRecords(
     clientId: number | null,
-    options?: { enabled?: boolean; caseId?: string; refreshOnFocus?: boolean },
+    options?: { enabled?: boolean; caseId?: string; branchId?: string | null; refreshOnFocus?: boolean },
 ) {
+    const { caseId, branchId } = options ?? {};
+    const isInScope = () => branchId === undefined || isBranchContextAligned(branchId);
     return useQuery<ServiceRecordOverview>({
-        queryKey: serviceRecordKeys.clientOverview(clientId, options?.caseId),
-        queryFn: () => {
+        queryKey: serviceRecordKeys.clientOverview(clientId, caseId, branchId),
+        queryFn: async () => {
             if (clientId === null) {
                 throw new Error("clientId is required");
             }
-            return serviceRecordsApi.getClientOverview(clientId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
+            if (!isInScope()) throw new Error("Active branch changed");
+            const { data } = await serviceRecordsApi.getClientOverview(clientId, ...(caseId ? [caseId] : []));
+            if (!isInScope()) throw new Error("Active branch changed");
+            return data;
         },
-        enabled: clientId !== null && (options?.enabled ?? true),
+        enabled: clientId !== null && isInScope() && (options?.enabled ?? true),
         ...(options?.refreshOnFocus ? {
             staleTime: 0,
             refetchOnWindowFocus: "always",
@@ -40,17 +46,22 @@ export function useClientServiceRecords(
 
 export function useClientServiceRecordRevisionHistory(
     clientId: number | null,
-    options?: { enabled?: boolean; caseId?: string },
+    options?: { enabled?: boolean; caseId?: string; branchId?: string | null },
 ) {
+    const { caseId, branchId } = options ?? {};
+    const isInScope = () => branchId === undefined || isBranchContextAligned(branchId);
     return useQuery<ServiceRecordRevisionHistoryResponse>({
-        queryKey: serviceRecordKeys.revisionHistory(clientId, options?.caseId),
-        queryFn: () => {
+        queryKey: serviceRecordKeys.revisionHistory(clientId, caseId, branchId),
+        queryFn: async () => {
             if (clientId === null) {
                 throw new Error("clientId is required");
             }
-            return serviceRecordsApi.getClientRevisionHistory(clientId, ...(options?.caseId ? [options.caseId] : [])).then((response) => response.data);
+            if (!isInScope()) throw new Error("Active branch changed");
+            const { data } = await serviceRecordsApi.getClientRevisionHistory(clientId, ...(caseId ? [caseId] : []));
+            if (!isInScope()) throw new Error("Active branch changed");
+            return data;
         },
-        enabled: clientId !== null && (options?.enabled ?? true),
+        enabled: clientId !== null && isInScope() && (options?.enabled ?? true),
         staleTime: 0,
         refetchOnWindowFocus: true,
         refetchOnReconnect: true,

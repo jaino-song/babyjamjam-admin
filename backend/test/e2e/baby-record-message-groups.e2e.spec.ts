@@ -5,6 +5,7 @@ import { ConfigModule } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
+import { babyRecordRolloutKey } from "application/policies/baby-record-rollout.policy";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { RECORD_LINK_GROUP_CHANGED } from "application/services/service-record-link-group-source";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
@@ -126,6 +127,9 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         branchId = (await db.branch.create({
             data: { name: "QA-Baby group messages", slug: `qa-send-${randomUUID()}`, smsSenderApprovalStatus: "approved" },
         })).id;
+        await db.system_setting.create({
+            data: { key: babyRecordRolloutKey(branchId), value: "true" },
+        });
         staff = [];
         for (let index = 0; index < 4; index++) {
             staff.push((await db.employee.create({

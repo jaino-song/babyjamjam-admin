@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import request from "supertest";
 
+import { babyRecordRolloutKey } from "application/policies/baby-record-rollout.policy";
 import { closeScheduleAllocation, persistClientAllocation } from "application/services/client-allocation.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
@@ -128,6 +129,7 @@ describeE2E("caregiver case authority over the real public routes", () => {
             });
             const providers = [{ slot: 0 as const, employeeId: primary.id }, { slot: 1 as const, employeeId: assistant.id }];
             if (!singleton) {
+                await enableConfirmedAllocation(branch.id);
                 await db.$transaction(async tx => {
                     await lockClientForScheduleWrite(tx, branch.id, client.id);
                     await persistClientAllocation(tx, scope, {
@@ -195,12 +197,19 @@ describeE2E("caregiver case authority over the real public routes", () => {
 
     type AccessFixture = Awaited<ReturnType<typeof fixture>>;
 
-    function allocateSingleton(
+    async function enableConfirmedAllocation(branchId: string) {
+        if (legacyKeys) return;
+        const key = babyRecordRolloutKey(branchId);
+        await db.system_setting.upsert({ where: { key }, create: { key, value: "true" }, update: {} });
+    }
+
+    async function allocateSingleton(
         f: AccessFixture,
         babyId: string | null,
         providerSlot: 0 | 1,
         replacement?: { primaryEmployeeId: number; secondaryEmployeeId: number },
     ) {
+        await enableConfirmedAllocation(f.branch.id);
         return scoped(f.branch.id, () => db.$transaction(async tx => {
             await lockClientForScheduleWrite(tx, f.branch.id, f.scope.clientId);
             const staffing = replacement ?? { primaryEmployeeId: f.primary.id, secondaryEmployeeId: f.assistant.id };
