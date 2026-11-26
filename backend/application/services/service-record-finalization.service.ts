@@ -55,6 +55,9 @@ const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CLIENT_NOT_TOMBSTONED: Prisma.service_record_caseWhereInput = {
     OR: [{ clientId: null }, { client: { is: { deletedAt: null } } }],
 };
+const CASE_BABY_NOT_RETIRED: Prisma.service_record_caseWhereInput = {
+    OR: [{ babyId: null }, { baby: { is: { active: true } } }],
+};
 const CLIENT_TOMBSTONED: Prisma.service_record_caseWhereInput = {
     client: { is: { deletedAt: { not: null } } },
 };
@@ -447,7 +450,7 @@ export class ServiceRecordFinalizationService {
         const candidates = await this.prisma.service_record_case.findMany({
             where: {
                 snapshotChunks: { none: { status: "MANUAL_REVIEW" } },
-                AND: [CLIENT_NOT_TOMBSTONED],
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                     {
@@ -605,13 +608,14 @@ export class ServiceRecordFinalizationService {
                     nextAttemptAt: Date | null;
                     finalizationAttempts: number;
                     client?: { deletedAt: Date | null } | null;
+                    baby?: { active: boolean } | null;
                 } | null>;
             } | undefined;
             if (typeof caseDelegate?.findUnique !== "function") {
                 const claimed = await tx.service_record_case.updateMany({
                     where: {
                         id: caseId,
-                        AND: [CLIENT_NOT_TOMBSTONED],
+                        AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                         OR: [
                             { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                             {
@@ -682,6 +686,7 @@ export class ServiceRecordFinalizationService {
                     nextAttemptAt: true,
                     finalizationAttempts: true,
                     client: { select: { deletedAt: true } },
+                    baby: { select: { active: true } },
                 },
             });
             if (
@@ -689,6 +694,7 @@ export class ServiceRecordFinalizationService {
                 // Reread under the lock: a client deleted while this run waited
                 // for the lock must not be finalized, and nothing is changed.
                 || (current.client?.deletedAt ?? null) !== null
+                || current.baby?.active === false
                 || current.branchId !== branchId
                 || (
                     current.status === SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED
@@ -734,7 +740,7 @@ export class ServiceRecordFinalizationService {
                 where: {
                     id: caseId,
                     branchId,
-                    AND: [CLIENT_NOT_TOMBSTONED],
+                    AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                     OR: [
                         { status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE },
                         {
@@ -773,7 +779,7 @@ export class ServiceRecordFinalizationService {
         } | undefined;
         if (typeof delegate?.findUnique !== "function") return null;
         const row = await delegate.findUnique({
-            where: { id: caseId },
+            where: { id: caseId, AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED] },
             select: {
                 id: true,
                 branchId: true,
@@ -1321,6 +1327,7 @@ export class ServiceRecordFinalizationService {
         const recovered = await this.prisma.service_record_case.updateMany({
             where: {
                 status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 finalizationStartedAt: { lte: staleBefore },
                 snapshotChunks: {
                     none: {
@@ -1345,6 +1352,7 @@ export class ServiceRecordFinalizationService {
         const cases = await this.prisma.service_record_case.findMany({
             where: {
                 status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 eformsignDocs: {
                     some: { documentKind: "service_record_snapshot" },
                     none: {
@@ -1375,6 +1383,7 @@ export class ServiceRecordFinalizationService {
     private async promoteEligibleCases(referenceDate: Date, limit: number): Promise<void> {
         const candidates = await this.prisma.service_record_case.findMany({
             where: {
+                AND: [CLIENT_NOT_TOMBSTONED, CASE_BABY_NOT_RETIRED],
                 OR: [
                     { status: SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END },
                     {

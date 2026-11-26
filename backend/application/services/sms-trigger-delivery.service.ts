@@ -1,3 +1,10 @@
+import { isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
+import { renderServiceRecordLinks } from "@babyjamjam/shared/message/service-record-links";
+import { ConfigService } from "@nestjs/config";
+import { MESSAGE_AUTOMATION_DATABASE, type MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
+import { hasApprovedRecordLinkSender, lockRecordLinkSchedule } from "infrastructure/database/repositories/record-link-recovery.repository";
+import { isRecordLinkGroup, recordLinkHash, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED, RECORD_LINK_GROUP_LOG_MARKER } from "./service-record-link-group-source";
+import { serviceRecordGroupUrl } from "./service-record-link-group.service";
 import { RECEIPT_RECOVERY_PREFIX, type ReceiptRecoveryProof } from "domain/constants/receipt-job-recovery";
 import type { ReceiptReadiness } from "./sms-trigger-payload-enricher.registry";
 import {
@@ -34,6 +41,7 @@ import {
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { SmsAutomationSafeguardService, smsAutomationSafeguardReason } from "./sms-automation-safeguard.service";
 import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
@@ -167,6 +175,9 @@ export class SmsTriggerDeliveryService {
         private readonly quietHours?: MessageQuietHoursService,
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobRepository?: IMessageTriggerJobRepository,
         private readonly defaultSender?: AligoDefaultSenderPolicyService,
+        @Optional() @Inject(MESSAGE_AUTOMATION_DATABASE) private readonly groupDatabase?: MessageAutomationDatabase,
+        @Optional() private readonly groupConfig?: ConfigService,
+        @Optional() private readonly groupSafeguard?: SmsAutomationSafeguardService,
     ) {}
 
     /**
@@ -758,9 +769,26 @@ export class SmsTriggerDeliveryService {
         if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY && (!manualLog || manualLog.triggerJobId !== job.id
             || manualLog.providerAcceptanceState !== "prepared" || manualLog.providerCallStartedAt !== null
             || manualLog.receiver !== snapshot.receiver || manualLog.messageBody !== snapshot.message)) throw new AgentAutomationDispatchUncertainError();
-        const persistedAttempt = manualLog ?? (this.acceptanceService
-            ? await this.acceptanceService.prepare(pendingAttempt)
-            : await this.logRepository.save(pendingAttempt)) ?? pendingAttempt;
+        const grouped = isRecordLinkGroup(job);
+        const persistedAttempt = grouped
+            ? await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver,
+                async (_decision, tx) => {
+                    if (!tx || !this.acceptanceService) throw new AgentAutomationDispatchUncertainError();
+                    if (await this.releaseGroupedJobIfPaused(tx, job)) return null;
+                    const claim = await tx.message_trigger_job.findFirst({
+                        where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken },
+                        select: { id: true },
+                    });
+                    if (!claim || !job.claimToken) throw new AgentAutomationDispatchUncertainError();
+                    return this.acceptanceService.prepare(pendingAttempt, tx);
+                })
+            : manualLog ?? (this.acceptanceService
+                ? await this.acceptanceService.prepare(pendingAttempt)
+                : await this.logRepository.save(pendingAttempt)) ?? pendingAttempt;
+        if (!persistedAttempt) {
+            this.markGroupReleasedForPause(job);
+            return false;
+        }
 
         // A duplicate dispatch converges on the existing durable row. Never
         // cross the provider boundary again once that row is started,
@@ -782,6 +810,7 @@ export class SmsTriggerDeliveryService {
                 | { kind: "receipt-fenced"; result: "canceled" | "released" }
                 | { kind: "ready"; attempt: MessageLogEntity }
                 | { kind: "held"; hold: MessageQuietHold }
+                | { kind: "rollout-paused" }
                 | { kind: "standalone-denied"; reason: string }
                 | { kind: "duplicate" }
                 | { kind: "occurrence"; disposition: "accepted" | "held"; at: Date }
@@ -810,7 +839,7 @@ export class SmsTriggerDeliveryService {
                     if (result !== "allow") return { kind: "receipt-fenced", result };
                 }
                 if (!transaction) {
-                    if (snapshot.standaloneLink) throw new AgentAutomationDispatchUncertainError();
+                    if (snapshot.standaloneLink || isRecordLinkGroup(job)) throw new AgentAutomationDispatchUncertainError();
                     // Only the explicit schema-valid OFF direct-builder compatibility path.
                     if (isQuietHoursCanceled(persistedAttempt)) return { kind: "refused", decision: { action: "CANCEL", reevaluateAt: null }, canceledAt: null };
                     return { kind: "ready", attempt: (this.acceptanceService
@@ -829,6 +858,40 @@ export class SmsTriggerDeliveryService {
                     || !persistedAttempt.providerAcceptanceFingerprint || current.providerAcceptanceFingerprint !== persistedAttempt.providerAcceptanceFingerprint
                     || current.providerAcceptanceState !== "prepared" || current.providerCallStartedAt !== null) {
                     throw new AgentAutomationDispatchUncertainError();
+                }
+                if (isRecordLinkGroup(job)) {
+                    if (await this.releaseGroupedJobIfPaused(transaction, job)) return { kind: "rollout-paused" };
+                    const group = await resolveRecordLinkGroup(transaction, job, true);
+                    await lockRecordLinkSchedule(transaction, job.employeeScheduleId!);
+                    const senderApproved = await hasApprovedRecordLinkSender(transaction, job.branchId!);
+                    const manual = isManualMessageTriggerJob(job);
+                    const safeguard = manual ? undefined : await this.groupSafeguard?.check(job, transaction);
+                    let allowed = false;
+                    if (group && senderApproved && (manual || safeguard?.allowed === true)) {
+                        try {
+                            const latest = await this.resolveCanonicalDeliverySnapshot(job, transaction);
+                            allowed = latest.snapshotHash === snapshot.snapshotHash;
+                        } catch (error) {
+                            if (!(error instanceof SmsTriggerDeliverySkipError)) throw error;
+                        }
+                    }
+                    if (!allowed) {
+                        const reason = !senderApproved ? MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON
+                            : safeguard?.allowed === false && safeguard.level !== "recipient" ? smsAutomationSafeguardReason(safeguard.level)
+                                : RECORD_LINK_GROUP_CHANGED;
+                        const canceled = await transaction.message_trigger_job.updateMany({
+                            where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken },
+                            data: { status: "canceled", canceledAt: new Date(), cancelReason: reason,
+                                claimToken: null, processingDeadlineAt: null, nextAttemptAt: null },
+                        });
+                        if (canceled.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        const failed = await transaction.message_log.updateMany({
+                            where: { id: current.id, branchId: job.branchId, providerAcceptanceState: "prepared", providerCallStartedAt: null },
+                            data: { status: "failed", errorMessage: reason, nextRetryAt: null },
+                        });
+                        if (failed.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        return { kind: "standalone-denied", reason };
+                    }
                 }
                 const variables = current.variables && typeof current.variables === "object" && !Array.isArray(current.variables)
                     ? current.variables : {};
@@ -970,6 +1033,10 @@ export class SmsTriggerDeliveryService {
                 // transaction so its actual clock is sampled immediately before CAS.
                 return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver, finish, transaction, currentHold?.releaseAt);
             });
+        if (admission.kind === "rollout-paused") {
+            this.markGroupReleasedForPause(job);
+            return false;
+        }
         if (admission.kind === "receipt-fenced") {
             // The source/epoch transaction already persisted the disposition.
             job.status = admission.result === "released" ? "pending" : "canceled";
@@ -1032,6 +1099,7 @@ export class SmsTriggerDeliveryService {
             return false;
         }
         const attempt = admission.attempt;
+        const recordGroup = isRecordLinkGroup(job);
 
         try {
             const result = await this.aligoService.sendSms({
@@ -1040,7 +1108,7 @@ export class SmsTriggerDeliveryService {
                 recipientName: snapshot.recipientName,
                 title: snapshot.title,
                 msgType: snapshot.requestedDeliveryType,
-                ...(snapshot.standaloneLink ? { confidential: true } : {}),
+                ...(snapshot.standaloneLink || isRecordLinkGroup(job) ? { confidential: true } : {}),
                 ...(job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? { testMode: job.payload.templateVariables["testMode"] === "true" } : {}),
             });
             const outcome = classifySmsProviderOutcome(result, countSmsRecipients(snapshot.receiver));
@@ -1058,7 +1126,8 @@ export class SmsTriggerDeliveryService {
             attempt.providerAcceptedAt = isAccepted ? new Date(Date.now()) : null;
             attempt.errorMessage = isAccepted ? null : isPermanent
                 ? `발송 실패: ${rejection.reason}`
-                : snapshot.standaloneLink ? "Standalone receipt delivery rejected" : result.response.message;
+                : snapshot.standaloneLink ? "Standalone receipt delivery rejected"
+                    : recordGroup ? "제공기록지 링크 문자 발송이 거절되었습니다" : result.response.message;
             attempt.status = isAccepted ? "sent" : "failed";
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
@@ -1078,7 +1147,8 @@ export class SmsTriggerDeliveryService {
             return isAccepted;
         } catch (error) {
             job.payload.templateVariables["retrySafety"] = "uncertain";
-            const errorMessage = snapshot.standaloneLink ? "Standalone receipt delivery outcome unavailable" : this.formatErrorMessage(error);
+            const errorMessage = snapshot.standaloneLink ? "Standalone receipt delivery outcome unavailable"
+                : recordGroup ? "제공기록지 링크 문자 발송 결과를 확인할 수 없습니다" : this.formatErrorMessage(error);
             try {
                 if (attempt.providerAcceptanceState === "started") {
                     attempt.markProviderOutcomeUncertain(errorMessage);
@@ -1089,9 +1159,26 @@ export class SmsTriggerDeliveryService {
                     snapshot.standaloneLink ? "Failed to record standalone receipt delivery" : `Failed to record SMS log: ${this.formatErrorMessage(logError)}`,
                 );
             }
-            if (snapshot.standaloneLink) throw new Error(errorMessage);
+            if (snapshot.standaloneLink || recordGroup) throw new Error(errorMessage);
             throw error;
         }
+    }
+
+    private async releaseGroupedJobIfPaused(tx: Prisma.TransactionClient, job: MessageTriggerJobEntity): Promise<boolean> {
+        if (!job.branchId || !job.claimToken) throw new AgentAutomationDispatchUncertainError();
+        if (await isBabyRecordRolloutEnabled(tx, job.branchId)) return false;
+        const released = await tx.message_trigger_job.updateMany({
+            where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken },
+            data: { status: job.cancelReason ? "needs_setup" : "pending", claimToken: null, processingDeadlineAt: null },
+        });
+        if (released.count !== 1) throw new AgentAutomationDispatchUncertainError();
+        return true;
+    }
+
+    private markGroupReleasedForPause(job: MessageTriggerJobEntity): void {
+        job.status = job.cancelReason ? "needs_setup" : "pending";
+        job.claimToken = null;
+        job.processingDeadlineAt = null;
     }
 
     private matchesQuietCancellationJob(job: MessageTriggerJobEntity,
@@ -1131,6 +1218,9 @@ export class SmsTriggerDeliveryService {
             const validation = await this.validateManualInlineSource(job, transaction);
             if (!validation.valid) throw new SmsTriggerDeliverySkipError(validation.reason);
         }
+        const group = isRecordLinkGroup(job);
+        const groupSource = group && (transaction ?? this.groupDatabase) && await resolveRecordLinkGroup((transaction ?? this.groupDatabase)!, job);
+        if (group && (!groupSource || !this.groupConfig)) throw new SmsTriggerDeliverySkipError(RECORD_LINK_GROUP_CHANGED);
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
             employeeName: payload.recipientName,
@@ -1138,24 +1228,43 @@ export class SmsTriggerDeliveryService {
             buttonUrl: payload.buttonUrl ?? "",
             serviceRecordUrl: payload.buttonUrl ?? "",
             ...publicMessageVariables(payload.templateVariables),
+            ...(groupSource ? groupSource.variables : {}),
         };
         const usesPayloadMessage = config.usePayloadMessage || payload.templateVariables["triggerType"] === "agent_scheduled";
         const template = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
             ? { content: payload.messageBody!, version: "manual-inline-v1", hash: this.hash(payload.messageBody), requiredVariableKeys: [] }
             : usesPayloadMessage ? this.resolvePayloadTemplate(job)
             : await this.resolveSystemTemplate(config.systemTemplateKey, branchId, transaction);
+        if (!group && job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
+            baseVariables["serviceRecordLinks"] = baseVariables["serviceRecordUrl"] ?? "";
+        }
         const missingVariableKeys = template.requiredVariableKeys.filter(
-            (key) => !baseVariables[key]?.trim(),
+            (key) => !(group && ["buttonUrl", "serviceRecordUrl", "serviceRecordLinks"].includes(key))
+                && !baseVariables[key]?.trim(),
         );
+        if (!group && job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK
+            && !baseVariables["serviceRecordUrl"]?.trim() && !missingVariableKeys.includes("serviceRecordUrl")) {
+            missingVariableKeys.push("serviceRecordUrl");
+        }
         if (missingVariableKeys.length > 0) {
             throw new MissingSmsTemplateVariablesError(missingVariableKeys);
         }
         // Payload messages retain the legacy trim/no-render behavior in
         // resolvePayloadTemplate; editable system templates are rendered
         // byte-for-byte so approval and provider requests remain equivalent.
-        const message = usesPayloadMessage
-            ? template.content
-            : this.renderTemplate(template.content, baseVariables);
+        let message: string;
+        if (groupSource) {
+            const rendered = renderServiceRecordLinks({
+                template: template.content, variables: baseVariables, householdBabyCount: groupSource.householdBabyCount,
+                members: groupSource.links.map(({ activeRank, linkToken }) => ({ activeRank, url: serviceRecordGroupUrl(this.groupConfig!, linkToken) })),
+            });
+            if (!rendered.ok) throw new Error(`제공기록지 링크 템플릿 오류 (${rendered.reason})`);
+            const previewHash = payload.recordLinkGroup?.previewHash;
+            if (previewHash && previewHash !== recordLinkHash(rendered.content)) throw new SmsTriggerDeliverySkipError(RECORD_LINK_GROUP_CHANGED);
+            message = rendered.content;
+        } else {
+            message = usesPayloadMessage ? template.content : this.renderTemplate(template.content, baseVariables);
+        }
         const title = usesPayloadMessage
             ? payload.templateVariables["title"]?.trim() || config.title
             : config.title;
@@ -1389,6 +1498,8 @@ export class SmsTriggerDeliveryService {
             configVersion: params.snapshot.configVersion,
             configHash: params.snapshot.configHash,
             recipientDisplay: params.snapshot.maskedReceiver,
+            ...(params.job.payload.sentByUserId ? { sentByUserId: params.job.payload.sentByUserId } : {}),
+            ...(isRecordLinkGroup(params.job) ? { [RECORD_LINK_GROUP_LOG_MARKER]: "1" } : {}),
         };
         if (params.config.systemTemplateKey) {
             variables["systemTemplateKey"] = params.config.systemTemplateKey;

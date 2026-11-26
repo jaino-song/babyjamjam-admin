@@ -103,20 +103,20 @@ describe("ClientFormDialog employee cache refresh", () => {
         render(form());
 
         await waitFor(() => {
-            expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveTextContent(primary.name);
-            expect(screen.getByRole("combobox", { name: "보조 담당 인력" })).toHaveTextContent(secondary.name);
+            expect(screen.getByRole("combobox", { name: "주 제공인력" })).toHaveTextContent(primary.name);
+            expect(screen.getByRole("combobox", { name: "보조 제공인력 1" })).toHaveTextContent(secondary.name);
         });
-        expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveAttribute("aria-expanded", "false");
+        expect(screen.getByRole("combobox", { name: "주 제공인력" })).toHaveAttribute("aria-expanded", "false");
         expect(api.get).toHaveBeenCalledWith("/employees");
     });
 
     it("refreshes again when the dialog reopens while the list cache is still fresh", async () => {
         const { rerender } = render(form());
-        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveTextContent(primary.name));
+        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 제공인력" })).toHaveTextContent(primary.name));
         rerender(form(false));
         jest.mocked(api.get).mockResolvedValue({ data: [{ ...primary, name: "갱신된 주담당" }, secondary] });
         rerender(form());
-        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveTextContent("갱신된 주담당"));
+        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 제공인력" })).toHaveTextContent("갱신된 주담당"));
     });
 
     it("does not restore an employee cleared by the user while the refresh is pending", async () => {
@@ -124,10 +124,10 @@ describe("ClientFormDialog employee cache refresh", () => {
         let resolveEmployees!: (result: { data: Employee[] }) => void;
         jest.mocked(api.get).mockImplementation(() => new Promise((resolve) => { resolveEmployees = resolve; }));
         render(form());
-        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveTextContent(primary.name));
+        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 제공인력" })).toHaveTextContent(primary.name));
         await waitFor(() => expect(api.get).toHaveBeenCalledWith("/employees"));
         fireEvent.click(screen.getAllByRole("button", { name: "제공인력 선택 해제" })[0]);
         await act(async () => { resolveEmployees({ data: [primary, secondary] }); });
-        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveTextContent("이름으로 검색..."));
+        await waitFor(() => expect(screen.getByRole("combobox", { name: "주 제공인력" })).toHaveTextContent("이름으로 검색..."));
     });
 });

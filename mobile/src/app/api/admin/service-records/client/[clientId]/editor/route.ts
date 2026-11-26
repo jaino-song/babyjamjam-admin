@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { clientId } = await params;
         if (!isPositiveIntegerString(clientId)) return invalidClientIdResponse();
 
-        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}/editor`, {
+        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}/editor${new URL(request.url).search}`, {
             headers: getAuthHeaders(token),
         });
         return withNoStore(backendJsonResponse(response));

@@ -1,4 +1,13 @@
 {
+  "service-record": {
+    "baby-1": "First baby's service record",
+    "baby-2": "Second baby's service record",
+    "baby-3": "Third baby's service record",
+    "baby-4": "Fourth baby's service record",
+    "baby-5": "Fifth baby's service record",
+    "baby-6": "Sixth baby's service record",
+    "baby-n": "Baby {rank}'s service record"
+  },
   "roles": {
     "owner": "Owner",
     "admin": "Branch Manager",

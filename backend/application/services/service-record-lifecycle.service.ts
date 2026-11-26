@@ -1,3 +1,4 @@
+import { lockEnabledBabyRecordRollout, readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -38,6 +39,7 @@ import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 export const SERVICE_RECORD_CASE_STATUS = {
@@ -76,6 +78,27 @@ type InitialSnapshotTerminalOutcomeInput = {
 
 const initialTombstoneSettledSql = Prisma.sql`doc.updated_date <= now() - (${INITIAL_PROVIDER_SETTLE_MS}::int * interval '1 millisecond')`;
 type ServiceRecordCaseRecord = Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
+
+const lifecycleClientSelect = {
+    id: true,
+    branchId: true,
+    deletedAt: true,
+    fetalConfirmation: true,
+    startDate: true,
+    endDate: true,
+    duration: true,
+    serviceStatus: true,
+    bookingConfirmedAt: true,
+    allowSaturdayService: true,
+    allowSundayService: true,
+    allowHolidayService: true,
+    employeeSchedules: {
+        include: { primaryEmployee: { select: { id: true, name: true, phone: true } } },
+        orderBy: [{ startDate: "asc" }, { id: "asc" }],
+    },
+} satisfies Prisma.clientSelect;
+
+type LifecycleClient = Prisma.clientGetPayload<{ select: typeof lifecycleClientSelect }>;
 
 type LockedServiceRecordSnapshot = {
     id: number;
@@ -267,16 +290,17 @@ function isReadyCurrentSnapshot(snapshot: LockedServiceRecordSnapshot): boolean 
 
 /** The few caller frames above the lifecycle service, for the in-transaction calendar warning. */
 function callPath(): string {
-    const frames = (new Error().stack ?? "").split("\n").slice(1)
+    return (new Error().stack ?? "").split("\n").slice(1)
         .map((line) => line.trim().replace(/^at (async )?/, ""))
-        .filter((line) => line && !/service-record-lifecycle\.service\.(ts|js)/.test(line));
-    return frames.slice(0, 3).join(" <- ") || "unknown";
+        .filter((line) => line && !/service-record-lifecycle\.service\.(ts|js)/.test(line))
+        .slice(0, 3).join(" <- ") || "unknown";
 }
 
 export interface StartDateChangeDecision {
     mode: StartDateChangeMode;
     previousStartDate: Date | null;
     recordedSessionCount: number;
+    cases?: Array<{ caseId: string; previousStartDate: Date | null; recordedSessionCount: number }>;
 }
 
 @Injectable()
@@ -288,69 +312,54 @@ export class ServiceRecordLifecycleService {
         private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
-    async ensureForSchedule(
-        scheduleId: number,
-        tx?: Prisma.TransactionClient,
-    ): Promise<ServiceRecordCaseRecord | null> {
-        if (!tx && typeof this.prisma.$transaction === "function") {
-            // The calendar is read through the root client, so it must be read
-            // before the owning transaction pins a pooled connection.
-            const preRead = await this.prisma.employee_schedule.findUnique({
-                where: { id: scheduleId },
-                select: { clientId: true },
-            });
-            const calendar = preRead
-                ? await this.resolveCalendarBeforeTransaction(preRead.clientId)
-                : undefined;
-            return this.prisma.$transaction(async (transaction) => {
-                const schedule = await transaction.employee_schedule.findUnique({
-                    where: { id: scheduleId },
-                    select: { clientId: true },
-                });
-                if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-                return this.ensureForClient(
-                    schedule.clientId,
-                    transaction,
-                    schedule.clientId === preRead?.clientId ? calendar : undefined,
-                );
-            });
-        }
-        const db = tx ?? this.prisma;
-        const schedule = await db.employee_schedule.findUnique({
-            where: { id: scheduleId },
-            select: { clientId: true },
-        });
-        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-        return this.ensureForClient(schedule.clientId, tx);
+    async ensureForSchedule(scheduleId: number, tx?: Prisma.TransactionClient): Promise<ServiceRecordCaseRecord | null> {
+        const [record] = await this.ensureScheduleCases(scheduleId, tx, true);
+        return record ?? null;
     }
 
-    /**
-     * `calendar` is the branch calendar a transaction-opening caller already
-     * read (fresh) before its transaction began. It is optional: without it the
-     * calendar is read in here, and only when a count actually has to be
-     * derived (a brand-new case, a null N, or a period that really changed).
-     */
+    async ensureAllForSchedule(scheduleId: number, tx?: Prisma.TransactionClient): Promise<ServiceRecordCaseRecord[]> {
+        return this.ensureScheduleCases(scheduleId, tx, false);
+    }
+
+    private async ensureScheduleCases(scheduleId: number, tx: Prisma.TransactionClient | undefined, single: boolean) {
+        const schedule = await (tx ?? this.prisma).employee_schedule.findUnique({
+            where: { id: scheduleId },
+            select: { clientId: true, branchId: true },
+        });
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return this.ensureCases(schedule.clientId, tx, undefined, single, { ...schedule, id: scheduleId });
+    }
+
     async ensureForClient(
         clientId: number,
         tx?: Prisma.TransactionClient,
         calendar?: KrBusinessDayCalendar,
     ): Promise<ServiceRecordCaseRecord | null> {
-        // A no-transaction lifecycle call still performs a business write.
-        // Put the complete read/lock/reread/upsert sequence in one owning
-        // transaction so callers cannot observe a stale client or schedule
-        // set and then repair it from a separate root transaction.
+        const [record] = await this.ensureCases(clientId, tx, calendar, true);
+        return record ?? null;
+    }
+
+    async ensureAllForClient(
+        clientId: number,
+        tx?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
+    ): Promise<ServiceRecordCaseRecord[]> {
+        return this.ensureCases(clientId, tx, calendar, false);
+    }
+
+    private async ensureCases(
+        clientId: number,
+        tx: Prisma.TransactionClient | undefined,
+        calendar: KrBusinessDayCalendar | undefined,
+        single: boolean,
+        scheduleTarget?: { id: number; clientId: number; branchId: string | null },
+    ): Promise<ServiceRecordCaseRecord[]> {
         if (!tx && typeof this.prisma.$transaction === "function") {
-            // `holidayCalendar.forBranch` reads through the root client, so the
-            // calendar is resolved before this transaction takes a pooled
-            // connection; resolving it inside would hold one connection while
-            // waiting for a second.
-            const resolvedCalendar = calendar ?? await this.resolveCalendarBeforeTransaction(clientId);
+            const resolved = calendar ?? await this.resolveCalendarBeforeTransaction(clientId);
             return this.prisma.$transaction((transaction) =>
-                this.ensureForClient(clientId, transaction, resolvedCalendar));
+                this.ensureForClientInTransaction(clientId, transaction, resolved, single, scheduleTarget));
         }
-        // Captured here, before any await, while the caller's frames are still on the stack.
-        const callSite = tx && !calendar ? callPath() : undefined;
-        return this.ensureForClientInTransaction(clientId, tx, calendar, callSite);
+        return this.ensureForClientInTransaction(clientId, tx, calendar, single, scheduleTarget, tx && !calendar ? callPath() : undefined);
     }
 
     /**
@@ -378,6 +387,7 @@ export class ServiceRecordLifecycleService {
                 branchId: true,
                 startDate: true,
                 endDate: true,
+                fetalConfirmation: true,
                 employeeSchedules: {
                     select: { branchId: true },
                     orderBy: [{ startDate: "asc" }, { id: "asc" }],
@@ -394,285 +404,296 @@ export class ServiceRecordLifecycleService {
             ?? client.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
             ?? null;
         if (!branchId) return undefined;
-        const existing = await this.prisma.service_record_case.findUnique({ where: { clientId } });
-        if (existing && existingCaseKeepsStoredCount(existing, period)) return undefined;
+        const scope = { branchId, clientId };
+        const existing = await this.prisma.service_record_case.findMany({ where: scope });
+        if (existing.length && existing.every((record) => existingCaseKeepsStoredCount(record, period))) {
+            if (client.fetalConfirmation !== "CONFIRMED" || existing.some(({ babyId }) => babyId === null)) return undefined;
+            const missing = await this.prisma.client_baby.count({
+                where: { ...scope, active: true, id: { notIn: existing.flatMap(({ babyId }) => babyId ? [babyId] : []) } },
+            });
+            if (missing === 0) return undefined;
+        }
         return this.holidayCalendar.forBranch(branchId, { fresh: true });
     }
 
     private async ensureForClientInTransaction(
         clientId: number,
-        tx?: Prisma.TransactionClient,
-        passedCalendar?: KrBusinessDayCalendar,
-        callSite?: string,
-    ): Promise<ServiceRecordCaseRecord | null> {
+        tx: Prisma.TransactionClient | undefined,
+        passedCalendar: KrBusinessDayCalendar | undefined,
+        single: boolean,
+        scheduleTarget?: { id: number; clientId: number; branchId: string | null },
+        caller?: string,
+    ): Promise<ServiceRecordCaseRecord[]> {
         const db = tx ?? this.prisma;
-        let client = await db.client.findUnique({
-            where: { id: clientId },
-            select: {
-                id: true,
-                branchId: true,
-                startDate: true,
-                endDate: true,
-                duration: true,
-                serviceStatus: true,
-                bookingConfirmedAt: true,
-                allowSaturdayService: true,
-                allowSundayService: true,
-                allowHolidayService: true,
-                employeeSchedules: {
-                    include: { primaryEmployee: true },
-                    orderBy: [{ startDate: "asc" }, { id: "asc" }],
-                },
-            },
-        });
+        const loadClient = () => db.client.findUnique({ where: { id: clientId }, select: lifecycleClientSelect });
+        let client = await loadClient();
         if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-        const branchId = client.branchId
-            ?? client.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
-            ?? null;
-        if (!branchId || !client.startDate) return null;
+        const owningBranch = (row: LifecycleClient) =>
+            row.branchId ?? row.employeeSchedules.find((schedule) => schedule.branchId)?.branchId ?? null;
+        const branchId = owningBranch(client);
+        if (!branchId || client.deletedAt) return [];
 
-        let existing = await db.service_record_case.findUnique({ where: { clientId } });
-
-        // Lifecycle synchronization is a business write. When an owning
-        // transaction is supplied, acquire the same client -> employee -> case
-        // -> schedule/assignment/day order as the schedule and entry writers,
-        // then reread the target set before deriving any values. This removes
-        // the old post-commit root transaction race without changing lifecycle
-        // status or duration semantics.
-        if (
-            tx
-            && typeof tx.$queryRaw === "function"
-        ) {
-            await lockServiceRecordWriteSet(tx, {
-                branchId,
-                clientId,
-                caseId: existing?.id,
-                scheduleIds: client.employeeSchedules.map((schedule) => schedule.id),
-                employeeIds: client.employeeSchedules.flatMap((schedule) => [
-                    schedule.primaryEmployeeId,
-                    schedule.secondaryEmployeeId,
-                ]),
-            });
-            const rereadClient = await db.client.findUnique({
-                where: { id: clientId },
-                select: {
-                    id: true,
-                    branchId: true,
-                    startDate: true,
-                    endDate: true,
-                    duration: true,
-                    serviceStatus: true,
-                    bookingConfirmedAt: true,
-                    allowSaturdayService: true,
-                    allowSundayService: true,
-                    allowHolidayService: true,
-                    employeeSchedules: {
-                        include: { primaryEmployee: true },
-                        orderBy: [{ startDate: "asc" }, { id: "asc" }],
-                    },
-                },
-            });
-            if (!rereadClient) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-            const rereadBranchId = rereadClient.branchId
-                ?? rereadClient.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
-                ?? null;
-            if (rereadBranchId !== branchId) {
+        const scope = { branchId, clientId };
+        if (tx && typeof tx.$queryRaw === "function") {
+            await lockServiceRecordWriteSet(tx, scope);
+            client = await loadClient();
+            if (!client || client.deletedAt || owningBranch(client) !== branchId) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
-            client = rereadClient;
-            existing = await db.service_record_case.findUnique({ where: { clientId } });
-            if (existing && (existing.branchId !== branchId || existing.clientId !== clientId)) {
+            if (scheduleTarget && !client.employeeSchedules.some(({ id, branchId, clientId }) =>
+                id === scheduleTarget.id && branchId === scheduleTarget.branchId && clientId === scheduleTarget.clientId)) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         }
-        if (
-            !existing
-            && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking"
-        ) {
-            return null;
+        if (!client.startDate) return [];
+        const existing = await db.service_record_case.findMany({ where: scope, orderBy: { id: "asc" } });
+        const babies = client.fetalConfirmation === "CONFIRMED"
+            ? await db.client_baby.findMany({ where: { ...scope, active: true }, select: { id: true }, orderBy: { ordinal: "asc" } })
+            : [];
+        const unbound = existing.find(({ babyId }) => babyId === null);
+        // Legacy consumers may only act on an unambiguous household.
+        // A retired sibling is historical when the remaining baby's case is identified.
+        if (single) {
+            if (babies.length > 1) return [];
+            const [baby] = babies;
+            if (existing.length > 1 && (unbound || !baby || !existing.some(({ babyId }) => babyId === baby.id))) return [];
         }
-        // The derived session count is persisted, so any calendar used for it
-        // is read fresh (or handed in by a caller that read it before opening
-        // its transaction). It is resolved lazily: a holiday-calendar edit must
-        // never change a stored N on its own, so an existing case with a stored
-        // N and an unchanged period needs no calendar at all.
+        const isPreBooking = getEffectiveClientServiceStatus(
+            client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt,
+        ) === "pre_booking";
+        if (unbound && babies.length > 1) return [unbound];
+        if (client.fetalConfirmation === "CONFIRMED" && babies.length === 0) return [];
+        if (babies.length === 0 && existing.some(({ babyId }) => babyId !== null)) return [];
+
+        const targets = unbound || babies.length === 0
+            ? [{ babyId: null, existing: unbound }]
+            : babies.map(({ id }) => ({ babyId: id, existing: existing.find(({ babyId }) => babyId === id) }));
         let calendar = passedCalendar;
-        // N and the planned dates are the CLIENT's service days: apply the
-        // service-day policy of the row read under the write lock, so a flag
-        // change racing this write cannot be missed. Callers hand in the branch
-        // calendar; re-wrapping replaces any policy already on it.
-        const resolveCalendar = async (): Promise<KrBusinessDayCalendar> => {
+        const resolveCalendar = async () => {
             if (!calendar) {
                 if (tx) {
-                    // The caller owns this transaction and did not hand a
-                    // calendar in: the read below goes through the root client
-                    // while the transaction holds a pooled connection. Name the
-                    // call path so the caller can resolve it beforehand.
                     this.logger.warn(
                         `[CALENDAR_READ_INSIDE_TRANSACTION] clientId=${clientId} branchId=${branchId} — `
-                        + "resolveCalendarBeforeTransaction() before opening the transaction and pass it "
-                        + `to ensureForClient. callPath=${callSite ?? "unknown"}`,
+                        + `Resolve the calendar before opening the transaction. callPath=${caller ?? "unknown"}`,
                     );
                 }
                 calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
             }
             return withClientServiceDays(calendar, client);
         };
-        const finalizationDueAt = client.endDate
-            ? getServiceRecordFinalizationDueAt(client.endDate)
-            : null;
-        const tokenExpiresAt = client.endDate
-            ? getServiceRecordTokenExpiresAt(client.endDate)
-            : null;
-        // N is a service-record fact, separate from the nominal voucher
-        // duration. A case keeps its initialized N through postponed or
-        // shortened outer periods; only a brand-new case may derive N from a
-        // complete supported client period. A legacy case (no revision) keeps
-        // its stored N unless the client's own period moved, in which case N is
-        // re-capped by the business days of the NEW period. A holiday-calendar
-        // change alone never lowers (or restores) N. Legacy null/zero values
-        // remain visible and are not silently backfilled.
+        const schedules = client.employeeSchedules.filter((schedule) => schedule.branchId === branchId);
+        const owners = babies.length > 0 && !unbound
+            ? await db.service_record_baby_assignment.findMany({
+                where: { ...scope, babyId: { in: babies.map(({ id }) => id) } },
+                select: {
+                    babyId: true, scheduleId: true, activeOwner: true,
+                    employee: { select: { id: true, name: true, phone: true } },
+                },
+                orderBy: [{ version: "desc" }, { id: "asc" }],
+            })
+            : [];
+        const canCreateBabyArtifacts = babies.length > 0 && !unbound && !isPreBooking
+            && !!tx && await lockEnabledBabyRecordRollout(tx, branchId);
+        const historicalCaseId = !canCreateBabyArtifacts && !isPreBooking && !!tx && babies.length === 1 && !unbound
+            ? (await readBackfilledScalarHousehold(tx, scope))?.caseId : undefined;
+        const records: ServiceRecordCaseRecord[] = [];
+        for (const target of targets) {
+            if (!target.existing && (isPreBooking || (target.babyId !== null && !canCreateBabyArtifacts))) continue;
+            const ownedSchedules = schedules.flatMap((schedule) => {
+                if (target.babyId === null) return [{ schedule, employee: schedule.primaryEmployee }];
+                const owner = owners.find((candidate) => candidate.babyId === target.babyId
+                    && candidate.scheduleId === schedule.id && (schedule.replaced || candidate.activeOwner === true));
+                return [{ schedule, employee: owner?.employee ?? null }];
+            });
+            records.push(await this.syncCase(db, tx, {
+                ...scope, ...target, client, ownedSchedules, resolveCalendar,
+                legacyArtifacts: target.babyId === null && existing.length <= 1,
+                canCreateBabyArtifacts: canCreateBabyArtifacts || (!!historicalCaseId && target.existing?.id === historicalCaseId),
+            }));
+        }
+        return records;
+    }
+
+    private async syncCase(db: DbClient, tx: Prisma.TransactionClient | undefined, params: {
+        branchId: string;
+        clientId: number;
+        babyId: string | null;
+        existing: ServiceRecordCaseRecord | undefined;
+        client: LifecycleClient;
+        ownedSchedules: Array<{
+            schedule: LifecycleClient["employeeSchedules"][number];
+            employee: { id: number; name: string; phone: string | null } | null;
+        }>;
+        resolveCalendar: () => Promise<KrBusinessDayCalendar>;
+        legacyArtifacts: boolean;
+        canCreateBabyArtifacts: boolean;
+    }): Promise<ServiceRecordCaseRecord> {
+        const { branchId, clientId, babyId, existing, client, ownedSchedules, resolveCalendar, legacyArtifacts } = params;
+        if (existing && (IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
+            || existing.status === SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED)) return existing;
+
         const sessionCount = existing
             ? existingCaseKeepsStoredCount(existing, client)
                 ? existing.requiredSessionCount
-                : legacySessionCount(
-                    client.startDate,
-                    client.endDate,
-                    existing.requiredSessionCount,
-                    await resolveCalendar(),
-                )
+                : legacySessionCount(client.startDate, client.endDate, existing.requiredSessionCount, await resolveCalendar())
             : deriveInitialSessionCount({
-                startDate: client.startDate,
-                endDate: client.endDate,
-                calendar: await resolveCalendar(),
+                startDate: client.startDate, endDate: client.endDate, calendar: await resolveCalendar(),
             });
-        const immutableFinalized = Boolean(
-            existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status),
-        );
-        // A new client without a nominal duration may still be initialized
-        // from its complete service period. Never derive a nominal duration
-        // from an existing case's N.
-        if (
-            !existing
-            && client.duration === null
-            && sessionCount !== null
-            && typeof db.client.updateMany === "function"
-        ) {
-            await db.client.updateMany({
-                where: { id: clientId, branchId },
-                data: { duration: sessionCount },
-            });
+        if (!existing && client.duration === null && sessionCount !== null && typeof db.client.updateMany === "function") {
+            await db.client.updateMany({ where: { id: clientId, branchId, duration: null }, data: { duration: sessionCount } });
         }
-        const status = existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
-            ? existing.status
-            : this.deriveBaseStatus({
-                startDate: client.startDate,
-                endDate: client.endDate,
-                duration: sessionCount,
-                hasAssignment: client.employeeSchedules.some((schedule) => !schedule.replaced),
-                terminated: client.serviceStatus === "terminated",
-            });
 
-        const record = await db.service_record_case.upsert({
-            where: { clientId, branchId },
-            create: {
-                branchId,
-                clientId,
-                status,
-                startDate: client.startDate,
-                endDate: client.endDate,
-                requiredSessionCount: sessionCount,
-                finalizationDueAt,
-            },
-            update: {
-                branchId,
-                ...(immutableFinalized
-                    ? {}
-                    : {
-                        startDate: client.startDate,
-                        endDate: client.endDate,
-                        requiredSessionCount: sessionCount,
-                        finalizationDueAt,
-                        status,
-                        version: { increment: 1 },
-                    }),
-            },
+        const period = {
+            startDate: client.startDate,
+            endDate: client.endDate,
+            requiredSessionCount: sessionCount,
+            finalizationDueAt: client.endDate ? getServiceRecordFinalizationDueAt(client.endDate) : null,
+        };
+        const terminated = client.serviceStatus === "terminated";
+        const status = this.deriveBaseStatus({
+            ...period,
+            duration: sessionCount,
+            hasAssignment: ownedSchedules.some(({ schedule, employee }) => !schedule.replaced && !!employee),
+            terminated,
         });
+        const periodChanged = existing && (
+            isoDate(existing.startDate) !== isoDate(period.startDate)
+            || isoDate(existing.endDate) !== isoDate(period.endDate)
+            || existing.requiredSessionCount !== period.requiredSessionCount
+        );
+        const wasTerminated = existing?.status === SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED;
+        // Recompute treats termination as terminal, so persist the transition first.
+        const caseChanged = periodChanged || wasTerminated !== terminated;
+        const record = !existing
+            ? await db.service_record_case.create({ data: { ...period, branchId, clientId, babyId, status } })
+            : caseChanged
+                ? await db.service_record_case.update({
+                    where: { id: existing.id, branchId },
+                    data: { ...period, status, ...(terminated ? { version: { increment: 1 } } : {}) },
+                })
+                : existing;
 
-        // Finalization claims freeze the case's source, assignments, and
-        // planned vector. Lifecycle repair may still be invoked by an older
-        // writer after that claim, but it must not reproject mutable client or
-        // schedule fields onto the immutable case.
-        if (immutableFinalized) return record;
+        const serviceRecordCaseId = record.id;
+        const caseScope = { branchId, serviceRecordCaseId };
+        const schedules = ownedSchedules.map(({ schedule }) => schedule);
+        const scheduleIds = schedules.map(({ id }) => id);
 
-        for (const schedule of client.employeeSchedules) {
-            await db.service_record_assignment.upsert({
-                where: { scheduleId: schedule.id, branchId: schedule.branchId ?? branchId },
-                create: {
-                    branchId: schedule.branchId ?? branchId,
-                    serviceRecordCaseId: record.id,
-                    scheduleId: schedule.id,
-                    employeeId: schedule.primaryEmployeeId,
-                    employeeNameSnapshot: schedule.primaryEmployee.name,
-                    employeePhoneSnapshot: schedule.primaryEmployee.phone,
-                    startDate: schedule.startDate,
-                    endDate: schedule.endDate,
-                },
-                update: {
-                    serviceRecordCaseId: record.id,
-                    employeeId: schedule.primaryEmployeeId,
-                    employeeNameSnapshot: schedule.primaryEmployee.name,
-                    employeePhoneSnapshot: schedule.primaryEmployee.phone,
-                    startDate: schedule.startDate,
-                    endDate: schedule.endDate,
-                },
+        const assignments = scheduleIds.length ? await db.service_record_assignment.findMany({ where: caseScope }) : [];
+        let assignmentChanged = false;
+        for (const { schedule, employee } of ownedSchedules) {
+            const assignment = assignments.find(({ scheduleId }) => scheduleId === schedule.id);
+            if (!employee && !assignment) continue;
+            const data = {
+                employeeId: employee?.id ?? null,
+                employeeNameSnapshot: employee?.name ?? assignment?.employeeNameSnapshot ?? "",
+                employeePhoneSnapshot: employee ? employee.phone : assignment?.employeePhoneSnapshot ?? null,
+                startDate: schedule.startDate,
+                endDate: schedule.endDate,
+            };
+            if (!assignment) {
+                if (babyId !== null && !params.canCreateBabyArtifacts) continue;
+                await db.service_record_assignment.create({ data: { ...caseScope, scheduleId: schedule.id, ...data } });
+                assignmentChanged = true;
+            } else if (assignment.employeeId !== data.employeeId
+                || assignment.employeeNameSnapshot !== data.employeeNameSnapshot
+                || assignment.employeePhoneSnapshot !== data.employeePhoneSnapshot
+                || isoDate(assignment.startDate) !== isoDate(data.startDate)
+                || isoDate(assignment.endDate) !== isoDate(data.endDate)) {
+                await db.service_record_assignment.update({ where: { id: assignment.id, ...caseScope }, data });
+                assignmentChanged = true;
+            }
+        }
+
+        if (scheduleIds.length > 0 && legacyArtifacts) {
+            const unresolved = { branchId, scheduleId: { in: scheduleIds }, serviceRecordCaseId: null };
+            const linkedHeaders = await db.service_record.findMany({ where: caseScope, select: { scheduleId: true } });
+            await db.service_record.updateMany({
+                where: { ...unresolved, scheduleId: { in: scheduleIds, notIn: linkedHeaders.map(({ scheduleId }) => scheduleId) } },
+                data: { serviceRecordCaseId },
             });
-        }
-
-        const scheduleIds = client.employeeSchedules.map((schedule) => schedule.id);
-        if (scheduleIds.length > 0) {
-            await Promise.all([
-                db.service_record.updateMany({
-                    where: { scheduleId: { in: scheduleIds }, branchId },
-                    data: { serviceRecordCaseId: record.id },
-                }),
-                db.service_record_token.updateMany({
-                    where: { scheduleId: { in: scheduleIds }, branchId },
-                    data: { serviceRecordCaseId: record.id },
-                }),
-                db.eformsign_doc.updateMany({
-                    where: {
-                        branchId,
-                        employeeScheduleId: { in: scheduleIds },
-                        documentKind: "service_record_snapshot",
-                    },
-                    data: { serviceRecordCaseId: record.id },
-                }),
-            ]);
-            await this.linkLegacyDays(record.id, client.employeeSchedules, db, branchId);
-        }
-
-        if (tokenExpiresAt) {
-            // Raise expiresAt to the new grace-adjusted value, but never lower it —
-            // a later-reissued token (see resolveExpiry in service-record-link.service.ts)
-            // may already carry a further-out expiresAt and must not be clawed back.
-            await db.service_record_token.updateMany({
+            await db.service_record_token.updateMany({ where: unresolved, data: { serviceRecordCaseId } });
+            await db.eformsign_doc.updateMany({
                 where: {
-                    serviceRecordCaseId: record.id,
-                    branchId,
-                    active: true,
-                    revokedAt: null,
-                    expiresAt: { lt: tokenExpiresAt },
+                    branchId, employeeScheduleId: { in: scheduleIds }, serviceRecordCaseId: null,
+                    documentKind: "service_record_snapshot", revisionId: null,
                 },
+                data: { serviceRecordCaseId },
+            });
+            await this.linkLegacyDays(serviceRecordCaseId, schedules, db, branchId);
+        }
+        if (scheduleIds.length > 0 && babyId !== null && params.canCreateBabyArtifacts) {
+            const headers = await db.service_record.findMany({ where: caseScope, select: { scheduleId: true } });
+            const missing = ownedSchedules.flatMap(({ schedule, employee }) =>
+                !headers.some(({ scheduleId }) => scheduleId === schedule.id) && (!schedule.replaced || employee)
+                    ? [schedule.id] : []);
+            if (missing.length) {
+                await db.service_record.createMany({ data: missing.map((scheduleId) => ({ ...caseScope, scheduleId })) });
+            }
+        }
+        if (client.endDate) {
+            const tokenExpiresAt = getServiceRecordTokenExpiresAt(client.endDate);
+            await db.service_record_token.updateMany({
+                where: { ...caseScope, active: true, revokedAt: null, expiresAt: { lt: tokenExpiresAt } },
                 data: { expiresAt: tokenExpiresAt },
             });
         }
+        const calendar = sessionCount === null ? await resolveCalendar() : undefined;
+        return this.recompute(serviceRecordCaseId, tx, calendar, {
+            preserveVersion: !!existing && !caseChanged && !assignmentChanged,
+        });
+    }
 
-        return this.recompute(record.id, tx, calendar);
+    async linkLegacyCaseToBaby(
+        params: { branchId: string; clientId: number; caseId: string; babyId: string },
+        tx?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
+    ): Promise<{ caseId: string; babyId: string }> {
+        if (tx) return this.adoptLegacyCase(tx, params, calendar);
+        const { branchId, clientId, caseId } = params;
+        const target = await resolveServiceRecordCaseTarget(this.prisma, { branchId, clientId, caseId });
+        if (target.kind !== "resolved") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        const resolvedCalendar = calendar ?? await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        return this.prisma.$transaction((transaction) => this.adoptLegacyCase(transaction, params, resolvedCalendar));
+    }
+
+    private async adoptLegacyCase(
+        tx: Prisma.TransactionClient,
+        params: { branchId: string; clientId: number; caseId: string; babyId: string },
+        calendar?: KrBusinessDayCalendar,
+    ) {
+        const { branchId, clientId, caseId } = params;
+        const scope = { branchId, clientId };
+        const found = await resolveServiceRecordCaseTarget(tx, { ...scope, caseId });
+        if (found.kind !== "resolved") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        await lockServiceRecordWriteSet(tx, scope);
+        const target = await resolveServiceRecordCaseTarget(tx, { ...scope, caseId });
+        if (target.kind !== "resolved") throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        const [baby] = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT id FROM client_baby
+            WHERE branch_id = ${branchId}::uuid AND client_id = ${clientId} AND id::text = ${params.babyId.toLowerCase()} AND active
+            FOR UPDATE
+        `);
+        if (!baby || target.babyCount === null) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        const result = { caseId: target.caseId, babyId: baby.id };
+        if (target.babyId === baby.id) return result;
+        if (target.babyId !== null || await tx.service_record_case.count({ where: { ...scope, babyId: baby.id } })) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        await requireBabyRecordRollout(tx, branchId);
+        const changed = await tx.service_record_case.updateMany({
+            where: { ...scope, id: target.caseId, babyId: null },
+            data: { babyId: baby.id },
+        });
+        if (changed.count !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        await this.ensureAllForClient(clientId, tx, calendar);
+        return result;
     }
 
     async validatePeriodChange(params: {
         clientId: number;
+        branchId?: string;
         startDate?: Date | null;
         endDate?: Date | null;
         duration?: number | null;
@@ -680,13 +701,34 @@ export class ServiceRecordLifecycleService {
         startDateChangeMode?: StartDateChangeMode;
     }, tx?: Prisma.TransactionClient): Promise<StartDateChangeDecision | null> {
         const db = tx ?? this.prisma;
-        const record = await db.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            include: {
-                days: { select: { serviceDate: true, locked: true, caseSessionIndex: true, sessionIndex: true } },
-            },
+        const records = await db.service_record_case.findMany({
+            where: { clientId: params.clientId, branchId: params.branchId },
+            include: { days: { select: { serviceDate: true, locked: true, caseSessionIndex: true, sessionIndex: true } } },
+            orderBy: { id: "asc" },
         });
-        if (!record) return null;
+        const decisions = records.flatMap((record) => {
+            const decision = this.validateCasePeriodChange(record, params);
+            return decision ? [{ caseId: record.id, ...decision }] : [];
+        });
+        const first = decisions[0];
+        if (!first) return null;
+        return {
+            mode: first.mode,
+            previousStartDate: first.previousStartDate,
+            recordedSessionCount: decisions.reduce((total, decision) => total + decision.recordedSessionCount, 0),
+            ...(records.length > 1 ? { cases: decisions } : {}),
+        };
+    }
+
+    private validateCasePeriodChange(
+        record: Pick<ServiceRecordCaseRecord, "status" | "startDate" | "endDate" | "requiredSessionCount"> & {
+            days: Array<{ serviceDate: Date; locked: boolean; caseSessionIndex: number | null; sessionIndex: number }>;
+        },
+        params: {
+            startDate?: Date | null; endDate?: Date | null; duration?: number | null;
+            now?: Date; startDateChangeMode?: StartDateChangeMode;
+        },
+    ): StartDateChangeDecision | null {
         const now = params.now ?? new Date();
 
         if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status)) {
@@ -834,7 +876,7 @@ export class ServiceRecordLifecycleService {
                 || currentDocument.branchId !== params.branchId
                 || (
                     currentDocument.serviceRecordCaseId !== null
-                    && currentDocument.serviceRecordCaseId !== lockedWriteSet.caseId
+                    && !lockedWriteSet.caseIds.includes(currentDocument.serviceRecordCaseId)
                 )
             ) {
                 return false;
@@ -845,7 +887,7 @@ export class ServiceRecordLifecycleService {
                 clientId: params.clientId,
                 documentId: params.documentId,
                 currentDocument,
-                caseId: lockedWriteSet.caseId,
+                caseIds: lockedWriteSet.caseIds,
             })) return false;
 
             await this.syncEndDateFromContractInTransaction(params, tx, calendar);
@@ -935,8 +977,8 @@ export class ServiceRecordLifecycleService {
                     currentDocument.clientId !== params.clientId
                     || currentDocument.branchId !== params.branchId
                     || (
-                        (currentDocument.serviceRecordCaseId ?? null) !== null
-                        && (currentDocument.serviceRecordCaseId ?? null) !== lockedWriteSet?.caseId
+                        currentDocument.serviceRecordCaseId != null
+                        && !lockedWriteSet?.caseIds.includes(currentDocument.serviceRecordCaseId)
                     )
                 )
             ) {
@@ -956,7 +998,7 @@ export class ServiceRecordLifecycleService {
                         serviceRecordCaseId: currentDocument.serviceRecordCaseId ?? null,
                         revisionId: currentDocument.revisionId ?? null,
                     },
-                    caseId: lockedWriteSet?.caseId ?? null,
+                    caseIds: lockedWriteSet?.caseIds ?? [],
                 })
             ) return false;
 
@@ -984,7 +1026,7 @@ export class ServiceRecordLifecycleService {
                 serviceRecordCaseId: string | null;
                 revisionId: string | null;
             };
-            caseId: string | null;
+            caseIds: string[];
         },
     ): Promise<boolean> {
         const clients = await tx.$queryRaw<Array<{
@@ -1029,7 +1071,15 @@ export class ServiceRecordLifecycleService {
                 : Prisma.empty}
             FOR UPDATE
         `);
-        if (revisionCases.length > 1) return false;
+        if (params.caseIds.length > 1) {
+            // Maternal contracts are household-wide. A document carrying a
+            // case/revision is never allowed to drive a sibling period write.
+            return params.currentDocument.serviceRecordCaseId === null
+                && params.currentDocument.revisionId === null
+                && revisionCases.length === params.caseIds.length
+                && revisionCases.every((record) => record.currentRevisionId === null
+                    && record.currentUsableRevisionId === null && record.currentUsableDocumentVersion === null);
+        }
         const ownerCase = revisionCases[0];
         if (ownerCase) {
             if (
@@ -1040,8 +1090,8 @@ export class ServiceRecordLifecycleService {
                     && ownerCase.id !== params.currentDocument.serviceRecordCaseId
                 )
                 || (
-                    params.caseId !== null
-                    && ownerCase.id !== params.caseId
+                    params.caseIds.length !== 1
+                    || ownerCase.id !== params.caseIds[0]
                 )
             ) return false;
             if (params.currentDocument.revisionId === null) {
@@ -1054,7 +1104,7 @@ export class ServiceRecordLifecycleService {
         }
         return params.currentDocument.revisionId === null
             && params.currentDocument.serviceRecordCaseId === null
-            && params.caseId === null;
+            && params.caseIds.length === 0;
     }
 
     async findSnapshotChunkBranchForDocument(documentId: string): Promise<string | null> {
@@ -1569,6 +1619,7 @@ export class ServiceRecordLifecycleService {
             }
         }
         await this.validatePeriodChange({
+            branchId: params.branchId,
             clientId: params.clientId,
             endDate: params.endDate,
         }, tx);
@@ -1591,12 +1642,11 @@ export class ServiceRecordLifecycleService {
                     allowHolidayService: true,
                 },
             });
-            const existingCase = typeof tx.service_record_case?.findUnique === "function"
-                ? await tx.service_record_case.findUnique({
-                    where: { clientId: params.clientId },
-                    select: { id: true, requiredSessionCount: true },
-                })
-                : undefined;
+            const cases = await tx.service_record_case.findMany({
+                where: { branchId: params.branchId, clientId: params.clientId },
+                select: { id: true },
+                take: 1,
+            });
             clientCalendar = withClientServiceDays(calendar, currentClient);
             // A null client duration on a case that already has persisted
             // service-record state is legacy evidence, not permission to
@@ -1604,7 +1654,7 @@ export class ServiceRecordLifecycleService {
             // visible for preview/repair instead of changing billing facts.
             // The no-case path retains the historical initialization needed
             // when a contract completes a client period for the first time.
-            if (currentClient && currentClient.duration === null && (existingCase === null || existingCase === undefined)) {
+            if (currentClient && currentClient.duration === null && cases.length === 0) {
                 if (!currentClient.startDate) {
                     duration = null;
                 } else {
@@ -1638,7 +1688,7 @@ export class ServiceRecordLifecycleService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
-        await this.ensureForClient(params.clientId, tx, clientCalendar);
+        await this.ensureAllForClient(params.clientId, tx, clientCalendar);
     }
 
     private hasCompleteServiceRecordWriteLockSurface(
@@ -1661,7 +1711,7 @@ export class ServiceRecordLifecycleService {
     ): Promise<{
         scheduleIds: number[];
         employeeIds: number[];
-        caseId: string | null;
+        caseIds: string[];
     } | null> {
         const client = await tx.client.findUnique({
             where: { id: params.clientId },
@@ -1679,17 +1729,9 @@ export class ServiceRecordLifecycleService {
             },
             orderBy: { id: "asc" },
         });
-        const existing = await tx.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            select: { id: true, branchId: true, clientId: true },
-        });
-        const caseId = existing?.branchId === params.branchId && existing.clientId === params.clientId
-            ? existing.id
-            : undefined;
         const result = await lockServiceRecordWriteSet(tx, {
             branchId: params.branchId,
             clientId: params.clientId,
-            caseId,
             expectedScheduleIds: schedules.map((schedule) => schedule.id),
             scheduleIds: schedules.map((schedule) => schedule.id),
             employeeIds: schedules.flatMap((schedule) => [
@@ -1705,20 +1747,11 @@ export class ServiceRecordLifecycleService {
         if (!rereadClient || (rereadClient.branchId !== null && rereadClient.branchId !== params.branchId)) {
             throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
         }
-        const rereadCase = await tx.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            select: { id: true, branchId: true, clientId: true },
+        const cases = await tx.service_record_case.findMany({
+            where: { branchId: params.branchId, clientId: params.clientId },
+            select: { id: true },
         });
-        if (
-            rereadCase
-            && (rereadCase.branchId !== params.branchId || rereadCase.clientId !== params.clientId)
-        ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
-        }
-        return {
-            ...result,
-            caseId: rereadCase?.id ?? null,
-        };
+        return { ...result, caseIds: cases.map(({ id }) => id) };
     }
 
     async recompute(
@@ -1876,7 +1909,8 @@ export class ServiceRecordLifecycleService {
         const effectiveFinalizationDueAt = record.endDate
             ? getServiceRecordFinalizationDueAt(record.endDate)
             : null;
-        const hasActiveAssignment = record.assignments.some((assignment) => assignment.schedule && !assignment.schedule.replaced);
+        const hasActiveAssignment = record.assignments.some((assignment) =>
+            assignment.schedule && !assignment.schedule.replaced && assignment.employeeId !== null);
         let status: ServiceRecordCaseStatus;
 
         if (!record.startDate || !record.endDate || usableRequired <= 0) {
@@ -1910,10 +1944,15 @@ export class ServiceRecordLifecycleService {
         });
     }
 
-    async markTerminated(clientId: number, tx?: Prisma.TransactionClient): Promise<void> {
+    async markTerminated(clientId: number, tx?: Prisma.TransactionClient, branchId?: string): Promise<void> {
         const db = tx ?? this.prisma;
         await db.service_record_case.updateMany({
-            where: { clientId, status: { notIn: [...IMMUTABLE_FINALIZATION_STATUSES] } },
+            where: {
+                branchId,
+                clientId,
+                OR: [{ babyId: null }, { baby: { is: { active: true } } }],
+                status: { notIn: [...IMMUTABLE_FINALIZATION_STATUSES] },
+            },
             data: {
                 status: SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED,
                 version: { increment: 1 },
@@ -1953,7 +1992,9 @@ export class ServiceRecordLifecycleService {
         const scheduleIds = schedules.map((schedule) => schedule.id);
         const rows = await db.service_record_day.findMany({
             where: {
+                branchId,
                 scheduleId: { in: scheduleIds },
+                AND: [{ OR: [{ serviceRecordCaseId }, { serviceRecordCaseId: null }] }],
                 OR: [
                     { serviceRecordCaseId: null },
                     { caseSessionIndex: null },

@@ -6,7 +6,7 @@ const date = (value: string) => new Date(value);
 const client = { id: 10, branchId, name: "김산모", duration: 3,
     startDate: date("2026-09-07"), endDate: date("2026-09-09"), serviceStatus: "completed",
     allowSaturdayService: false, allowSundayService: false, allowHolidayService: false };
-const record = { id: "case-1", clientId: 10, branchId, version: 4, requiredSessionCount: 3,
+const record = { id: "case-1", babyId: null, babyName: null, clientId: 10, branchId, version: 4, requiredSessionCount: 3,
     startDate: date("2026-09-07"), endDate: date("2026-09-09"), plannedSessions: null };
 const schedule = { id: 55, branchId, clientId: 10, startDate: date("2026-09-07"), endDate: date("2026-09-09"),
     replaced: false, terminatedAt: null, primaryEmployeeId: 9, secondaryEmployeeId: null,
@@ -17,7 +17,8 @@ const schedule = { id: 55, branchId, clientId: 10, startDate: date("2026-09-07")
 
 describe("branch-scoped service record alert sources", () => {
     const db = { client: { findMany: jest.fn() }, employee_schedule: { findMany: jest.fn() },
-        service_record_case: { findMany: jest.fn() }, service_record_day: { findMany: jest.fn() } };
+        service_record_case: { findMany: jest.fn() }, service_record_day: { findMany: jest.fn() },
+        client_baby: { findMany: jest.fn() }, service_record_assignment: { findMany: jest.fn() } };
     const repository = new SbClientRepository(db as unknown as PrismaService);
     beforeEach(() => {
         jest.resetAllMocks();
@@ -25,6 +26,8 @@ describe("branch-scoped service record alert sources", () => {
         db.employee_schedule.findMany.mockResolvedValue([schedule]);
         db.service_record_case.findMany.mockResolvedValue([record]);
         db.service_record_day.findMany.mockResolvedValue([]);
+        db.client_baby.findMany.mockResolvedValue([]);
+        db.service_record_assignment.findMany.mockResolvedValue([schedule.serviceRecordAssignment]);
     });
 
     it("loads lean source fields in branch-scoped batches without tokens, signatures or answers", async () => {
@@ -43,7 +46,7 @@ describe("branch-scoped service record alert sources", () => {
         expect(db.employee_schedule.findMany.mock.calls[0]![0]).toMatchObject({
             where: { branchId, clientId: { in: [10] }, client: { branchId, deletedAt: null }, primaryEmployee: { branchId } },
         });
-        for (const table of [db.employee_schedule, db.service_record_case, db.service_record_day]) {
+        for (const table of [db.employee_schedule, db.service_record_case, db.service_record_day, db.service_record_assignment]) {
             const query = table.findMany.mock.calls[0]![0];
             expect(query.where.branchId).toBe(branchId);
             expect(query.take).toBeLessThanOrEqual(500);
@@ -55,9 +58,11 @@ describe("branch-scoped service record alert sources", () => {
         db.service_record_case.findMany.mockResolvedValue([]);
         expect(await repository.findServiceRecordAlertCandidates(branchId)).toEqual([]);
         db.service_record_case.findMany.mockResolvedValue([record]);
-        db.employee_schedule.findMany.mockResolvedValue([{ ...schedule,
-            serviceRecordAssignment: { ...schedule.serviceRecordAssignment, branchId: "other" } }]);
+        db.service_record_assignment.findMany.mockResolvedValue([]);
         expect(await repository.findServiceRecordAlertCandidates(branchId)).toEqual([]);
+        expect(db.service_record_assignment.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ branchId, serviceRecordCaseId: { in: [record.id] } }),
+        }));
     });
 
     it("normalizes UI record indexes while retaining canonical ambiguity", async () => {

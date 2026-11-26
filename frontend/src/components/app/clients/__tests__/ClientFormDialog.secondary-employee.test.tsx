@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { render } from "@/test-utils/render-client-form";
 
 import { api } from "@/lib/api/client";
 import type { Client } from "@/lib/client/types";
@@ -48,7 +49,7 @@ jest.mock("@/providers/LocaleProvider", () => ({
 jest.mock("../EmployeeAutocomplete", () => ({
   EmployeeAutocomplete: (props: { "data-component": string; onChange: (id: number | null) => void }) => (
     <button type="button" onClick={() => props.onChange(null)}>
-      {props["data-component"].includes("secondary") ? "clear secondary" : "clear primary"}
+      {props["data-component"].endsWith("_provider-1") ? "clear secondary" : "clear primary"}
     </button>
   ),
 }));

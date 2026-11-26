@@ -10,6 +10,8 @@ import {
     persistClientMessageAutomationIntent,
     persistScheduleMessageAutomationIntent,
 } from "application/services/message-automation-intent-writer";
+import { EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON } from "domain/constants/message-automation-intent";
+import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { problemBody } from "application/utils/problem-bodies";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { type KrBusinessDayCalendar } from "domain/utils/business-days";
@@ -120,6 +122,7 @@ export async function persistReevaluationIntents(
         branchId: string;
         clientId: number;
         scheduleIds: ReadonlyArray<number | null>;
+        supersededScheduleIds?: readonly number[];
         intentAt: Date;
     },
 ): Promise<void> {
@@ -135,6 +138,23 @@ export async function persistReevaluationIntents(
     ) {
         return;
     }
+    const superseded = new Set(params.supersededScheduleIds);
+    if (superseded.size) {
+        // The existing link revoke fence also revokes tokens after commit. Do
+        // not give the old schedule a fresh reevaluation job in the meantime.
+        await tx.message_trigger_job.updateMany({
+            where: {
+                branchId: params.branchId, clientId: params.clientId,
+                employeeScheduleId: { in: [...superseded] },
+                templateKey: { in: [MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED, MessageTriggerTemplateKey.SERVICE_RECORD_LINK] },
+                status: "pending", canceledByUser: false,
+            },
+            data: {
+                status: "canceled", canceledAt: params.intentAt, nextAttemptAt: null,
+                cancelReason: EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
+            },
+        });
+    }
     await persistClientMessageAutomationIntent(tx, {
         branchId: params.branchId,
         clientId: params.clientId,
@@ -144,7 +164,7 @@ export async function persistReevaluationIntents(
     });
     const scheduleIds = [...new Set(
         params.scheduleIds.filter((scheduleId): scheduleId is number => (
-            typeof scheduleId === "number" && Number.isInteger(scheduleId) && scheduleId > 0
+            typeof scheduleId === "number" && Number.isInteger(scheduleId) && scheduleId > 0 && !superseded.has(scheduleId)
         )),
     )].sort((left, right) => left - right);
     for (const scheduleId of scheduleIds) {

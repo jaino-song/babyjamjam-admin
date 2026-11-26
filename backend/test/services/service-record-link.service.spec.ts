@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { allowsLegacyServiceRecordLink } from "application/services/service-record-legacy-link-target";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
@@ -54,6 +55,7 @@ describe("ServiceRecordLinkService", () => {
                 findFirst: jest.fn(),
                 findMany: jest.fn().mockResolvedValue([]),
             },
+            service_record_case: { findMany: jest.fn().mockResolvedValue([]) },
             message_trigger_job: {
                 findUnique: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -162,11 +164,39 @@ describe("ServiceRecordLinkService", () => {
             id: 20,
             name: "김산모",
             serviceStatus: "waiting",
+            fetalConfirmation: null,
             bookingConfirmedAt: new Date("2026-07-01T00:00:00Z"),
             startDate: new Date("2026-07-03T00:00:00.000Z"),
             endDate: new Date("2026-07-12T00:00:00.000Z"),
         },
         ...overrides,
+    });
+
+    it.each([
+        ["selected null", { fetalConfirmation: null }, ["case-1"], true],
+        ["explicit UNCONFIRMED", { fetalConfirmation: "UNCONFIRMED" }, ["case-1"], true],
+        ["explicit undefined", { fetalConfirmation: undefined }, ["case-1"], false],
+        ["corrupt confirmation", { fetalConfirmation: "invalid" }, ["case-1"], false],
+        ["ambiguous history", { fetalConfirmation: "UNCONFIRMED" }, ["case-1", "case-2"], false],
+    ] as const)("checks legacy link eligibility for %s", async (_label, client, ids, allowed) => {
+        const prisma = createPrisma();
+        prisma.service_record_case.findMany.mockResolvedValue(ids.map(id => ({ id })));
+        const schedule = { id: 10, branchId: "branch-1", clientId: 20, primaryEmployeeId: 30, client };
+
+        await expect(allowsLegacyServiceRecordLink(
+            prisma as unknown as Prisma.TransactionClient,
+            schedule as Parameters<typeof allowsLegacyServiceRecordLink>[1],
+        )).resolves.toBe(allowed);
+    });
+
+    it("declines legacy link eligibility when the client projection is incomplete", async () => {
+        const tx = createPrisma() as unknown as Prisma.TransactionClient;
+        const schedule = { id: 10, branchId: "branch-1", clientId: 20, primaryEmployeeId: 30 };
+
+        // @ts-expect-error The Prisma projection must include the client relation.
+        await expect(allowsLegacyServiceRecordLink(tx, schedule)).resolves.toBe(false);
+        // @ts-expect-error The client relation must include the confirmation field.
+        await expect(allowsLegacyServiceRecordLink(tx, { ...schedule, client: {} })).resolves.toBe(false);
     });
 
     describe("pre-booking recovery", () => {
@@ -413,7 +443,7 @@ describe("ServiceRecordLinkService", () => {
             expect(prisma.employee_schedule.findUnique).toHaveBeenCalledWith({
                 where: { id: 10 },
                 include: { primaryEmployee: true,
-                    client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
+                    client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true, fetalConfirmation: true } } },
             });
         }
         expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
@@ -473,8 +503,8 @@ describe("ServiceRecordLinkService", () => {
         ["end date passed", { endDate: new Date("2026-11-01T00:00:00.000Z") }, false],
         ["terminated schedule", { terminatedAt: new Date() }, false],
         ["replaced schedule", { replaced: true }, false],
-        ["completed client", { client: { id: 20, name: "김산모", serviceStatus: "completed" } }, false],
-        ["terminated client", { client: { id: 20, name: "김산모", serviceStatus: "terminated" } }, false],
+        ["completed client", { client: { id: 20, name: "김산모", serviceStatus: "completed", fetalConfirmation: null } }, false],
+        ["terminated client", { client: { id: 20, name: "김산모", serviceStatus: "terminated", fetalConfirmation: null } }, false],
     ])("gates automatic scheduling for %s", async (_name, overrides, eligible) => {
         jest.setSystemTime(new Date("2026-11-02T06:00:00.000Z"));
         const prisma = createPrisma();
@@ -747,7 +777,7 @@ describe("ServiceRecordLinkService", () => {
         expect(tokenService.issueLink).not.toHaveBeenCalled();
     });
 
-    it("keeps authentication tied to the provider when the delivery phone is overridden", async () => {
+    it("prepares a link only for the assigned provider phone", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -762,7 +792,12 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
-        const result = await service.prepareLink(10, "010-0000-6621");
+        await expect(service.prepareLink(10, "010-0000-6621")).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+        });
+        expect(tokenService.prepareLink).not.toHaveBeenCalled();
+        expect(tokenService.reuseActiveLink).not.toHaveBeenCalled();
+        const result = await service.prepareLink(10, "01011112222");
 
         expect(tokenService.reuseActiveLink).toHaveBeenCalledWith(expect.objectContaining({
             branchId: "branch-1",
@@ -854,7 +889,7 @@ describe("ServiceRecordLinkService", () => {
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
-    it("sendNow overrides SMS delivery while retaining the current provider verification phone", async () => {
+    it("sendNow refuses another receiver and normalizes the assigned verification phone", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -868,7 +903,13 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
-        await service.sendNow(10, "efl_prepared", "01000006621");
+        await expect(service.sendNow(10, "efl_prepared", "01000006621")).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+        });
+        expect(tokenService.activatePreparedLink).not.toHaveBeenCalled();
+        expect(jobRepository.replacePendingJobsUnlessInFlight).not.toHaveBeenCalled();
+
+        await service.sendNow(10, "efl_prepared", "010-1111-2222");
 
         expect(tokenService.activatePreparedLink).toHaveBeenCalledWith(expect.objectContaining({
             linkToken: "efl_prepared",
@@ -879,8 +920,8 @@ describe("ServiceRecordLinkService", () => {
         }));
         expect(tokenService.issueLink).not.toHaveBeenCalled();
         const job = jobRepository.replacePendingJobsUnlessInFlight.mock.calls[0]?.[0] as MessageTriggerJobEntity;
-        expect(job.recipientPhone).toBe("01000006621");
-        expect(job.payload.recipientPhone).toBe("01000006621");
+        expect(job.recipientPhone).toBe("01011112222");
+        expect(job.payload.recipientPhone).toBe("01011112222");
         expect(job.payload.buttonUrl).toBe("https://mobile.test/service-record/efl_prepared");
         expect(job.payload.messageBody).toContain("https://mobile.test/service-record/efl_prepared");
     });
@@ -992,7 +1033,7 @@ describe("ServiceRecordLinkService", () => {
         const completedClientSchedule = () => createSchedule({
             startDate: new Date("2026-11-03T00:00:00.000Z"),
             endDate: new Date("2026-11-14T00:00:00.000Z"),
-            client: { id: 20, name: "김산모", serviceStatus: "completed" },
+            client: { id: 20, name: "김산모", serviceStatus: "completed", fetalConfirmation: null },
         });
 
         beforeEach(() => {
@@ -1849,7 +1890,7 @@ describe("ServiceRecordLinkService", () => {
         expect(logRepository.save).not.toHaveBeenCalled();
     });
 
-    it("reports missing registered authentication phone even when delivery is overridden", async () => {
+    it("requires a registered authentication phone even when the request supplies a number", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const service = new ServiceRecordLinkService(

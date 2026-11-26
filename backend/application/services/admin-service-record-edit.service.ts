@@ -9,7 +9,7 @@ import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/s
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
 import { IMMUTABLE_FINALIZATION_STATUSES, SERVICE_RECORD_CASE_STATUS } from "application/services/service-record-lifecycle.service";
-import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, codeOnlyProblemException, problemBody } from "application/utils/problem-bodies";
 import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
 import {
@@ -696,8 +696,9 @@ export class AdminServiceRecordEditService {
         clientId: number,
         actorUserId: string,
         dto: CreateServiceRecordEditDraftDto = {},
+        caseId?: string,
     ): Promise<AdminServiceRecordEditStateDto> {
-        const loaded = await this.loadSource(branchId, { clientId });
+        const loaded = await this.loadSource(branchId, { clientId, caseId, writable: true });
         const validatedChanges = this.validateChanges(dto.changes, loaded.source);
         if (this.changesCarryServiceDate(validatedChanges)) {
             const existing = await this.repository.findActiveDraft(branchId, loaded.source.caseId);
@@ -735,8 +736,9 @@ export class AdminServiceRecordEditService {
         clientId: number,
         actorUserId: string,
         dto: CreateServiceRecordEditDraftDto = {},
+        caseId?: string,
     ): Promise<AdminServiceRecordEditStateDto> {
-        const loaded = await this.loadSource(branchId, { clientId });
+        const loaded = await this.loadSource(branchId, { clientId, caseId, writable: true });
         const changes = await this.normalizeStartChanges(
             branchId, loaded.source, this.validateChanges(dto.changes, loaded.source),
         );
@@ -759,8 +761,8 @@ export class AdminServiceRecordEditService {
         return this.state(draft, loaded);
     }
 
-    async getDraft(branchId: string, clientId: number): Promise<AdminServiceRecordEditStateDto> {
-        const loaded = await this.loadSource(branchId, { clientId });
+    async getDraft(branchId: string, clientId: number, caseId?: string): Promise<AdminServiceRecordEditStateDto> {
+        const loaded = await this.loadSource(branchId, { clientId, caseId });
         const draft = await this.repository.findActiveDraft(branchId, loaded.source.caseId);
         return this.state(draft, loaded);
     }
@@ -1350,8 +1352,9 @@ export class AdminServiceRecordEditService {
             || contentChanged
             || hasPlannedDateDifference(provisional.before.sessions, provisional.after.sessions)
             || resumeWritesPending;
-        const periodChanged = provisional.after.startDate !== source.startDate
-            || provisional.after.endDate !== source.endDate;
+        const periodChanged = !source.sharedHousehold && (
+            provisional.after.startDate !== source.startDate || provisional.after.endDate !== source.endDate
+        );
         const documentStatus = completeness === "partial"
             ? "waiting_for_completion"
             : documentStatusForSource(source);
@@ -1586,6 +1589,9 @@ export class AdminServiceRecordEditService {
         const clientServiceDays = pendingServiceDays && !sameServiceDays(pendingServiceDays, storedServiceDays(source))
             ? pendingServiceDays
             : undefined;
+        if (clientServiceDays && source.sharedHousehold) {
+            throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_SHARED_SERVICE_DAYS" });
+        }
         // A legacy case (no stored vector) derives its dates on read, so flipping the toggles under
         // dates that merely equal the old projection would re-project them. Store the selected
         // vector next to the flags; a case that already stores a vector keeps flags-only.
@@ -2092,7 +2098,7 @@ export class AdminServiceRecordEditService {
 
     private async loadSource(
         branchId: string,
-        target: { clientId?: number; caseId?: string },
+        target: { clientId?: number; caseId?: string; writable?: boolean },
     ): Promise<LoadedSource> {
         const source = await this.repository.loadSource(branchId, target);
         if (!source) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));

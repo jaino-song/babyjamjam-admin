@@ -1,4 +1,5 @@
 "use client";
+import { serviceRecordResetTarget } from "@babyjamjam/shared/utils";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 
@@ -6,6 +7,7 @@ import { createContext, useContext, useMemo, useRef, useState, type KeyboardEven
 import {
     getServiceRecordStatusMeta,
     getSignatureStatusMeta,
+    serviceRecordCaseLabel,
     type ServiceRecordStatusMeta,
 } from "@babyjamjam/shared/constants/service-record-display";
 import { RefreshCw } from "lucide-react";
@@ -16,6 +18,7 @@ import {
     type ServiceRecordFieldDescriptor,
 } from "@babyjamjam/shared/constants/service-record-form-layout";
 import type {
+    ResetServiceRecordLinkRequest,
     ServiceRecordAssignment,
     ServiceRecordCase,
     ServiceRecordHeader,
@@ -38,7 +41,7 @@ import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useKeepPeriodMismatch, useFitPeriodMismatch, useSendServiceRecordLink } from "@/hooks/useServiceRecords";
+import { useClientServiceRecords, useKeepPeriodMismatch, useFitPeriodMismatch, useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -50,6 +53,13 @@ import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 import { displayPeriodDate, outOfPeriodSessions, periodMismatchQuestion, periodFitToast } from "./period-mismatch";
 
+export interface ServiceRecordLinkResetSelection {
+    caseId: string;
+    scheduleId: number;
+    employeeId: number;
+    refresh?: () => void;
+}
+
 interface ClientServiceRecordsProps {
     "data-component": string;
     client: Client;
@@ -60,6 +70,7 @@ interface ClientServiceRecordsProps {
     isRefreshing?: boolean;
     onRefresh?: () => void;
     onPeriodFitted?: () => Promise<void>;
+    onResetServiceRecordLink?: (selection: ServiceRecordLinkResetSelection) => void;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -128,16 +139,53 @@ const PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES = new Set<string>([
 function ClientServiceRecordsContent({
     client,
     activeTab,
-    overview,
-    isLoading,
-    isError,
+    overview: householdOverview,
+    isLoading: isHouseholdLoading,
+    isError: isHouseholdError,
     isRefreshing = false,
-    onRefresh,
+    onRefresh: refreshHousehold,
     onPeriodFitted,
+    onResetServiceRecordLink,
 }: Omit<ClientServiceRecordsProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
     const alertDataComponent = useClientServiceRecordsDataComponent("sessions-card", "out-of-period-alert");
+    const [selection, setSelection] = useState<{ clientId: number; caseId: string }>();
+    const selectedCaseId = selection?.clientId === client.id ? selection.caseId : undefined;
+    const selectedQuery = useClientServiceRecords(client.id, {
+        caseId: selectedCaseId, enabled: Boolean(selectedCaseId) && activeTab === "serviceRecords",
+    });
+    const overview = selectedCaseId ? selectedQuery.data : householdOverview;
+    const isLoading = selectedCaseId ? selectedQuery.isLoading : isHouseholdLoading;
+    const isError = selectedCaseId ? selectedQuery.isError : isHouseholdError;
+    const onRefresh = selectedCaseId ? () => void selectedQuery.refetch() : refreshHousehold;
+    const cases = overview?.cases ?? householdOverview?.cases ?? [];
+    const picker = cases.length > 1 || (!overview?.record && cases.length > 0) ? (
+        <ul data-component={`${dataComponent}_case-picker`} data-slot="case-picker" className="flex flex-wrap gap-2">
+            {cases.map((item) => {
+                const rankLabel = serviceRecordCaseLabel(item);
+                const names = item.assignees.map(({ name }) => name).join(", ");
+                return <li key={item.caseId} data-component={`${dataComponent}_case-picker_option`} data-slot="option">
+                    <Button data-component={`${dataComponent}_case-picker_option_button`} data-slot="case-select"
+                        type="button" variant="outline" aria-pressed={selectedCaseId === item.caseId}
+                        onClick={() => setSelection({ clientId: client.id, caseId: item.caseId })}>
+                        {rankLabel}{names ? ` · ${names}` : ""} · {item.submittedSessions}/{item.totalSessions}회차{item.retired ? " · 보관" : ""}
+                    </Button>
+                </li>;
+            })}
+        </ul>
+    ) : null;
     const record = overview?.record ?? null;
+    const selectedCase = cases.find((item) => item.caseId === record?.id);
+    const retired = Boolean(selectedCase?.retired);
+    const credentialTarget = overview && serviceRecordResetTarget(overview, selectedCaseId);
+    const groupTarget = credentialTarget && "members" in credentialTarget.request ? credentialTarget.request : undefined;
+    const matchesCredential = (assignment: ServiceRecordAssignment) => {
+        if (retired || assignment.replaced) return false;
+        if (overview?.legacyLinkAssignment === undefined && !selectedCase?.babyId) return true;
+        return Boolean(credentialTarget?.scheduleId === assignment.scheduleId
+            && (!groupTarget || groupTarget.employeeId === assignment.employee.id));
+    };
+    const isSelectionFetching = selectedCaseId ? selectedQuery.isFetching : isRefreshing;
     const assignments = useMemo(
         () => sortAssignmentsNewestFirst(overview?.assignments ?? []),
         [overview?.assignments],
@@ -155,15 +203,15 @@ function ClientServiceRecordsContent({
     const [isMutating, setIsMutating] = useState(false);
     const isPeriodPending = isMutating || keepMutation.isPending || fitMutation.isPending;
     const handlePeriodMismatch = async (action: "keep" | "fit") => {
-        if (!canEditServiceRecord || !record?.startDate || !record.endDate || !unkept.length || mutationInFlight.current || isPeriodPending) return;
+        if (retired || !canEditServiceRecord || !record?.startDate || !record.endDate || !unkept.length || mutationInFlight.current || isPeriodPending) return;
         mutationInFlight.current = true;
         setIsMutating(true);
         const before = { startDate: record.startDate, endDate: record.endDate };
         try {
             if (action === "keep") {
-                await keepMutation.mutateAsync({ clientId: client.id, sessionIndexes: unkept.map((session) => session.sessionIndex) });
+                await keepMutation.mutateAsync({ clientId: client.id, ...(selectedCaseId ? { caseId: selectedCaseId } : {}), sessionIndexes: unkept.map((session) => session.sessionIndex) });
             } else {
-                const result = await fitMutation.mutateAsync({ clientId: client.id });
+                const result = await fitMutation.mutateAsync({ clientId: client.id, ...(selectedCaseId ? { caseId: selectedCaseId } : {}) });
                 const description = periodFitToast(before, result);
                 if (description) toast({ variant: "success", description });
                 await onPeriodFitted?.();
@@ -181,7 +229,7 @@ function ClientServiceRecordsContent({
         sessionIndex: number;
     } | null>(null);
 
-    const detailKey = `${activeTab}:${client.id}`;
+    const detailKey = `${activeTab}:${client.id}:${selectedCaseId ?? ""}`;
     const selectedAssignment = selectedEntry?.key === detailKey
         ? assignments.find((assignment) => assignment.scheduleId === selectedEntry.assignmentScheduleId) ?? null
         : null;
@@ -190,7 +238,7 @@ function ClientServiceRecordsContent({
         : null;
 
     if (isLoading) {
-        return <ServiceRecordsSkeleton />;
+        return <>{picker}<ServiceRecordsSkeleton /></>;
     }
 
     // A failed load is not an empty result: with nothing cached, show the error with a retry.
@@ -217,6 +265,7 @@ function ClientServiceRecordsContent({
     ) : null;
 
     if (assignments.length === 0 && !record) {
+        if (picker) return <>{staleNotice}{picker}</>;
         return (
             <>
                 {staleNotice}
@@ -256,6 +305,7 @@ function ClientServiceRecordsContent({
             className="detail-column"
         >
             {staleNotice}
+            {picker}
             {record ? <RecordStatusCard record={record} /> : null}
             {record ? <ServiceHeaderCard header={record.header} delay={60} /> : null}
             {assignments.map((assignment, assignmentIndex) => (
@@ -268,6 +318,16 @@ function ClientServiceRecordsContent({
                     <LinkCard
                         assignment={assignment}
                         clientId={client.id}
+                        caseId={selectedCaseId}
+                        readOnly={!matchesCredential(assignment) || (Boolean(groupTarget) && isSelectionFetching)}
+                        target={matchesCredential(assignment) ? groupTarget : undefined}
+                        onResetLink={selectedCase?.babyId && groupTarget && onResetServiceRecordLink && matchesCredential(assignment)
+                            ? () => onResetServiceRecordLink({
+                                caseId: selectedCase.caseId,
+                                scheduleId: assignment.scheduleId,
+                                employeeId: groupTarget.employeeId,
+                                refresh: onRefresh,
+                            }) : undefined}
                         delay={assignmentIndex * 180}
                         showStatus={!record}
                     />
@@ -276,7 +336,7 @@ function ClientServiceRecordsContent({
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
                         mismatchDates={mismatchDates}
-                        periodMismatchAlert={assignmentIndex === 0 && record && !PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES.has(record.status) && periodStart && periodEnd && unkept.length > 0 ? (
+                        periodMismatchAlert={assignmentIndex === 0 && record && !retired && !PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES.has(record.status) && periodStart && periodEnd && unkept.length > 0 ? (
                             <Alert
                                 variant="warning"
                                 className="mt-1 mb-2.5"
@@ -374,11 +434,19 @@ function getRecordStatusLabel(status: string): string {
 function LinkCard({
     assignment,
     clientId,
+    caseId,
+    readOnly,
+    target,
+    onResetLink,
     delay,
     showStatus,
 }: {
     assignment: ServiceRecordAssignment;
     clientId: number;
+    caseId?: string;
+    readOnly?: boolean;
+    target?: Extract<ResetServiceRecordLinkRequest, { members: unknown }>;
+    onResetLink?: () => void;
     delay: number;
     showStatus: boolean;
 }) {
@@ -409,11 +477,11 @@ function LinkCard({
     latestLinkStatusRef.current = assignment.link.status;
 
     const sendLink = async (): Promise<boolean> => {
-        if (latestLinkStatusRef.current === "sending") return false;
+        if (readOnly || latestLinkStatusRef.current === "sending") return false;
         setIsSending(true);
         try {
             const result = await sendLinkMutation.mutateAsync({
-                scheduleId: assignment.scheduleId,
+                scheduleId: assignment.scheduleId, ...(target ? { target } : caseId ? { caseId } : {}),
                 clientId,
             });
             // The outcome is decided by the job status alone: `ok` is false for
@@ -447,7 +515,7 @@ function LinkCard({
     };
 
     const handleSendClick = () => {
-        if (isLinkSending) return;
+        if (readOnly || isLinkSending) return;
         if (isResend) {
             setResendModalOpen(true);
             return;
@@ -513,13 +581,19 @@ function LinkCard({
                     data-component={isResend
                         ? `${dataComponent}_actions_resend`
                         : `${dataComponent}_actions_send`}
-                    disabled={isPending || isLinkSending}
+                    disabled={readOnly || isPending || isLinkSending}
                     aria-busy={isPending || undefined}
                     data-loading={isPending ? "" : undefined}
                     onClick={handleSendClick}
                 >
                     <ButtonLoadingContent loading={isPending} loadingLabel="발송 중">제공기록지 링크 발송</ButtonLoadingContent>
                 </button>
+                {onResetLink && canEditServiceRecord ? (
+                    <Button type="button" variant="outline" disabled={readOnly}
+                        data-component={`${dataComponent}_actions_reset`} onClick={onResetLink}>
+                        제공기록지 링크 재설정
+                    </Button>
+                ) : null}
                 {isLinkSending ? (
                     <p className="info-row-value-muted" role="status">
                         발송 처리 중이에요. 끝난 뒤에 다시 보낼 수 있어요.
@@ -534,7 +608,7 @@ function LinkCard({
                         data-component={`${dataComponent}_actions_edit-service-record`}
                     >
                         <a
-                            href={getServiceRecordAdminHref(clientId)}
+                            href={`${getServiceRecordAdminHref(clientId)}${caseId ? `?caseId=${encodeURIComponent(caseId)}` : ""}`}
                             target="_blank"
                             rel="noopener noreferrer"
                         >

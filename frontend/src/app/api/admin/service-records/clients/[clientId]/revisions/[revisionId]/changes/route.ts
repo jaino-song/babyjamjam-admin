@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     try {
         const response = await serverAPIClient.get(
-            `/admin/service-records/clients/${encodeURIComponent(clientId)}/revisions/${encodeURIComponent(revisionId)}/changes`,
+            `/admin/service-records/clients/${encodeURIComponent(clientId)}/revisions/${encodeURIComponent(revisionId)}/changes${new URL(request.url).search}`,
             { headers: getAuthHeaders(token) },
         );
         return jsonResponse(response.data ?? {}, response.status);

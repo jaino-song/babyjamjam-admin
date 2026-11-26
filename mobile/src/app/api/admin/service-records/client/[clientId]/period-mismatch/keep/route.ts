@@ -32,7 +32,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
                 { pointer: "/sessionIndexes", code: "INVALID_VALUE", detail: "입력값을 확인해 주세요.", location: "body" },
             ]);
         }
-        const response = await serverAPIClient.post(`/admin/service-records/client/${clientId}/period-mismatch/keep`, { sessionIndexes: indexes }, {
+        const response = await serverAPIClient.post(`/admin/service-records/client/${clientId}/period-mismatch/keep${new URL(request.url).search}`, { sessionIndexes: indexes }, {
             headers: getAuthHeaders(token),
         });
         return withNoStore(backendJsonResponse(response));

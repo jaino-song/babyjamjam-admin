@@ -2053,6 +2053,14 @@
       "discovery_task_id": "1.1.01"
     },
     {
+      "path": "backend/application/services/admin-service-record-target.ts",
+      "root": "backend/application/",
+      "kind": "runtime",
+      "candidate_count": 1,
+      "review_status": "reviewed",
+      "discovery_task_id": "baby-records-3-3-case-admin"
+    },
+    {
       "path": "backend/application/services/admin-service-record.service.ts",
       "root": "backend/application/",
       "kind": "runtime",
@@ -27963,6 +27971,27 @@
       "review_task": "1.1-batch-b",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Non-catalog codes and plain strings; codes must split by business meaning, transport-free"
+    },
+    {
+      "id": "owner-fc9d7d1f172c",
+      "path": "backend/application/services/admin-service-record-target.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Selected-case misses use NotFoundException with the registered RESOURCE_NOT_FOUND problem body. Ambiguity and retired-case writes use the registered problem exception helper.",
+      "seams": [
+        {
+          "line": 19,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        }
+      ],
+      "related_tests": [
+        "backend/test/e2e/baby-case-admin.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "baby-records-3-3-case-admin",
+      "spec_mapping_status": "mapped-em-v1"
     },
     {
       "id": "owner-2697491355fe",
@@ -76498,6 +76527,260 @@
       "review_task": null,
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "The compatibility exception covers the pre-service BRANCH_CONTEXT_CHANGED 409 only. The fence refusal uses the local code/message body."
+    },
+    {
+      "id": "owner-e50973508566",
+      "path": "backend/application/services/client-allocation.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "The intake pattern matches the NestJS import and two throws. invalid wraps catalog VALIDATION_FAILED (400) in problemBody for registration and edit input refusals. allocationConflict wraps catalog REQUEST_CONFLICT (409) in problemBody for stale or incompatible allocation changes, including retirement of a baby with an authored record.",
+      "seams": [
+        {
+          "line": 10,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 147,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 153,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "baby-records-2-1-error-inventory",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-04",
+        "EM-VAL-03",
+        "EM-STATE-01"
+      ],
+      "public_codes": [
+        "VALIDATION_FAILED",
+        "REQUEST_CONFLICT"
+      ],
+      "outcome_evidence": "Both helpers set NOT_APPLIED through problemBody. The registration HTTP tests assert 400 VALIDATION_FAILED with body pointers and no client created for invalid input. They also assert 409 with /expectedAllocationVersion for a divergent stale edit, /babyCount for authored-baby retirement, and /newPrimaryEmployeeId for a legacy replacement collision that leaves the original schedule in place.",
+      "consumer_paths": [
+        "backend/application/services/client.service.ts (ClientService.create and its syncEmployeeAssignment helper, ClientService.update, ClientService.requestReplacement)",
+        "backend/application/usecases/employee-schedule/create-employee-schedule.usecase.ts (CreateEmployeeScheduleUsecase.execute)",
+        "backend/application/usecases/employee-schedule/update-employee-schedule.usecase.ts (UpdateEmployeeScheduleUsecase.execute)"
+      ],
+      "test_evidence": [
+        "backend/test/e2e/baby-record-registration.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Both throws use registered Problem Details codes with matching HTTP statuses, fixed field detail and request-body JSON Pointers."
+    },
+    {
+      "id": "owner-dd72bb297b57",
+      "path": "backend/application/policies/baby-record-rollout.policy.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "The intake pattern matches the NestJS ConflictException import and superclass. BabyRecordRolloutPausedException wraps the registered REQUEST_CONFLICT (409) with codeOnlyProblemBody. requireBabyRecordRollout throws it when the locked branch setting does not enable new writes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 37,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 44,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "baby-records-closure-error-ownership",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-01",
+        "EM-STATE-01",
+        "EM-SEC-03"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT"
+      ],
+      "outcome_evidence": "The opt-in Nest/PostgreSQL rollout suite requires matching DATABASE_URL and DIRECT_URL for an approved throwaway loopback cutover clone, NODE_ENV=test, and vendor stubs. It asserts HTTP 409 for paused-branch registration, booking confirmation, schedule creation, and link prepare, send and reset. Source inspection shows that the public mapHttpProblem boundary strips the producer's paused detail and supplies the localized REQUEST_CONFLICT catalog detail.",
+      "consumer_paths": [
+        "backend/application/services/client.service.ts",
+        "backend/application/services/client-allocation.service.ts",
+        "backend/application/services/employee-schedule.service.ts",
+        "backend/application/services/service-record-lifecycle.service.ts",
+        "backend/application/services/service-record-token.service.ts",
+        "backend/application/services/service-record-link.service.ts",
+        "backend/application/services/service-record-link-group.service.ts",
+        "backend/application/services/message-automation-intent.service.ts (handles the pause during intent dispatch)"
+      ],
+      "test_evidence": [
+        "backend/test/e2e/baby-record-rollout.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Catalog-backed rollout refusal carries NOT_APPLIED with recovery action NONE and retry mode NEVER."
+    },
+    {
+      "id": "owner-4521f5cd1537",
+      "path": "backend/application/services/service-record-link-group.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "The intake pattern matches NestJS exception imports, a handled NotFoundException check in employee refresh, and structured refusals. A missing group source or case uses RESOURCE_NOT_FOUND (404). A paused rollout uses REQUEST_CONFLICT (409) via BabyRecordRolloutPausedException. Changed assignments, recipient mismatches or invalidated link credentials use SERVICE_RECORD_WRITE_TARGET_CHANGED (409) via codeOnlyProblemException. Missing registered phone uses INVALID_PROVIDER_PHONE (400). Preview failure uses VALIDATION_FAILED (400) with a fixed renderer reason identifier.",
+      "seams": [
+        {
+          "line": 5,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 84,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 86,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 95,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 150,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 158,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 176,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 177,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 291,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 292,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 297,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 299,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 300,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 329,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 370,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 374,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 387,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "baby-records-closure-error-ownership",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-01",
+        "EM-STATE-01",
+        "EM-SEC-03"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT",
+        "RESOURCE_NOT_FOUND",
+        "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+        "INVALID_PROVIDER_PHONE",
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": "The opt-in Nest/PostgreSQL message-group suite requires matching DATABASE_URL and DIRECT_URL for an approved throwaway loopback send clone, NODE_ENV=test, and vendor stubs. It asserts HTTP 409 on grouped prepare or send for stale selections after reassignment, mismatched employees, and mismatched recipient phones. The opt-in rollout suite also asserts HTTP 409 for paused grouped prepare, send and reset.",
+      "consumer_paths": [
+        "backend/interface/controllers/admin-service-record.controller.ts (link-targets, prepare-link, send-link and reset-link via AdminServiceRecordService)",
+        "backend/application/services/admin-service-record.service.ts (targets, prepare and reset)",
+        "backend/application/services/service-record-link.service.ts (manual grouped send and automatic scheduling)",
+        "backend/application/services/message-trigger.service.ts (employee refresh and automatic rescheduling)"
+      ],
+      "test_evidence": [
+        "backend/test/e2e/baby-record-message-groups.e2e.spec.ts",
+        "backend/test/e2e/baby-record-rollout.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Catalog bodies carry NOT_APPLIED with recovery action NONE and retry mode NEVER. The HTTP mapper rebuilds paused detail from the catalog and preserves the renderer's bounded reason extension."
     }
   ]
 }

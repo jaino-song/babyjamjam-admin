@@ -190,6 +190,7 @@ function normalizeAgentClientWrite<T>(normalize: () => T): T {
 async function validateClientServicePeriod(
     lifecycle: Pick<ServiceRecordLifecycleService, "validatePeriodChange">,
     params: {
+        branchId: string;
         clientId: number;
         startDate?: Date | null;
         endDate?: Date | null;
@@ -399,7 +400,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         }
                         return await this.prisma.$transaction(async (transaction) => {
                             const client = await this.createClient.execute(context.principal.branchId, write, transaction, calendar);
-                            await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
+                            await this.serviceRecordLifecycleService.ensureAllForClient(client.id, transaction, calendar);
                             const result = { id: client.id, name: client.name, status: "created" };
                             await recordAgentActionEffect(transaction, context, "clients.create", "client", client.id, result);
                             return result;
@@ -456,6 +457,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, input, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                        branchId: context.principal.branchId,
                         clientId: existing.id,
                         startDate: parsedUpdates.startDate,
                         endDate: parsedUpdates.endDate,
@@ -489,6 +491,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                        branchId: context.principal.branchId,
                         clientId: existing.id,
                         startDate: parsedUpdates.startDate,
                         endDate: parsedUpdates.endDate,
@@ -500,7 +503,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             const before = await this.readRecordLinkStatusBeforeWrite(transaction, branchId, id, existing);
                             const client = await this.updateClient.execute(branchId, id, parsedUpdates, transaction, calendar);
                             await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchId, id, before);
-                            await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
+                            await this.serviceRecordLifecycleService.ensureAllForClient(client.id, transaction, calendar);
                             return { client, before };
                         });
                         await this.refreshEmployeeAssignmentJobsAfterProfileChange(
@@ -538,6 +541,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             : await this.withRecordLinkWrite(branchId, async (transaction) => {
                                 before = await this.readRecordLinkStatusBeforeWrite(transaction, branchId, id, existing);
                                 await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                                    branchId,
                                     clientId: existing.id,
                                     startDate: parsedUpdates.startDate,
                                     endDate: parsedUpdates.endDate,
@@ -552,7 +556,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                     calendar,
                                 );
                                 await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchId, id, before);
-                                await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
+                                await this.serviceRecordLifecycleService.ensureAllForClient(client.id, transaction, calendar);
                                 updatedClient = client;
                                 const result = { id: client.id, name: client.name, status: "updated" };
                                 await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
@@ -692,6 +696,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             throw new AgentActionCertainFailureError("The approved customer target is unavailable");
                         }
                         await validateClientServicePeriod(this.serviceRecordLifecycleService, {
+                            branchId,
                             clientId: artifact.targetClientId,
                             startDate: updates.startDate,
                             endDate: updates.endDate,
@@ -717,7 +722,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             if (allowRecovery) recoveryTransition = { before, after: updated };
                         }
                     }
-                    await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
+                    await this.serviceRecordLifecycleService.ensureAllForClient(client.id, transaction, calendar);
                     committedClientId = client.id;
                     const committed = await transaction.client.findFirst({
                         where: { id: client.id, branchId: context.principal.branchId },

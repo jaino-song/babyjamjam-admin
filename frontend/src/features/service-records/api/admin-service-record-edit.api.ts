@@ -1,3 +1,4 @@
+import { withServiceRecordCase } from "../utils/case-selection";
 import type {
     ServiceRecordEditConfirmResponse,
     ServiceRecordEditContractStage,
@@ -634,8 +635,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     return body as T;
 }
 
-function draftPath(clientId: string): string {
-    return `/api/admin/service-records/client/${encodeURIComponent(clientId)}/draft`;
+function draftPath(clientId: string, caseId?: string): string {
+    return withServiceRecordCase(`/api/admin/service-records/client/${encodeURIComponent(clientId)}/draft`, caseId);
 }
 
 function draftIdPath(draftId: string): string {
@@ -643,16 +644,17 @@ function draftIdPath(draftId: string): string {
 }
 
 export const adminServiceRecordEditApi = {
-    async getDraft(clientId: string): Promise<AdminServiceRecordEditState> {
-        const body = await request<unknown>(draftPath(clientId), { method: "GET" });
+    async getDraft(clientId: string, caseId?: string): Promise<AdminServiceRecordEditState> {
+        const body = await request<unknown>(draftPath(clientId, caseId), { method: "GET" });
         return normalizeAdminServiceRecordEditState(body);
     },
 
     async startDraft(
         clientId: string,
         changes?: AdminServiceRecordEditChanges,
+        caseId?: string,
     ): Promise<AdminServiceRecordEditState> {
-        const body = await request<unknown>(draftPath(clientId), {
+        const body = await request<unknown>(draftPath(clientId, caseId), {
             method: "POST",
             body: JSON.stringify(changes ? { changes } : {}),
         });

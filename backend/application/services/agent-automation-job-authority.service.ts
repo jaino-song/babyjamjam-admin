@@ -1,3 +1,4 @@
+import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
 import { RECEIPT_RECOVERY_PREFIX, isReceiptRecoveryReason, readReceiptObservation, receiptRuleSlot } from "domain/constants/receipt-job-recovery";
 import { MessageTriggerRecipientResolverService, describeCaregiverMessageEffect } from "./message-trigger-recipient-resolver.service";
 import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
@@ -391,6 +392,7 @@ export class AgentAutomationJobAuthorityService {
                         branchId: true,
                         createdAt: true,
                         serviceStatus: true,
+                        fetalConfirmation: true,
                     },
                 },
                 primaryEmployee: {
@@ -404,7 +406,8 @@ export class AgentAutomationJobAuthorityService {
                 },
             },
         });
-        if (!schedule || !schedule.primaryEmployee || !schedule.client) return null;
+        if (!schedule || !schedule.primaryEmployee || !schedule.client
+            || !await allowsLegacyServiceRecordLink(transaction, schedule)) return null;
 
         // ServiceRecordTokenService.currentProvider selects the latest active
         // assignment for the client. Mirror that check inside this transaction
@@ -416,7 +419,7 @@ export class AgentAutomationJobAuthorityService {
         });
         if (!latestSchedule || latestSchedule.id !== schedule.id) return null;
 
-        const serviceRecordCase = await transaction.service_record_case.findFirst({
+        const cases = await transaction.service_record_case.findMany({
             where: { branchId: input.scope.branchId, clientId: input.scope.clientId },
             select: {
                 id: true,
@@ -431,7 +434,10 @@ export class AgentAutomationJobAuthorityService {
                 finalizedAt: true,
                 updatedAt: true,
             },
+            take: 2,
         });
+        if (cases.length > 1) return null;
+        const [serviceRecordCase = null] = cases;
 
         const payload = agentAutomationSourcePayload(job.payload, job.templateKey);
         const variables = payload["templateVariables"];

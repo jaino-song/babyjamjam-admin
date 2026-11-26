@@ -5,6 +5,10 @@ import { CAREGIVER_DATE_WINDOW_DAYS, resolveServiceRecordScheduleProjection, sto
 
 export interface MissingServiceRecordAlert {
     clientId: number;
+    caseId: string;
+    rank: number | null;
+    babyCount: number | null;
+    legacyName: string | null;
     clientName: string;
     primaryEmployeeName: string;
     scheduleId: number;
@@ -51,7 +55,7 @@ function collectMissingServiceRecordAlerts(
     branchCalendar: KrBusinessDayCalendar,
     now: Date,
 ): MissingServiceRecordAlertRow[] {
-    const alerts = new Map<number, MissingServiceRecordAlertRow>();
+    const alerts = new Map<string, MissingServiceRecordAlertRow>();
     for (const candidate of candidates) {
         // Bad/unsupported source evidence must not prevent other clients' alerts.
         try {
@@ -114,9 +118,10 @@ function collectMissingServiceRecordAlerts(
                 if (!(now.getTime() >= entryThreshold)) break;
                 unwrittenThroughSessionIndex = index;
             }
-            alerts.set(source.client.id, {
+            alerts.set(source.caseId, {
                 alert: {
-                    clientId: source.client.id, clientName: source.client.name,
+                    clientId: source.client.id, clientName: source.client.name, caseId: source.caseId,
+                    rank: candidate.rank ?? null, babyCount: candidate.babyCount ?? null, legacyName: candidate.legacyName ?? null,
                     primaryEmployeeName: active.primaryEmployeeName, scheduleId: active.scheduleId,
                 },
                 unwrittenThroughSessionIndex,

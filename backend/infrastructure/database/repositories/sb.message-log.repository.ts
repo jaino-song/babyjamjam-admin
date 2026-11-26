@@ -1,3 +1,6 @@
+import { hasReconciledLegacyLinkRetry } from "application/services/service-record-legacy-link-occurrence";
+import { babyRecordRolloutEnabledSql } from "application/policies/baby-record-rollout.policy";
+import { RECORD_LINK_GROUP_LOG_MARKER, recordLinkGroupJobSql } from "application/services/service-record-link-group-source";
 import {
     admitOccurrence, occurrenceVariables, resolveLogOccurrence, settleOccurrence, storedOccurrence, transferReleasedOccurrenceHolder,
 } from "./message-occurrence-ledger";
@@ -260,28 +263,30 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
     }
 
-    async prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity> {
+    async prepareProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
         if (!log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) {
             throw new Error("SMS provider acceptance key and fingerprint are required before dispatch");
         }
 
-        try {
-            return await this.prisma.$transaction(async (transaction) => {
-                const existing = await transaction.message_log.findUnique({
-                    where: { providerAcceptanceKey: log.providerAcceptanceKey! },
-                });
-                if (existing) {
-                    if (existing.providerAcceptanceFingerprint !== log.providerAcceptanceFingerprint) {
-                        throw new Error("SMS provider acceptance fingerprint mismatch");
-                    }
-                    return MessageLogMapper.toDomain(existing);
-                }
-
-                const row = await transaction.message_log.create({
-                    data: MessageLogMapper.toPrismaCreate(log),
-                });
-                return MessageLogMapper.toDomain(row);
+        const prepare = async (tx: Prisma.TransactionClient) => {
+            const existing = await tx.message_log.findUnique({
+                where: { providerAcceptanceKey: log.providerAcceptanceKey! },
             });
+            if (existing) {
+                if (existing.providerAcceptanceFingerprint !== log.providerAcceptanceFingerprint) {
+                    throw new Error("SMS provider acceptance fingerprint mismatch");
+                }
+                return MessageLogMapper.toDomain(existing);
+            }
+
+            const row = await tx.message_log.create({
+                data: MessageLogMapper.toPrismaCreate(log),
+            });
+            return MessageLogMapper.toDomain(row);
+        };
+        if (transaction) return prepare(transaction);
+        try {
+            return await this.prisma.$transaction(prepare);
         } catch (error) {
             // A concurrent request may win the unique-key race after the
             // transaction's read. Re-read that one key and converge on it.
@@ -520,7 +525,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                     log.status !== "failed"
                     || log.isPartialProviderOutcome()
                     || log.isProviderOutcomeUncertain()
-                    || log.variables["retrySafety"] === "uncertain"
+                    || (log.variables["retrySafety"] === "uncertain" && !hasReconciledLegacyLinkRetry(log, family))
                     || log.providerAcceptanceState === "reconciled_delivered"
                 ))) return { kind: "lost" };
                 if (
@@ -613,15 +618,23 @@ export class SbMessageLogRepository implements IMessageLogRepository {
     }
 
     async findPendingRetriesSystemScope(): Promise<MessageLogEntity[]> {
+        const eligible = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT log.id
+            FROM message_log log
+            LEFT JOIN message_trigger_job job ON job.id = log.trigger_job_id AND job.branch_id = log.branch_id
+            WHERE log.status IN ('pending', 'failed') AND log.next_retry_at <= ${new Date()}
+              AND (NOT (COALESCE(log.variables ? ${RECORD_LINK_GROUP_LOG_MARKER}, false)
+                      OR COALESCE(${recordLinkGroupJobSql(Prisma.sql`job`)}, false))
+                   OR ${babyRecordRolloutEnabledSql(Prisma.sql`log.branch_id`)})
+            ORDER BY log.next_retry_at, log.id
+            LIMIT 50
+        `);
+        if (!eligible.length) return [];
         const rows = await this.prisma.message_log.findMany({
-            where: {
-                status: { in: ["pending", "failed"] },
-                nextRetryAt: { lte: new Date() },
-            },
-            orderBy: { nextRetryAt: "asc" },
-            take: 50,
+            where: { id: { in: eligible.map(({ id }) => id) } },
         });
-        return rows.map(MessageLogMapper.toDomain);
+        const byId = new Map(rows.map(row => [row.id, MessageLogMapper.toDomain(row)]));
+        return eligible.flatMap(({ id }) => byId.get(id) ?? []);
     }
 
     async findCarrierChecksDueSystemScope(limit: number, now: Date = new Date()): Promise<MessageLogEntity[]> {
@@ -758,8 +771,12 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         // Compare stored timestamps, not JS Dates which truncate sub-millisecond precision.
         const [result] = await client.$queryRaw<Array<{ exists: boolean }>>(Prisma.sql`
             WITH source AS (
-                SELECT log.id, log.created_at,
-                    COALESCE(NULLIF(log.variables->>'scheduleId', ''), job.employee_schedule_id::text) AS schedule_id
+                SELECT log.id, log.created_at, log.branch_id, job.id AS job_id, job.recipient_employee_id,
+                    COALESCE(NULLIF(log.variables->>'scheduleId', ''), job.employee_schedule_id::text) AS schedule_id,
+                    COALESCE(job.client_id, log.client_id) AS client_id,
+                    COALESCE(job.payload->>'employeeId', log.variables->>'employeeId') AS employee_id,
+                    COALESCE(job.payload->>'scheduleIncarnationId', log.variables->>'scheduleIncarnationId') AS incarnation_id,
+                    regexp_replace(log.receiver, '[^0-9]', '', 'g') AS phone
                 FROM message_log AS log
                 LEFT JOIN message_trigger_job AS job
                     ON job.id = log.trigger_job_id AND job.branch_id = ${branchId}::uuid
@@ -772,14 +789,33 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                   AND newer.provider = 'aligo_sms'
                   AND newer.template_key = ${SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY}
                   AND newer.status <> 'failed'
+                  AND regexp_replace(newer.receiver, '[^0-9]', '', 'g') = source.phone
+                  AND (source.recipient_employee_id IS NULL OR EXISTS (
+                      SELECT 1 FROM service_record_job_member original
+                      JOIN service_record_job_member replacement
+                        ON replacement.branch_id = original.branch_id
+                       AND replacement.service_record_case_id = original.service_record_case_id
+                       AND replacement.assignment_version = original.assignment_version
+                       AND replacement.employee_id = original.employee_id
+                      WHERE original.branch_id = source.branch_id AND original.job_id = source.job_id
+                        AND replacement.job_id = newer.trigger_job_id
+                  ))
                   AND (
-                      newer.variables->>'scheduleId' = source.schedule_id
+                      (newer.trigger_job_id IS NULL AND newer.variables->>'scheduleId' = source.schedule_id
+                       AND newer.client_id IS NOT DISTINCT FROM source.client_id
+                       AND (source.employee_id IS NULL OR COALESCE(newer.variables->>'employeeId', source.employee_id) = source.employee_id)
+                       AND (source.incarnation_id IS NULL OR newer.variables->>'scheduleIncarnationId' IS NULL
+                            OR newer.variables->>'scheduleIncarnationId' = source.incarnation_id))
                       OR EXISTS (
                           SELECT 1 FROM message_trigger_job AS job
                           WHERE job.id = newer.trigger_job_id
                             AND job.branch_id = ${branchId}::uuid
                             AND job.rule_id = ${SERVICE_RECORD_LINK_RULE_ID}
                             AND job.employee_schedule_id::text = source.schedule_id
+                            AND job.client_id IS NOT DISTINCT FROM source.client_id
+                            AND (source.employee_id IS NULL OR COALESCE(job.payload->>'employeeId', source.employee_id) = source.employee_id)
+                            AND (source.incarnation_id IS NULL OR job.payload->>'scheduleIncarnationId' IS NULL
+                                OR job.payload->>'scheduleIncarnationId' = source.incarnation_id)
                       )
                   )
             ) AS exists

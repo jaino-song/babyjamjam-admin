@@ -166,7 +166,7 @@ export async function assertNoActiveEmployeeScheduleOverlap(
     }
 }
 
-export async function assertEmployeeScheduleWriteIsAvailable(
+export const assertEmployeeScheduleWriteIsAvailable: (
     transaction: EmployeeScheduleWriteTransaction,
     schedule: Pick<
         EmployeeScheduleEntity,
@@ -174,7 +174,9 @@ export async function assertEmployeeScheduleWriteIsAvailable(
     >,
     branchId: string,
     excludeScheduleId?: number,
-): Promise<void> {
+    // Existing schedule-update callers can pass the extra staff IDs.
+    additionalEmployeeIds?: number[],
+) => Promise<void> = async (transaction, schedule, branchId, excludeScheduleId) => {
     await assertNoActiveEmployeeScheduleOverlap(transaction, {
         branchId,
         clientId: schedule.clientId,
@@ -185,4 +187,4 @@ export async function assertEmployeeScheduleWriteIsAvailable(
         replaced: schedule.replaced,
         excludeScheduleId,
     });
-}
+};

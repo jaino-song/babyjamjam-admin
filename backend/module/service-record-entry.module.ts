@@ -10,11 +10,13 @@ import { AdminServiceRecordController } from "interface/controllers/admin-servic
 import { OWNER_RECORD_JSON_JWT_DECODER, OwnerRecordJsonBearerGuard, OwnerRecordJsonController } from "interface/controllers/owner-record-json.controller";
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
 import { ServiceRecordPeriodMismatchService } from "application/services/service-record-period-mismatch.service";
+import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
+import { ServiceRecordLinkGroupService } from "application/services/service-record-link-group.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
 import { ServiceRecordEditAgentCapabilitiesProvider } from "application/usecases/service-record/service-record-edit-agent-capabilities.provider";
@@ -40,6 +42,7 @@ import { HolidayModule } from "./holiday.module";
     imports: [DatabaseModule, AligoModule, MessageModule, SystemTemplateModule, SystemSettingModule, EformsignDocModule, HolidayModule],
     controllers: [ServiceRecordEntryController, AdminServiceRecordController, OwnerRecordJsonController],
     providers: [
+        AdminAuditEventWriter,
         AdminServiceRecordService,
         ServiceRecordPeriodMismatchService,
         AdminServiceRecordEditService,
@@ -47,6 +50,7 @@ import { HolidayModule } from "./holiday.module";
         ServiceRecordEntryService,
         ServiceRecordTokenService,
         ServiceRecordLinkService,
+        ServiceRecordLinkGroupService,
         ServiceRecordLifecycleService,
         ServiceRecordFinalizationSchedulerService,
         ServiceRecordLinkReconciliationService,

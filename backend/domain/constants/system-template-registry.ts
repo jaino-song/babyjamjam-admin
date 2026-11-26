@@ -1,3 +1,4 @@
+import { SERVICE_RECORD_LINK_DEFAULT_TEMPLATE } from "@babyjamjam/shared/message/service-record-links";
 import { SERVICE_END_NOTICE_DEFAULT_CONTENT, SERVICE_END_NOTICE_SMS_TITLE } from './service-end-notice-message';
 
 export enum SystemTemplateKey {
@@ -306,7 +307,7 @@ blog.naver.com/imirae-incheon`,
     name: '제공기록지 작성 요청',
     group: 'provider',
     groupLabel: '제공인력 대상',
-    description: '서비스 시작일 오후 3시에 제공인력에게 발송되는 제공기록지 작성 링크 SMS',
+    description: '서비스 시작 전날 정오(한국 시간)에 제공인력에게 발송되는 제공기록지 작성 링크 SMS',
     requiredVariables: [
       {
         key: 'employeeName',
@@ -333,22 +334,18 @@ blog.naver.com/imirae-incheon`,
         key: 'serviceRecordUrl',
         label: '제공기록지 링크',
         type: 'string',
-        required: true,
-        description: '제공인력이 작성할 제공기록지 링크',
+        required: false,
+        description: '제공기록지 링크 또는 링크 목록 (serviceRecordLinks와 둘 중 하나 필요)',
+      },
+      {
+        key: 'serviceRecordLinks',
+        label: '아기별 제공기록지 링크 목록',
+        type: 'string',
+        required: false,
+        description: '아기별 제공기록지 링크 목록 (serviceRecordUrl과 둘 중 하나 필요)',
       },
     ],
-    defaultContent: `[사회서비스 제공자 품질평가 A등급]
-안녕하세요, 인천 아이미래로 입니다 :)
-
-{{employeeName}} 관리사님, {{clientName}} 산모님의 {{serviceStartDate}} 시작 서비스 제공기록지 작성 링크입니다.
-매일 서비스 제공 완료 직전에 서비스 세부사항 기록 후에, 산모님께 승인을 받으시면 됩니다.
-
-최초 접속 시에 관리사님의 전화번호 인증이 필요합니다. 링크 접속 후 휴대폰 번호로 본인확인하고, 방문일마다 기록을 남겨주세요.
-
-감사합니다.
-
-제공기록지 링크
-{{serviceRecordUrl}}`,
+    defaultContent: SERVICE_RECORD_LINK_DEFAULT_TEMPLATE,
   },
 
   [SystemTemplateKey.REMINDER]: {

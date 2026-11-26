@@ -41,6 +41,7 @@ const SESSION_KIND_TAG: Record<ServiceRecordRevisionSessionChange["kind"], strin
 export interface RevisionHistoryViewProps {
     "data-component": string;
     clientId: string;
+    caseId?: string;
     onBack: () => void;
 }
 
@@ -57,11 +58,12 @@ function numericClientId(clientId: string): number | null {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
-export function RevisionHistoryView({ "data-component": root, clientId, onBack }: RevisionHistoryViewProps) {
+export function RevisionHistoryView({ "data-component": root, clientId, caseId, onBack }: RevisionHistoryViewProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     const labelId = useId();
     const numericId = numericClientId(clientId);
-    const history = useClientServiceRecordRevisionHistory(numericId);
+    const caseOptions = caseId ? [{ caseId }] : [];
+    const history = useClientServiceRecordRevisionHistory(numericId, ...caseOptions);
     // Revisions and caregiver edits in one list, newest first whatever order
     // the server returned. Equal times: revision before edit, then by number/id.
     const entries = useMemo<HistoryEntry[]>(() => {
@@ -94,8 +96,8 @@ export function RevisionHistoryView({ "data-component": root, clientId, onBack }
     // The newest entry overall is selected on entering the view.
     const selected = entries.find((entry) => entry.key === chosenKey) ?? entries[0] ?? null;
     // Only the query of the selected kind is enabled.
-    const revisionChanges = useClientServiceRecordRevisionChanges(numericId, selected?.kind === "revision" ? selected.id : null);
-    const editChanges = useClientServiceRecordCaregiverEditChanges(numericId, selected?.kind === "edit" ? selected.id : null);
+    const revisionChanges = useClientServiceRecordRevisionChanges(numericId, selected?.kind === "revision" ? selected.id : null, ...caseOptions);
+    const editChanges = useClientServiceRecordCaregiverEditChanges(numericId, selected?.kind === "edit" ? selected.id : null, ...caseOptions);
     const changes = selected?.kind === "edit" ? editChanges : revisionChanges;
 
     const revisionSessions = (revisionChanges.data?.sessions ?? []).filter((session) => session.kind !== "changed" || session.changes.length > 0);

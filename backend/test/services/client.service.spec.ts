@@ -222,7 +222,8 @@ describe("ClientService", () => {
 
     const createMockServiceRecordLifecycleService = () => ({
         validatePeriodChange: jest.fn().mockResolvedValue(undefined),
-        ensureForClient: jest.fn().mockResolvedValue(undefined),
+        ensureAllForClient: jest.fn().mockResolvedValue([]),
+        recompute: jest.fn().mockResolvedValue(undefined),
         resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         markTerminated: jest.fn().mockResolvedValue(undefined),
     });
@@ -762,10 +763,10 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(w.startChange.applyInTransaction).not.toHaveBeenCalled();
-                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             });
 
-            it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("saves %s after the client write and before ensureForClient, skipping flag realignment", async (mode) => {
+            it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("saves %s after the client write and before ensureAllForClient, skipping flag realignment", async (mode) => {
                 const w = setup(mode);
                 await w.withStartChange.update(branchId, 1, { ...w.patch, allowSaturdayService: true });
                 expect(serviceRecordLifecycleService.validatePeriodChange).toHaveBeenCalledWith(expect.objectContaining({
@@ -778,7 +779,7 @@ describe("ClientService", () => {
                 expect(prismaService.client.updateMany.mock.invocationCallOrder[0])
                     .toBeLessThan(w.startChange.applyInTransaction.mock.invocationCallOrder[0]!);
                 expect(w.startChange.applyInTransaction.mock.invocationCallOrder[0])
-                    .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
+                    .toBeLessThan(serviceRecordLifecycleService.ensureAllForClient.mock.invocationCallOrder[0]!);
                 expectNoDateWrites();
             });
 
@@ -814,16 +815,14 @@ describe("ClientService", () => {
                 expectNoDateWrites();
             });
 
-            it.each([7, 10])("restores legacy N only if ensureForClient changed it to %s", async (syncedN) => {
+            it.each([7, 10])("restores legacy N only if ensureAllForClient changed it to %s", async (syncedN) => {
                 const w = setup();
-                const recompute = jest.fn();
-                (serviceRecordLifecycleService as unknown as { recompute: jest.Mock }).recompute = recompute;
-                serviceRecordLifecycleService.ensureForClient.mockResolvedValue({ id: "case-1", requiredSessionCount: syncedN });
-                const updateCase = jest.fn();
-                (prismaService.service_record_case as unknown as { update: jest.Mock }).update = updateCase;
+                serviceRecordLifecycleService.ensureAllForClient.mockResolvedValue([{ id: "case-1", requiredSessionCount: syncedN }]);
+                const { recompute } = serviceRecordLifecycleService;
+                const { update: updateCase } = prismaService.service_record_case;
                 await w.withStartChange.update(branchId, 1, w.patch);
                 if (syncedN !== 10) {
-                    expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-1" }, data: { requiredSessionCount: 10 } });
+                    expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-1", branchId }, data: { requiredSessionCount: 10 } });
                     expect(recompute).toHaveBeenCalledWith("case-1", prismaService, expect.anything());
                 } else {
                     expect(updateCase).not.toHaveBeenCalled();
@@ -831,12 +830,46 @@ describe("ClientService", () => {
                 }
             });
 
+            it("restores each sibling's own required session count after start-date synchronization", async () => {
+                const w = setup();
+                const restoreByCase = new Map([
+                    ["case-1", 10],
+                    ["case-2", 12],
+                    ["case-3", 7],
+                ]);
+                serviceRecordLifecycleService.validatePeriodChange.mockResolvedValue({
+                    ...w.decision,
+                    cases: [...restoreByCase.keys()].map((caseId) => ({
+                        caseId,
+                        previousStartDate: w.decision.previousStartDate,
+                        recordedSessionCount: w.decision.recordedSessionCount,
+                    })),
+                });
+                w.startChange.applyInTransaction.mockResolvedValue({ restoreRequiredSessionCount: null, restoreByCase });
+                serviceRecordLifecycleService.ensureAllForClient.mockResolvedValue([
+                    { id: "case-2", requiredSessionCount: 7 },
+                    { id: "case-3", requiredSessionCount: 7 },
+                    { id: "case-1", requiredSessionCount: 7 },
+                ]);
+
+                await w.withStartChange.update(branchId, w.client.id, w.patch);
+
+                const { update: updateCase } = prismaService.service_record_case;
+                expect(updateCase).toHaveBeenCalledTimes(2);
+                expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-1", branchId }, data: { requiredSessionCount: 10 } });
+                expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-2", branchId }, data: { requiredSessionCount: 12 } });
+                const { recompute } = serviceRecordLifecycleService;
+                expect(recompute).toHaveBeenCalledTimes(2);
+                expect(recompute).toHaveBeenCalledWith("case-1", prismaService, expect.anything());
+                expect(recompute).toHaveBeenCalledWith("case-2", prismaService, expect.anything());
+            });
+
             it("propagates archive/apply failure and never runs lifecycle synchronization afterward", async () => {
                 const w = setup();
                 const failure = new Error("archive insert failed");
                 w.startChange.applyInTransaction.mockRejectedValue(failure);
                 await expect(w.withStartChange.update(branchId, 1, w.patch)).rejects.toBe(failure);
-                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             });
         });
 
@@ -1380,7 +1413,7 @@ describe("ClientService", () => {
             expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
             expect(mockClient.eDocId).toBeNull();
             expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalled();
         });
 
         it("links every matching contract by normalized phone after manual client creation", async () => {
@@ -2381,7 +2414,7 @@ describe("ClientService", () => {
                 });
 
                 expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(
                     existingClient.id,
                     prismaService,
                     KR_BUILTIN_CALENDAR,
@@ -2915,10 +2948,10 @@ describe("ClientService", () => {
                 expect(dayUpdate).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.updateMany).not.toHaveBeenCalled();
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(1);
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(1, prismaService, expect.anything());
+                expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(1, prismaService, expect.anything());
                 expect(callOrder(prismaService.client.updateMany))
-                    .toBeLessThan(callOrder(serviceRecordLifecycleService.ensureForClient));
+                    .toBeLessThan(callOrder(serviceRecordLifecycleService.ensureAllForClient));
             });
 
             it.each([
@@ -2945,7 +2978,7 @@ describe("ClientService", () => {
                 await withCollaborators.update(branchId, 1, { allowSundayService: false, allowHolidayService: false });
 
                 expectNoDateWrites();
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(3);
+                expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledTimes(3);
             });
 
             it("does not re-lay regardless of a stale preflight flag value", async () => {
@@ -2980,7 +3013,7 @@ describe("ClientService", () => {
                         endDate: new Date("2026-12-30T00:00:00Z"),
                     }),
                 });
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledTimes(1);
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.updateMany).not.toHaveBeenCalled();
             });
@@ -3237,7 +3270,7 @@ describe("ClientService", () => {
                 expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
                 expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
                     .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(
                     existingClient.id, expect.anything(), calendar,
                 );
             });
@@ -4129,7 +4162,7 @@ describe("ClientService", () => {
 
                 expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
                 expect(serviceRecordLifecycleService.validatePeriodChange).not.toHaveBeenCalled();
-                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
                 expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
                 expect(prismaService.eformsign_doc.findMany).toHaveBeenCalledWith(
                     expect.objectContaining({
@@ -4233,7 +4266,7 @@ describe("ClientService", () => {
             it("treats an empty update as relink-only even when lifecycle reconciliation would fail", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
-                serviceRecordLifecycleService.ensureForClient.mockRejectedValue(
+                serviceRecordLifecycleService.ensureAllForClient.mockRejectedValue(
                     new NotFoundException("Client not found"),
                 );
 
@@ -4242,7 +4275,7 @@ describe("ClientService", () => {
                 expect(prismaService.eformsign_doc.findMany).toHaveBeenCalled();
                 expect(prismaService.$transaction).not.toHaveBeenCalled();
                 expect(serviceRecordLifecycleService.validatePeriodChange).not.toHaveBeenCalled();
-                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
                 expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
             });
 
@@ -6478,7 +6511,7 @@ describe("ClientService", () => {
             expect(createClientUsecase.execute).toHaveBeenCalledWith(
                 branchId, expect.anything(), expect.anything(), calendar,
             );
-            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+            expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(
                 mockClient.id, expect.anything(), calendar,
             );
         });
@@ -6496,7 +6529,7 @@ describe("ClientService", () => {
             expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
                 branchId, expect.anything(), expect.anything(), expect.anything(), calendar, [],
             );
-            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+            expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(
                 mockClient.id, expect.anything(), calendar,
             );
         });
@@ -6513,7 +6546,7 @@ describe("ClientService", () => {
 
             expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
             loadedBeforeTransaction();
-            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+            expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(
                 existingClient.id, expect.anything(), calendar,
             );
         });
@@ -6530,7 +6563,7 @@ describe("ClientService", () => {
             expect(serviceRecordLifecycleService.resolveCalendarBeforeTransaction).toHaveBeenCalledWith(1);
             expect(serviceRecordLifecycleService.resolveCalendarBeforeTransaction.mock.invocationCallOrder[0]!)
                 .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
-            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
+            expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
         });
 
         it("terminateService loads the calendar before the transaction and passes it to the update", async () => {
@@ -6564,7 +6597,7 @@ describe("ClientService", () => {
             expect(updateClientUsecase.execute).toHaveBeenCalledWith(
                 branchId, 1, expect.anything(), expect.anything(), calendar,
             );
-            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
+            expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
         });
     });
 
@@ -6708,7 +6741,7 @@ describe("ClientService", () => {
                 errors: [{ pointer: "/id", code: "INVALID_VALUE", detail, location: "path" }],
             });
             expect(tx.client.updateMany).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
         };
@@ -6730,7 +6763,7 @@ describe("ClientService", () => {
             await expect(service.confirmBooking(branchId, 1)).rejects.toBeInstanceOf(NotFoundException);
 
             expect(tx.client.updateMany).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
         });
 
         it("answers a client deleted before the lock with not-found, not the write-set conflict, and writes nothing", async () => {
@@ -6743,7 +6776,7 @@ describe("ClientService", () => {
             expect(error).toBeInstanceOf(NotFoundException);
             expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
             expect(tx.client.updateMany).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
         });
@@ -6761,7 +6794,7 @@ describe("ClientService", () => {
             expect(error).toBeInstanceOf(ConflictException);
             expect((error as ConflictException).getResponse()).toMatchObject({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
             expect(tx.client.updateMany).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
         });
@@ -6834,13 +6867,13 @@ describe("ClientService", () => {
             expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
             expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
                 .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
-            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(1);
-            const [clientId, transactionArg, calendarArg] = serviceRecordLifecycleService.ensureForClient.mock.calls[0]!;
+            expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledTimes(1);
+            const [clientId, transactionArg, calendarArg] = serviceRecordLifecycleService.ensureAllForClient.mock.calls[0]!;
             expect(clientId).toBe(1);
             expect(transactionArg).toBe(tx);
             expect(calendarArg).toBe(calendar);
             expect(tx.client.updateMany.mock.invocationCallOrder[0]!)
-                .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
+                .toBeLessThan(serviceRecordLifecycleService.ensureAllForClient.mock.invocationCallOrder[0]!);
         });
 
         it("runs both follow-ups after commit and returns the post-commit client", async () => {
@@ -6871,7 +6904,7 @@ describe("ClientService", () => {
 
         it("rejects the confirm and runs neither follow-up when the lifecycle repair rejects", async () => {
             arrange(unconfirmedRow(), confirmedRow());
-            serviceRecordLifecycleService.ensureForClient.mockRejectedValue(new Error("lifecycle repair failed"));
+            serviceRecordLifecycleService.ensureAllForClient.mockRejectedValue(new Error("lifecycle repair failed"));
 
             await expect(service.confirmBooking(branchId, 1)).rejects.toThrow("lifecycle repair failed");
 
@@ -6886,7 +6919,7 @@ describe("ClientService", () => {
 
             await expect(service.confirmBooking(branchId, 1)).rejects.toBeInstanceOf(NotFoundException);
 
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
         });
 
@@ -6898,7 +6931,7 @@ describe("ClientService", () => {
             await expect(service.confirmBooking(branchId, 1)).resolves.toBe(row);
 
             expect(tx.client.updateMany).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
         });
@@ -6966,7 +6999,7 @@ describe("ClientService", () => {
             });
             expect(prismaService.client.updateMany).not.toHaveBeenCalled();
             expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
         });
 
         it("judges the locked row, not the preflight snapshot", async () => {
@@ -7079,13 +7112,14 @@ describe("ClientService", () => {
                 expect(result.serviceStatus).toBe("terminated");
                 expect(clientRepository.update).toHaveBeenCalledWith(branchId, result, prismaService);
                 expect(serviceRecordLifecycleService.validatePeriodChange).toHaveBeenCalledWith({
+                    branchId,
                     clientId: 1, endDate: new Date(expectedEnd),
                 }, prismaService);
                 expect(prismaService.employee_schedule.updateMany).toHaveBeenCalledWith({
                     where: { clientId: 1, branchId, replaced: false, terminatedAt: null },
                     data: { terminatedAt: new Date(now) },
                 });
-                expect(serviceRecordLifecycleService.markTerminated).toHaveBeenCalledWith(1, prismaService);
+                expect(serviceRecordLifecycleService.markTerminated).toHaveBeenCalledWith(1, prismaService, branchId);
             });
         });
 
@@ -7347,7 +7381,7 @@ describe("ClientService", () => {
                 expect(prismaService.client.updateMany).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
-                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
                 expect(serviceRecordLinkService.revoke).not.toHaveBeenCalled();
                 expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             };
@@ -7401,7 +7435,7 @@ describe("ClientService", () => {
                     where: { id: 1, branchId },
                     data: { serviceStatus: "replacement_requested" },
                 });
-                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalled();
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(20);
             });
         });
@@ -7830,7 +7864,7 @@ describe("ClientService", () => {
             expect(triggerService.syncEmployeeAssignmentRulesForSchedule).not.toHaveBeenCalled();
             expect(serviceRecordLinkService.revoke).not.toHaveBeenCalled();
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
         };
 
         it.each(invalidCases)(
@@ -7953,7 +7987,7 @@ describe("ClientService", () => {
                     response: expect.objectContaining({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" }),
                 });
                 expect(updateClientUsecase.execute).not.toHaveBeenCalled();
-                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
             });
         });
 

@@ -1,3 +1,5 @@
+import type { ResetServiceRecordLinkRequest } from "@babyjamjam/shared/types/service-record";
+import { withServiceRecordCase } from "../utils/case-selection";
 import { INITIAL_CONFIRM_CLIENT_CONFIG, type InitialDocumentTarget } from "@/lib/eformsign/initial-document-recovery-contract";
 import { api } from "@/lib/api/client";
 import {
@@ -149,27 +151,32 @@ export function normalizeServiceRecordOverview(value: unknown): ServiceRecordOve
 }
 
 export const serviceRecordsApi = {
-    getClientOverview: (clientId: number) =>
-        api.get<unknown>(`/admin/service-records/client/${clientId}`).then((response) => ({
+    adoptLegacyCase: (clientId: number, caseId: string, babyId: string) =>
+        api.post<{ caseId: string; babyId: string }>(
+            `/admin/service-records/client/${clientId}/cases/${encodeURIComponent(caseId)}/adopt`,
+            { babyId },
+        ),
+    getClientOverview: (clientId: number, caseId?: string) =>
+        api.get<unknown>(withServiceRecordCase(`/admin/service-records/client/${clientId}`, caseId)).then((response) => ({
             ...response,
             data: normalizeServiceRecordOverview(response.data),
         } as typeof response & { data: ServiceRecordOverview })),
-    getClientRevisionHistory: (clientId: number) =>
-        api.get<unknown>(`/admin/service-records/clients/${encodeURIComponent(String(clientId))}/revisions`)
+    getClientRevisionHistory: (clientId: number, caseId?: string) =>
+        api.get<unknown>(withServiceRecordCase(`/admin/service-records/clients/${encodeURIComponent(String(clientId))}/revisions`, caseId))
             .then((response) => ({
                 ...response,
                 data: normalizeServiceRecordRevisionHistory(response.data),
             } as typeof response & { data: ServiceRecordRevisionHistoryResponse })),
-    getClientRevisionChanges: (clientId: number, revisionId: string) =>
+    getClientRevisionChanges: (clientId: number, revisionId: string, caseId?: string) =>
         api.get<unknown>(
-            `/admin/service-records/clients/${encodeURIComponent(String(clientId))}/revisions/${encodeURIComponent(revisionId)}/changes`,
+            withServiceRecordCase(`/admin/service-records/clients/${encodeURIComponent(String(clientId))}/revisions/${encodeURIComponent(revisionId)}/changes`, caseId),
         ).then((response) => ({
             ...response,
             data: normalizeServiceRecordRevisionChanges(response.data),
         } as typeof response & { data: ServiceRecordRevisionChangesResponse })),
-    getClientCaregiverEditChanges: (clientId: number, editId: string) =>
+    getClientCaregiverEditChanges: (clientId: number, editId: string, caseId?: string) =>
         api.get<unknown>(
-            `/admin/service-records/clients/${encodeURIComponent(String(clientId))}/caregiver-edits/${encodeURIComponent(editId)}/changes`,
+            withServiceRecordCase(`/admin/service-records/clients/${encodeURIComponent(String(clientId))}/caregiver-edits/${encodeURIComponent(editId)}/changes`, caseId),
         ).then((response) => ({
             ...response,
             data: normalizeServiceRecordCaregiverEditChanges(response.data),
@@ -189,21 +196,21 @@ export const serviceRecordsApi = {
             INITIAL_CONFIRM_CLIENT_CONFIG,
         );
     },
-    keepPeriodMismatch: (clientId: number, sessionIndexes: number[]) =>
-        api.post<unknown>(`/admin/service-records/client/${clientId}/period-mismatch/keep`, { sessionIndexes })
+    keepPeriodMismatch: (clientId: number, sessionIndexes: number[], caseId?: string) =>
+        api.post<unknown>(withServiceRecordCase(`/admin/service-records/client/${clientId}/period-mismatch/keep`, caseId), { sessionIndexes })
             .then((response) => ({ ...response, data: normalizeKeepPeriodMismatch(response.data) })),
-    fitPeriodMismatch: (clientId: number) =>
-        api.post<unknown>(`/admin/service-records/client/${clientId}/period-mismatch/fit`, {})
+    fitPeriodMismatch: (clientId: number, caseId?: string) =>
+        api.post<unknown>(withServiceRecordCase(`/admin/service-records/client/${clientId}/period-mismatch/fit`, caseId), {})
             .then((response) => ({ ...response, data: normalizeFitPeriodMismatch(response.data) })),
     prepareLink: (scheduleId: number, request: PrepareServiceRecordLinkRequest = {}) =>
         api.post<PrepareServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/prepare-link`,
             request,
         ),
-    resetLink: (scheduleId: number) =>
+    resetLink: (scheduleId: number, request: ResetServiceRecordLinkRequest = {}) =>
         api.post<ResetServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/reset-link`,
-            {},
+            request,
         ),
     sendLink: (scheduleId: number, request: SendServiceRecordLinkRequest = {}) =>
         api.post<SendServiceRecordLinkResponse>(

@@ -202,7 +202,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "6e9d1ee56447ed88843db3a643455ed70235b24c413788da88926ad8b0098389"
+      "sourceDigest": "0407698373403b70d6ab7c63aea74b0937644662ddb09aa4133981c2ef5901bb"
     },
     {
       "name": "clients.get",
@@ -257,7 +257,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "6e9d1ee56447ed88843db3a643455ed70235b24c413788da88926ad8b0098389"
+      "sourceDigest": "0407698373403b70d6ab7c63aea74b0937644662ddb09aa4133981c2ef5901bb"
     },
     {
       "name": "consultations.list",
@@ -811,7 +811,7 @@
       "flagKey": "agent.capability.schedules.list",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee-schedule/employee-schedule-agent-capabilities.provider.ts",
-      "sourceDigest": "fff4d6bd89dd0970a598a5889f355f039831db8fd3b0090e68ac67455d7d3fcd"
+      "sourceDigest": "6c7558c27cc63ef43250a34e43f7989414b00a42f328c7b38ce70c398c1655ab"
     },
     {
       "name": "service-records.edit",

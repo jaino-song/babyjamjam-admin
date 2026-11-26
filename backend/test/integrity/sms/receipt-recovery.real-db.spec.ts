@@ -1656,7 +1656,11 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             apply(...prefix.map(migration), oldVerifier);
 
             const branch = await createBranch(upgrade, upgradeTracker);
-            const client = await createClient(upgrade, upgradeTracker, { branchId: branch.id });
+            const client = await upgrade.client.create({
+                data: { branchId: branch.id, name: `무결성 고객 ${randomUUID()}`, voucherClient: false },
+                select: { id: true },
+            });
+            upgradeTracker.track("client", client.id);
             const receiptRule = await createMessageTriggerRule(upgrade, upgradeTracker, { branchId: branch.id,
                 templateKey: "SERVICE_END_NOTICE", recipientType: "CLIENT", eventType: "SERVICE_END" });
             const recordRule = await upgrade.message_trigger_rule.upsert({ where: { id: "system:service_record_link" }, update: {},
@@ -1667,8 +1671,8 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             const record = { branchId: branch.id, ruleId: recordRule.id, templateKey: "SERVICE_RECORD_LINK",
                 recipientType: "PRIMARY_EMPLOYEE", scheduledFor: originalDue, recoveryReason: "record_link_pre_booking", recoveryEpoch: beforeDue };
             const receipt = { ...ordinary, recoveryReason: "live_unsigned_contract", recoveryEpoch: beforeDue };
-            // The upgrade starts before the standalone-issuance columns exist.
-            const omit = { standaloneRequestId: true, standaloneIssuedTokenId: true } as const;
+            // These standalone and per-recipient columns were added after both historical migrations.
+            const omit = { standaloneRequestId: true, standaloneIssuedTokenId: true, recipientEmployeeId: true } as const;
             const create = (data: Prisma.message_trigger_jobUncheckedCreateInput) => upgrade.message_trigger_job.create({ data, omit });
             const original = await create({ ...ordinary, dedupeKey: "ordinary" });
             const recordParent = await create({ ...record, dedupeKey: "record-parent", status: "canceled",

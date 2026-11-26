@@ -17,7 +17,7 @@ describe("EmployeeScheduleService", () => {
             extendExpiryForEndDate: jest.fn().mockResolvedValue(undefined),
         };
         const serviceRecordLifecycleService = {
-            ensureForClient: jest.fn().mockResolvedValue(undefined),
+            ensureAllForClient: jest.fn().mockResolvedValue([]),
             resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         };
         const transaction = {};
@@ -90,10 +90,10 @@ describe("EmployeeScheduleService", () => {
 
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
         expect(deleteUsecase.execute).toHaveBeenCalledWith("branch-1", schedule.id, transaction);
-        expect(serviceRecordLifecycleService.ensureForClient)
+        expect(serviceRecordLifecycleService.ensureAllForClient)
             .toHaveBeenCalledWith(schedule.clientId, transaction, undefined);
         expect(deleteUsecase.execute.mock.invocationCallOrder[0])
-            .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
+            .toBeLessThan(serviceRecordLifecycleService.ensureAllForClient.mock.invocationCallOrder[0]!);
     });
 
     it("keeps the scoped delete usecase responsible for a missing discovery row", async () => {
@@ -441,7 +441,7 @@ describe("EmployeeScheduleService assignment eligibility", () => {
             scheduleForServiceStart: jest.fn().mockResolvedValue(undefined),
         };
         const serviceRecordLifecycleService = {
-            ensureForClient: jest.fn().mockResolvedValue(undefined),
+            ensureAllForClient: jest.fn().mockResolvedValue([]),
             resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         };
         messageAutomationIntentService.fulfillScheduleIntent.mockImplementation(
@@ -511,7 +511,7 @@ describe("EmployeeScheduleService assignment eligibility", () => {
             expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
             expect(messageAutomationIntentService.fulfillScheduleIntent).not.toHaveBeenCalled();
             expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
         },
     );
 
@@ -536,7 +536,7 @@ describe("EmployeeScheduleService assignment eligibility", () => {
         expect(scheduleRepository.create).toHaveBeenCalledTimes(1);
         expect(messageAutomationIntentService.persistScheduleIntent).toHaveBeenCalledTimes(1);
         expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
-        expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(1);
+        expect(serviceRecordLifecycleService.ensureAllForClient).toHaveBeenCalledTimes(1);
     });
 
     it("refuses a client outside the authenticated branch before schedule, automation, or service-record side effects", async () => {
@@ -574,7 +574,7 @@ describe("EmployeeScheduleService assignment eligibility", () => {
         expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
         expect(messageAutomationIntentService.fulfillScheduleIntent).not.toHaveBeenCalled();
         expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycleService.ensureAllForClient).not.toHaveBeenCalled();
     });
 });
 
@@ -629,9 +629,9 @@ describe("EmployeeScheduleService lifecycle calendar", () => {
         expect(probe.state.forBranchWhileOpen).toEqual([false]);
         expect((probe.holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
             .toBeLessThan(probe.prisma.$transaction.mock.invocationCallOrder[0]!);
-        expect(probe.tables.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        expect(probe.tables.service_record_case.create).toHaveBeenCalledWith(expect.objectContaining({
             // 09-07..09-18 is ten business days; the branch closing on 09-14 leaves nine.
-            create: expect.objectContaining({ requiredSessionCount: 9 }),
+            data: expect.objectContaining({ requiredSessionCount: 9 }),
         }));
     });
 

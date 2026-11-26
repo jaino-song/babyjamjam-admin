@@ -1,3 +1,11 @@
+import { isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
+import { isRecordLinkGroup, recordLinkHash, recordLinkPhone, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED, RECORD_LINK_GROUP_LOG_MARKER } from "./service-record-link-group-source";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
+import { hasReconciledLegacyLinkRetry, readLegacyLinkOccurrence } from "./service-record-legacy-link-occurrence";
+import { hasConflictingUnboundCaseHistory } from "./service-record-token.service";
+import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
+import { hasApprovedRecordLinkSender, lockRecordLinkSchedule } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { RECEIPT_RECOVERY_PREFIX } from "domain/constants/receipt-job-recovery";
 import { MessageTriggerService } from "./message-trigger.service";
 import { SmsTriggerDeliverySkipError } from "./sms-trigger-payload-enricher.registry";
@@ -54,7 +62,7 @@ import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTri
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
-import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_RULE_ID, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
 import { MESSAGE_TRIGGER_JOB_REPOSITORY, IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 
 const INVALID_RETRY_SCHEDULE_REASON =
@@ -174,7 +182,8 @@ export class SmsRetryService {
         }
 
         const family = await this.logRepository.findRetryFamilyInBranch(branchId, sourceLog.id);
-        if (family.some((log) => isQuietHoursCanceled(log) || (log.id !== sourceLog.id && isRetryFamilyBlocker(log)))) {
+        if (family.some(log => isQuietHoursCanceled(log)
+            || (log.id !== sourceLog.id && isRetryFamilyBlocker(log) && !hasReconciledLegacyLinkRetry(log, family)))) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
@@ -236,16 +245,19 @@ export class SmsRetryService {
     ): Promise<MessageLogEntity | null> {
         if (leaseHeld && !leaseHeld()) return sourceLog;
         if (isQuietHoursCanceled(sourceLog)) return sourceLog;
+        const grouped = await this.isGroupedRetrySource(sourceLog);
+        if (grouped && (!sourceLog.branchId || !this.quietHours)) return null;
         if (sourceLog.variables["quietHoursDisposition"] === "DEFER") {
             if (sourceLog.status === "pending" && sourceLog.providerAcceptanceState === "prepared"
                 && sourceLog.providerCallStartedAt === null && sourceLog.providerAcceptedAt === null && sourceLog.aligoMid === null
                 && ["manual", "automatic"].includes(sourceLog.variables["retryInvocation"] ?? "")) {
-                return this.resumeQuietRetry(sourceLog, invocation, leaseHeld);
+                return this.resumeQuietRetry(sourceLog, invocation, leaseHeld, grouped);
             }
             // 실제 거절 이후에는 안정된 quiet 이력을 보존한 채 기존 재시도 경로를 따른다.
             // 그 외 pending/시작됨/불확실/수락됨 상태를 새 시도로 되살리지 않는다.
             if (sourceLog.status !== "failed" || sourceLog.providerAcceptanceState !== "rejected") return sourceLog;
         }
+        if (grouped && !this.hasConfirmedRecordLinkRejection(sourceLog)) return null;
         if (invocation === "automatic" && sourceLog.variables["origin"] === "ADMIN_DIRECT"
             && sourceLog.variables["manualQueueMode"] === "internal") return sourceLog;
         if (sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
@@ -290,6 +302,11 @@ export class SmsRetryService {
                 sourceLog.branchId,
                 sourceLog.triggerJobId,
                 async (transaction, rulePolicy): Promise<AutomaticRetryBoundary> => {
+                    if ((grouped && !await isBabyRecordRolloutEnabled(transaction, sourceLog.branchId!))
+                        || !await this.permitsRecordLinkRetry(sourceLog, transaction, invocation)) {
+                        await this.retireRefusedAutomaticLegacyRecordLinkRetry(sourceLog, transaction, invocation, grouped);
+                        return { kind: "claimed", log: null };
+                    }
                     const policySkip = await this.supersedeForRulePolicy(transaction, sourceLog, rulePolicy);
                     if (policySkip) return { kind: "terminal", log: policySkip };
 
@@ -416,50 +433,186 @@ export class SmsRetryService {
             return sourceLog;
         }
         const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
-        await this.checkQuietRetryBeforeStart(sourceLog);
-        const retryStart = await this.logRepository.startRetryAttempt(
-            sourceLog,
-            this.createRetryAttempt(sourceLog, retryDelayMs),
-            invocation,
-        );
-        if (retryStart.kind === "lost") {
-            this.logger.warn(`[Retry] SMS log ${sourceLog.id} was already claimed`);
-            return null;
-        }
-        if (retryStart.kind === "suppressed") {
-            this.logger.warn(
-                `[Retry] Skipped automatic service-end SMS log ${sourceLog.id}; client was already notified`,
-            );
-            return retryStart.log;
-        }
-        const retryLog = retryStart.log;
-
-        if (retryLog.branchId) {
-            try {
-                await this.messageSenderApprovalService.ensureApproved(retryLog.branchId);
-            } catch (approvalError) {
-                const reason = approvalError instanceof Error ? approvalError.message : String(approvalError);
-                this.logger.warn(`[Retry] SMS blocked by approval gate for log ${retryLog.id} (branchId=${retryLog.branchId}): ${reason}`);
-                retryLog.status = "failed";
-                retryLog.errorMessage = reason;
-                retryLog.attempts += 1;
-                retryLog.lastAttemptAt = new Date(Date.now());
-                retryLog.nextRetryAt = null;
-                await this.logRepository.update(retryLog);
-                return retryLog;
+        const start = async (tx?: Prisma.TransactionClient) => {
+            if (grouped && (!tx || !await isBabyRecordRolloutEnabled(tx, sourceLog.branchId!))) return null;
+            if (tx && !await this.permitsRecordLinkRetry(sourceLog, tx, invocation)) {
+                await this.retireRefusedAutomaticLegacyRecordLinkRetry(sourceLog, tx, invocation, grouped);
+                return null;
             }
-        }
-
-        const providerAttempt = await this.admitRetry(sourceLog, retryLog, undefined, invocation, leaseHeld, standaloneSnapshot);
+            await this.checkQuietRetryBeforeStart(sourceLog, tx);
+            const retryStart = await this.logRepository.startRetryAttempt(
+                sourceLog,
+                this.createRetryAttempt(sourceLog, retryDelayMs),
+                invocation,
+                ...(tx ? [tx] as const : []),
+            );
+            if (retryStart.kind === "lost") {
+                this.logger.warn(`[Retry] SMS log ${sourceLog.id} was already claimed`);
+                return null;
+            }
+            if (retryStart.kind === "suppressed") {
+                this.logger.warn(`[Retry] Skipped automatic service-end SMS log ${sourceLog.id}; client was already notified`);
+                return { retryLog: retryStart.log, providerAttempt: null };
+            }
+            const retryLog = retryStart.log;
+            if (retryLog.branchId) {
+                try {
+                    await this.messageSenderApprovalService.ensureApproved(retryLog.branchId);
+                } catch (approvalError) {
+                    const reason = approvalError instanceof Error ? approvalError.message : String(approvalError);
+                    this.logger.warn(`[Retry] SMS blocked by approval gate for log ${retryLog.id} (branchId=${retryLog.branchId}): ${reason}`);
+                    retryLog.status = "failed";
+                    retryLog.errorMessage = reason;
+                    retryLog.attempts += 1;
+                    retryLog.lastAttemptAt = new Date(Date.now());
+                    retryLog.nextRetryAt = null;
+                    if (tx) await this.logRepository.update(retryLog, tx);
+                    else await this.logRepository.update(retryLog);
+                    return { retryLog, providerAttempt: null };
+                }
+            }
+            const providerAttempt = await this.admitRetry(sourceLog, retryLog, tx, invocation, leaseHeld, standaloneSnapshot);
+            return { retryLog, providerAttempt };
+        };
+        const admitted = sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY && this.quietHours && sourceLog.branchId
+            ? await this.quietHours.runAdmission(sourceLog.branchId, sourceLog.receiver, (_decision, tx) => start(tx))
+            : await start();
+        if (!admitted) return null;
+        const { retryLog, providerAttempt } = admitted;
         if (!providerAttempt) return this.quietDeferredLogs.has(retryLog) ? this.logRepository.findByIdInBranch(retryLog.branchId!, retryLog.id) : retryLog;
 
         return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation, retryDelayMs, standaloneSnapshot);
+    }
+
+    private async retireRefusedAutomaticLegacyRecordLinkRetry(
+        source: MessageLogEntity,
+        tx: Prisma.TransactionClient,
+        invocation: MessageRetryInvocation,
+        grouped: boolean,
+    ): Promise<void> {
+        if (invocation !== "automatic" || grouped || source.templateKey !== SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY
+            || !source.branchId || !source.nextRetryAt) return;
+
+        // Retire the retry without rewriting provider evidence or clearing a concurrent update.
+        await tx.message_log.updateMany({
+            where: {
+                id: source.id,
+                branchId: source.branchId,
+                status: source.status,
+                providerAcceptanceState: source.providerAcceptanceState,
+                nextRetryAt: source.nextRetryAt,
+                updatedAt: source.updatedAt,
+            },
+            data: { nextRetryAt: null },
+        });
+    }
+
+    private async isGroupedRetrySource(source: MessageLogEntity): Promise<boolean> {
+        if (Object.prototype.hasOwnProperty.call(source.variables, RECORD_LINK_GROUP_LOG_MARKER)) return true;
+        if (source.templateKey !== SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY || !source.branchId || !source.triggerJobId) return false;
+        const job = await this.jobRepository?.findByIdInBranch?.(source.branchId, source.triggerJobId);
+        return !!job && isRecordLinkGroup(job);
+    }
+
+    private hasConfirmedRecordLinkRejection(source: MessageLogEntity): boolean {
+        return !source.isProviderOutcomeUncertain() && source.variables["retrySafety"] !== "uncertain"
+            && (source.providerAcceptanceState === "rejected" || source.providerAcceptanceState === "reconciled_not_delivered");
+    }
+
+    private async permitsRecordLinkRetry(source: MessageLogEntity, tx: Prisma.TransactionClient, invocation: MessageRetryInvocation): Promise<boolean> {
+        const marked = Object.prototype.hasOwnProperty.call(source.variables, RECORD_LINK_GROUP_LOG_MARKER);
+        if (source.templateKey !== SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY || !source.branchId) return !marked;
+        const row = source.triggerJobId ? await tx.message_trigger_job.findUnique({
+            where: { id: source.triggerJobId, branchId: source.branchId },
+        }) : null;
+        if (!row || !isRecordLinkGroup(row)) {
+            return !marked && await this.permitsLegacyRecordLinkRetry(source, tx, invocation, row);
+        }
+        if (!this.hasConfirmedRecordLinkRejection(source)) return false;
+        const job = await this.jobRepository?.findByIdInBranch(source.branchId, row.id, tx);
+        if (!job || job.status === "canceled" || !this.smsTriggerDeliveryService
+            || !await resolveRecordLinkGroup(tx, job, true) || !await hasApprovedRecordLinkSender(tx, source.branchId)) return false;
+        const canonical = await this.smsTriggerDeliveryService.resolveCanonicalDeliverySnapshot(job, tx);
+        return source.receiver === canonical.receiver && source.messageBody === canonical.message;
+    }
+
+    private async permitsLegacyRecordLinkRetry(
+        source: MessageLogEntity,
+        tx: Prisma.TransactionClient,
+        invocation: MessageRetryInvocation,
+        job: Awaited<ReturnType<Prisma.TransactionClient["message_trigger_job"]["findUnique"]>>,
+    ): Promise<boolean> {
+        const branchId = source.branchId!;
+        const scheduleId = job?.employeeScheduleId ?? Number(source.variables["scheduleId"]);
+        const clientId = job?.clientId ?? source.clientId;
+        // Unscoped historical audit rows cannot establish an occurrence.
+        if (!scheduleId || !clientId) return !this.quietHours;
+        if (job && (job.ruleId !== SERVICE_RECORD_LINK_RULE_ID || job.canceledByUser || job.status === "canceled")) return false;
+        if (!Number.isSafeInteger(scheduleId) || !this.hasConfirmedRecordLinkRejection(source)) return false;
+
+        const scope = { branchId, clientId };
+        await lockServiceRecordWriteSet(tx, { ...scope, scheduleIds: [scheduleId] });
+        await lockRecordLinkSchedule(tx, scheduleId);
+        const schedule = await tx.employee_schedule.findFirst({
+            where: { ...scope, id: scheduleId, replaced: false, terminatedAt: null, client: { branchId, deletedAt: null },
+                primaryEmployee: { branchId, deletedAt: null } },
+            include: { client: true, primaryEmployee: true },
+        });
+        const latest = await tx.employee_schedule.findFirst({
+            where: { ...scope, replaced: false, terminatedAt: null }, orderBy: { id: "desc" }, select: { id: true },
+        });
+        if (!schedule || latest?.id !== scheduleId || schedule.client.serviceStatus === "terminated"
+            || getEffectiveClientServiceStatus(schedule.client.serviceStatus, schedule.client.startDate, schedule.client.endDate,
+                schedule.client.bookingConfirmedAt) === "pre_booking"
+            || !await allowsLegacyServiceRecordLink(tx, schedule)
+            || (invocation === "automatic" && !schedule.primaryEmployee.smsAutomationEnabled)
+            || !await hasApprovedRecordLinkSender(tx, branchId)) return false;
+
+        const employeeId = schedule.primaryEmployeeId;
+        const phone = recordLinkPhone(schedule.primaryEmployee.phone);
+        if (!phone || recordLinkPhone(source.receiver) !== phone) return false;
+        const legacy = await readLegacyLinkOccurrence(tx, { ...scope, scheduleId, incarnationId: schedule.incarnationId, employeeId, phone });
+        const proof = legacy.rejected.find(log => log.id === source.id);
+        if (legacy.blocked || !proof?.credential || proof.messageBody !== source.messageBody) return false;
+        const grouped = await tx.message_trigger_job.findFirst({
+            where: { ...scope, employeeScheduleId: scheduleId, recipientEmployeeId: employeeId, ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                payload: { path: ["scheduleIncarnationId"], equals: schedule.incarnationId },
+                status: { not: "canceled" } },
+            select: { id: true },
+        });
+        if (grouped) return false;
+        const target = await resolveServiceRecordCaseTarget(tx, scope);
+        if (target.kind !== "resolved") return false;
+        const record = await tx.service_record_case.findFirst({
+            where: { ...scope, id: target.caseId, finalizedAt: null }, select: { id: true },
+        });
+        if (!record) return false;
+        if (target.babyId && !await tx.service_record_baby_assignment.findFirst({
+            where: { ...scope, scheduleId, employeeId, babyId: target.babyId, activeOwner: true, endedAt: null, teamSlot: { active: true } },
+            select: { id: true },
+        })) return false;
+        const token = await tx.service_record_token.findFirst({
+            where: { branchId, scheduleId, employeeId, linkTokenHash: proof.credential, expectedPhoneHash: recordLinkHash(phone),
+                OR: [{ serviceRecordCaseId: target.caseId }, { serviceRecordCaseId: null }],
+                active: true, revokedAt: null, lockedAt: null, expiresAt: { gt: new Date() } },
+            select: { serviceRecordCaseId: true },
+        });
+        return Boolean(token && (token.serviceRecordCaseId || !target.babyId
+            || !await hasConflictingUnboundCaseHistory(tx, { ...scope, scheduleId, employeeId, babyId: target.babyId })));
     }
 
     private async admitRetry(source: MessageLogEntity, retry: MessageLogEntity, transaction: Prisma.TransactionClient | undefined,
         invocation: MessageRetryInvocation, leaseHeld?: () => boolean, standaloneSnapshot?: Readonly<SmsTriggerDeliverySnapshot>): Promise<MessageLogEntity | null> {
         return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, retry.branchId, retry.receiver,
             async (decision, tx, revision) => {
+                if (!tx && Object.prototype.hasOwnProperty.call(source.variables, RECORD_LINK_GROUP_LOG_MARKER)) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+                if (tx && !await this.permitsRecordLinkRetry(source, tx, invocation)) {
+                    retry.markRetrySuperseded(RECORD_LINK_GROUP_CHANGED);
+                    await this.logRepository.update(retry, tx);
+                    return null;
+                }
                 if (decision.action === "DEFER") {
                     if (!tx || !revision) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                     const storedSource = await this.logRepository.findByIdInBranch(source.branchId!, source.id, tx);
@@ -534,7 +687,7 @@ export class SmsRetryService {
     }
 
     /** Resume the same prepared acceptance; never create another retry attempt for quiet waiting. */
-    private async resumeQuietRetry(retry: MessageLogEntity, invocation: MessageRetryInvocation, leaseHeld?: () => boolean): Promise<MessageLogEntity | null> {
+    private async resumeQuietRetry(retry: MessageLogEntity, invocation: MessageRetryInvocation, leaseHeld?: () => boolean, grouped = false): Promise<MessageLogEntity | null> {
         const hold = parseMessageQuietHold(retry.variables);
         const sourceId = Number(retry.variables["retryOfLogId"]);
         if (!hold || !retry.branchId || !this.quietHours || !Number.isSafeInteger(sourceId) || sourceId <= 0) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
@@ -559,6 +712,7 @@ export class SmsRetryService {
         const retryDelayMs = await this.getRetryDelayMs(retry.branchId);
         const resume = (transaction?: Prisma.TransactionClient, rulePolicy?: AutomaticRetryRulePolicy) => this.quietHours!.runAdmission(retry.branchId!, retry.receiver, async (_decision, tx) => {
             if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            if (grouped && !await isBabyRecordRolloutEnabled(tx, retry.branchId!)) return null;
             const current = await this.logRepository.findByIdInBranch(retry.branchId!, retry.id, tx);
             const source = await this.logRepository.findByIdInBranch(retry.branchId!, sourceId, tx);
             if (!current || !source || current.status !== "pending" || current.provider !== "aligo_sms" || source.provider !== "aligo_sms"
@@ -597,7 +751,7 @@ export class SmsRetryService {
             if (current.triggerJobId) {
                 const job = this.jobRepository && await this.jobRepository.findByIdInBranch(current.branchId!, current.triggerJobId, tx);
                 if (!job || job.scheduledFor.getTime() !== currentHold.originalScheduledFor.getTime()) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-                if (current.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
+                if (current.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY && !grouped) {
                     const schedule = job.employeeScheduleId ? await tx.employee_schedule.findFirst({ where: { id: job.employeeScheduleId, branchId: current.branchId! } }) : null;
                     let token: string | null = null;
                     try { token = new URL(job.payload.buttonUrl ?? "").pathname.split("/service-record/")[1] ?? null; } catch { /* Invalid links fail closed below. */ }
@@ -651,6 +805,11 @@ export class SmsRetryService {
                         await this.logRepository.transitionQuietRetry(current, decision.action === "DEFER"
                             ? { ...currentHold, releaseAt: new Date(Math.max(currentHold.releaseAt.getTime(), decision.reevaluateAt.getTime())) } : currentHold,
                             decision.action === "CANCEL", finalTx);
+                        return null;
+                    }
+                    if (!await this.permitsRecordLinkRetry(finalSource, finalTx, explicitManual ? "manual" : "automatic")) {
+                        finalCurrent.markRetrySuperseded(RECORD_LINK_GROUP_CHANGED);
+                        await this.logRepository.update(finalCurrent, finalTx);
                         return null;
                     }
                     if (leaseHeld && !leaseHeld()) return null;
@@ -937,8 +1096,10 @@ export class SmsRetryService {
         const scheduledDate = isScheduledInFuture ? schedule.scheduledDate : undefined;
         const scheduledTime = isScheduledInFuture ? schedule.scheduledTime : undefined;
 
-        const confidential = Boolean(authorizedSnapshot?.standaloneLink);
-        if (Object.prototype.hasOwnProperty.call(providerAttempt.variables, STANDALONE_RECEIPT_LOG_REFERENCE) && !confidential) {
+        const standalone = Boolean(authorizedSnapshot?.standaloneLink);
+        const recordGroup = Object.prototype.hasOwnProperty.call(providerAttempt.variables, RECORD_LINK_GROUP_LOG_MARKER);
+        const confidential = standalone || recordGroup;
+        if (Object.prototype.hasOwnProperty.call(providerAttempt.variables, STANDALONE_RECEIPT_LOG_REFERENCE) && !standalone) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         try {
@@ -962,7 +1123,8 @@ export class SmsRetryService {
                 result,
                 countSmsRecipients(authorizedSnapshot?.receiver ?? providerAttempt.receiver),
             );
-            const providerMessage = confidential ? "Standalone receipt delivery rejected" : this.providerResponseMessage(result);
+            const providerMessage = standalone ? "Standalone receipt delivery rejected"
+                : recordGroup ? "제공기록지 링크 문자 발송이 거절되었습니다" : this.providerResponseMessage(result);
             if (providerOutcome === "rejected") {
                 this.markSmsRetryRejected(providerAttempt, providerMessage, invocation, retryDelayMs);
                 // 수동 재시도의 주차 정책은 변경하지 않는다.
@@ -1039,11 +1201,13 @@ export class SmsRetryService {
                 );
             }
             await this.logRepository.update(providerAttempt);
-            this.logger.log(confidential ? `[Retry] Standalone receipt log ${providerAttempt.id} accepted`
+            this.logger.log(confidential ? `[Retry] SMS log ${providerAttempt.id} accepted`
                 : `[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${providerAttempt.receiver}`);
             return providerAttempt;
         } catch (error) {
-            const errorMessage = confidential ? "Standalone receipt delivery outcome unavailable" : error instanceof Error ? error.message : String(error);
+            const errorMessage = standalone ? "Standalone receipt delivery outcome unavailable"
+                : recordGroup ? "제공기록지 링크 문자 발송 결과를 확인할 수 없습니다"
+                : error instanceof Error ? error.message : String(error);
             this.markSmsRetryUncertain(providerAttempt, errorMessage);
             await this.logRepository.update(providerAttempt);
             await this.fenceSourceLogAfterUnidentifiableOutcome(

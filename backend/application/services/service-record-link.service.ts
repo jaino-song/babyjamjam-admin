@@ -1,12 +1,17 @@
+import {
+    BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold, requireBabyRecordRollout,
+} from "application/policies/baby-record-rollout.policy";
+import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { randomUUID } from "node:crypto";
 
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, type OnModuleInit, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { ordinaryAutomationJobSql } from "application/utils/message-automation-record-sql";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -45,11 +50,14 @@ import {
     MESSAGE_TRIGGER_RULE_BRANCH_OVERRIDE_REPOSITORY,
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
+import { ServiceRecordLinkGroupService, type RecordLinkSendSelection } from "./service-record-link-group.service";
+import { recordLinkPhone } from "./service-record-link-group-source";
 import { ServiceRecordTokenService } from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { MessageTemplateAutomationLockService } from "./message-template-automation-lock.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "./message-automation-activation.service";
+import { MessageTriggerService } from "./message-trigger.service";
 import {
     buildServiceRecordLinkMessage,
     DEFAULT_MOBILE_SERVICE_RECORD_BASE_URL,
@@ -108,7 +116,7 @@ function readStoredCustomVariables(
  * Message trigger scheduler later dispatches it and writes retryable SMS logs.
  */
 @Injectable()
-export class ServiceRecordLinkService {
+export class ServiceRecordLinkService implements OnModuleInit {
     private readonly logger = new Logger(ServiceRecordLinkService.name);
 
     constructor(
@@ -126,7 +134,13 @@ export class ServiceRecordLinkService {
         @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
         @Optional() private readonly branchLock?: MessageAutomationBranchLockService,
         @Optional() private readonly automationActivationService?: MessageAutomationActivationService,
+        @Optional() private readonly linkGroups?: ServiceRecordLinkGroupService,
+        @Optional() private readonly messageTriggers?: MessageTriggerService,
     ) {}
+
+    onModuleInit(): void {
+        if (this.linkGroups) this.messageTriggers?.registerRecordLinkGroups(this.linkGroups);
+    }
 
     /** The owning write has already acquired the automation branch lock. */
     async observeAssignmentInTransaction(tx: Prisma.TransactionClient, branchId: string, scheduleId: number): Promise<boolean> {
@@ -152,10 +166,12 @@ export class ServiceRecordLinkService {
             include: { client: true, primaryEmployee: true },
             orderBy: { id: "asc" },
         });
+        const eligible = [];
         for (const schedule of schedules) {
-            await observeRecordLinkBlock(tx, schedule, now, after);
+            if (await allowsLegacyServiceRecordLink(tx, schedule)) eligible.push(schedule);
         }
-        await recordLinkTransition(tx, branchId, clientId, after, now, allowRecovery);
+        for (const schedule of eligible) await observeRecordLinkBlock(tx, schedule, now, after);
+        await recordLinkTransition(tx, branchId, clientId, after, now, allowRecovery && eligible.length > 0);
     }
 
     async recheckClientRecovery(branchId: string, clientId: number): Promise<void> {
@@ -216,6 +232,7 @@ export class ServiceRecordLinkService {
                 ? await readRecordLinkAssignment(tx, candidate.branch_id, original.employeeScheduleId)
                 : null;
             if (!original.clientId || !recordLinkAssignmentMatches(schedule, candidate.branch_id, original.clientId, now)
+                || !await allowsLegacyServiceRecordLink(tx, schedule)
                 || !matchesRecordLinkOccurrence(original.payload, schedule)
                 || !permitsRecordLinkRecovery(recordLinkClientStatus(schedule.client, now))
                 || !(await hasApprovedRecordLinkSender(tx, candidate.branch_id))
@@ -272,7 +289,7 @@ export class ServiceRecordLinkService {
                 await lockRecordLinkSchedule(tx, eligible.schedule.id);
                 const current = await read(tx);
                 if (!current || current.schedule.incarnationId !== eligible.schedule.incarnationId
-                    || current.schedule.primaryEmployee.phone !== pendingJob.recipientPhone
+                    || this.normalizePhone(current.schedule.primaryEmployee.phone) !== this.normalizePhone(pendingJob.recipientPhone ?? "")
                     || current.schedule.client.name !== pendingJob.payload.clientName
                     || current.schedule.primaryEmployee.name !== pendingJob.payload.employeeName
                     || this.formatDate(current.schedule.startDate) !== pendingJob.payload.templateVariables["serviceStartDate"]
@@ -332,6 +349,25 @@ export class ServiceRecordLinkService {
         try {
             if (options.rescheduleAutomatic && options.branchId
                 && await this.recheckRecovery({ branchId: options.branchId, scheduleId })) return true;
+            let historicalOnly = false;
+            if (this.linkGroups && !options.taskAutomationReference) {
+                const schedule = await this.prisma.employee_schedule.findFirst({
+                    where: { id: scheduleId, ...(options.branchId ? { branchId: options.branchId } : {}), replaced: false,
+                        terminatedAt: null, client: { deletedAt: null, fetalConfirmation: "CONFIRMED" } },
+                    select: { id: true, branchId: true, clientId: true, primaryEmployeeId: true,
+                        client: { select: { fetalConfirmation: true } } },
+                });
+                if (schedule?.branchId) {
+                    historicalOnly = !await this.scalarLinkNeedsRollout(this.prisma, schedule);
+                    if (!historicalOnly && !(options.rescheduleAutomatic
+                        && await this.hasLegacyAutomaticReservation({ ...schedule, branchId: schedule.branchId }))) {
+                        if (!await this.ensureSystemRule(schedule.branchId, false, true)) {
+                            throw new BabyRecordRolloutPausedException();
+                        }
+                        return await this.linkGroups.schedule(schedule.branchId, scheduleId);
+                    }
+                }
+            }
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
@@ -339,6 +375,7 @@ export class ServiceRecordLinkService {
                 taskAutomationReference: options.taskAutomationReference,
                 rescheduleAutomatic: options.rescheduleAutomatic,
                 branchId: options.branchId,
+                historicalOnly,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -349,6 +386,7 @@ export class ServiceRecordLinkService {
         } catch (error) {
             // Missing/legacy no-branch schedules were a silent no-op before the refactor; keep them log-free.
             if (error instanceof NotFoundException) return false;
+            if (error instanceof BabyRecordRolloutPausedException) throw error;
             captureServiceRecordError(error, {
                 operation: "link-schedule",
                 handled: false,
@@ -359,6 +397,53 @@ export class ServiceRecordLinkService {
         }
     }
 
+    private async scalarLinkNeedsRollout(
+        db: Prisma.TransactionClient,
+        schedule: Parameters<typeof allowsLegacyServiceRecordLink>[1],
+        taskAutomation = false,
+    ) {
+        if (schedule.client.fetalConfirmation !== "CONFIRMED") return false;
+        if (taskAutomation || !schedule.branchId) return true;
+        const source = await readBackfilledScalarHousehold(db, { branchId: schedule.branchId, clientId: schedule.clientId });
+        return source?.scheduleId !== schedule.id || source.employeeId !== schedule.primaryEmployeeId;
+    }
+
+    private async lockScalarLinkSource(
+        tx: Prisma.TransactionClient,
+        expected: { branchId: string; clientId: number; id: number; primaryEmployeeId: number },
+        taskAutomation = false,
+        wasHistorical = false,
+    ) {
+        const { branchId, clientId, id } = expected;
+        await lockServiceRecordWriteSet(tx, { branchId, clientId, scheduleIds: [id] });
+        const current = await tx.employee_schedule.findFirst({
+            where: { branchId, clientId, id, replaced: false, terminatedAt: null, client: { deletedAt: null } },
+            include: { client: true, primaryEmployee: true },
+        });
+        if (!current || current.primaryEmployeeId !== expected.primaryEmployeeId
+            || !await allowsLegacyServiceRecordLink(tx, current)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        if (await this.scalarLinkNeedsRollout(tx, current, taskAutomation)) {
+            if (wasHistorical) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            await requireBabyRecordRollout(tx, branchId);
+        }
+        return current;
+    }
+
+    private async hasLegacyAutomaticReservation(schedule: Parameters<typeof allowsLegacyServiceRecordLink>[1] & { branchId: string }): Promise<boolean> {
+        const { id, branchId, clientId, primaryEmployeeId } = schedule;
+        const job = await this.prisma.message_trigger_job.findFirst({
+            where: { branchId, clientId, employeeScheduleId: id, ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, recipientEmployeeId: null, canceledByUser: false,
+                status: { in: ["pending", "needs_setup"] },
+                dedupeKey: { in: [serviceRecordAutomaticJobKey(id), serviceRecordAutomaticJobKey(id, primaryEmployeeId)] },
+                payload: { path: ["employeeId"], equals: primaryEmployeeId } },
+            select: { id: true },
+        });
+        return !!job && await allowsLegacyServiceRecordLink(this.prisma, schedule);
+    }
+
     /**
      * Reuse the assignment's active link when possible and enqueue immediate dispatch.
      * Unlike the assignment hook, errors are intentionally surfaced to the caller.
@@ -367,6 +452,7 @@ export class ServiceRecordLinkService {
         scheduleId: number,
         preparedLinkToken?: string,
         recipientPhone?: string,
+        actorUserId?: string,
     ): Promise<{ scheduledFor: Date; jobId: string }> {
         const scheduledFor = new Date();
         const result = await this.issueServiceRecordLinkJob(scheduleId, {
@@ -376,6 +462,7 @@ export class ServiceRecordLinkService {
             preparedLinkToken,
             isManualSend: true,
             recipientPhone,
+            actorUserId,
         });
         if (!result.jobId) {
             throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -391,6 +478,11 @@ export class ServiceRecordLinkService {
         return { scheduledFor: result.scheduledFor, jobId: result.jobId };
     }
 
+    async sendGroupNow(branchId: string, scheduleId: number, selection: RecordLinkSendSelection, actorUserId: string) {
+        await this.ensureSystemRule(branchId, true, true);
+        return this.linkGroups!.send(branchId, scheduleId, selection, actorUserId);
+    }
+
     /**
      * Return the active assignment URL when one exists. Otherwise prepare the exact
      * inactive URL shown in the admin composer until sendNow activates the same row.
@@ -404,7 +496,7 @@ export class ServiceRecordLinkService {
             where: { id: scheduleId },
             include: {
                 primaryEmployee: true,
-                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true, fetalConfirmation: true } },
             },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
@@ -412,6 +504,9 @@ export class ServiceRecordLinkService {
         }
 
         this.assertClientCanReceiveLink(schedule.client);
+        if (!await allowsLegacyServiceRecordLink(this.prisma, schedule)) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -452,7 +547,7 @@ export class ServiceRecordLinkService {
             where: { id: scheduleId },
             include: {
                 primaryEmployee: true,
-                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true, fetalConfirmation: true } },
             },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
@@ -460,6 +555,9 @@ export class ServiceRecordLinkService {
         }
 
         this.assertClientCanReceiveLink(schedule.client);
+        if (!await allowsLegacyServiceRecordLink(this.prisma, schedule)) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -471,7 +569,43 @@ export class ServiceRecordLinkService {
             }));
         }
 
-        // The cancel runs under the schedule fence and commits before
+        if (schedule.client.fetalConfirmation === "CONFIRMED" && this.branchLock) {
+            const branchId = schedule.branchId;
+            const calendar = await this.lifecycleService?.resolveCalendarBeforeTransaction(schedule.clientId);
+            return this.branchLock.runExclusive(branchId, async tx => {
+                const current = await this.lockScalarLinkSource(tx, { ...schedule, branchId });
+                this.assertClientCanReceiveLink(current.client);
+                if (current.primaryEmployee.phone !== employee.phone) {
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+                }
+                await lockRecordLinkSchedule(tx, scheduleId);
+                const reason = "Service record link reset without resend";
+                const ordinary = ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` });
+                await tx.$executeRaw`
+                    WITH cancellable AS (
+                        SELECT id FROM message_trigger_job
+                        WHERE branch_id = ${branchId}::uuid AND employee_schedule_id = ${scheduleId}
+                          AND rule_id = ${SERVICE_RECORD_LINK_RULE_ID} AND ${ordinary}
+                          AND status IN ('pending', 'processing', 'needs_setup')
+                        ORDER BY id FOR UPDATE
+                    )
+                    UPDATE message_trigger_job job SET status = 'canceled', canceled_at = now(),
+                        cancel_reason = ${reason}, claim_token = NULL, updated_at = now()
+                    FROM cancellable WHERE job.id = cancellable.id
+                      AND job.status IN ('pending', 'processing', 'needs_setup')
+                `;
+                await this.supersedeRetryableServiceRecordSmsLogs(scheduleId, reason, tx);
+                const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId, tx, calendar);
+                const expiresAt = this.resolveExpiry(serviceRecordCase?.endDate ?? current.endDate, true);
+                const { linkToken } = await this.tokenService.issueLink({
+                    branchId, scheduleId, employeeId: employee.id, serviceRecordCaseId: serviceRecordCase?.id,
+                    expectedPhone: employee.phone, expiresAt, resetChallenge: true,
+                }, tx);
+                return { serviceRecordUrl: this.buildServiceRecordUrl(linkToken), expiresAt };
+            });
+        }
+
+        // The original scalar reset commits its cancel before
         // `issueLink` below: `issueLink` opens its own transaction (a
         // `service-record-link:` advisory lock and a case row lock) that must
         // never be requested from inside the fence. The reset keeps the token
@@ -527,7 +661,13 @@ export class ServiceRecordLinkService {
             if (record) {
                 await this.tokenService.extendExpiryForCase(record.id, expiresAt);
             } else {
-                await this.tokenService.extendExpiryForSchedule(scheduleId, expiresAt);
+                const schedule = this.lifecycleService && await this.prisma.employee_schedule.findUnique({
+                    where: { id: scheduleId },
+                    select: { client: { select: { fetalConfirmation: true } } },
+                });
+                if (!this.lifecycleService || (schedule && schedule.client.fetalConfirmation !== "CONFIRMED")) {
+                    await this.tokenService.extendExpiryForSchedule(scheduleId, expiresAt);
+                }
             }
         } catch (error) {
             this.logger.error(`Failed to extend service-record token expiry for schedule ${scheduleId}: ${error}`);
@@ -601,9 +741,11 @@ export class ServiceRecordLinkService {
             preparedLinkToken?: string;
             isManualSend: boolean;
             recipientPhone?: string;
+            actorUserId?: string;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
             rescheduleAutomatic?: boolean;
             branchId?: string;
+            historicalOnly?: boolean;
             recovery?: (transaction: Prisma.TransactionClient, pendingJob: MessageTriggerJobEntity, linkToken: string) => Promise<boolean>;
         },
     ): Promise<{
@@ -625,12 +767,30 @@ export class ServiceRecordLinkService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
         if (options.isManualSend) this.assertClientCanReceiveLink(schedule.client);
-        await this.ensureSystemRule(schedule.branchId, options.isManualSend);
+        if (!await allowsLegacyServiceRecordLink(this.prisma, schedule)) {
+            if (options.isManualSend) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            return {
+                scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
+                employeeId: schedule.primaryEmployeeId,
+                jobEnqueued: false,
+                jobId: null,
+            };
+        }
+        const confirmed = schedule.client.fetalConfirmation === "CONFIRMED";
+        const configured = await this.scalarLinkNeedsRollout(this.prisma, schedule, !!options.taskAutomationReference);
+        if (options.historicalOnly && (!confirmed || configured)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        if (configured && !await isBabyRecordRolloutEnabled(this.prisma, schedule.branchId)) {
+            if (options.isManualSend) throw new BabyRecordRolloutPausedException();
+            return { scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
+                employeeId: schedule.primaryEmployeeId, jobEnqueued: false, jobId: null };
+        }
+        await this.ensureSystemRule(schedule.branchId, options.isManualSend, configured);
         const employee = schedule.primaryEmployee;
-        const resolvedRecipientPhone = this.resolveRecipientPhone(
-            employee.phone,
-            options.recipientPhone,
-        );
+        const normalizedPhone = this.resolveRecipientPhone(employee.phone, options.recipientPhone);
+        // Keep the byte-for-byte v1 automatic effect used by existing consent.
+        const resolvedRecipientPhone = normalizedPhone && !options.isManualSend ? employee.phone : normalizedPhone;
 
         const scheduledFor = options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate);
         const originalKey = serviceRecordAutomaticJobKey(scheduleId);
@@ -679,7 +839,8 @@ export class ServiceRecordLinkService {
                     dedupeKey: automaticDedupeKey,
                     serviceStartDate: this.formatDate(schedule.startDate),
                     serviceEndDate: this.formatDate(schedule.endDate),
-                });
+                }, confirmed ? tx => this.lockScalarLinkSource(tx, { ...schedule, branchId: schedule.branchId! },
+                    !!options.taskAutomationReference, !configured) : undefined);
                 if (!automaticSchedulingClaim) {
                     return {
                         scheduledFor,
@@ -693,6 +854,10 @@ export class ServiceRecordLinkService {
 
         try {
             const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
+            if (schedule.client.fetalConfirmation === "CONFIRMED" && !serviceRecordCase) {
+                if (options.isManualSend) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
+            }
             if (options.preparedLinkToken) {
                 if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                     throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
@@ -713,6 +878,7 @@ export class ServiceRecordLinkService {
                         serviceRecordCase?.endDate ?? schedule.endDate,
                         options.allowLateReissue === true,
                     ),
+                    ...(options.taskAutomationReference ? { requireRollout: true } : {}),
                 });
                 if (!activated) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -779,6 +945,7 @@ export class ServiceRecordLinkService {
                     ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
                     expectedPhone: employee.phone,
                     expiresAt,
+                    ...(options.taskAutomationReference ? { requireRollout: true } : {}),
                 };
                 ({ linkToken } = await this.tokenService.reuseActiveLink(tokenParams)
                     ?? await this.tokenService.issueLink(tokenParams));
@@ -812,6 +979,7 @@ export class ServiceRecordLinkService {
                     employeeName: employee.name,
                     memberId: `employee:${employee.id}`,
                     recipientName: employee.name,
+                    ...(options.actorUserId ? { sentByUserId: options.actorUserId } : {}),
                     recipientPhone: resolvedRecipientPhone,
                     buttonUrl: url,
                     messageBody: message,
@@ -860,7 +1028,12 @@ export class ServiceRecordLinkService {
                         || current.client.bookingConfirmedAt?.getTime() !== schedule.client.bookingConfirmedAt?.getTime()) {
                         throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                     }
-                    if (!(await this.automationActivationService!.getTriggerDispatchEnabled(schedule.branchId!, transaction))) return null;
+                    if (!await allowsLegacyServiceRecordLink(transaction, current)
+                        || !(await this.automationActivationService!.getTriggerDispatchEnabled(schedule.branchId!, transaction))) return null;
+                    if (await this.scalarLinkNeedsRollout(transaction, current, !!options.taskAutomationReference)) {
+                        if (!configured) return null;
+                        await requireBabyRecordRollout(transaction, schedule.branchId!);
+                    }
                     const override = await transaction.message_trigger_rule_branch_override.findUnique({
                         where: { branchId_ruleId: { branchId: schedule.branchId!, ruleId: SERVICE_RECORD_LINK_RULE_ID } },
                     });
@@ -874,23 +1047,37 @@ export class ServiceRecordLinkService {
             } else if (automaticSchedulingClaim) {
                 persistedJob = await this.branchLock!.runExclusive(
                     schedule.branchId,
-                    (transaction) => promote(transaction),
+                    async (transaction) => {
+                        if (confirmed) await this.lockScalarLinkSource(transaction, { ...schedule, branchId: schedule.branchId! },
+                            !!options.taskAutomationReference, !configured);
+                        return promote(transaction);
+                    },
                 );
             } else if (options.isManualSend) {
                 // The retry-log supersession runs inside the replacement's
                 // transaction: if it fails, the replacement rolls back with it
                 // instead of throwing after a committed (and still dispatchable)
                 // send, which an operator retry would then duplicate.
-                const replaced = await this.jobRepository.replacePendingJobsUnlessInFlight(
+                const replace = (transaction?: Prisma.TransactionClient) => this.jobRepository.replacePendingJobsUnlessInFlight(
                     pendingJob,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-                    { requireActiveLinkToken: linkToken },
+                    { requireActiveLinkToken: linkToken, ...(transaction ? { transaction } : {}) },
                     (transaction) => this.supersedeRetryableServiceRecordSmsLogs(
                         scheduleId,
                         SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                         transaction,
                     ),
                 );
+                const replaced = confirmed && this.branchLock
+                    ? await this.branchLock.runExclusive(schedule.branchId, async transaction => {
+                        const current = await this.lockScalarLinkSource(transaction, { ...schedule, branchId: schedule.branchId! }, false, !configured);
+                        this.assertClientCanReceiveLink(current.client);
+                        if (current.primaryEmployee.phone !== employee.phone) {
+                            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+                        }
+                        return replace(transaction);
+                    })
+                    : await replace();
                 if (
                     replaced.kind === "protected"
                     || replaced.kind === "canceled"
@@ -945,7 +1132,7 @@ export class ServiceRecordLinkService {
         dedupeKey: string;
         serviceStartDate: string;
         serviceEndDate: string;
-    }): Promise<AutomaticSchedulingClaim | null> {
+    }, checkSource?: (tx: Prisma.TransactionClient) => Promise<unknown>): Promise<AutomaticSchedulingClaim | null> {
         const payload = {
             clientId: params.clientId,
             clientName: params.clientName,
@@ -968,6 +1155,7 @@ export class ServiceRecordLinkService {
             if (!this.automationActivationService || !this.branchLock) {
                 throw new ServiceUnavailableException("Message automation activation is not configured");
             }
+            await checkSource?.(transaction);
             if (!(await this.automationActivationService.getTriggerDispatchEnabled(params.branchId, transaction))) {
                 return [] as Array<{ id: string; claim_version: string }>;
             }
@@ -1090,7 +1278,7 @@ export class ServiceRecordLinkService {
         `);
     }
 
-    private async ensureSystemRule(branchId?: string, allowParentDisabled = true): Promise<void> {
+    private async ensureSystemRule(branchId?: string, allowParentDisabled = true, configured = false): Promise<boolean> {
         const ensure = (transaction?: Prisma.TransactionClient) => this.automationLock.runExclusive(
             SystemTemplateKey.SERVICE_RECORD_LINK,
             async (writeTransaction) => {
@@ -1149,14 +1337,18 @@ export class ServiceRecordLinkService {
             },
             transaction,
         );
-        if (branchId && !allowParentDisabled) {
-            if (!this.branchLock || !this.automationActivationService) {
+        if (branchId && (!allowParentDisabled || configured)) {
+            if (!this.branchLock || (!allowParentDisabled && !this.automationActivationService)) {
                 throw new ServiceUnavailableException("Message automation activation is not configured");
             }
-            await this.branchLock.runExclusive(branchId, (transaction) => ensure(transaction));
-            return;
+            return this.branchLock.runExclusive(branchId, async transaction => {
+                if (configured && !await isBabyRecordRolloutEnabled(transaction, branchId)) return false;
+                await ensure(transaction);
+                return true;
+            });
         }
         await ensure();
+        return true;
     }
 
     private async recordPermanentFailure(params: {
@@ -1214,13 +1406,18 @@ export class ServiceRecordLinkService {
     }
 
     private resolveRecipientPhone(employeePhone: string, recipientPhone?: string): string | null {
-        const candidate = recipientPhone?.trim() || employeePhone;
-        const normalized = this.normalizePhone(candidate);
-        if (!/^01[016789]\d{7,8}$/.test(normalized)) {
-            return null;
+        const normalized = recordLinkPhone(employeePhone);
+        if (!normalized) return null;
+        const requestedPhone = recordLinkPhone(recipientPhone);
+        if (recipientPhone !== undefined && !requestedPhone) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/recipientPhone", code: "INVALID_VALUE", detail: "수신 전화번호 형식이 올바르지 않습니다.", location: "body",
+            }));
         }
-
-        return recipientPhone ? normalized : employeePhone;
+        if (requestedPhone && requestedPhone !== normalized) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        return normalized;
     }
 
     private buildServiceRecordUrl(linkToken: string): string {

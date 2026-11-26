@@ -65,18 +65,23 @@ function asList<T>(value: T | T[]): T[] {
     return Array.isArray(value) ? value : [value];
 }
 
-export function matchesWhere(row: Row, where: Row | undefined): boolean {
+export function matchesWhere(
+    row: Row,
+    where: Row | undefined,
+    matchesRelation?: (key: string, condition: Row) => boolean | undefined,
+): boolean {
     if (!where) return true;
     return Object.entries(where).every(([key, condition]) => {
         if (COMBINATORS.has(key)) {
             const clauses = asList(condition as Row | Row[]);
-            if (key === "AND") return clauses.every((clause) => matchesWhere(row, clause));
-            if (key === "OR") return clauses.some((clause) => matchesWhere(row, clause));
-            return !clauses.some((clause) => matchesWhere(row, clause));
+            const matches = (clause: Row) => matchesWhere(row, clause, matchesRelation);
+            if (key === "AND") return clauses.every(matches);
+            if (key === "OR") return clauses.some(matches);
+            return !clauses.some(matches);
         }
         const fieldValue = row[key];
         if (condition === null) return fieldValue === null || fieldValue === undefined;
-        if (isOperatorObject(condition)) return matchesOperators(fieldValue, condition);
+        if (isOperatorObject(condition)) return matchesRelation?.(key, condition) ?? matchesOperators(fieldValue, condition);
         if (fieldValue === null || fieldValue === undefined) return false;
         return comparable(fieldValue) === comparable(condition);
     });

@@ -1412,7 +1412,8 @@ describe("ServiceRecordEntryService.saveHeader", () => {
                 count: jest.fn().mockResolvedValue(0),
             },
             service_record: {
-                upsert: jest.fn().mockResolvedValue({ ...transactionRecord, scheduleId: context.scheduleId }),
+                findFirst: jest.fn().mockResolvedValue(null),
+                create: jest.fn().mockResolvedValue({ ...transactionRecord, scheduleId: context.scheduleId }),
             },
         };
         const prisma = {
@@ -1446,7 +1447,7 @@ describe("ServiceRecordEntryService.saveHeader", () => {
         });
 
         expect(transaction.service_record_case.update).not.toHaveBeenCalled();
-        expect(transaction.service_record.upsert).not.toHaveBeenCalled();
+        expect(transaction.service_record.create).not.toHaveBeenCalled();
         expect(lifecycle.recompute).not.toHaveBeenCalled();
     });
 });
@@ -1478,7 +1479,7 @@ describe("ServiceRecordEntryService transaction recompute calendar", () => {
             update: jest.fn().mockResolvedValue(record),
         });
         Object.assign(harness.transactionClient.service_record_day, { count: jest.fn().mockResolvedValue(0) });
-        Object.assign(harness.transactionClient, { service_record: { upsert: jest.fn().mockResolvedValue({}) } });
+        Object.assign(harness.transactionClient, { service_record: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({}) } });
         Object.assign(harness.prisma, { service_record_day: { count: jest.fn().mockResolvedValue(0) } });
         harness.prisma.$transaction.mockImplementation(async (callback) => {
             transactionOpen = true;
@@ -1801,7 +1802,8 @@ describe("caregiver access token re-check inside the write transaction", () => {
                     count: jest.fn().mockResolvedValue(0),
                 },
                 service_record: {
-                    upsert: jest.fn().mockResolvedValue({ ...aggregate, scheduleId: context.scheduleId }),
+                    findFirst: jest.fn().mockResolvedValue(null),
+                    create: jest.fn().mockResolvedValue({ ...aggregate, scheduleId: context.scheduleId }),
                 },
             };
             const prisma = {
@@ -1824,7 +1826,7 @@ describe("caregiver access token re-check inside the write transaction", () => {
 
             await expectGuardRefusal(h.service.saveHeader(context, headerDto));
             expect(h.transaction.service_record_case.update).not.toHaveBeenCalled();
-            expect(h.transaction.service_record.upsert).not.toHaveBeenCalled();
+            expect(h.transaction.service_record.create).not.toHaveBeenCalled();
             expect(h.lifecycle.recompute).not.toHaveBeenCalled();
         });
 
@@ -1834,7 +1836,7 @@ describe("caregiver access token re-check inside the write transaction", () => {
             await h.service.saveHeader(context, headerDto);
 
             expect(h.lockOrder).toEqual(["service_record_case", "service_record_token"]);
-            expect(h.transaction.service_record.upsert).toHaveBeenCalled();
+            expect(h.transaction.service_record.create).toHaveBeenCalled();
         });
     });
 
@@ -1876,7 +1878,7 @@ describe("caregiver access token re-check inside the write transaction", () => {
                 expect.objectContaining({ status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS, chunkCount: 0 }),
             );
             expect(h.transaction.$queryRaw).toHaveBeenCalledTimes(1);
-            expect(h.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID);
+            expect(h.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID, h.transaction, expect.anything());
         });
     });
 });

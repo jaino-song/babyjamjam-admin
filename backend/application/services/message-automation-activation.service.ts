@@ -1,3 +1,5 @@
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import { isRecordLinkGroup } from "./service-record-link-group-source";
 import { lockClientForScheduleWrite } from "application/policies/employee-schedule-invariants.policy";
 import { RECEIPT_RECOVERY_PREFIX } from "domain/constants/receipt-job-recovery";
 import { hasApprovedReceiptSender } from "./message-sender-approval.service";
@@ -364,6 +366,14 @@ export class MessageAutomationActivationService {
 
             // A recovered receipt must re-prove its own document generation
             // even on a definite transport retry. Match its source lock order.
+            if (isRecordLinkGroup(candidate) && candidate.clientId !== null) {
+                // Retry authorization locks the rule and source job below.
+                // Take the grouped sender's aggregate locks before either row.
+                await lockServiceRecordWriteSet(transaction, {
+                    branchId, clientId: candidate.clientId,
+                    ...(candidate.employeeScheduleId === null ? {} : { scheduleIds: [candidate.employeeScheduleId] }),
+                });
+            }
             if (candidate.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)) {
                 await hasApprovedReceiptSender(transaction, branchId);
                 if (candidate.clientId !== null) await lockClientForScheduleWrite(transaction, branchId, candidate.clientId);

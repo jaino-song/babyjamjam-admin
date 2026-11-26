@@ -1,4 +1,7 @@
+import { readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { Injectable, Logger, Optional } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import {
     CreateEmployeeScheduleUsecase,
@@ -10,11 +13,14 @@ import {
     UpdateEmployeeScheduleUsecase,
 } from "application/usecases/employee-schedule";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
+import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
+import { persistClientAllocation } from "./client-allocation.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -35,6 +41,21 @@ export class EmployeeScheduleService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
     ) {}
 
+    private async readClientBooking(tx: Prisma.TransactionClient, branchId: string, clientId: number) {
+        if (!tx?.client_baby) return null;
+        return tx.client.findFirst({
+            where: { branchId, id: clientId },
+            select: { fetalConfirmation: true, serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+        });
+    }
+
+    private async isConfiguredPreBooking(tx: Prisma.TransactionClient, branchId: string, clientId: number) {
+        const client = await this.readClientBooking(tx, branchId, clientId);
+        return client?.fetalConfirmation === "CONFIRMED" && getEffectiveClientServiceStatus(
+            client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+    }
+
     async create(branchid: string, params: {
         clientId: number;
         primaryEmployeeId: number;
@@ -50,6 +71,7 @@ export class EmployeeScheduleService {
         // so it is resolved before the owning transaction takes a connection.
         const calendar = await this.serviceRecordLifecycleService
             ?.resolveCalendarBeforeTransaction(params.clientId);
+        let preBooking = false;
         const schedule = await this.prisma.$transaction(async (transaction) => {
             // Acquire the branch automation lock before the schedule write.
             // The zero-scope call intentionally performs no append; the second
@@ -61,6 +83,17 @@ export class EmployeeScheduleService {
                 mutationId: ordinaryMutationId,
                 scheduleIds: [],
             });
+            const scope = { branchId: branchid, clientId: params.clientId };
+            let historical: Awaited<ReturnType<typeof readBackfilledScalarHousehold>> = null;
+            if (!params.replaced && await this.readClientBooking(transaction, branchid, params.clientId)) {
+                await lockServiceRecordWriteSet(transaction, {
+                    ...scope, employeeIds: [params.primaryEmployeeId, params.secondaryEmployeeId],
+                });
+                if ((await this.readClientBooking(transaction, branchid, params.clientId))?.fetalConfirmation === "CONFIRMED") {
+                    historical = await readBackfilledScalarHousehold(transaction, scope);
+                    if (!historical) await requireBabyRecordRollout(transaction, branchid);
+                }
+            }
             const created = await this.createEmployeeScheduleUsecase.execute(branchid, {
                 clientId: params.clientId,
                 primaryEmployeeId: params.primaryEmployeeId,
@@ -70,13 +103,26 @@ export class EmployeeScheduleService {
                 endDate: new Date(params.endDate),
                 replaced: params.replaced,
             }, transaction);
+            if (historical) {
+                const providers = [
+                    { slot: 0 as const, employeeId: created.primaryEmployeeId },
+                    ...(created.secondaryEmployeeId === null ? [] : [{ slot: 1 as const, employeeId: created.secondaryEmployeeId }]),
+                ];
+                await persistClientAllocation(transaction, scope, {
+                    fetalType: "SINGLETON", unchanged: false, retired: [], legacyContinuity: true,
+                    providers,
+                    assignments: [{ babyId: historical.babyId, ordinal: 1, providerSlot: 0 }],
+                }, created.id, null);
+                created.providers = providers;
+            }
             await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
                 branchId: branchid,
                 clientId: created.clientId,
                 mutationId: ordinaryMutationId,
                 scheduleIds: [created.id],
             });
-            await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+            preBooking = await this.isConfiguredPreBooking(transaction, branchid, created.clientId);
+            if (!preBooking) await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                 branchId: branchid,
                 clientId: created.clientId,
                 scheduleId: created.id,
@@ -87,14 +133,14 @@ export class EmployeeScheduleService {
             // Keep lifecycle writes in the transaction that owns the schedule
             // mutation; a post-commit root transaction could observe a
             // partially synchronized case under concurrent writes.
-            await this.serviceRecordLifecycleService?.ensureForClient(
+            await this.serviceRecordLifecycleService?.ensureAllForClient(
                 created.clientId,
                 transaction,
                 created.clientId === params.clientId ? calendar : undefined,
             );
             return created;
         });
-        await this.messageAutomationIntentService
+        if (!preBooking) await this.messageAutomationIntentService
             .fulfillScheduleIntent({
                 branchId: branchid,
                 scheduleId: schedule.id,
@@ -152,15 +198,16 @@ export class EmployeeScheduleService {
         const calendar = preRead
             ? await this.serviceRecordLifecycleService?.resolveCalendarBeforeTransaction(preRead.clientId)
             : undefined;
+        let preBooking = false;
         const schedule = await this.prisma.$transaction(async (transaction) => {
             // Keep the same owning transaction and advisory lock for the
             // source fence and schedule mutation. The fence is intentionally
             // evaluated before the update so a stale task cannot race it.
             const scheduleReader = (transaction as unknown as {
-                employee_schedule?: { findFirst?: (args: unknown) => Promise<{ id: number; clientId: number } | null> };
+                employee_schedule?: { findFirst?: (args: unknown) => Promise<{ id: number; clientId: number; replaced: boolean } | null> };
             }).employee_schedule;
             const existing = scheduleReader?.findFirst
-                ? await scheduleReader.findFirst({ where: { id, branchId: branchid }, select: { id: true, clientId: true } })
+                ? await scheduleReader.findFirst({ where: { id, branchId: branchid }, select: { id: true, clientId: true, replaced: true } })
                 : null;
             if (existing) {
                 await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
@@ -169,6 +216,10 @@ export class EmployeeScheduleService {
                     mutationId: ordinaryMutationId,
                     scheduleIds: [existing.id],
                 });
+            }
+            if (existing?.replaced && params.replaced === false
+                && (await this.readClientBooking(transaction, branchid, existing.clientId))?.fetalConfirmation === "CONFIRMED") {
+                await requireBabyRecordRollout(transaction, branchid);
             }
             const updated = await this.updateEmployeeScheduleUsecase.execute(branchid, id, {
                 workAddress: params.workAddress,
@@ -186,7 +237,8 @@ export class EmployeeScheduleService {
                 mutationId: ordinaryMutationId,
                 scheduleIds: [updated.id],
             });
-            await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
+            preBooking = await this.isConfiguredPreBooking(transaction, branchid, updated.clientId);
+            if (!preBooking) await this.messageAutomationIntentService.persistScheduleIntent(transaction, {
                 branchId: branchid,
                 clientId: updated.clientId,
                 scheduleId: updated.id,
@@ -194,14 +246,14 @@ export class EmployeeScheduleService {
                 intentAt,
                 replaceExisting: true,
             });
-            await this.serviceRecordLifecycleService?.ensureForClient(
+            await this.serviceRecordLifecycleService?.ensureAllForClient(
                 updated.clientId,
                 transaction,
                 updated.clientId === preRead?.clientId ? calendar : undefined,
             );
             return updated;
         });
-        await this.messageAutomationIntentService
+        if (!preBooking) await this.messageAutomationIntentService
             .fulfillScheduleIntent({
                 branchId: branchid,
                 scheduleId: schedule.id,
@@ -215,7 +267,7 @@ export class EmployeeScheduleService {
                     error instanceof Error ? error.stack : String(error),
                 );
             });
-        if (params.endDate) {
+        if (params.endDate && !preBooking) {
             this.serviceRecordLinkService
                 ?.extendExpiryForEndDate(schedule.id, schedule.endDate)
                 ?.catch((error) => {
@@ -253,7 +305,7 @@ export class EmployeeScheduleService {
                 scheduleIds: [schedule.id],
             });
             await this.deleteEmployeeScheduleUsecase.execute(branchid, id, transaction);
-            await this.serviceRecordLifecycleService?.ensureForClient(
+            await this.serviceRecordLifecycleService?.ensureAllForClient(
                 schedule.clientId,
                 transaction,
                 calendar,

@@ -24,7 +24,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         const { clientId } = await params;
         if (!isPositiveIntegerString(clientId)) return invalidClientIdResponse();
 
-        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}/draft`, {
+        const response = await serverAPIClient.get(`/admin/service-records/client/${clientId}/draft${new URL(request.url).search}`, {
             headers: getAuthHeaders(token),
         });
         return withNoStore(backendJsonResponse(response));
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     try {
         const body = await readJsonObjectBody(request);
-        const response = await serverAPIClient.post(`/admin/service-records/client/${clientId}/draft`, body, {
+        const response = await serverAPIClient.post(`/admin/service-records/client/${clientId}/draft${new URL(request.url).search}`, body, {
             headers: getAuthHeaders(token),
         });
         return withNoStore(backendJsonResponse(response));

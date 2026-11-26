@@ -273,6 +273,7 @@ export class PwaNotificationSchedulerService {
         }
 
         if (missingServiceRecords.length > 0) {
+            const missingClientCount = new Set(missingServiceRecords.map(({ clientId }) => clientId)).size;
             const notificationItems: DailyDigestNotificationItem[] = missingServiceRecords.map((alert) => ({
                 title: "제공기록지 미작성",
                 body: `${alert.clientName} 산모님의 서비스 제공기록지가 작성되지 않고 있어요. ${alert.primaryEmployeeName} 관리사님께 확인이 필요해 보여요.`,
@@ -280,6 +281,7 @@ export class PwaNotificationSchedulerService {
                     type: "daily-summary-item",
                     category: "service-record-missing",
                     clientId: alert.clientId,
+                    caseId: alert.caseId,
                     scheduleId: alert.scheduleId,
                     url: `/dashboard?clientId=${alert.clientId}`,
                 },
@@ -288,8 +290,8 @@ export class PwaNotificationSchedulerService {
             sections.push({
                 key: "missingServiceRecords",
                 label: "제공기록지 미작성",
-                description: `제공기록지 작성 확인이 필요한 산모가 ${notificationItems.length}명 있어요.`,
-                count: notificationItems.length,
+                description: `제공기록지 작성 확인이 필요한 산모가 ${missingClientCount}명 있어요.`,
+                count: missingClientCount,
                 unit: "명",
                 url: "/dashboard",
                 details,

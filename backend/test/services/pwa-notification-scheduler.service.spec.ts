@@ -157,7 +157,7 @@ describe("PwaNotificationSchedulerService", () => {
                 count: 1, unit: "명", url: "/dashboard", details: [body],
                 notificationItems: [{ title: "제공기록지 미작성", body,
                     data: { type: "daily-summary-item", category: "service-record-missing",
-                        clientId: 10, scheduleId: 55, url: "/dashboard?clientId=10" } }],
+                        clientId: 10, caseId: "case-1", scheduleId: 55, url: "/dashboard?clientId=10" } }],
             });
             expect(clientRepository.findServiceRecordAlertCandidates).toHaveBeenCalledWith("branch-1");
         } finally {

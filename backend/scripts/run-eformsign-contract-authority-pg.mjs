@@ -188,7 +188,7 @@ export async function runHarness(overrides = {}) {
       '--username',role,'--dbname',database,'--set','ON_ERROR_STOP=1','--file',join(backend,'prisma/scripts/verify-eformsign-contract-authority.sql')]);
     emit('verifier-passed');
     const output = join(directory, 'jest.json');
-    await command(process.execPath, ['--experimental-vm-modules',resolveCli('jest/bin/jest'),'--runInBand','--runTestsByPath',...SUITES,'--json','--outputFile',output], backend);
+    await command(process.execPath, ['--experimental-vm-modules','--max-old-space-size=4096',resolveCli('jest/bin/jest'),'--runInBand','--runTestsByPath',...SUITES,'--json','--outputFile',output], backend);
     const suites = validateReport(JSON.parse(readFileSync(output, 'utf8')));
     emit('suites-passed', { suites });
   } catch (error) { failure = error; }
