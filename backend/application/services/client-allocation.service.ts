@@ -1,4 +1,4 @@
-import { requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import {
     admitVoucherCode,
     resolveBabyRecordAllocation,
@@ -53,6 +53,7 @@ export interface ClientAllocationProjection {
 
 const snapshotSelect = {
     id: true,
+    branchId: true,
     type: true,
     voucherClient: true,
     fetalType: true,
@@ -68,7 +69,7 @@ const snapshotSelect = {
             secondaryEmployeeId: true,
             recordTeamSlots: {
                 where: { active: true },
-                select: { id: true, slot: true, employeeId: true },
+                select: { id: true, slot: true, employeeId: true, legacyBackfilled: true },
                 orderBy: { slot: "asc" },
             },
             recordBabyAssignments: {
@@ -185,6 +186,8 @@ export interface ClientAllocationPlan {
     assignments: { babyId: string | null; ordinal: number; providerSlot: ProviderSlot | null }[];
     retired: string[];
     unchanged: boolean;
+    adoptBackfilledSlots?: boolean;
+    legacyContinuity?: boolean;
 }
 
 const maxPrismaInt = 2_147_483_647;
@@ -333,7 +336,8 @@ export async function planClientAllocation(
         return { babyId, ordinal, providerSlot };
     });
     const providers = [...input.providers].sort((left, right) => left.slot - right.slot);
-    const unchanged = projection?.fetalConfirmation === "CONFIRMED"
+    const adoptBackfilledSlots = current?.employeeSchedules[0]?.recordTeamSlots.some(slot => slot.legacyBackfilled) ?? false;
+    const unchanged = !adoptBackfilledSlots && projection?.fetalConfirmation === "CONFIRMED"
         && projection.fetalType === rules.fetalType
         && current?.type === voucher.type
         && sameProviders(providers, projection.providers)
@@ -345,7 +349,7 @@ export async function planClientAllocation(
     if (stale && !unchanged) allocationConflict("/expectedAllocationVersion");
     const retired = projection?.babies.filter((baby) => !retained.has(baby.babyId)).map((baby) => baby.babyId) ?? [];
     if (scope) await assertBabiesCanRetire(tx, scope, retired);
-    return { fetalType: rules.fetalType, assignments, providers, retired, unchanged };
+    return { fetalType: rules.fetalType, assignments, providers, retired, unchanged, adoptBackfilledSlots };
 }
 
 export function sameProviders(left: Provider[], right: Provider[]): boolean {
@@ -364,6 +368,7 @@ export async function planLegacyClientAllocation(
         primaryPointer?: string;
         secondaryPointer?: string;
     },
+    persistHistoricalAllocation = false,
 ): Promise<ClientAllocationPlan | null> {
     if (!snapshot) return null;
     const projection = allocationProjection(snapshot);
@@ -412,9 +417,15 @@ export async function planLegacyClientAllocation(
         }
         allocationConflict("/type");
     }
+    const legacyContinuity = rules.fetalType === "SINGLETON" && snapshot.branchId !== null
+        && !!await readBackfilledScalarHousehold(tx, { branchId: snapshot.branchId, clientId: snapshot.id });
+    // Standalone schedule creation retains its scalar validations. Its service
+    // carries forward the original assignment after those validations succeed.
+    if (legacyContinuity && !persistHistoricalAllocation) return null;
     return {
         fetalType: rules.fetalType, providers, retired: [],
         unchanged: sameProviders(providers, projection.providers),
+        legacyContinuity,
         assignments: assignments.map((row) => ({
             ...row, providerSlot: rules.assignmentFor(row.ordinal)!.providerSlot,
         })),
@@ -429,6 +440,7 @@ export async function persistClientAllocation(
     previousScheduleId: number | null = scheduleId,
 ): Promise<void> {
     if (plan.unchanged && previousScheduleId === scheduleId) return;
+    if (plan.adoptBackfilledSlots) await requireBabyRecordRollout(tx, scope.branchId);
     const newRows = plan.assignments.filter(({ babyId }) => babyId === null);
     if (newRows.length) await requireBabyRecordRollout(tx, scope.branchId);
     if (previousScheduleId !== null) await lockCredentialCases(tx, scope);
@@ -468,7 +480,7 @@ export async function persistClientAllocation(
     }
     const scheduleScope = { ...scope, scheduleId };
     const slots = await tx.service_record_team_slot.findMany({ where: { ...scheduleScope, active: true } });
-    const slotChanges = slots.filter((old) => !plan.providers.some(
+    const slotChanges = slots.filter((old) => (plan.adoptBackfilledSlots && old.legacyBackfilled) || !plan.providers.some(
         ({ slot, employeeId }) => old.slot === slot && old.employeeId === employeeId,
     ));
     const retiredSlotIds = new Set(slotChanges.map(({ id }) => id));
@@ -490,9 +502,9 @@ export async function persistClientAllocation(
     });
     const kept = slots.filter(({ id }) => !retiredSlotIds.has(id));
     const toInsert = plan.providers.filter(({ slot }) => !kept.some((row) => row.slot === slot));
-    if (toInsert.length) await requireBabyRecordRollout(tx, scope.branchId);
+    if (toInsert.length && !plan.legacyContinuity) await requireBabyRecordRollout(tx, scope.branchId);
     const created = toInsert.length ? await tx.service_record_team_slot.createManyAndReturn({
-        data: toInsert.map((provider) => ({ ...scheduleScope, ...provider })),
+        data: toInsert.map((provider) => ({ ...scheduleScope, ...provider, ...(plan.legacyContinuity ? { legacyBackfilled: true } : {}) })),
     }) : [];
     const bySlot = new Map([...kept, ...created].map((row) => [row.slot, row]));
     const closed = new Set(changed.map(({ id }) => id));
@@ -504,10 +516,11 @@ export async function persistClientAllocation(
         return [{
             ...scheduleScope, babyId, teamSlotId: owner.id, employeeId: owner.employeeId,
             version: (versions.get(babyId) ?? 0) + 1,
+            ...(plan.legacyContinuity ? { legacyBackfilled: true } : {}),
         }];
     });
     if (newOwners.length) {
-        if (!toInsert.length) await requireBabyRecordRollout(tx, scope.branchId);
+        if (!toInsert.length && !plan.legacyContinuity) await requireBabyRecordRollout(tx, scope.branchId);
         await tx.service_record_baby_assignment.createMany({ data: newOwners });
     }
 

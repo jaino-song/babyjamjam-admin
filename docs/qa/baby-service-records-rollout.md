@@ -8,6 +8,12 @@
 
 ## 잠금과 발송 처리
 
+활성화 전 백필로 원래 케이스와 주담당 배정이 확인된 A형 단태아 가구는 지점 설정이 없거나
+`false`여도 기존 단일 링크, 예약 확정, 일정 쓰기를 사용한다. 원래 케이스 ID, 아기 ID와 서명
+회차는 보존한다. 같은 배정을 명시적으로 저장하면 기존 슬롯과 담당 버전을 정상 교체하여 신규
+배정의 출처를 기록한다. 그룹 링크 준비·발송 기록이나 출처가 불분명한 백필 이후 링크가 있으면
+단일 링크 예외를 적용하지 않는다. 해당 링크 흐름은 지점 활성화와 기존 그룹 선택 검증을 따른다.
+
 - 설정 변경은 지점 advisory transaction lock을 잡고 설정 한 행만 upsert한다. 확정 등록과 그룹 생성 및 발송·재시도 경로는 같은 지점 잠금을 쓴다. 기존 client 및 일정 트랜잭션 안의 케이스 생성, 소유권 추가, 토큰 발급은 설정 행의 `FOR SHARE`를 커밋까지 유지한다.
 - 그룹 source/발송은 지점 advisory → client/employee/case/schedule → 일정 발송 advisory → job/token/log 순서로 해당 작업에 필요한 잠금을 잡는다. 설정만 쓰는 운영 트랜잭션은 job이나 케이스를 잠그지 않는다. drain 쿼리는 설정 커밋 이후 별도 읽기 트랜잭션에서 실행한다.
 - pause의 경계는 `false` upsert 트랜잭션의 커밋이다. 발송의 경계는 동일 지점 잠금 아래 `message_log.provider_call_started_at`을 찍고 `provider_acceptance_state='started'`로 바꾸는 CAS의 커밋이다. job의 `dispatching`과 log의 `prepared`는 발송 준비 상태다. pause가 먼저이면 carrier 호출 없이 보류한다. CAS가 먼저이면 잠금 밖에서 시작되거나 진행 중인 호출이 끝나는 것을 확인한다.

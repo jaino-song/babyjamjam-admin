@@ -1,4 +1,4 @@
-import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { BadRequestException, ConflictException, Injectable, Inject, InternalServerErrorException, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -1175,7 +1175,7 @@ export class ClientService {
             const snapshot = (await loadClientAllocations(transaction, branchid, [params.clientId])).get(params.clientId);
             const allocation = await planLegacyClientAllocation(transaction, snapshot, {
                 primaryEmployeeId: params.primaryEmployeeId, secondaryEmployeeId: params.secondaryEmployeeId,
-            });
+            }, true);
             assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId);
             if (newPrimaryEmployeeId === null) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -2430,7 +2430,7 @@ export class ClientService {
                     voucherClient: params.voucherClient ?? currentClient.voucherClient,
                     type: lockedPricing ? lockedPricing.type : currentClient.type,
                 }, snapshot, scope)
-                : legacyAllocationWrite ? await planLegacyClientAllocation(transaction, snapshot, params) : null;
+                : legacyAllocationWrite ? await planLegacyClientAllocation(transaction, snapshot, params, true) : null;
             const previousProjection = snapshot && allocationProjection(snapshot);
             const teamChanged = !!allocation && !sameProviders(allocation.providers, previousProjection?.providers ?? []);
             configuredPreBooking = (configured || lockedClient?.fetalConfirmation === "CONFIRMED") && getEffectiveClientServiceStatus(
@@ -3038,7 +3038,7 @@ export class ClientService {
                 secondaryEmployeeId: newSecondaryEmployeeId ?? null,
                 primaryPointer: "/newPrimaryEmployeeId",
                 secondaryPointer: "/newSecondaryEmployeeId",
-            });
+            }, true);
             assertEmployeeAssignmentShape(newPrimaryEmployeeId, newSecondaryEmployeeId ?? null, {
                 primary: "/newPrimaryEmployeeId", secondary: "/newSecondaryEmployeeId",
             });
@@ -3281,7 +3281,9 @@ export class ClientService {
                 return refuse("서비스 시작일과 종료일을 먼저 입력해 주세요.");
             }
             const snapshot = (await loadClientAllocations(transaction, branchid, [clientId])).get(clientId);
-            if (snapshot?.fetalConfirmation === "CONFIRMED") {
+            const requiresRollout = snapshot?.fetalConfirmation === "CONFIRMED"
+                && !await readBackfilledScalarHousehold(transaction, { branchId: branchid, clientId });
+            if (requiresRollout) {
                 await requireBabyRecordRollout(transaction, branchid);
             }
             const now = new Date();
@@ -3295,7 +3297,7 @@ export class ClientService {
             if (updateResult.count === 0) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
-            if (snapshot?.fetalConfirmation === "CONFIRMED") {
+            if (requiresRollout) {
                 configuredScheduleId = snapshot.employeeSchedules[0]?.id ?? null;
             } else {
                 await this.serviceRecordLinkService?.recordClientTransitionInTransaction?.(transaction, branchid, clientId, lockedClient);
