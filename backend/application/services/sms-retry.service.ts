@@ -1,6 +1,11 @@
 import { isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
-import { isRecordLinkGroup, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED, RECORD_LINK_GROUP_LOG_MARKER } from "./service-record-link-group-source";
-import { hasApprovedRecordLinkSender } from "infrastructure/database/repositories/record-link-recovery.repository";
+import { isRecordLinkGroup, recordLinkHash, recordLinkPhone, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED, RECORD_LINK_GROUP_LOG_MARKER } from "./service-record-link-group-source";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
+import { hasReconciledLegacyLinkRetry, readLegacyLinkOccurrence } from "./service-record-legacy-link-occurrence";
+import { hasConflictingUnboundCaseHistory } from "./service-record-token.service";
+import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
+import { hasApprovedRecordLinkSender, lockRecordLinkSchedule } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { RECEIPT_RECOVERY_PREFIX } from "domain/constants/receipt-job-recovery";
 import { MessageTriggerService } from "./message-trigger.service";
 import { SmsTriggerDeliverySkipError } from "./sms-trigger-payload-enricher.registry";
@@ -57,7 +62,7 @@ import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTri
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
-import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_RULE_ID, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
 import { MESSAGE_TRIGGER_JOB_REPOSITORY, IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 
 const INVALID_RETRY_SCHEDULE_REASON =
@@ -177,7 +182,8 @@ export class SmsRetryService {
         }
 
         const family = await this.logRepository.findRetryFamilyInBranch(branchId, sourceLog.id);
-        if (family.some((log) => isQuietHoursCanceled(log) || (log.id !== sourceLog.id && isRetryFamilyBlocker(log)))) {
+        if (family.some(log => isQuietHoursCanceled(log)
+            || (log.id !== sourceLog.id && isRetryFamilyBlocker(log) && !hasReconciledLegacyLinkRetry(log, family)))) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
@@ -251,7 +257,7 @@ export class SmsRetryService {
             // 그 외 pending/시작됨/불확실/수락됨 상태를 새 시도로 되살리지 않는다.
             if (sourceLog.status !== "failed" || sourceLog.providerAcceptanceState !== "rejected") return sourceLog;
         }
-        if (grouped && !this.hasConfirmedGroupRejection(sourceLog)) return null;
+        if (grouped && !this.hasConfirmedRecordLinkRejection(sourceLog)) return null;
         if (invocation === "automatic" && sourceLog.variables["origin"] === "ADMIN_DIRECT"
             && sourceLog.variables["manualQueueMode"] === "internal") return sourceLog;
         if (sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
@@ -296,8 +302,8 @@ export class SmsRetryService {
                 sourceLog.branchId,
                 sourceLog.triggerJobId,
                 async (transaction, rulePolicy): Promise<AutomaticRetryBoundary> => {
-                    if (grouped && (!await isBabyRecordRolloutEnabled(transaction, sourceLog.branchId!)
-                        || !await this.permitsRecordLinkGroupRetry(sourceLog, transaction))) {
+                    if ((grouped && !await isBabyRecordRolloutEnabled(transaction, sourceLog.branchId!))
+                        || !await this.permitsRecordLinkRetry(sourceLog, transaction, invocation)) {
                         return { kind: "claimed", log: null };
                     }
                     const policySkip = await this.supersedeForRulePolicy(transaction, sourceLog, rulePolicy);
@@ -427,8 +433,8 @@ export class SmsRetryService {
         }
         const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
         const start = async (tx?: Prisma.TransactionClient) => {
-            if (grouped && (!tx || !await isBabyRecordRolloutEnabled(tx, sourceLog.branchId!)
-                || !await this.permitsRecordLinkGroupRetry(sourceLog, tx))) return null;
+            if (grouped && (!tx || !await isBabyRecordRolloutEnabled(tx, sourceLog.branchId!))) return null;
+            if (tx && !await this.permitsRecordLinkRetry(sourceLog, tx, invocation)) return null;
             await this.checkQuietRetryBeforeStart(sourceLog, tx);
             const retryStart = await this.logRepository.startRetryAttempt(
                 sourceLog,
@@ -464,8 +470,8 @@ export class SmsRetryService {
             const providerAttempt = await this.admitRetry(sourceLog, retryLog, tx, invocation, leaseHeld, standaloneSnapshot);
             return { retryLog, providerAttempt };
         };
-        const admitted = grouped
-            ? await this.quietHours!.runAdmission(sourceLog.branchId!, sourceLog.receiver, (_decision, tx) => start(tx))
+        const admitted = sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY && this.quietHours && sourceLog.branchId
+            ? await this.quietHours.runAdmission(sourceLog.branchId, sourceLog.receiver, (_decision, tx) => start(tx))
             : await start();
         if (!admitted) return null;
         const { retryLog, providerAttempt } = admitted;
@@ -481,24 +487,91 @@ export class SmsRetryService {
         return !!job && isRecordLinkGroup(job);
     }
 
-    private hasConfirmedGroupRejection(source: MessageLogEntity): boolean {
+    private hasConfirmedRecordLinkRejection(source: MessageLogEntity): boolean {
         return !source.isProviderOutcomeUncertain() && source.variables["retrySafety"] !== "uncertain"
             && (source.providerAcceptanceState === "rejected" || source.providerAcceptanceState === "reconciled_not_delivered");
     }
 
-    private async permitsRecordLinkGroupRetry(source: MessageLogEntity, tx: Prisma.TransactionClient): Promise<boolean> {
+    private async permitsRecordLinkRetry(source: MessageLogEntity, tx: Prisma.TransactionClient, invocation: MessageRetryInvocation): Promise<boolean> {
         const marked = Object.prototype.hasOwnProperty.call(source.variables, RECORD_LINK_GROUP_LOG_MARKER);
-        if (source.templateKey !== SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY || !source.triggerJobId || !source.branchId) return !marked;
-        const row = await tx.message_trigger_job.findUnique({
+        if (source.templateKey !== SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY || !source.branchId) return !marked;
+        const row = source.triggerJobId ? await tx.message_trigger_job.findUnique({
             where: { id: source.triggerJobId, branchId: source.branchId },
-        });
-        if (!row || !isRecordLinkGroup(row)) return !marked;
-        if (!this.hasConfirmedGroupRejection(source)) return false;
+        }) : null;
+        if (!row || !isRecordLinkGroup(row)) {
+            return !marked && await this.permitsLegacyRecordLinkRetry(source, tx, invocation, row);
+        }
+        if (!this.hasConfirmedRecordLinkRejection(source)) return false;
         const job = await this.jobRepository?.findByIdInBranch(source.branchId, row.id, tx);
         if (!job || job.status === "canceled" || !this.smsTriggerDeliveryService
             || !await resolveRecordLinkGroup(tx, job, true) || !await hasApprovedRecordLinkSender(tx, source.branchId)) return false;
         const canonical = await this.smsTriggerDeliveryService.resolveCanonicalDeliverySnapshot(job, tx);
         return source.receiver === canonical.receiver && source.messageBody === canonical.message;
+    }
+
+    private async permitsLegacyRecordLinkRetry(
+        source: MessageLogEntity,
+        tx: Prisma.TransactionClient,
+        invocation: MessageRetryInvocation,
+        job: Awaited<ReturnType<Prisma.TransactionClient["message_trigger_job"]["findUnique"]>>,
+    ): Promise<boolean> {
+        const branchId = source.branchId!;
+        const scheduleId = job?.employeeScheduleId ?? Number(source.variables["scheduleId"]);
+        const clientId = job?.clientId ?? source.clientId;
+        // Unscoped historical audit rows cannot establish an occurrence.
+        if (!scheduleId || !clientId) return !this.quietHours;
+        if (job && (job.ruleId !== SERVICE_RECORD_LINK_RULE_ID || job.canceledByUser || job.status === "canceled")) return false;
+        if (!Number.isSafeInteger(scheduleId) || !this.hasConfirmedRecordLinkRejection(source)) return false;
+
+        const scope = { branchId, clientId };
+        await lockServiceRecordWriteSet(tx, { ...scope, scheduleIds: [scheduleId] });
+        await lockRecordLinkSchedule(tx, scheduleId);
+        const schedule = await tx.employee_schedule.findFirst({
+            where: { ...scope, id: scheduleId, replaced: false, terminatedAt: null, client: { branchId, deletedAt: null },
+                primaryEmployee: { branchId, deletedAt: null } },
+            include: { client: true, primaryEmployee: true },
+        });
+        const latest = await tx.employee_schedule.findFirst({
+            where: { ...scope, replaced: false, terminatedAt: null }, orderBy: { id: "desc" }, select: { id: true },
+        });
+        if (!schedule || latest?.id !== scheduleId || schedule.client.serviceStatus === "terminated"
+            || getEffectiveClientServiceStatus(schedule.client.serviceStatus, schedule.client.startDate, schedule.client.endDate,
+                schedule.client.bookingConfirmedAt) === "pre_booking"
+            || !await allowsLegacyServiceRecordLink(tx, schedule)
+            || (invocation === "automatic" && !schedule.primaryEmployee.smsAutomationEnabled)
+            || !await hasApprovedRecordLinkSender(tx, branchId)) return false;
+
+        const employeeId = schedule.primaryEmployeeId;
+        const phone = recordLinkPhone(schedule.primaryEmployee.phone);
+        if (!phone || recordLinkPhone(source.receiver) !== phone) return false;
+        const legacy = await readLegacyLinkOccurrence(tx, { ...scope, scheduleId, incarnationId: schedule.incarnationId, employeeId, phone });
+        const proof = legacy.rejected.find(log => log.id === source.id);
+        if (legacy.blocked || !proof?.credential || proof.messageBody !== source.messageBody) return false;
+        const grouped = await tx.message_trigger_job.findFirst({
+            where: { ...scope, employeeScheduleId: scheduleId, recipientEmployeeId: employeeId, ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                payload: { path: ["scheduleIncarnationId"], equals: schedule.incarnationId },
+                status: { not: "canceled" } },
+            select: { id: true },
+        });
+        if (grouped) return false;
+        const target = await resolveServiceRecordCaseTarget(tx, scope);
+        if (target.kind !== "resolved") return false;
+        const record = await tx.service_record_case.findFirst({
+            where: { ...scope, id: target.caseId, finalizedAt: null }, select: { id: true },
+        });
+        if (!record) return false;
+        if (target.babyId && !await tx.service_record_baby_assignment.findFirst({
+            where: { ...scope, scheduleId, employeeId, babyId: target.babyId, activeOwner: true, endedAt: null, teamSlot: { active: true } },
+            select: { id: true },
+        })) return false;
+        const token = await tx.service_record_token.findFirst({
+            where: { branchId, scheduleId, employeeId, linkTokenHash: proof.credential, expectedPhoneHash: recordLinkHash(phone),
+                OR: [{ serviceRecordCaseId: target.caseId }, { serviceRecordCaseId: null }],
+                active: true, revokedAt: null, lockedAt: null, expiresAt: { gt: new Date() } },
+            select: { serviceRecordCaseId: true },
+        });
+        return Boolean(token && (token.serviceRecordCaseId || !target.babyId
+            || !await hasConflictingUnboundCaseHistory(tx, { ...scope, scheduleId, employeeId, babyId: target.babyId })));
     }
 
     private async admitRetry(source: MessageLogEntity, retry: MessageLogEntity, transaction: Prisma.TransactionClient | undefined,
@@ -508,7 +581,7 @@ export class SmsRetryService {
                 if (!tx && Object.prototype.hasOwnProperty.call(source.variables, RECORD_LINK_GROUP_LOG_MARKER)) {
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
-                if (tx && !await this.permitsRecordLinkGroupRetry(source, tx)) {
+                if (tx && !await this.permitsRecordLinkRetry(source, tx, invocation)) {
                     retry.markRetrySuperseded(RECORD_LINK_GROUP_CHANGED);
                     await this.logRepository.update(retry, tx);
                     return null;
@@ -707,7 +780,7 @@ export class SmsRetryService {
                             decision.action === "CANCEL", finalTx);
                         return null;
                     }
-                    if (!await this.permitsRecordLinkGroupRetry(finalSource, finalTx)) {
+                    if (!await this.permitsRecordLinkRetry(finalSource, finalTx, explicitManual ? "manual" : "automatic")) {
                         finalCurrent.markRetrySuperseded(RECORD_LINK_GROUP_CHANGED);
                         await this.logRepository.update(finalCurrent, finalTx);
                         return null;
