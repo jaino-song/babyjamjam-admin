@@ -43,8 +43,8 @@ export function ClientBabyRecordOwners({
                 const id = `${idPrefix}-${row.field}`;
                 const message = messages[row.field]?.text ?? (row.needsReplacement ? copy("choose-replacement") : undefined);
                 const availableSlots = row.availableProviderSlots ?? [];
-                const showSelect = onChange && row.canChangeProvider
-                    && (row.providerSlot === null || availableSlots.length > 1 || Boolean(message));
+                const showSelect = onChange && (row.needsReplacement || (row.canChangeProvider
+                    && (row.providerSlot === null || availableSlots.length > 1 || Boolean(message))));
                 return (
                     <FormField key={row.field} data-component={rowBase} htmlFor={showSelect ? id : undefined} label={label}
                         className="min-h-8 grid-cols-2 items-center"

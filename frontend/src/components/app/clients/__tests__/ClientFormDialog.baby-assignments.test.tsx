@@ -448,6 +448,43 @@ describe("desktop client service-record allocation", () => {
     expect(fetusSelect()).toHaveValue("TWINS");
   });
 
+  it("lets the first twin record replace the severe singleton's secondary owner with the primary owner", async () => {
+    await open({
+      client: {
+        ...savedTwins,
+        fetalType: "SEVERE_SINGLETON",
+        babyCount: 1,
+        babies: [baby1],
+        babyAssignments: [{ ...baby1, providerSlot: 1 }],
+      },
+      initialStep: 1,
+    });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    next();
+
+    const firstOwner = ownerSelect("첫째 기록지");
+    expect(firstOwner).toBeEnabled();
+    expect(firstOwner).toHaveValue("");
+    expect(firstOwner).toHaveAccessibleDescription("담당 제공인력을 다시 선택해 주세요.");
+    expect(within(firstOwner).queryByRole("option", { name: /박여름/ })).not.toBeInTheDocument();
+    next();
+    expect(firstOwner).toBeVisible();
+
+    select("첫째 기록지 담당자", "0");
+    expect(firstOwner).not.toBeInTheDocument();
+    expect(screen.getByText("주 제공인력 · 김봄", { selector: "span" })).toBeVisible();
+    next();
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({
+      fetalType: "TWINS",
+      babyCount: 2,
+      expectedAllocationVersion: "fixture-version-1",
+      babyAssignments: [{ babyId: baby1.babyId, providerSlot: 0 }, { ordinal: 5, providerSlot: 1 }],
+    });
+  });
+
   it("keeps given baby IDs and adds the new child after the historical maximum when the grade changes", async () => {
     await open({ client: savedTwins, initialStep: 1 });
     await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
@@ -671,16 +708,20 @@ describe("desktop client service-record allocation", () => {
     }
   });
 
-  it("blocks a draft when the authenticated and selected branches differ", async () => {
+  it.each<Surface>(["panel", "dialog"])("explains why the %s cannot save when branches differ at open", async (surface) => {
     selectBranch(secondBranch);
-    await open();
-    await screen.findByText("등록 가능한 번호입니다.");
-    next();
+    await open({ surface });
+    if (surface === "panel") next();
     fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
     select("바우처 유형", "A가1형");
-    next();
-    next();
-    expect(screen.getByRole("button", { name: "생성" })).toBeDisabled();
+    if (surface === "panel") {
+      next();
+      next();
+    }
+    const submit = screen.getByRole("button", { name: "생성" });
+    expect(submit).toBeDisabled();
+    expect(screen.getByText("지점을 선택한 후 양식을 다시 열어 주세요.")).toHaveAttribute("role", "status");
+    fireEvent.click(submit);
     expect(post).not.toHaveBeenCalled();
   });
 
