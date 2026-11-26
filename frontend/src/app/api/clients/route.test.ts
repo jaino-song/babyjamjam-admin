@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 
 import { createProblemDetails } from "@babyjamjam/shared";
+import { REGISTRATION_BRANCH_HEADER, REGISTRATION_USER_HEADER } from "@/features/clients/api/registration-scope";
 import { serverAPIClient } from "@/lib/api/server";
 import { GET, POST } from "./route";
 
@@ -17,12 +18,13 @@ jest.mock("@/lib/api/server", () => ({
 const mockGet = serverAPIClient.get as jest.Mock;
 const mockPost = serverAPIClient.post as jest.Mock;
 
-function createCreateRequest(body: object): NextRequest {
+function createCreateRequest(body: object, headers: Record<string, string> = {}): NextRequest {
     return new NextRequest("http://localhost/api/clients", {
         method: "POST",
         headers: {
             cookie: "auth_token=access-token",
             "content-type": "application/json",
+            ...headers,
         },
         body: JSON.stringify(body),
     });
@@ -43,6 +45,43 @@ describe("POST /api/clients", () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+    });
+
+    const scopeHeaders = { [REGISTRATION_BRANCH_HEADER]: "branch-a", [REGISTRATION_USER_HEADER]: "user-a" };
+
+    it("creates in the automatic branch using the same bearer checked by /auth/me", async () => {
+        mockGet.mockResolvedValue({ status: 200, data: { id: "user-a", branchId: "branch-a" } });
+        mockPost.mockResolvedValue({ status: 201, data: { id: 10 } });
+
+        const response = await POST(createCreateRequest(createBody, scopeHeaders));
+
+        expect(response.status).toBe(201);
+        const config = { headers: { Authorization: "Bearer access-token" } };
+        expect(mockGet).toHaveBeenCalledWith("/auth/me", config);
+        expect(mockPost).toHaveBeenCalledWith("/clients", createBody, config);
+    });
+
+    it.each([
+        { id: "user-b", branchId: "branch-a" },
+        { id: "user-a", branchId: "branch-b" },
+        { id: "user-a", branchId: null },
+    ])("refuses a stale automatic registration for active identity %j", async (user) => {
+        mockGet.mockResolvedValue({ status: 200, data: user });
+
+        const response = await POST(createCreateRequest(createBody, scopeHeaders));
+
+        expect(response.status).toBe(403);
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it("refuses a pending automatic registration after explicit selection", async () => {
+        const response = await POST(createCreateRequest(createBody, {
+            ...scopeHeaders, cookie: "auth_token=access-token; selected_organization_id=branch-a",
+        }));
+
+        expect(response.status).toBe(403);
+        expect(mockGet).not.toHaveBeenCalled();
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
     it("passes a converted duplicate-phone problem body through with its code intact", async () => {

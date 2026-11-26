@@ -3,6 +3,7 @@
 import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Check, ChevronsUpDown, UserPlus, X, Play } from "lucide-react";
 import { useEmployees, Employee } from "@/hooks/useEmployees";
+import type { ClientRegistrationScope } from "@/features/clients/api/registration-scope";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
@@ -67,6 +68,7 @@ interface EmployeeAutocompleteProps {
     searchMode?: "all" | "phone";
     /** Refresh the shared list when a form opens, even if its cache is still fresh. */
     refreshOnMount?: boolean;
+    registrationScope?: ClientRegistrationScope;
 }
 
 export function EmployeeAutocomplete({
@@ -91,12 +93,14 @@ export function EmployeeAutocomplete({
     displayValueMode = "name",
     searchMode = "all",
     refreshOnMount = false,
+    registrationScope,
     "data-testid": dataTestId,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
     const helperIdBase = useId();
     const { data: employees, isLoading, refetch } = useEmployees({
         refetchOnMount: refreshOnMount ? "always" : true,
+        registrationScope,
     });
     const setPrefillName = useEmployeeDialogStore((state) => state.setPrefillName);
     const clearPrefillName = useEmployeeDialogStore((state) => state.clearPrefillName);

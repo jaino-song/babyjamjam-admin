@@ -3,6 +3,7 @@
  */
 import { NextRequest } from "next/server";
 
+import { REGISTRATION_BRANCH_HEADER, REGISTRATION_USER_HEADER } from "@/features/clients/api/registration-scope";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     DELETE as deleteEmployeeProxy,
@@ -61,6 +62,26 @@ describe("GET /api/employees", () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+    });
+
+    it.each(["branch-a", "branch-b"])("fences automatic provider search to the authenticated branch %s", async (branchId) => {
+        mockGet.mockResolvedValueOnce({ status: 200, data: { id: "user-a", branchId } });
+        mockGet.mockResolvedValueOnce({ status: 200, data: [{ id: 11 }] });
+
+        const response = await listEmployees(createRequest("/api/employees", {
+            headers: { [REGISTRATION_BRANCH_HEADER]: "branch-a", [REGISTRATION_USER_HEADER]: "user-a" },
+        }));
+
+        const config = { headers: { Authorization: "Bearer auth-token" } };
+        expect(mockGet).toHaveBeenNthCalledWith(1, "/auth/me", config);
+        if (branchId === "branch-a") {
+            expect(response.status).toBe(200);
+            await expect(response.json()).resolves.toEqual([{ id: 11 }]);
+            expect(mockGet).toHaveBeenNthCalledWith(2, "/employees", config);
+        } else {
+            expect(response.status).toBe(403);
+            expect(mockGet).toHaveBeenCalledTimes(1);
+        }
     });
 
     it("rejects a missing auth token with the shared 401 response",

@@ -9,6 +9,7 @@ import {
     type QueryKey,
 } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import { registrationScopeHeaders, type ClientRegistrationScope } from "@/features/clients/api/registration-scope";
 import {
     removeById,
     restoreQueries,
@@ -96,16 +97,24 @@ export const employeeQueryKeys = {
 };
 
 // Fetch all employees
-export function useEmployees({ refetchOnMount = true }: { refetchOnMount?: boolean | "always" } = {}) {
-    return useQuery<Employee[]>({
-        queryKey: employeeQueryKeys.lists(),
+export function useEmployees({ refetchOnMount = true, registrationScope }: {
+    refetchOnMount?: boolean | "always";
+    registrationScope?: ClientRegistrationScope;
+} = {}) {
+    const query = useQuery<Employee[]>({
+        queryKey: registrationScope ? employeeQueryKeys.list({ registrationScope }) : employeeQueryKeys.lists(),
         queryFn: async () => {
-            const { data } = await api.get("/employees");
-            return data;
+            const response = registrationScope
+                ? await api.get("/employees", { headers: registrationScopeHeaders(registrationScope) })
+                : await api.get("/employees");
+            return response.data;
         },
         staleTime: 1000 * 60 * 10, // 10 minutes
         refetchOnMount,
     });
+
+    // A failed scope check must not fall back to the previous provider list.
+    return registrationScope && query.isError ? { ...query, data: undefined } : query;
 }
 
 /** Fetch the clients currently assigned to an employee. */
