@@ -2,6 +2,7 @@
 
 import type { ExistingBaby, ProviderSlot } from "@babyjamjam/shared";
 import type { Client, ClientProvider, EmployeeSummary } from "@/features/clients/types";
+import type { ClientRegistrationScope } from "@/features/clients/api/registration-scope";
 import { useEmployees } from "@/hooks/useEmployees";
 import { type Locale, t } from "@/lib/i18n/translations";
 import { FormField, FormNativeSelect, FormTextInput } from "@/components/app/ui/form-section";
@@ -12,7 +13,7 @@ type OwnerRow = Pick<ClientBabyRow, "field" | "providerSlot">
     & Partial<Pick<ClientBabyRow, "availableProviderSlots" | "canChangeProvider" | "needsReplacement">>;
 
 export function ClientBabyRecordOwners({
-    base, idPrefix, locale, rows, providers, knownEmployees, messages, onChange,
+    base, idPrefix, locale, rows, providers, knownEmployees, messages, onChange, registrationScope,
 }: {
     base: string;
     idPrefix: string;
@@ -22,8 +23,9 @@ export function ClientBabyRecordOwners({
     knownEmployees: readonly (EmployeeSummary | null | undefined)[];
     messages: Partial<Record<ClientBabyField, { text: string }>>;
     onChange?: (field: ClientBabyField, slot: ProviderSlot) => void;
+    registrationScope?: ClientRegistrationScope;
 }) {
-    const { data: employees = [] } = useEmployees();
+    const { data: employees = [] } = useEmployees({ registrationScope });
     const labels = new Map(providers.map(({ slot, employeeId }) => {
         const name = employees.find((employee) => employee.id === employeeId)?.name
             ?? knownEmployees.find((employee) => employee?.id === employeeId)?.name;
