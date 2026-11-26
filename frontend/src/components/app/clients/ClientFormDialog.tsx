@@ -1288,8 +1288,9 @@ function ClientFormContent({
         || formData.voucherClient !== formDataBaselineRef.current.voucherClient
         || voucherYear !== (allocationSnapshot?.voucherIssuanceYear ?? null);
     const isNewVoucherRegistration = !isEditMode && formData.voucherClient;
-    const wantsAllocation = isNewVoucherRegistration || (formData.voucherClient
-        && (hasSavedAllocation ? allocationWasEdited : hasBabyDraftChanges));
+    const wantsAllocation = formData.voucherClient && (isEditMode
+        ? hasSavedAllocation ? allocationWasEdited : hasBabyDraftChanges
+        : Boolean(formData.type));
     const shouldWriteAllocation = canEditAllocation && wantsAllocation;
     const explicitAllocationBlocked = !canEditAllocation && session.explicitAllocation;
     const areVoucherControlsLocked = Boolean(readOnlyAllocation) || explicitAllocationBlocked || branchChanged;
@@ -1768,6 +1769,8 @@ function ClientFormContent({
             || session.branchId !== getActiveBranchId() || (session.explicitAllocation && !grouped)) return false;
         if (grouped) return capability.isEnabledNow();
         if (!isNewVoucherRegistration) return true;
+        // 상담 단계에서는 바우처 유형이 정해지기 전에도 저장할 수 있다.
+        if (capability.status === "enabled") return !wantsAllocation && capability.isEnabledNow();
         if (capability.status !== "paused" || !session.branchId) return false;
 
         // The branch may have started a new capability read while the calendar was refreshing.
