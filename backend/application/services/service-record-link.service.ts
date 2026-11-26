@@ -1,4 +1,6 @@
-import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
+import {
+    BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold, requireBabyRecordRollout,
+} from "application/policies/baby-record-rollout.policy";
 import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { randomUUID } from "node:crypto";
@@ -9,6 +11,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { ordinaryAutomationJobSql } from "application/utils/message-automation-record-sql";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -346,6 +349,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
         try {
             if (options.rescheduleAutomatic && options.branchId
                 && await this.recheckRecovery({ branchId: options.branchId, scheduleId })) return true;
+            let historicalOnly = false;
             if (this.linkGroups && !options.taskAutomationReference) {
                 const schedule = await this.prisma.employee_schedule.findFirst({
                     where: { id: scheduleId, ...(options.branchId ? { branchId: options.branchId } : {}), replaced: false,
@@ -353,12 +357,15 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     select: { id: true, branchId: true, clientId: true, primaryEmployeeId: true,
                         client: { select: { fetalConfirmation: true } } },
                 });
-                if (schedule?.branchId && !(options.rescheduleAutomatic
-                    && await this.hasLegacyAutomaticReservation({ ...schedule, branchId: schedule.branchId }))) {
-                    if (!await this.ensureSystemRule(schedule.branchId, false, true)) {
-                        throw new BabyRecordRolloutPausedException();
+                if (schedule?.branchId) {
+                    historicalOnly = !await this.scalarLinkNeedsRollout(this.prisma, schedule);
+                    if (!historicalOnly && !(options.rescheduleAutomatic
+                        && await this.hasLegacyAutomaticReservation({ ...schedule, branchId: schedule.branchId }))) {
+                        if (!await this.ensureSystemRule(schedule.branchId, false, true)) {
+                            throw new BabyRecordRolloutPausedException();
+                        }
+                        return await this.linkGroups.schedule(schedule.branchId, scheduleId);
                     }
-                    return await this.linkGroups.schedule(schedule.branchId, scheduleId);
                 }
             }
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
@@ -368,6 +375,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                 taskAutomationReference: options.taskAutomationReference,
                 rescheduleAutomatic: options.rescheduleAutomatic,
                 branchId: options.branchId,
+                historicalOnly,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -387,6 +395,40 @@ export class ServiceRecordLinkService implements OnModuleInit {
             this.logger.error(`Failed to schedule service-record link for schedule ${scheduleId}: ${error}`);
             throw error;
         }
+    }
+
+    private async scalarLinkNeedsRollout(
+        db: Prisma.TransactionClient,
+        schedule: Parameters<typeof allowsLegacyServiceRecordLink>[1],
+        taskAutomation = false,
+    ) {
+        if (schedule.client.fetalConfirmation !== "CONFIRMED") return false;
+        if (taskAutomation || !schedule.branchId) return true;
+        const source = await readBackfilledScalarHousehold(db, { branchId: schedule.branchId, clientId: schedule.clientId });
+        return source?.scheduleId !== schedule.id || source.employeeId !== schedule.primaryEmployeeId;
+    }
+
+    private async lockScalarLinkSource(
+        tx: Prisma.TransactionClient,
+        expected: { branchId: string; clientId: number; id: number; primaryEmployeeId: number },
+        taskAutomation = false,
+        wasHistorical = false,
+    ) {
+        const { branchId, clientId, id } = expected;
+        await lockServiceRecordWriteSet(tx, { branchId, clientId, scheduleIds: [id] });
+        const current = await tx.employee_schedule.findFirst({
+            where: { branchId, clientId, id, replaced: false, terminatedAt: null, client: { deletedAt: null } },
+            include: { client: true, primaryEmployee: true },
+        });
+        if (!current || current.primaryEmployeeId !== expected.primaryEmployeeId
+            || !await allowsLegacyServiceRecordLink(tx, current)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        if (await this.scalarLinkNeedsRollout(tx, current, taskAutomation)) {
+            if (wasHistorical) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            await requireBabyRecordRollout(tx, branchId);
+        }
+        return current;
     }
 
     private async hasLegacyAutomaticReservation(schedule: Parameters<typeof allowsLegacyServiceRecordLink>[1] & { branchId: string }): Promise<boolean> {
@@ -527,7 +569,43 @@ export class ServiceRecordLinkService implements OnModuleInit {
             }));
         }
 
-        // The cancel runs under the schedule fence and commits before
+        if (schedule.client.fetalConfirmation === "CONFIRMED" && this.branchLock) {
+            const branchId = schedule.branchId;
+            const calendar = await this.lifecycleService?.resolveCalendarBeforeTransaction(schedule.clientId);
+            return this.branchLock.runExclusive(branchId, async tx => {
+                const current = await this.lockScalarLinkSource(tx, { ...schedule, branchId });
+                this.assertClientCanReceiveLink(current.client);
+                if (current.primaryEmployee.phone !== employee.phone) {
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+                }
+                await lockRecordLinkSchedule(tx, scheduleId);
+                const reason = "Service record link reset without resend";
+                const ordinary = ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` });
+                await tx.$executeRaw`
+                    WITH cancellable AS (
+                        SELECT id FROM message_trigger_job
+                        WHERE branch_id = ${branchId}::uuid AND employee_schedule_id = ${scheduleId}
+                          AND rule_id = ${SERVICE_RECORD_LINK_RULE_ID} AND ${ordinary}
+                          AND status IN ('pending', 'processing', 'needs_setup')
+                        ORDER BY id FOR UPDATE
+                    )
+                    UPDATE message_trigger_job job SET status = 'canceled', canceled_at = now(),
+                        cancel_reason = ${reason}, claim_token = NULL, updated_at = now()
+                    FROM cancellable WHERE job.id = cancellable.id
+                      AND job.status IN ('pending', 'processing', 'needs_setup')
+                `;
+                await this.supersedeRetryableServiceRecordSmsLogs(scheduleId, reason, tx);
+                const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId, tx, calendar);
+                const expiresAt = this.resolveExpiry(serviceRecordCase?.endDate ?? current.endDate, true);
+                const { linkToken } = await this.tokenService.issueLink({
+                    branchId, scheduleId, employeeId: employee.id, serviceRecordCaseId: serviceRecordCase?.id,
+                    expectedPhone: employee.phone, expiresAt, resetChallenge: true,
+                }, tx);
+                return { serviceRecordUrl: this.buildServiceRecordUrl(linkToken), expiresAt };
+            });
+        }
+
+        // The original scalar reset commits its cancel before
         // `issueLink` below: `issueLink` opens its own transaction (a
         // `service-record-link:` advisory lock and a case row lock) that must
         // never be requested from inside the fence. The reset keeps the token
@@ -667,6 +745,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
             taskAutomationReference?: AgentAutomationTaskCommitReference;
             rescheduleAutomatic?: boolean;
             branchId?: string;
+            historicalOnly?: boolean;
             recovery?: (transaction: Prisma.TransactionClient, pendingJob: MessageTriggerJobEntity, linkToken: string) => Promise<boolean>;
         },
     ): Promise<{
@@ -697,7 +776,11 @@ export class ServiceRecordLinkService implements OnModuleInit {
                 jobId: null,
             };
         }
-        const configured = schedule.client.fetalConfirmation === "CONFIRMED";
+        const confirmed = schedule.client.fetalConfirmation === "CONFIRMED";
+        const configured = await this.scalarLinkNeedsRollout(this.prisma, schedule, !!options.taskAutomationReference);
+        if (options.historicalOnly && (!confirmed || configured)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
         if (configured && !await isBabyRecordRolloutEnabled(this.prisma, schedule.branchId)) {
             if (options.isManualSend) throw new BabyRecordRolloutPausedException();
             return { scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
@@ -756,7 +839,8 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     dedupeKey: automaticDedupeKey,
                     serviceStartDate: this.formatDate(schedule.startDate),
                     serviceEndDate: this.formatDate(schedule.endDate),
-                });
+                }, confirmed ? tx => this.lockScalarLinkSource(tx, { ...schedule, branchId: schedule.branchId! },
+                    !!options.taskAutomationReference, !configured) : undefined);
                 if (!automaticSchedulingClaim) {
                     return {
                         scheduledFor,
@@ -794,6 +878,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                         serviceRecordCase?.endDate ?? schedule.endDate,
                         options.allowLateReissue === true,
                     ),
+                    ...(options.taskAutomationReference ? { requireRollout: true } : {}),
                 });
                 if (!activated) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -860,6 +945,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     ...(serviceRecordCase ? { serviceRecordCaseId: serviceRecordCase.id } : {}),
                     expectedPhone: employee.phone,
                     expiresAt,
+                    ...(options.taskAutomationReference ? { requireRollout: true } : {}),
                 };
                 ({ linkToken } = await this.tokenService.reuseActiveLink(tokenParams)
                     ?? await this.tokenService.issueLink(tokenParams));
@@ -944,6 +1030,10 @@ export class ServiceRecordLinkService implements OnModuleInit {
                     }
                     if (!await allowsLegacyServiceRecordLink(transaction, current)
                         || !(await this.automationActivationService!.getTriggerDispatchEnabled(schedule.branchId!, transaction))) return null;
+                    if (await this.scalarLinkNeedsRollout(transaction, current, !!options.taskAutomationReference)) {
+                        if (!configured) return null;
+                        await requireBabyRecordRollout(transaction, schedule.branchId!);
+                    }
                     const override = await transaction.message_trigger_rule_branch_override.findUnique({
                         where: { branchId_ruleId: { branchId: schedule.branchId!, ruleId: SERVICE_RECORD_LINK_RULE_ID } },
                     });
@@ -957,23 +1047,37 @@ export class ServiceRecordLinkService implements OnModuleInit {
             } else if (automaticSchedulingClaim) {
                 persistedJob = await this.branchLock!.runExclusive(
                     schedule.branchId,
-                    (transaction) => promote(transaction),
+                    async (transaction) => {
+                        if (confirmed) await this.lockScalarLinkSource(transaction, { ...schedule, branchId: schedule.branchId! },
+                            !!options.taskAutomationReference, !configured);
+                        return promote(transaction);
+                    },
                 );
             } else if (options.isManualSend) {
                 // The retry-log supersession runs inside the replacement's
                 // transaction: if it fails, the replacement rolls back with it
                 // instead of throwing after a committed (and still dispatchable)
                 // send, which an operator retry would then duplicate.
-                const replaced = await this.jobRepository.replacePendingJobsUnlessInFlight(
+                const replace = (transaction?: Prisma.TransactionClient) => this.jobRepository.replacePendingJobsUnlessInFlight(
                     pendingJob,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-                    { requireActiveLinkToken: linkToken },
+                    { requireActiveLinkToken: linkToken, ...(transaction ? { transaction } : {}) },
                     (transaction) => this.supersedeRetryableServiceRecordSmsLogs(
                         scheduleId,
                         SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                         transaction,
                     ),
                 );
+                const replaced = confirmed && this.branchLock
+                    ? await this.branchLock.runExclusive(schedule.branchId, async transaction => {
+                        const current = await this.lockScalarLinkSource(transaction, { ...schedule, branchId: schedule.branchId! }, false, !configured);
+                        this.assertClientCanReceiveLink(current.client);
+                        if (current.primaryEmployee.phone !== employee.phone) {
+                            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+                        }
+                        return replace(transaction);
+                    })
+                    : await replace();
                 if (
                     replaced.kind === "protected"
                     || replaced.kind === "canceled"
@@ -1028,7 +1132,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
         dedupeKey: string;
         serviceStartDate: string;
         serviceEndDate: string;
-    }): Promise<AutomaticSchedulingClaim | null> {
+    }, checkSource?: (tx: Prisma.TransactionClient) => Promise<unknown>): Promise<AutomaticSchedulingClaim | null> {
         const payload = {
             clientId: params.clientId,
             clientName: params.clientName,
@@ -1051,6 +1155,7 @@ export class ServiceRecordLinkService implements OnModuleInit {
             if (!this.automationActivationService || !this.branchLock) {
                 throw new ServiceUnavailableException("Message automation activation is not configured");
             }
+            await checkSource?.(transaction);
             if (!(await this.automationActivationService.getTriggerDispatchEnabled(params.branchId, transaction))) {
                 return [] as Array<{ id: string; claim_version: string }>;
             }

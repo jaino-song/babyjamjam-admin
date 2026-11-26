@@ -1,4 +1,4 @@
-import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled } from "application/policies/baby-record-rollout.policy";
+import { BabyRecordRolloutPausedException, isBabyRecordRolloutEnabled, readBackfilledScalarHousehold } from "application/policies/baby-record-rollout.policy";
 import { randomUUID } from "node:crypto";
 
 import { renderServiceRecordLinks } from "@babyjamjam/shared/message/service-record-links";
@@ -158,9 +158,10 @@ export class ServiceRecordLinkGroupService {
         const schedules = await this.prisma.employee_schedule.findMany({
             where: { branchId, replaced: false, terminatedAt: null, client: { branchId, deletedAt: null, fetalConfirmation: "CONFIRMED" },
                 recordBabyAssignments: { some: { branchId, employeeId, activeOwner: true, endedAt: null, teamSlot: { active: true } } } },
-            select: { id: true }, orderBy: { id: "asc" },
+            select: { id: true, clientId: true }, orderBy: { id: "asc" },
         });
-        for (const { id } of schedules) {
+        for (const { id, clientId } of schedules) {
+            if (await readBackfilledScalarHousehold(this.prisma, { branchId, clientId })) continue;
             try {
                 await this.schedule(branchId, id, { employeeId });
             } catch (error) {
@@ -267,6 +268,7 @@ export class ServiceRecordLinkGroupService {
         return {
             branchId: source.scope.branchId, scheduleId: source.schedule.id, serviceRecordCaseId: member.caseId,
             employeeId: member.employeeId, expectedPhone: member.employee.phone,
+            grouped: true,
             expiresAt: manual && expiry.getTime() <= Date.now() ? new Date(Date.now() + 86_400_000) : expiry,
         };
     }

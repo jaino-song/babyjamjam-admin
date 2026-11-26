@@ -1,3 +1,4 @@
+import { isBabyRecordRolloutEnabled, readBackfilledScalarHousehold } from "application/policies/baby-record-rollout.policy";
 import { resolveAdminServiceRecordTarget } from "./admin-service-record-target";
 import { IMMUTABLE_FINALIZATION_STATUSES, SERVICE_RECORD_CASE_STATUS } from "./service-record-lifecycle.service";
 import { ServiceRecordFinalizationService } from "./service-record-finalization.service";
@@ -276,13 +277,17 @@ export class AdminServiceRecordService {
             !record.completedAt && !record.finalizedAt && !IMMUTABLE_FINALIZATION_STATUSES.has(record.status)
             && record.status !== SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED
             && record.status !== SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED;
+        const historical = canUseCurrentSchedule && client.fetalConfirmation === "CONFIRMED"
+            && caseRows.length === 1 && caseRows[0]?.babyId && isWritable(caseRows[0])
+            && !await isBabyRecordRolloutEnabled(this.prisma, branchId)
+            ? await readBackfilledScalarHousehold(this.prisma, scope) : null;
         const cases: AdminServiceRecordCaseSummary[] = caseRows.map((record) => {
             const rank = activeBabies.findIndex(({ id }) => id === record.babyId) + 1;
             const owners = activeOwners.filter(({ babyId }) => babyId === record.babyId);
             const assignees = owners.map(({ employee }) => ({ id: employee.id, name: employee.name }));
             const currentOwners = owners.filter(({ scheduleId }) => scheduleId === currentSchedule?.id);
             const [owner] = currentOwners;
-            const linkAssignments = canUseCurrentSchedule && rank > 0 && isWritable(record)
+            const linkAssignments = historical?.caseId !== record.id && canUseCurrentSchedule && rank > 0 && isWritable(record)
                 && client.fetalConfirmation === "CONFIRMED" && currentOwners.length === 1
                 && owner && owner.endedAt === null && owner.teamSlot.active
                 && owner.employee.branchId === branchId && owner.employee.deletedAt === null
@@ -314,7 +319,9 @@ export class AdminServiceRecordService {
         const legacyLinkAssignment = legacy && canUseCurrentSchedule && currentSchedule
             && currentSchedule.primaryEmployee.branchId === branchId
             && currentSchedule.primaryEmployee.deletedAt === null
-            && (!legacyRecord || (legacyRecord.babyId === null && isWritable(legacyRecord)))
+            && (!legacyRecord || (legacyRecord.babyId === null && isWritable(legacyRecord))
+                || (historical?.caseId === legacyRecord.id && historical.scheduleId === currentSchedule.id
+                    && historical.employeeId === currentSchedule.primaryEmployee.id))
             ? { scheduleId: currentSchedule.id, employeeId: currentSchedule.primaryEmployee.id }
             : null;
         const ownedRecord = selectedId ? await this.prisma.service_record_case.findFirst({

@@ -1,4 +1,5 @@
-import { requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -19,6 +20,7 @@ import { MessageAutomationIntentService } from "./message-automation-intent.serv
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
+import { persistClientAllocation } from "./client-allocation.service";
 
 @Injectable()
 export class EmployeeScheduleService {
@@ -81,8 +83,16 @@ export class EmployeeScheduleService {
                 mutationId: ordinaryMutationId,
                 scheduleIds: [],
             });
-            if (!params.replaced && (await this.readClientBooking(transaction, branchid, params.clientId))?.fetalConfirmation === "CONFIRMED") {
-                await requireBabyRecordRollout(transaction, branchid);
+            const scope = { branchId: branchid, clientId: params.clientId };
+            let historical: Awaited<ReturnType<typeof readBackfilledScalarHousehold>> = null;
+            if (!params.replaced && await this.readClientBooking(transaction, branchid, params.clientId)) {
+                await lockServiceRecordWriteSet(transaction, {
+                    ...scope, employeeIds: [params.primaryEmployeeId, params.secondaryEmployeeId],
+                });
+                if ((await this.readClientBooking(transaction, branchid, params.clientId))?.fetalConfirmation === "CONFIRMED") {
+                    historical = await readBackfilledScalarHousehold(transaction, scope);
+                    if (!historical) await requireBabyRecordRollout(transaction, branchid);
+                }
             }
             const created = await this.createEmployeeScheduleUsecase.execute(branchid, {
                 clientId: params.clientId,
@@ -93,6 +103,18 @@ export class EmployeeScheduleService {
                 endDate: new Date(params.endDate),
                 replaced: params.replaced,
             }, transaction);
+            if (historical) {
+                const providers = [
+                    { slot: 0 as const, employeeId: created.primaryEmployeeId },
+                    ...(created.secondaryEmployeeId === null ? [] : [{ slot: 1 as const, employeeId: created.secondaryEmployeeId }]),
+                ];
+                await persistClientAllocation(transaction, scope, {
+                    fetalType: "SINGLETON", unchanged: false, retired: [], legacyContinuity: true,
+                    providers,
+                    assignments: [{ babyId: historical.babyId, ordinal: 1, providerSlot: 0 }],
+                }, created.id, null);
+                created.providers = providers;
+            }
             await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
                 branchId: branchid,
                 clientId: created.clientId,

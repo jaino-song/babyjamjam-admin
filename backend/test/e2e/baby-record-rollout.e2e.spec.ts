@@ -5,6 +5,8 @@ import { PassportModule } from "@nestjs/passport";
 import { Test } from "@nestjs/testing";
 import type { Prisma } from "@prisma/client";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import request from "supertest";
 
 import { MessageTriggerService } from "application/services/message-trigger.service";
@@ -29,6 +31,7 @@ import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { MessageDeliveryModule } from "module/message-delivery.module";
 import { SchedulerLeaseModule } from "module/scheduler-lease.module";
 
+import { serviceRecordResetTarget } from "../../../packages/shared/src/utils/service-record-link-selection";
 import { issueAdminServiceRecordEditHttpToken } from "./helpers/admin-service-record-edit-http.helper";
 import { ScriptedAligoStub } from "./helpers/scripted-aligo.stub";
 
@@ -532,4 +535,168 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(await db.client_baby.count({ where: scope })).toBe(0);
         expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
     });
+
+    async function backfillHistoricBooking(startDate = dateAt(-1)) {
+        const { body } = await http(off).post("/clients").send({
+            ...draft(), startDate, type: "A가2형", applyMessageAutomation: true, smsAutomationEnabled: true,
+            primaryEmployeeId: off.employees[0]!.id,
+        }).expect(201);
+        const scope = { branchId: off.id, clientId: body.id as number };
+        await confirm(scope.clientId, off).expect(200);
+        const schedule = await db.employee_schedule.findFirstOrThrow({ where: { ...scope, replaced: false } });
+        const original = await db.service_record_case.findFirstOrThrow({ where: scope });
+        expect(original.babyId).toBeNull();
+        if (startDate === dateAt(-1)) {
+            const { body: sent } = await link(schedule.id, "send", {}, off).expect(201);
+            expect(sent.status).toBe("sent");
+            const { linkTokenHash } = await db.service_record_token.findFirstOrThrow({
+                where: { branchId: off.id, scheduleId: schedule.id, active: true, revokedAt: null },
+            });
+            const { body: verified } = await raw().post("/service-record/verify")
+                .send({ linkToken: linkTokenHash, phone: off.employees[0]!.phone }).expect(201);
+            await header(verified.accessToken).expect(200);
+            await submit(verified.accessToken, 1).expect(201);
+        }
+        const days = () => db.service_record_day.findMany({
+            where: { branchId: off.id, serviceRecordCaseId: original.id }, orderBy: { id: "asc" },
+        });
+        const originalDays = await days();
+        // beforeAll requires the exact throwaway loopback clone and vendor
+        // stubs. The original operator SQL runs only on that clone.
+        execFileSync("psql", [
+            "-X", "--single-transaction", "-v", "ON_ERROR_STOP=1", "-d", target!,
+            "-f", resolve(__dirname, "../../prisma/scripts/backfill-baby-record-foundation.sql"),
+        ], { stdio: ["ignore", "ignore", "pipe"] });
+        const baby = await db.client_baby.findFirstOrThrow({ where: scope });
+        expect(baby).toMatchObject({ active: true, legacyBackfilled: true, ordinal: 1 });
+        expect(await db.service_record_case.findFirstOrThrow({ where: scope })).toMatchObject({ id: original.id, babyId: baby.id });
+        expect(await db.service_record_baby_assignment.count({
+            where: { ...scope, babyId: baby.id, scheduleId: schedule.id, legacyBackfilled: true, activeOwner: true },
+        })).toBe(1);
+        return { scope, schedule, original, baby, days, originalDays };
+    }
+
+    it.each(["missing", "false"])("keeps signed backfilled singleton writes scalar with a %s setting", async setting => {
+        const { scope, schedule, original, baby, days, originalDays } = await backfillHistoricBooking();
+        expect(originalDays).toHaveLength(1);
+        expect(originalDays[0]).toMatchObject({ locked: true });
+        if (setting === "false") await db.$transaction(tx => setRollout(tx, off.id, "false"));
+        // Exercise booking with the backfilled case and allocation already in place.
+        await db.client.update({ where: { id: scope.clientId }, data: { bookingConfirmedAt: null, serviceStatus: "pre_booking" } });
+        await confirm(scope.clientId, off).expect(200);
+        expect((await db.client.findUniqueOrThrow({ where: { id: scope.clientId } })).bookingConfirmedAt).not.toBeNull();
+        const editor = "/admin/service-records/client/" + scope.clientId + "/editor?caseId=" + original.id;
+        const { body: overview } = await http(off).get(editor).expect(200);
+        const target = serviceRecordResetTarget(overview, original.id);
+        expect(target).toEqual({ scheduleId: schedule.id, request: {} });
+        const { body: prepared } = await link(schedule.id, "prepare", { caseId: original.id }, off).expect(201);
+        expect(prepared.kind).toBe("legacy");
+        const { body: sent } = await link(schedule.id, "send", { preparedLinkToken: prepared.preparedLinkToken }, off).expect(201);
+        expect(sent.status).toBe("sent");
+        expect(await db.message_log.count({ where: { branchId: off.id, triggerJobId: sent.jobId, providerAcceptanceState: "accepted" } })).toBe(1);
+        expect(carrier.sendCalls.filter(call => call.receiver === off.employees[0]!.phone)).toHaveLength(2);
+        const { body: reset } = await link(schedule.id, "reset", target!.request, off).expect(201);
+        expect(reset).toMatchObject({ kind: "legacy", serviceRecordUrl: prepared.serviceRecordUrl });
+        expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
+        expect(await db.service_record_case.findMany({ where: scope, select: { id: true, babyId: true } }))
+            .toEqual([{ id: original.id, babyId: baby.id }]);
+        expect(await days()).toEqual(originalDays);
+    });
+
+    it("reserves a fresh scalar automatic job and keeps a later schedule on the original case", async () => {
+        const { scope, schedule, original, baby } = await backfillHistoricBooking(dateAt(4));
+        const where = { ...scope, ruleId: SERVICE_RECORD_LINK_RULE_ID };
+        const before = await db.message_trigger_job.findMany({ where, include: { logs: true } });
+        expect(before).toHaveLength(1);
+        expect(before[0]).toMatchObject({ recipientEmployeeId: null, canceledByUser: false, logs: [] });
+        expect(["pending", "canceled"]).toContain(before[0]!.status);
+        if (before[0]!.status === "canceled") expect(before[0]!.cancelReason).toContain("예약 전");
+        await db.message_trigger_job.delete({ where: { id: before[0]!.id } });
+        await expect(app.get(ServiceRecordLinkService).scheduleForServiceStart(schedule.id)).resolves.toBe(true);
+        expect(await db.message_trigger_job.findMany({ where, include: { recordMembers: true } }))
+            .toEqual([expect.objectContaining({ status: "pending", recipientEmployeeId: null, recordMembers: [] })]);
+        const { body: successor } = await http(off).post("/employee-schedules").send({
+            clientId: scope.clientId, primaryEmployeeId: off.employees[0]!.id, workAddress: "QA-Rollout schedule",
+            startDate: dateAt(20), endDate: dateAt(25),
+        }).expect(201);
+        expect(await db.service_record_baby_assignment.count({ where: {
+            ...scope, babyId: baby.id, scheduleId: successor.id, activeOwner: true, legacyBackfilled: true,
+        } })).toBe(1);
+        expect(await db.service_record_assignment.count({
+            where: { branchId: off.id, serviceRecordCaseId: original.id, scheduleId: successor.id },
+        })).toBe(1);
+        expect(await db.service_record_case.count({ where: scope })).toBe(1);
+    });
+
+    it.each(["adopted", "mixed", "group prepared", "no current owner", "retired baby"])(
+        "keeps a %s historical household fenced after pause", async mode => {
+        const { scope, schedule, original, baby } = await backfillHistoricBooking(dateAt(4));
+        await db.$transaction(tx => setRollout(tx, off.id, "true"));
+        const employeeId = off.employees[0]!.id;
+        const selection = { employeeId, caseIds: [original.id] };
+        let preparedGroup: { caseId: string; assignmentVersion: number; preparedLinkToken: string } | undefined;
+        if (mode === "adopted") {
+            const clientPath = "/clients/" + scope.clientId;
+            const { body: client } = await http(off).get(clientPath).expect(200);
+            await http(off).patch(clientPath).send({
+                type: "A가2형", voucherIssuanceYear: 2026, fetalType: "SINGLETON", babyCount: 1,
+                expectedAllocationVersion: client.allocationVersion,
+                providers: [{ slot: 0, employeeId }], babyAssignments: [{ babyId: baby.id, providerSlot: 0 }],
+            }).expect(200);
+            expect(await db.service_record_baby_assignment.count({ where: {
+                ...scope, scheduleId: schedule.id, babyId: baby.id, activeOwner: true, legacyBackfilled: false,
+            } })).toBe(1);
+        } else if (mode === "mixed") {
+            await db.service_record_team_slot.create({ data: {
+                ...scope, scheduleId: schedule.id, slot: 1, employeeId: off.employees[1]!.id,
+            } });
+        } else if (mode === "group prepared") {
+            const { body } = await link(schedule.id, "prepare", selection, off).expect(201);
+            expect(body.kind).toBe("group");
+            const { caseId, assignmentVersion, preparedLinkToken } = body.members[0];
+            preparedGroup = { caseId, assignmentVersion, preparedLinkToken };
+            await link(schedule.id, "send", { preparedLinkToken }, off).expect(409);
+        } else {
+            await db.service_record_baby_assignment.updateMany({
+                where: { ...scope, scheduleId: schedule.id, babyId: baby.id, activeOwner: true },
+                data: { activeOwner: null, endedAt: new Date() },
+            });
+            if (mode === "retired baby") await db.client_baby.update({ where: { id: baby.id }, data: { active: false } });
+        }
+        await db.$transaction(tx => setRollout(tx, off.id, "false"));
+        await link(schedule.id, "prepare", {}, off).expect(409);
+        await link(schedule.id, "prepare", selection, off).expect(409);
+        await link(schedule.id, "send", { preparedLinkToken: preparedGroup?.preparedLinkToken }, off).expect(409);
+        await link(schedule.id, "reset", {}, off).expect(409);
+        if (preparedGroup) await link(schedule.id, "send", { employeeId, members: [preparedGroup] }, off).expect(409);
+        await http(off).post("/employee-schedules").send({
+            clientId: scope.clientId, primaryEmployeeId: employeeId, workAddress: "QA-Rollout schedule",
+            startDate: dateAt(20), endDate: dateAt(25),
+        }).expect(409);
+        await db.client.update({ where: { id: scope.clientId }, data: { bookingConfirmedAt: null, serviceStatus: "pre_booking" } });
+        await confirm(scope.clientId, off).expect(409);
+        expect((await db.client.findUniqueOrThrow({ where: { id: scope.clientId } })).bookingConfirmedAt).toBeNull();
+        expect(await db.service_record_case.findFirstOrThrow({ where: scope })).toMatchObject({ id: original.id, babyId: baby.id });
+        expect(carrier.sendCalls).toHaveLength(0);
+    });
+
+    it.each([[1, "A가2형", "SINGLETON"], [2, "B-가-2형", "TWINS"]] as const)(
+        "refuses new scalar and grouped link writes for an explicitly configured %i-baby household during pause",
+        async (count, type, fetalType) => {
+            const { body } = await http().post("/clients").send(configure(Array(count).fill(0), active, type, fetalType)).expect(201);
+            await confirm(body.id).expect(200);
+            const scope = { branchId: active.id, clientId: body.id as number };
+            const schedule = await db.employee_schedule.findFirstOrThrow({ where: { ...scope, replaced: false } });
+            const cases = await db.service_record_case.findMany({ where: scope });
+            await set("false");
+            await link(schedule.id, "prepare", {}, active).expect(409);
+            await link(schedule.id, "prepare", { employeeId: active.employees[0]!.id, caseIds: cases.map(record => record.id) }).expect(409);
+            await http().post("/employee-schedules").send({
+                clientId: body.id, primaryEmployeeId: active.employees[0]!.id, workAddress: "QA-Rollout schedule",
+                startDate: dateAt(20), endDate: dateAt(25),
+            }).expect(409);
+            expect(await db.service_record_case.count({ where: scope })).toBe(count);
+            expect(calls()).toBe(0);
+        },
+    );
 });

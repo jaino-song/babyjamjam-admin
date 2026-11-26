@@ -12,8 +12,11 @@ export function legacyServiceRecordLinkAssignment(
     overview: ServiceRecordOverview,
 ): ServiceRecordAssignment | undefined {
     const { cases = [], legacyLinkAssignment, assignments } = overview;
-    if (cases.length > 1 || cases.some(({ babyId, retired }) => babyId !== null || retired)) return;
+    if (cases.length > 1 || cases.some(({ retired }) => retired)) return;
     if (legacyLinkAssignment === null) return;
+    // A bound historical case needs an explicit scalar target from the
+    // server. Older payloads can only infer the legacy unbound target.
+    if (cases[0]?.babyId && (!legacyLinkAssignment || cases[0].babyCount !== 1 || cases[0].linkAssignments?.length)) return;
 
     // Older overviews supported a scalar link for an unambiguous schedule.
     const eligible = assignments.filter(({ replaced, scheduleId, employee }) => !replaced
@@ -39,8 +42,7 @@ export function serviceRecordResetTarget(
     const record = overview.cases?.find((item) => item.caseId === selectedCaseId);
     if (record?.babyId) {
         const target = caseServiceRecordLinkAssignment(record);
-        if (!target) return;
-        return {
+        if (target) return {
             scheduleId: target.scheduleId,
             request: {
                 employeeId: target.employeeId,
@@ -59,7 +61,7 @@ export function serviceRecordResetUrl(response: ResetServiceRecordLinkResponse, 
         if (!expected || request.members.length !== 1 || response.kind !== "group"
             || response.employeeId !== request.employeeId || !Array.isArray(response.members) || response.members.length !== 1) return;
         const [member] = response.members;
-        if (member.caseId === expected.caseId && member.assignmentVersion === expected.assignmentVersion) {
+        if (member?.caseId === expected.caseId && member.assignmentVersion === expected.assignmentVersion) {
             return member.serviceRecordUrl;
         }
     } else if (response.kind !== "group") {

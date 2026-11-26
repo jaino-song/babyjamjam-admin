@@ -1,4 +1,4 @@
-import { lockEnabledBabyRecordRollout, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { lockEnabledBabyRecordRollout, readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
@@ -489,6 +489,8 @@ export class ServiceRecordLifecycleService {
             : [];
         const canCreateBabyArtifacts = babies.length > 0 && !unbound && !isPreBooking
             && !!tx && await lockEnabledBabyRecordRollout(tx, branchId);
+        const historicalCaseId = !canCreateBabyArtifacts && !isPreBooking && !!tx && babies.length === 1 && !unbound
+            ? (await readBackfilledScalarHousehold(tx, scope))?.caseId : undefined;
         const records: ServiceRecordCaseRecord[] = [];
         for (const target of targets) {
             if (!target.existing && (isPreBooking || (target.babyId !== null && !canCreateBabyArtifacts))) continue;
@@ -501,7 +503,7 @@ export class ServiceRecordLifecycleService {
             records.push(await this.syncCase(db, tx, {
                 ...scope, ...target, client, ownedSchedules, resolveCalendar,
                 legacyArtifacts: target.babyId === null && existing.length <= 1,
-                canCreateBabyArtifacts,
+                canCreateBabyArtifacts: canCreateBabyArtifacts || (!!historicalCaseId && target.existing?.id === historicalCaseId),
             }));
         }
         return records;
