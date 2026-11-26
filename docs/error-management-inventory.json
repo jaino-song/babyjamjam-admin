@@ -76580,6 +76580,195 @@
       "review_task": null,
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Both throws use registered Problem Details codes with matching HTTP statuses, fixed field detail and request-body JSON Pointers."
+    },
+    {
+      "id": "owner-dd72bb297b57",
+      "path": "backend/application/policies/baby-record-rollout.policy.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "The intake pattern matches the NestJS ConflictException import and superclass. BabyRecordRolloutPausedException wraps the registered REQUEST_CONFLICT (409) with codeOnlyProblemBody. requireBabyRecordRollout throws it when the locked branch setting does not enable new writes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 37,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 44,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "baby-records-closure-error-ownership",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-01",
+        "EM-STATE-01",
+        "EM-SEC-03"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT"
+      ],
+      "outcome_evidence": "The opt-in Nest/PostgreSQL rollout suite requires matching DATABASE_URL and DIRECT_URL for an approved throwaway loopback cutover clone, NODE_ENV=test, and vendor stubs. It asserts HTTP 409 for paused-branch registration, booking confirmation, schedule creation, and link prepare, send and reset. Source inspection shows that the public mapHttpProblem boundary strips the producer's paused detail and supplies the localized REQUEST_CONFLICT catalog detail.",
+      "consumer_paths": [
+        "backend/application/services/client.service.ts",
+        "backend/application/services/client-allocation.service.ts",
+        "backend/application/services/employee-schedule.service.ts",
+        "backend/application/services/service-record-lifecycle.service.ts",
+        "backend/application/services/service-record-token.service.ts",
+        "backend/application/services/service-record-link.service.ts",
+        "backend/application/services/service-record-link-group.service.ts",
+        "backend/application/services/message-automation-intent.service.ts (handles the pause during intent dispatch)"
+      ],
+      "test_evidence": [
+        "backend/test/e2e/baby-record-rollout.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Catalog-backed rollout refusal carries NOT_APPLIED with recovery action NONE and retry mode NEVER."
+    },
+    {
+      "id": "owner-4521f5cd1537",
+      "path": "backend/application/services/service-record-link-group.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "The intake pattern matches NestJS exception imports, a handled NotFoundException check in employee refresh, and structured refusals. A missing group source or case uses RESOURCE_NOT_FOUND (404). A paused rollout uses REQUEST_CONFLICT (409) via BabyRecordRolloutPausedException. Changed assignments, recipient mismatches or invalidated link credentials use SERVICE_RECORD_WRITE_TARGET_CHANGED (409) via codeOnlyProblemException. Missing registered phone uses INVALID_PROVIDER_PHONE (400). Preview failure uses VALIDATION_FAILED (400) with a fixed renderer reason identifier.",
+      "seams": [
+        {
+          "line": 5,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 76,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 78,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 87,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 149,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 167,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 168,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 253,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 254,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 259,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 261,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 262,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 291,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 330,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 343,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "baby-records-closure-error-ownership",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-01",
+        "EM-STATE-01",
+        "EM-SEC-03"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT",
+        "RESOURCE_NOT_FOUND",
+        "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+        "INVALID_PROVIDER_PHONE",
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": "The opt-in Nest/PostgreSQL message-group suite requires matching DATABASE_URL and DIRECT_URL for an approved throwaway loopback send clone, NODE_ENV=test, and vendor stubs. It asserts HTTP 409 on grouped prepare or send for stale selections after reassignment, mismatched employees, and mismatched recipient phones. The opt-in rollout suite also asserts HTTP 409 for paused grouped prepare, send and reset.",
+      "consumer_paths": [
+        "backend/interface/controllers/admin-service-record.controller.ts (link-targets, prepare-link, send-link and reset-link via AdminServiceRecordService)",
+        "backend/application/services/admin-service-record.service.ts (targets, prepare and reset)",
+        "backend/application/services/service-record-link.service.ts (manual grouped send and automatic scheduling)",
+        "backend/application/services/message-trigger.service.ts (employee refresh and automatic rescheduling)"
+      ],
+      "test_evidence": [
+        "backend/test/e2e/baby-record-message-groups.e2e.spec.ts",
+        "backend/test/e2e/baby-record-rollout.e2e.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Catalog bodies carry NOT_APPLIED with recovery action NONE and retry mode NEVER. The HTTP mapper rebuilds paused detail from the catalog and preserves the renderer's bounded reason extension."
     }
   ]
 }
