@@ -8,6 +8,7 @@ import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
 import { REGISTRATION_BRANCH_HEADER, REGISTRATION_USER_HEADER } from "@/features/clients/api/registration-scope";
 import { useBusinessDayCalendar, type RefreshForSaveResult } from "@/hooks/useBusinessDayCalendar";
 import { employeeQueryKeys, type Employee } from "@/hooks/useEmployees";
+import { fetchAuthUser, type AuthUser } from "@/hooks/useGetAuthUser";
 import { DetailPanel } from "@/components/app/v3/DetailPanel";
 import { SteppedWizardStepper } from "@/components/app/v3/SteppedWizardStepper";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
@@ -750,6 +751,68 @@ describe("desktop client service-record allocation", () => {
     next();
     click("생성");
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  });
+
+  it("hides previously selectable scoped providers after a denied refresh and recovers on success", async () => {
+    clearBranchSelection();
+    render(<QueryClientProvider client={queries}><FormFixture initialStep={2} /></QueryClientProvider>);
+
+    const trigger = screen.getByRole("combobox", { name: roles[0] });
+    fireEvent.click(trigger);
+    const search = await screen.findByRole("combobox", { name: roles[0] + " 검색" });
+    fireEvent.change(search, { target: { value: providers[0].name } });
+    const oldOption = { name: new RegExp(providers[0].name) };
+    expect(await screen.findByRole("option", oldOption)).toBeVisible();
+
+    const defaultGet = get.getMockImplementation()!;
+    const refresh = jest.fn().mockRejectedValueOnce({
+      response: { status: 403, data: { code: "ACCESS_DENIED" } },
+    });
+    get.mockImplementation((url, config) => url === "/employees" ? refresh(config) : defaultGet(url, config));
+    await act(async () => { await queries.invalidateQueries({ queryKey: employeeQueryKeys.lists() }); });
+    expect(refresh).toHaveBeenCalledWith({
+      headers: { [REGISTRATION_BRANCH_HEADER]: firstBranch, [REGISTRATION_USER_HEADER]: originalUserId },
+    });
+    await waitFor(() => expect(screen.queryByRole("option", oldOption)).not.toBeInTheDocument());
+    expect(search).toBeVisible();
+
+    const recoveredProvider = { ...providers[0], id: 31, name: "김봄 신규" };
+    refresh.mockResolvedValue({ data: [recoveredProvider] });
+    await act(async () => { await queries.invalidateQueries({ queryKey: employeeQueryKeys.lists() }); });
+    fireEvent.click(await screen.findByRole("option", { name: /김봄 신규/ }));
+    expect(trigger).toHaveTextContent(recoveredProvider.name);
+  });
+
+  it("waits for cookieless branch authority before mounting provider search", async () => {
+    clearBranchSelection();
+    queries.removeQueries({ queryKey: AUTH_USER_QUERY_KEY });
+    queries.setQueryData(employeeQueryKeys.lists(), [{ ...providers[0], name: "다른 지점 제공인력" }]);
+    const defaultGet = get.getMockImplementation()!;
+    let resolveAuth!: (user: AuthUser) => void;
+    get.mockImplementation((url, config) => url === "/auth/me"
+      ? new Promise((resolve) => { resolveAuth = (user) => resolve({ data: user }); })
+      : defaultGet(url, config));
+    const authRequest = queries.fetchQuery({ queryKey: AUTH_USER_QUERY_KEY, queryFn: fetchAuthUser });
+
+    render(<QueryClientProvider client={queries}><FormFixture initialStep={2} /></QueryClientProvider>);
+    await act(async () => {});
+    expect(document.cookie).not.toMatch(/selected_(branch|organization)_id/);
+    expect(get).toHaveBeenCalledWith("/auth/me");
+    expect(get.mock.calls.map(([url]) => url)).not.toContain("/employees");
+    expect(screen.queryByRole("combobox", { name: roles[0] })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: roles[0] })).toBeDisabled();
+
+    await act(async () => {
+      resolveAuth({ id: originalUserId, name: "QA", branchId: firstBranch, branchRole: "manager" });
+      await authRequest;
+    });
+    await selectProvider(0, providers[0]);
+    const headers = { [REGISTRATION_BRANCH_HEADER]: firstBranch, [REGISTRATION_USER_HEADER]: originalUserId };
+    const employeeRequests = get.mock.calls.filter(([url]) => url === "/employees");
+    expect(employeeRequests).not.toHaveLength(0);
+    for (const request of employeeRequests) {
+      expect(request).toEqual(["/employees", { headers }]);
+    }
   });
 
   it.each<Surface>(["panel", "dialog"])("saves a voucher consultation without a type in the %s", async (surface) => {
