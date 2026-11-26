@@ -686,6 +686,32 @@ describe("desktop client service-record allocation", () => {
     }
   });
 
+  it.each<Surface>(["panel", "dialog"])("saves a voucher consultation without a type in the enabled %s", async (surface) => {
+    await open({ surface });
+    if (surface === "panel") {
+      await screen.findByText("등록 가능한 번호입니다.");
+      next();
+    }
+    fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
+    expect(screen.getByLabelText("바우처 유형")).toHaveValue("");
+    if (surface === "panel") {
+      next();
+      expect(screen.getByRole("combobox", { name: roles[0] })).toBeVisible();
+      next();
+    }
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
+    click("생성");
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/clients", expect.objectContaining({
+      voucherClient: true, type: null, primaryEmployeeId: null, secondaryEmployeeId: null,
+    }));
+    const body = post.mock.calls[0][1];
+    for (const key of ["fetalType", "babyCount", "providers", "babyAssignments"]) {
+      expect(body).not.toHaveProperty(key);
+    }
+  });
+
   it.each<Surface>(["panel", "dialog"])("waits for a confirmed capability before a new voucher registration in the %s", async (surface) => {
     selectBranch(pausedBranch);
     let settle: (result: { data: { enabled: unknown } }) => void = () => {};
