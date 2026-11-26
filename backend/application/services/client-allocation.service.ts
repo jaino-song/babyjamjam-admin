@@ -1,4 +1,4 @@
-import { readBackfilledScalarHousehold, requireBabyRecordRollout } from "application/policies/baby-record-rollout.policy";
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
 import {
     admitVoucherCode,
     resolveBabyRecordAllocation,
@@ -455,9 +455,7 @@ export async function persistClientAllocation(
     previousScheduleId: number | null = scheduleId,
 ): Promise<void> {
     if (plan.unchanged && previousScheduleId === scheduleId) return;
-    if (plan.adoptBackfilledSlots) await requireBabyRecordRollout(tx, scope.branchId);
     const newRows = plan.assignments.filter(({ babyId }) => babyId === null);
-    if (newRows.length) await requireBabyRecordRollout(tx, scope.branchId);
     if (previousScheduleId !== null || plan.retired.length) await lockCredentialCases(tx, scope);
     const previousOwners = previousScheduleId === null ? [] : await readCredentialOwners(tx, scope, previousScheduleId);
     const previousSingleton = previousScheduleId !== null && previousOwners.length <= 1
@@ -519,7 +517,6 @@ export async function persistClientAllocation(
     });
     const kept = slots.filter(({ id }) => !retiredSlotIds.has(id));
     const toInsert = plan.providers.filter(({ slot }) => !kept.some((row) => row.slot === slot));
-    if (toInsert.length && !plan.legacyContinuity) await requireBabyRecordRollout(tx, scope.branchId);
     const created = toInsert.length ? await tx.service_record_team_slot.createManyAndReturn({
         data: toInsert.map((provider) => ({ ...scheduleScope, ...provider, ...(plan.legacyContinuity ? { legacyBackfilled: true } : {}) })),
     }) : [];
@@ -537,7 +534,6 @@ export async function persistClientAllocation(
         }];
     });
     if (newOwners.length) {
-        if (!toInsert.length && !plan.legacyContinuity) await requireBabyRecordRollout(tx, scope.branchId);
         await tx.service_record_baby_assignment.createMany({ data: newOwners });
     }
 

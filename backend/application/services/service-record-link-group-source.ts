@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
-import { BACKFILLED_SCALAR_LINK_PREFIX, GROUP_RECORD_LINK_PREFIX, readBackfilledLinkPolicy } from "application/policies/baby-record-rollout.policy";
+import { BACKFILLED_SCALAR_LINK_PREFIX, GROUP_RECORD_LINK_PREFIX, readBackfilledLinkPolicy } from "application/policies/baby-record-provenance.policy";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import {
@@ -56,12 +56,6 @@ export function isAutomaticRecordLinkGroup(job: GroupJob): boolean {
         && job.dedupeKey.startsWith(RECORD_LINK_GROUP_KEY_PREFIX) && !isServiceRecordLinkManualDedupeKey(job.dedupeKey)
         && !job.payload.sentByUserId && job.payload.templateVariables?.["triggerType"] !== "agent_scheduled"
         && !hasTaskAuthorityMarker(job.payload);
-}
-
-/** Match grouped jobs before applying queue limits, including stale or malformed groups. */
-export function recordLinkGroupJobSql(alias: Prisma.Sql): Prisma.Sql {
-    return Prisma.sql`(starts_with(${alias}.dedupe_key, ${RECORD_LINK_GROUP_KEY_PREFIX})
-        OR ${alias}.recipient_employee_id IS NOT NULL OR ${alias}.payload ? 'recordLinkGroup')`;
 }
 
 export function recordLinkHash(value: string): string {
