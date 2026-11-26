@@ -13,6 +13,8 @@ import { Prisma } from "@prisma/client";
 import { problemBody } from "application/utils/problem-bodies";
 import { createHash } from "node:crypto";
 import { resolveServiceRecordCaseTarget, type ServiceRecordCaseTarget } from "./service-record-case-target";
+import { RECORD_LINK_GROUP_CHANGED, recordLinkGroupCarrierEvidence } from "./service-record-link-group-source";
+import { IMMUTABLE_FINALIZATION_STATUSES } from "./service-record-lifecycle.service";
 import { hasConflictingUnboundCaseHistory } from "./service-record-token.service";
 
 export interface ClientAllocationInput {
@@ -234,23 +236,38 @@ async function assertBabiesCanRetire(
     scope: { branchId: string; clientId: number },
     retired: string[],
 ): Promise<void> {
-    if (!retired.length) return;
+    const authoredFields = [
+        { momName: { not: null } }, { momBirth: { not: null } },
+        { babyName: { not: null } }, { babyBirth: { not: null } },
+        { deliveryType: { not: null } }, { babyWeight: { not: null } },
+    ];
+    const retiringCases = { ...scope, babyId: { in: retired } };
     const authored = await tx.service_record_case.findFirst({
         where: {
-            ...scope,
-            babyId: { in: retired },
+            ...retiringCases,
             OR: [
-                { days: { some: {} } }, { currentRevisionId: { not: null } },
+                ...authoredFields,
+                { legacyHeaders: { some: { OR: authoredFields } } },
+                { days: { some: {} } }, { dayEditLogs: { some: {} } },
                 { eformsignDocs: { some: {} } }, { snapshotChunks: { some: {} } },
-                { legacyHeaders: { some: {} } }, { finalizedAt: { not: null } },
-                { editDrafts: { some: {} } }, { revisions: { some: {} } },
-                { babyName: { not: null } }, { babyBirth: { not: null } },
-                { deliveryType: { not: null } }, { babyWeight: { not: null } },
+                { editDrafts: { some: {} } }, { revisions: { some: {} } }, { revisionDocumentStates: { some: {} } },
+                { currentRevisionId: { not: null } }, { currentUsableRevisionId: { not: null } },
+                { currentUsableDocumentVersion: { not: null } }, { plannedSessions: { not: Prisma.DbNull } },
+                { completedAt: { not: null } }, { finalizedAt: { not: null } },
+                { finalizationStartedAt: { not: null } }, { documentsCompletedAt: { not: null } },
+                { status: { in: [...IMMUTABLE_FINALIZATION_STATUSES] } },
             ],
         },
         select: { id: true },
     });
     if (authored) allocationConflict("/babyCount");
+
+    // Archived days retain authored data after their live rows are removed.
+    const cases = await tx.service_record_case.findMany({ where: retiringCases, select: { id: true } });
+    if (cases.length && await tx.service_record_day_archive.findFirst({
+        where: { ...scope, serviceRecordCaseId: { in: cases.map(({ id }) => id) } },
+        select: { id: true },
+    })) allocationConflict("/babyCount");
 }
 
 export async function planClientAllocation(
@@ -258,7 +275,6 @@ export async function planClientAllocation(
     input: ClientAllocationInput,
     voucher: { voucherClient: boolean; type: string | null },
     current?: ClientAllocationSnapshot,
-    scope?: { branchId: string; clientId: number },
 ): Promise<ClientAllocationPlan> {
     validateInput(input);
     if (!voucher.voucherClient) invalid("/type");
@@ -348,7 +364,6 @@ export async function planClientAllocation(
         });
     if (stale && !unchanged) allocationConflict("/expectedAllocationVersion");
     const retired = projection?.babies.filter((baby) => !retained.has(baby.babyId)).map((baby) => baby.babyId) ?? [];
-    if (scope) await assertBabiesCanRetire(tx, scope, retired);
     return { fetalType: rules.fetalType, assignments, providers, retired, unchanged, adoptBackfilledSlots };
 }
 
@@ -443,7 +458,7 @@ export async function persistClientAllocation(
     if (plan.adoptBackfilledSlots) await requireBabyRecordRollout(tx, scope.branchId);
     const newRows = plan.assignments.filter(({ babyId }) => babyId === null);
     if (newRows.length) await requireBabyRecordRollout(tx, scope.branchId);
-    if (previousScheduleId !== null) await lockCredentialCases(tx, scope);
+    if (previousScheduleId !== null || plan.retired.length) await lockCredentialCases(tx, scope);
     const previousOwners = previousScheduleId === null ? [] : await readCredentialOwners(tx, scope, previousScheduleId);
     const previousSingleton = previousScheduleId !== null && previousOwners.length <= 1
         ? await resolveServiceRecordCaseTarget(tx, scope) : null;
@@ -451,6 +466,8 @@ export async function persistClientAllocation(
         && previousSingleton.babyCount === null && previousOwners.length === 0
         && !await tx.service_record_baby_assignment.findFirst({ where: scope, select: { id: true } });
     if (plan.retired.length) {
+        await assertBabiesCanRetire(tx, scope, plan.retired);
+        await revokeRetiredBabyCredentials(tx, scope, plan.retired);
         // The database's conditional foreign key requires owners to close
         // before retiring a baby, including an owner from an older schedule.
         await tx.service_record_baby_assignment.updateMany({
@@ -559,6 +576,31 @@ function revokeCredentials(tx: Prisma.TransactionClient, where: Prisma.service_r
     return tx.service_record_token.updateMany({
         where: { ...where, revokedAt: null },
         data: { active: false, revokedAt: now, accessTokenHash: null, verifiedAt: null },
+    });
+}
+
+async function revokeRetiredBabyCredentials(tx: Prisma.TransactionClient, scope: AllocationScope, retired: string[]) {
+    const now = new Date();
+    await revokeCredentials(tx, {
+        branchId: scope.branchId,
+        schedule: scope,
+        OR: [
+            { serviceRecordCase: { ...scope, babyId: { in: retired } } },
+            // A legacy unscoped token must never gain access to the surviving case.
+            { serviceRecordCaseId: null },
+        ],
+    }, now);
+    await tx.message_trigger_job.updateMany({
+        where: {
+            ...scope,
+            recordMembers: { some: { ...scope, babyId: { in: retired } } },
+            status: { in: ["pending", "processing", "needs_setup", "dispatching"] },
+            canceledByUser: false, logs: { none: recordLinkGroupCarrierEvidence },
+        },
+        data: {
+            status: "canceled", cancelReason: RECORD_LINK_GROUP_CHANGED, canceledAt: now,
+            claimToken: null, nextAttemptAt: null, processingDeadlineAt: null,
+        },
     });
 }
 

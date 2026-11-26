@@ -2106,6 +2106,7 @@ export class ClientService {
         // transaction that could partially mutate schedule state.
         assertClientPhoneInput(params.phone);
         const configured = hasAllocationInput(params);
+        if (configured && params.voucherClient === false) allocationConflict("/voucherClient");
         assertAllocationStaffInput(params);
         // Get existing client
         const existingClient = await this.findClientByIdUsecase.execute(branchid, id);
@@ -2425,12 +2426,27 @@ export class ClientService {
                 lockedClient?.fetalConfirmation === "CONFIRMED" && (legacyAllocationWrite || lockedHasDateUpdate)
             ) ? (await loadClientAllocations(transaction, branchid, [id])).get(id) : undefined;
             const scope = { branchId: branchid, clientId: id };
+            const voucherClient = params.voucherClient ?? currentClient.voucherClient;
+            if (configured && !voucherClient) allocationConflict("/voucherClient");
+            // Self-pay pricing leaves the confirmed household and its ownership in place.
+            // A scalar staff edit cannot validate new ownership without the voucher rules.
+            const preserveAllocation = !voucherClient && snapshot?.fetalConfirmation === "CONFIRMED";
+            if (preserveAllocation && employeeChanged) {
+                const schedule = snapshot.employeeSchedules[0];
+                if (params.primaryEmployeeId !== undefined && params.primaryEmployeeId !== schedule?.primaryEmployeeId) {
+                    allocationConflict("/primaryEmployeeId");
+                }
+                if (params.secondaryEmployeeId !== undefined && params.secondaryEmployeeId !== (schedule?.secondaryEmployeeId ?? null)) {
+                    allocationConflict("/secondaryEmployeeId");
+                }
+            }
             const allocation = configured
                 ? await planClientAllocation(transaction, params, {
-                    voucherClient: params.voucherClient ?? currentClient.voucherClient,
+                    voucherClient,
                     type: lockedPricing ? lockedPricing.type : currentClient.type,
-                }, snapshot, scope)
-                : legacyAllocationWrite ? await planLegacyClientAllocation(transaction, snapshot, params, true) : null;
+                }, snapshot)
+                : legacyAllocationWrite && !preserveAllocation
+                    ? await planLegacyClientAllocation(transaction, snapshot, params, true) : null;
             const previousProjection = snapshot && allocationProjection(snapshot);
             const teamChanged = !!allocation && !sameProviders(allocation.providers, previousProjection?.providers ?? []);
             configuredPreBooking = (configured || lockedClient?.fetalConfirmation === "CONFIRMED") && getEffectiveClientServiceStatus(

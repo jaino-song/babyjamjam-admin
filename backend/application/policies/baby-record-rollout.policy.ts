@@ -60,8 +60,11 @@ async function readBackfilledSingleton(db: Prisma.TransactionClient, scope: Hous
         where: { branchId: scope.branchId, id: scope.clientId, deletedAt: null },
         select: { type: true, voucherClient: true, fetalType: true, fetalConfirmation: true, serviceStatus: true },
     });
-    if (!client?.voucherClient || client.fetalType !== "SINGLETON" || client.fetalConfirmation !== "CONFIRMED"
-        || !BACKFILL_VOUCHER.test(client.type?.trim() ?? "") || client.serviceStatus === "terminated") return null;
+    if (!client || client.fetalType !== "SINGLETON" || client.fetalConfirmation !== "CONFIRMED"
+        || client.serviceStatus === "terminated") return null;
+    // The provenance checks below still require the original backfilled rows
+    // after a pricing edit clears the voucher code.
+    if (client.voucherClient ? !BACKFILL_VOUCHER.test(client.type?.trim() ?? "") : client.type !== null) return null;
 
     const [babies, cases, schedules, slots, owners] = await Promise.all([
         db.client_baby.findMany({ where: scope, take: 2,

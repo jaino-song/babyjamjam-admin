@@ -450,9 +450,14 @@ export class ServiceRecordLifecycleService {
         const babies = client.fetalConfirmation === "CONFIRMED"
             ? await db.client_baby.findMany({ where: { ...scope, active: true }, select: { id: true }, orderBy: { ordinal: "asc" } })
             : [];
-        // Legacy consumers may only act on an unambiguous household.
-        if (single && (babies.length > 1 || existing.length > 1)) return [];
         const unbound = existing.find(({ babyId }) => babyId === null);
+        // Legacy consumers may only act on an unambiguous household.
+        // A retired sibling is historical when the remaining baby's case is identified.
+        if (single) {
+            if (babies.length > 1) return [];
+            const [baby] = babies;
+            if (existing.length > 1 && (unbound || !baby || !existing.some(({ babyId }) => babyId === baby.id))) return [];
+        }
         const isPreBooking = getEffectiveClientServiceStatus(
             client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt,
         ) === "pre_booking";

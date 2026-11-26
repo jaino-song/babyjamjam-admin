@@ -42,7 +42,7 @@ export async function resolveServiceRecordCaseTarget(
         select: { id: true, babyId: true },
         take: 2,
     });
-    const [recordCase] = cases;
+    let [recordCase] = cases;
     if (explicit && !recordCase) return { kind: "missing" };
 
     const babies = await tx.client_baby.findMany({
@@ -55,8 +55,20 @@ export async function resolveServiceRecordCaseTarget(
         orderBy: { ordinal: "asc" },
     });
     const activeBabies = babies.filter(({ active }) => active);
-    if (!explicit && (activeBabies.length > 1 || cases.length > 1)) {
-        return { kind: "ambiguous" };
+    if (!explicit) {
+        if (activeBabies.length > 1) return { kind: "ambiguous" };
+        if (cases.length > 1) {
+            const [activeBaby] = activeBabies;
+            if (!activeBaby) return { kind: "ambiguous" };
+            const liveCases = await tx.service_record_case.findMany({
+                where: { branchId, clientId, client: liveClient, OR: [{ babyId: activeBaby.id }, { babyId: null }] },
+                select: { id: true, babyId: true },
+                take: 2,
+            });
+            [recordCase] = liveCases;
+            // Unbound history still makes an implicit selection unsafe.
+            if (liveCases.length > 1 || recordCase?.babyId === null) return { kind: "ambiguous" };
+        }
     }
     if (!recordCase) return { kind: "missing" };
 
