@@ -536,9 +536,9 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
     });
 
-    async function backfillHistoricBooking(startDate = dateAt(-1)) {
+    async function backfillHistoricBooking(startDate = dateAt(-1), phone?: string) {
         const { body } = await http(off).post("/clients").send({
-            ...draft(), startDate, type: "A가2형", applyMessageAutomation: true, smsAutomationEnabled: true,
+            ...draft(), startDate, phone, type: "A가2형", applyMessageAutomation: true, smsAutomationEnabled: true,
             primaryEmployeeId: off.employees[0]!.id,
         }).expect(201);
         const scope = { branchId: off.id, clientId: body.id as number };
@@ -575,6 +575,102 @@ describeRollout("branch rollout over authenticated Nest routes and PostgreSQL", 
         })).toBe(1);
         return { scope, schedule, original, baby, days, originalDays };
     }
+
+    it.each(["reset", "send"] as const)("switches a backfilled v1 credential to the group on %s", async action => {
+        const { scope, schedule, original, days, originalDays } = await backfillHistoricBooking();
+        const employeeId = off.employees[0]!.id;
+        const tokenScope = { branchId: off.id, scheduleId: schedule.id, employeeId };
+        const legacy = await db.service_record_token.findFirstOrThrow({ where: { ...tokenScope, active: true, revokedAt: null }, select: { id: true } });
+        const scalarJobs = () => db.message_trigger_job.findMany({
+            where: { ...scope, employeeScheduleId: schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID, recipientEmployeeId: null, status: "sent" },
+            select: { id: true, dedupeKey: true, recipientPhone: true, logs: { select: { id: true, providerAcceptanceState: true } } },
+        });
+        const accepted = await scalarJobs();
+        expect(accepted).toEqual([expect.objectContaining({ logs: [expect.objectContaining({ providerAcceptanceState: "accepted" })] })]);
+        const groupSelection = { employeeId, caseIds: [original.id] };
+        if (action === "reset") {
+            await db.service_record_token.update({
+                where: { id: legacy.id }, data: { lockedAt: new Date(), failedAttempts: 5 },
+            });
+        }
+        await db.$transaction(tx => setRollout(tx, off.id, "true"));
+        const { body: prepared } = await link(schedule.id, "prepare", groupSelection, off).expect(201);
+        const { caseId, assignmentVersion, preparedLinkToken } = prepared.members[0];
+        const members = [{ caseId, assignmentVersion, preparedLinkToken }];
+        expect(prepared).toMatchObject({ kind: "group", employeeId });
+        expect(caseId).toBe(original.id);
+        expect(await db.service_record_token.findMany({ where: { ...tokenScope, active: true, revokedAt: null }, select: { id: true } }))
+            .toEqual([{ id: legacy.id }]);
+        await link(schedule.id, "send", { preparedLinkToken }, off).expect(409);
+        if (action === "reset") {
+            await link(schedule.id, "send", { employeeId, members }, off).expect(409);
+            await link(schedule.id, "reset", { employeeId, members: [{ caseId, assignmentVersion }] }, off).expect(201);
+            const { body: afterReset } = await link(schedule.id, "prepare", groupSelection, off).expect(201);
+            expect(afterReset.members[0].preparedLinkToken === preparedLinkToken).toBe(true);
+        }
+        const { body: sent } = await link(schedule.id, "send", { employeeId, members }, off).expect(201);
+        expect(sent.status).toBe("sent");
+        expect(await db.message_log.count({ where: { ...scope, triggerJobId: sent.jobId, providerAcceptanceState: "accepted" } })).toBe(1);
+        expect(await db.service_record_job_member.count({ where: { ...scope, jobId: sent.jobId, serviceRecordCaseId: original.id } })).toBe(1);
+        expect(await db.service_record_token.findMany({
+            where: { ...tokenScope, active: true, revokedAt: null }, select: { serviceRecordCaseId: true, failedAttempts: true, lockedAt: true },
+        })).toEqual([{ serviceRecordCaseId: original.id, failedAttempts: 0, lockedAt: null }]);
+        const retired = await db.service_record_token.findUniqueOrThrow({
+            where: { id: legacy.id }, select: { active: true, revokedAt: true, accessTokenHash: true, verifiedAt: true },
+        });
+        expect({ ...retired, accessTokenHash: retired.accessTokenHash === null }).toEqual({
+            active: false, revokedAt: expect.any(Date), accessTokenHash: true, verifiedAt: null,
+        });
+        await db.$transaction(tx => setRollout(tx, off.id, "false"));
+        await link(schedule.id, "send", { preparedLinkToken }, off).expect(409);
+        expect(await scalarJobs()).toEqual(accepted);
+        expect(await days()).toEqual(originalDays);
+        expect(carrier.sendCalls.filter(call => call.receiver === off.employees[0]!.phone)).toHaveLength(2);
+    });
+
+    it.each(["handover", "reuse", "replacement"] as const)("allows legacy %s only for the backfilled singleton while paused", async operation => {
+        const historicalPhone = `010${++phoneBase}`;
+        const explicitPhone = `010${++phoneBase}`;
+        const { scope, schedule, original, baby, days, originalDays } = await backfillHistoricBooking(dateAt(-1), historicalPhone);
+        const { body: explicit } = await http().post("/clients").send({
+            ...configure([0], active, "A가2형", "SINGLETON"), phone: explicitPhone,
+        }).expect(201);
+        await confirm(explicit.id).expect(200);
+        await set("false");
+        await db.$transaction(tx => setRollout(tx, off.id, "false"));
+
+        const change = (who: typeof off, clientId: number, phone: string) => {
+            const employeeId = who.employees[1]!.id;
+            if (operation === "replacement") {
+                return http(who).patch(`/clients/${clientId}/request-replacement`).send({ newPrimaryEmployeeId: employeeId });
+            }
+            if (operation === "reuse") {
+                return http(who).post("/clients").send({
+                    name: "QA-Rollout client", phone, reuseExistingClient: true, voucherClient: true, breastPump: false,
+                    primaryEmployeeId: employeeId, applyMessageAutomation: false,
+                });
+            }
+            return http(who).patch(`/clients/${clientId}`).send({ primaryEmployeeId: employeeId });
+        };
+        const explicitScope = { branchId: active.id, clientId: explicit.id as number };
+        const before = await db.employee_schedule.findMany({ where: explicitScope });
+        expect(before).toHaveLength(1);
+        await change(active, explicit.id, explicitPhone).expect(409);
+        expect(await db.employee_schedule.findMany({ where: explicitScope })).toEqual(before);
+
+        await change(off, scope.clientId, historicalPhone).expect(operation === "reuse" ? 201 : 200);
+        const successor = await db.employee_schedule.findFirstOrThrow({ where: { ...scope, replaced: false } });
+        const employeeId = off.employees[1]!.id;
+        expect(successor.id).not.toBe(schedule.id);
+        expect(successor.primaryEmployeeId).toBe(employeeId);
+        expect(await db.service_record_baby_assignment.findMany({ where: { ...scope, activeOwner: true } }))
+            .toEqual([expect.objectContaining({ babyId: baby.id, scheduleId: successor.id, employeeId, legacyBackfilled: true })]);
+        expect(await db.service_record_case.findMany({ where: scope, select: { id: true, babyId: true } }))
+            .toEqual([{ id: original.id, babyId: baby.id }]);
+        expect(await days()).toEqual(originalDays);
+        expect(await db.service_record_token.count({ where: { branchId: off.id, scheduleId: schedule.id, revokedAt: null } })).toBe(0);
+        expect(await db.service_record_job_member.count({ where: scope })).toBe(0);
+    });
 
     it.each(["missing", "false"])("keeps signed backfilled singleton writes scalar with a %s setting", async setting => {
         const { scope, schedule, original, baby, days, originalDays } = await backfillHistoricBooking();

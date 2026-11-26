@@ -222,8 +222,7 @@ export class ServiceRecordLinkGroupService {
                 const prepared = [];
                 for (const member of members) {
                     const params = this.params(source, member, false);
-                    const token = await this.tokenService.reuseActiveLink(params, {}, tx)
-                        ?? await this.tokenService.issueLink(params, tx);
+                    const token = await this.tokenService.issueLink(params, tx);
                     prepared.push(this.linkMember(member, params.expiresAt, token.linkToken));
                 }
                 const result = await this.admit(tx, source, members, prepared);
