@@ -357,7 +357,7 @@ describe("SmsTriggerDeliveryService", () => {
         expect(snapshot.title).toBe("서비스 안내");
         expect(snapshot.deliveryType).toBe("LMS");
         expect(snapshot.estimatedCost).toBe("LMS 요금제 기준");
-        expect(snapshot.templateVersion).toContain("2026-08-04T00:00:00.000Z");
+        expect(snapshot.templateVersion).toBe("template-service-info:2026-08-04T00:00:00.000Z");
         expect(snapshot.templateHash).toHaveLength(64);
         expect(snapshot.configHash).toHaveLength(64);
 
@@ -1011,6 +1011,38 @@ https://mobile.test/service-record/efl_token`;
             new Date("2026-07-02T00:00:00.000Z"),
             new Date("2026-07-02T00:00:00.000Z"),
         );
+
+    it("keeps a staged service-record default valid across reads until its content changes", async () => {
+        const firstReadAt = new Date("2026-07-03T06:00:00.000Z");
+        const nextReadAt = new Date("2026-07-03T06:01:00.000Z");
+        const defaultTemplate = { id: "", content: serviceRecordLinkTemplate };
+        const getByKeyForBranch = jest.fn()
+            .mockResolvedValueOnce({ ...defaultTemplate, createdAt: firstReadAt, updatedAt: firstReadAt })
+            .mockResolvedValue({ ...defaultTemplate, createdAt: nextReadAt, updatedAt: nextReadAt });
+        const service = buildService({
+            aligoService: { sendSms: jest.fn() },
+            logRepository: { save: jest.fn() },
+            systemTemplateService: { getByKeyForBranch },
+        });
+        const job = createServiceRecordJob();
+
+        const snapshot = await service.resolveDeliverySnapshot(job);
+        job.payload.templateVariables["__smsDeliverySnapshot"] = service.serializeSnapshot(snapshot);
+
+        await expect(service.resolveCanonicalDeliverySnapshot(job)).resolves.toEqual(snapshot);
+        await expect(service.resolveDeliverySnapshot(job)).resolves.toEqual(snapshot);
+
+        getByKeyForBranch.mockResolvedValue({
+            ...defaultTemplate,
+            content: `${serviceRecordLinkTemplate}\n안내 문구 수정`,
+            createdAt: nextReadAt,
+            updatedAt: nextReadAt,
+        });
+        const edited = await service.resolveCanonicalDeliverySnapshot(job);
+        expect(edited.templateVersion).not.toBe(snapshot.templateVersion);
+        expect(edited.snapshotHash).not.toBe(snapshot.snapshotHash);
+        await expect(service.resolveDeliverySnapshot(job)).rejects.toThrow("template or provider configuration changed");
+    });
 
     it("renders the editable service-record system template and records it in SMS history", async () => {
         const aligoService = {
