@@ -567,8 +567,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          # The resolver reads the message of the pushed commit, even on reruns.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
+      # For a LightNode-only release, use a direct GitHub merge commit
+      # (gh pr merge --merge --body-file) ending with Production-Deploy-Target: lightnode.
+      # The merge queue does not provide this commit-message guarantee.
       - name: Resolve the exclusive backend target
         id: resolve
         run: node backend/deploy/fallback-server/ci/resolve-deploy-target.mjs >> "$GITHUB_OUTPUT"
