@@ -121,6 +121,8 @@ import { AgentAutomationRecordStoreService } from "../agent/agent-automation-rec
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { AdminAuditEventWriter } from "./admin-audit-event.service";
+import type { ServiceRecordAdminActor } from "./admin-service-record.service";
 import {
     allocationConflict,
     allocationProjection,
@@ -132,10 +134,11 @@ import {
     planClientAllocation,
     planLegacyClientAllocation,
     sameProviders,
+    type AuditedLegacyRecordBinding,
     type ClientAllocationInput,
     type ClientAllocationProjection,
 } from "./client-allocation.service";
-import { legacyRecordBindingConflict, proveLegacyRecordBinding, type LegacyRecordBinding, type LockedLegacyRecordBinding } from "./client-legacy-record-binding";
+import { legacyRecordBindingConflict, proveLegacyRecordBinding, type LegacyRecordBinding } from "./client-legacy-record-binding";
 import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
@@ -300,6 +303,7 @@ export class ClientService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
         @Optional() private readonly serviceRecordStartDateChangeService?: ServiceRecordStartDateChangeService,
+        @Optional() private readonly adminAudit?: AdminAuditEventWriter,
     ) {}
 
     /**
@@ -2099,7 +2103,7 @@ export class ClientService {
             allowHolidayService: boolean;
         };
     }, beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>,
-    legacyRecordBinding?: LegacyRecordBinding): Promise<ClientEntity> {
+    legacyRecordBinding?: { selection: LegacyRecordBinding; actor: ServiceRecordAdminActor }): Promise<ClientEntity> {
         // Keep invalid phone input from reaching lifecycle/provider work or a
         // transaction that could partially mutate schedule state.
         assertClientPhoneInput(params.phone);
@@ -2464,8 +2468,11 @@ export class ClientService {
                     orderBy: { id: "desc" },
                 })
                 : null;
-            let lockedBinding: LockedLegacyRecordBinding | undefined;
+            let lockedBinding: AuditedLegacyRecordBinding | undefined;
             if (legacyRecordBinding) {
+                const { adminAudit } = this;
+                const { selection, actor } = legacyRecordBinding;
+                if (!adminAudit || !actor?.userId) throw new InternalServerErrorException();
                 if (!snapshot || !allocation || !currentSchedule || startDateChangeDecision
                     || allocation.providers.find(({ slot }) => slot === 0)?.employeeId !== currentSchedule.primaryEmployeeId
                     || (allocation.providers.find(({ slot }) => slot === 1)?.employeeId ?? null) !== currentSchedule.secondaryEmployeeId
@@ -2473,7 +2480,8 @@ export class ClientService {
                     || (endDateUpdate && endDateUpdate.getTime() !== currentSchedule.endDate.getTime())) {
                     legacyRecordBindingConflict("schedule");
                 }
-                lockedBinding = await proveLegacyRecordBinding(transaction, scope, legacyRecordBinding, allocation, snapshot, currentSchedule);
+                const proof = await proveLegacyRecordBinding(transaction, scope, selection, allocation, snapshot, currentSchedule);
+                lockedBinding = { ...proof, actor, audit: adminAudit };
             }
             const previousProjection = snapshot && allocationProjection(snapshot);
             const teamChanged = !!allocation && !sameProviders(allocation.providers, previousProjection?.providers ?? []);

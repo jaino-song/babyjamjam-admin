@@ -187,12 +187,6 @@ export class ClientController {
         @Headers("x-bjj-client") surface?: string,
     ) {
         const binding = dto.legacyRecordBinding;
-        // Surface restrictions do not determine the operator's authority.
-        // The existing tenant guard supplies the verified branch roles below.
-        if (binding && (surface === "mobile" || !tenant.userId || !tenant.branchId
-            || !(tenant.globalRole === "owner" || tenant.branchRole === "admin" || tenant.branchRole === "manager"))) {
-            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
-        }
         const params = {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
@@ -231,9 +225,17 @@ export class ClientController {
             } : {}),
             smsAutomationEnabled: dto.smsAutomationEnabled,
         };
-        return binding
-            ? this.clientService.update(tenant.branchId ?? "", id, params, undefined, binding)
-            : this.clientService.update(tenant.branchId ?? "", id, params);
+        if (!binding) return this.clientService.update(tenant.branchId ?? "", id, params);
+
+        const { branchId, userId, globalRole, branchRole } = tenant;
+        if (surface === "mobile" || !branchId || !userId || !globalRole || !branchRole
+            || !(globalRole === "owner" || branchRole === "admin" || branchRole === "manager")) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        return this.clientService.update(branchId, id, params, undefined, {
+            selection: binding,
+            actor: { userId, globalRole, branchRole },
+        });
     }
 
     @Delete(":id")

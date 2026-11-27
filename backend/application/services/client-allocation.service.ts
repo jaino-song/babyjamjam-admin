@@ -12,11 +12,18 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { problemBody } from "application/utils/problem-bodies";
 import { createHash } from "node:crypto";
+import type { AdminAuditEventWriter } from "./admin-audit-event.service";
+import type { ServiceRecordAdminActor } from "./admin-service-record.service";
 import { resolveServiceRecordCaseTarget, type ServiceRecordCaseTarget } from "./service-record-case-target";
 import { RECORD_LINK_GROUP_CHANGED, recordLinkGroupCarrierEvidence } from "./service-record-link-group-source";
 import { IMMUTABLE_FINALIZATION_STATUSES } from "./service-record-lifecycle.service";
 import { hasConflictingUnboundCaseHistory } from "./service-record-token.service";
 import { legacyRecordBindingConflict, type LockedLegacyRecordBinding } from "./client-legacy-record-binding";
+
+export type AuditedLegacyRecordBinding = LockedLegacyRecordBinding & {
+    actor: ServiceRecordAdminActor;
+    audit: AdminAuditEventWriter;
+};
 
 export interface ClientAllocationInput {
     fetalType?: FetalType;
@@ -466,7 +473,7 @@ export async function persistClientAllocation(
     plan: ClientAllocationPlan,
     scheduleId: number | null,
     previousScheduleId: number | null = scheduleId,
-    legacyBinding?: LockedLegacyRecordBinding,
+    legacyBinding?: AuditedLegacyRecordBinding,
 ): Promise<void> {
     if (legacyBinding && (plan.unchanged || scheduleId === null || scheduleId !== previousScheduleId)) {
         legacyRecordBindingConflict("schedule");
@@ -573,6 +580,15 @@ export async function persistClientAllocation(
         // The proven row is already scoped to the original case and remains
         // byte-for-byte intact, including its verified session and lockout.
         await revokeCredentials(tx, { ...tokenScope, id: { not: legacyBinding.tokenId } }, now);
+        await legacyBinding.audit.appendInTransaction(tx, {
+            action: "service_record.legacy_case_adopt",
+            targetType: "service_record_case",
+            targetId: legacyBinding.caseId,
+            branchId: scope.branchId,
+            actor: legacyBinding.actor,
+            after: { clientId: scope.clientId, babyId },
+            outcome: "success",
+        });
         return;
     }
 

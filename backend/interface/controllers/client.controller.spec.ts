@@ -192,7 +192,10 @@ describe("ClientController PATCH /clients/:id expectedEndDate", () => {
     it("passes an explicit binding only through the manager-authorized UPDATE", async () => {
         await request(app.getHttpServer()).patch("/clients/42")
             .set("x-test-role", "manager").send({ legacyRecordBinding: binding }).expect(200);
-        expect(clientService.update).toHaveBeenCalledWith(BRANCH_ID, 42, expect.any(Object), undefined, binding);
+        expect(clientService.update).toHaveBeenCalledWith(BRANCH_ID, 42, expect.any(Object), undefined, {
+            selection: binding,
+            actor: { userId: "admin-1", globalRole: "admin", branchRole: "manager" },
+        });
         await request(app.getHttpServer()).post("/clients")
             .send({ name: "QA", legacyRecordBinding: binding }).expect(400);
         expect(clientService.update).toHaveBeenCalledTimes(1);

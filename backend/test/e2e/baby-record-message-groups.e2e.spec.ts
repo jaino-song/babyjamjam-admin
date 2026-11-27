@@ -5,6 +5,7 @@ import { ConfigModule } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
+import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkGroupService } from "application/services/service-record-link-group.service";
 import { RECORD_LINK_GROUP_CHANGED } from "application/services/service-record-link-group-source";
@@ -91,7 +92,12 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         }).overrideGuard(JwtGuard).useValue({
             canActivate(context: ExecutionContext) {
                 const req = context.switchToHttp().getRequest();
-                req.user = { branchId: req.headers["x-test-branch"] ?? branchId, userId: ownerId, role: "owner" };
+                const branchUserId = req.headers["x-test-branch-user"];
+                req.user = {
+                    branchId: req.headers["x-test-branch"] ?? branchId,
+                    userId: branchUserId ?? ownerId,
+                    role: branchUserId ? "user" : "owner",
+                };
                 return true;
             },
         }).overrideProvider(ALIGO_SMS_API_PORT).useValue(stub).compile();
@@ -156,6 +162,19 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
     });
     const getLogs = (jobId: string) => db.message_log.findMany({ where: { branchId, triggerJobId: jobId }, orderBy: { id: "asc" } });
     const dispatch = (id: string) => trigger.dispatchPendingJobNow(id, { expectedBranchId: branchId });
+    const getAdoptionAudits = (caseId: string) => db.admin_audit_event.findMany({
+        where: { action: "service_record.legacy_case_adopt", targetId: caseId },
+        select: {
+            branchId: true, tenantId: true, actorUserId: true, actorGlobalRole: true, actorBranchRole: true,
+            targetType: true, beforePayload: true, afterPayload: true, outcome: true, reason: true,
+        },
+    });
+
+    async function createBranchUser(role: "manager" | "user") {
+        const { id } = await db.user.create({ data: { name: `QA-Binding ${role}`, role: "user" } });
+        await db.user_branch.create({ data: { branchId, userId: id, role } });
+        return id;
+    }
 
     async function signedLegacyFamily() {
         const [primaryEmployeeId, secondaryEmployeeId] = staff as [number, number];
@@ -236,7 +255,13 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         const { body: unscopedAccess } = await legacyChallenge(unscoped.linkTokenHash).expect(201);
         expect(unscopedAccess.ok).toBe(true);
 
-        const patch = () => http().patch(`/clients/${f.scope.clientId}`).send(f.save);
+        const managerId = await createBranchUser("manager");
+        const memberId = await createBranchUser("user");
+        const patch = (actor = managerId) => http().patch(`/clients/${f.scope.clientId}`)
+            .set("x-test-branch-user", actor).send(f.save);
+        await patch(memberId).expect(403);
+        expect(await getAdoptionAudits(f.record.id)).toEqual([]);
+        expect(await db.client_baby.count({ where: f.scope })).toBe(0);
         await Promise.all([patch().expect(200), patch().expect(200)]);
         const records = await db.service_record_case.findMany({ where: f.scope, include: { baby: true } });
         const original = records.find(record => record.id === f.record.id);
@@ -244,6 +269,12 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         expect(records).toHaveLength(2);
         expect(original?.baby?.ordinal).toBe(1);
         expect(sibling?.baby?.ordinal).toBe(2);
+        const audits = await getAdoptionAudits(f.record.id);
+        expect(audits).toEqual([{
+            branchId, tenantId: branchId, actorUserId: managerId, actorGlobalRole: "user", actorBranchRole: "manager",
+            targetType: "service_record_case", beforePayload: null, afterPayload: { clientId: f.scope.clientId, babyId: original?.babyId },
+            outcome: "success", reason: null,
+        }]);
         expect(await db.service_record_day.findMany({ where: { branchId, serviceRecordCaseId: f.record.id }, orderBy: { sessionIndex: "asc" } }))
             .toEqual(f.days.sort((a, b) => a.sessionIndex - b.sessionIndex));
         expect(await db.eformsign_doc.findUniqueOrThrow({ where: { branchId, id: f.document.id } })).toEqual(f.document);
@@ -262,6 +293,9 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         await app.get(ServiceRecordLifecycleService).ensureAllForClient(f.scope.clientId);
         expect(await db.service_record_token.findUniqueOrThrow({ where: tokenWhere })).toEqual(verifiedToken);
         await patch().expect(200);
+        expect(await getAdoptionAudits(f.record.id)).toEqual(audits);
+        expect(await getJobs(f.scope.clientId)).toEqual(jobs);
+        expect(calls()).toHaveLength(0);
         await legacyStatus(f.linkToken).expect(200, { valid: true });
         const { body: after } = await caregiverContext(originalAccess.accessToken).expect(200);
         expect(after).toMatchObject({ babyId: original?.babyId, babyRank: 1, babyCount: 2, sessions: before.sessions });
@@ -300,12 +334,17 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         } });
         const failSibling = jest.spyOn(ServiceRecordLifecycleService.prototype, "ensureAllForClient")
             .mockRejectedValueOnce(new Error("Synthetic sibling failure"));
+        const appendAudit = jest.spyOn(AdminAuditEventWriter.prototype, "appendInTransaction");
         try {
             await http().patch(`/clients/${f.scope.clientId}`).send(f.save).expect(500);
             expect(failSibling).toHaveBeenCalledTimes(1);
+            expect(appendAudit).toHaveBeenCalledTimes(1);
+            expect(appendAudit.mock.calls[0]?.[0]).toBe(failSibling.mock.calls[0]?.[1]);
         } finally {
+            appendAudit.mockRestore();
             failSibling.mockRestore();
         }
+        expect(await getAdoptionAudits(f.record.id)).toEqual([]);
         expect(await db.service_record_case.findMany({ where: f.scope })).toEqual([f.record]);
         expect(await db.client_baby.count({ where: f.scope })).toBe(0);
         expect(await getJobs(f.scope.clientId)).toEqual([]);
@@ -317,6 +356,7 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         const f = await signedLegacyFamily();
         const ordinarySave = { ...f.save, legacyRecordBinding: undefined };
         await http().patch(`/clients/${f.scope.clientId}`).send(ordinarySave).expect(200);
+        expect(await getAdoptionAudits(f.record.id)).toEqual([]);
         expect(await db.service_record_case.findMany({ where: f.scope })).toEqual([f.record]);
         expect(await db.client_baby.count({ where: { ...f.scope, active: true } })).toBe(2);
         await legacyStatus(f.linkToken).expect(200, { valid: false, reason: "unavailable" });
