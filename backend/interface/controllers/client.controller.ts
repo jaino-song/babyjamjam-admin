@@ -1,5 +1,5 @@
 import { hasAllocationInput } from "application/services/client-allocation.service";
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Header, Headers, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Header, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import {
     CLIENT_LIST_TAB_VALUES,
@@ -184,7 +184,6 @@ export class ClientController {
         @CurrentTenant() tenant: Partial<VerifiedTenantPrincipal>,
         @Param("id", ParseIntPipe) id: number,
         @Body() dto: UpdateClientDto,
-        @Headers("x-bjj-client") surface?: string,
     ) {
         const binding = dto.legacyRecordBinding;
         const params = {
@@ -228,7 +227,7 @@ export class ClientController {
         if (!binding) return this.clientService.update(tenant.branchId ?? "", id, params);
 
         const { branchId, userId, globalRole, branchRole } = tenant;
-        if (surface === "mobile" || !branchId || !userId || !globalRole || !branchRole
+        if (!branchId || !userId || !globalRole || !branchRole
             || !(globalRole === "owner" || branchRole === "admin" || branchRole === "manager")) {
             throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }

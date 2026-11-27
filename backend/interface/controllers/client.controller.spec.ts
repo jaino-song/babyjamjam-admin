@@ -189,23 +189,26 @@ describe("ClientController PATCH /clients/:id expectedEndDate", () => {
 
     const binding = { caseId: "00000000-0000-4000-8000-000000000001", babyOrdinal: 1 };
 
-    it("passes an explicit binding only through the manager-authorized UPDATE", async () => {
-        await request(app.getHttpServer()).patch("/clients/42")
-            .set("x-test-role", "manager").send({ legacyRecordBinding: binding }).expect(200);
+    it.each([undefined, "desktop", "mobile"])("forwards a manager's binding with client surface %s", async (surface) => {
+        const patch = request(app.getHttpServer()).patch("/clients/42").set("x-test-role", "manager");
+        if (surface) patch.set("x-bjj-client", surface);
+        await patch.send({ legacyRecordBinding: binding }).expect(200);
         expect(clientService.update).toHaveBeenCalledWith(BRANCH_ID, 42, expect.any(Object), undefined, {
             selection: binding,
             actor: { userId: "admin-1", globalRole: "admin", branchRole: "manager" },
         });
-        await request(app.getHttpServer()).post("/clients")
-            .send({ name: "QA", legacyRecordBinding: binding }).expect(400);
-        expect(clientService.update).toHaveBeenCalledTimes(1);
     });
 
-    it("rejects bindings from non-managers and marked mobile requests", async () => {
-        for (const [name, value] of [["x-test-role", "user"], ["x-bjj-client", "mobile"]] as const) {
-            await request(app.getHttpServer()).patch("/clients/42")
-                .set(name, value).send({ legacyRecordBinding: binding }).expect(403);
-        }
+    it("rejects an explicit binding on create", async () => {
+        await request(app.getHttpServer()).post("/clients")
+            .set("x-test-role", "manager").send({ name: "QA", legacyRecordBinding: binding }).expect(400);
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, "desktop", "mobile"])("rejects a non-manager's binding with client surface %s", async (surface) => {
+        const patch = request(app.getHttpServer()).patch("/clients/42").set("x-test-role", "user");
+        if (surface) patch.set("x-bjj-client", surface);
+        await patch.send({ legacyRecordBinding: binding }).expect(403);
         expect(clientService.update).not.toHaveBeenCalled();
     });
 
