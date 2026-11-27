@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Header, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
 import { Response } from "express";
 
 import { EformsignBackupService } from "application/services/eformsign-backup.service";
 import { EformsignBackupTokenGuard } from "infrastructure/auth/eformsign-backup-token.guard";
 import {
     EformsignBackupCreateRunDto, EformsignBackupDocumentsQueryDto, EformsignBackupFileParamsDto,
+    EformsignBackupReadyDocumentQueryDto, EformsignBackupReadyEventsQueryDto,
 } from "interface/dto/eformsign-backup.dto";
 
 @Controller("internal/eformsign-backup")
@@ -15,6 +16,18 @@ export class EformsignBackupInternalController {
     @Get("documents")
     listDocuments(@Query() query: EformsignBackupDocumentsQueryDto) {
         return this.service.listDocuments(query.cursor, query.limit);
+    }
+
+    @Get("ready-events")
+    @Header("Cache-Control", "no-store")
+    listReadyEvents(@Query() query: EformsignBackupReadyEventsQueryDto) {
+        return this.service.listReadyEvents(new Date(query.since), new Date(query.until), query.afterId, query.limit);
+    }
+
+    @Get("ready-documents")
+    @Header("Cache-Control", "no-store")
+    findReadyDocuments(@Query() query: EformsignBackupReadyDocumentQueryDto) {
+        return this.service.findReadyDocuments(query.docId);
     }
 
     @Get("files/:fileId")

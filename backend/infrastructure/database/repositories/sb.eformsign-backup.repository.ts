@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 
 import {
     EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES, EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES,
@@ -7,6 +8,22 @@ import { BackupRunInput, IEformsignBackupRepository } from "domain/repositories/
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
+const backupStatuses = [...EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES, ...EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES];
+const backupDocumentSelect = {
+    id: true, documentId: true, documentKind: true, documentName: true, statusType: true, detailPayload: true,
+    customerName: true, createdDate: true,
+    syncStatus: true, detailSourceUpdatedDate: true,
+    serviceRecordCase: { select: { startDate: true } },
+    employeeSchedule: { select: { startDate: true } }, client: { select: { startDate: true } },
+    serviceRecordSnapshotChunk: { select: {
+        serviceRecordCaseId: true, snapshotVersion: true, chunkIndex: true, chunkCount: true, firstSessionIndex: true,
+    } },
+    files: {
+        where: { fileType: { in: ["document", "audit_trail"] } },
+        select: { id: true, fileType: true, sha256: true, byteSize: true, sourceUpdatedDate: true },
+    },
+} satisfies Prisma.eformsign_docSelect;
+
 @Injectable()
 export class SbEformsignBackupRepository implements IEformsignBackupRepository {
     constructor(private readonly prisma: PrismaService) {}
@@ -14,25 +31,59 @@ export class SbEformsignBackupRepository implements IEformsignBackupRepository {
     listDocuments(cursor: number | undefined, limit: number) {
         return runSystemScope(() => this.prisma.eformsign_doc.findMany({
             where: {
-                id: { gt: cursor }, statusType: { in: [...EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES, ...EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES] },
+                id: { gt: cursor }, statusType: { in: backupStatuses },
                 permanentPurgeRequestedAt: null,
             },
             orderBy: { id: "asc" }, take: limit,
-            select: {
-                id: true, documentId: true, documentKind: true, documentName: true, statusType: true, detailPayload: true,
-                customerName: true, createdDate: true,
-                syncStatus: true, detailSourceUpdatedDate: true,
-                serviceRecordCase: { select: { startDate: true } },
-                employeeSchedule: { select: { startDate: true } }, client: { select: { startDate: true } },
-                serviceRecordSnapshotChunk: { select: {
-                    serviceRecordCaseId: true, snapshotVersion: true, chunkIndex: true, chunkCount: true, firstSessionIndex: true,
-                } },
-                files: {
-                    where: { fileType: { in: ["document", "audit_trail"] } },
-                    select: { id: true, fileType: true, sha256: true, byteSize: true, sourceUpdatedDate: true },
-                },
-            },
+            select: backupDocumentSelect,
         }));
+    }
+
+    async readyEventCutoff(): Promise<Date> {
+        // The ledger uses the database clock with microsecond precision. Round
+        // up to the next millisecond for the feed's exclusive upper bound.
+        const [row] = await runSystemScope(() => this.prisma.$queryRaw<{ cutoff: Date }[]>`
+            SELECT date_trunc('milliseconds', clock_timestamp()) + interval '1 millisecond' AS cutoff
+        `);
+        if (!row) throw new Error("Archive feed cutoff unavailable");
+        return row.cutoff;
+    }
+
+    listReadyEvents(since: Date, until: Date, afterId: number, limit: number) {
+        return this.prisma.eformsign_webhook_event.findMany({
+            where: {
+                eventType: "ready_document_pdf", documentId: { not: null, notIn: [""] },
+                createdAt: { gte: since, lt: until }, id: { gt: afterId },
+            },
+            orderBy: { id: "asc" }, take: limit,
+            select: {
+                id: true, documentId: true, rawStatus: true, statusType: true, sourceUpdatedDate: true, createdAt: true,
+            },
+        });
+    }
+
+    findReadyTarget(docId: string) {
+        return runSystemScope(() => this.prisma.$transaction(async (tx) => {
+            const seed = await tx.eformsign_doc.findUnique({
+                where: { documentId: docId },
+                select: { ...backupDocumentSelect, branchId: true, permanentPurgeRequestedAt: true },
+            });
+            if (!seed) return null;
+            const chunk = seed.serviceRecordSnapshotChunk;
+            const peers = chunk && !seed.permanentPurgeRequestedAt && backupStatuses.includes(seed.statusType)
+                ? await tx.eformsign_doc.findMany({
+                    where: {
+                        id: { not: seed.id }, branchId: seed.branchId, permanentPurgeRequestedAt: null,
+                        statusType: { in: backupStatuses },
+                        serviceRecordSnapshotChunk: {
+                            serviceRecordCaseId: chunk.serviceRecordCaseId, snapshotVersion: chunk.snapshotVersion,
+                        },
+                    },
+                    orderBy: [{ serviceRecordSnapshotChunk: { firstSessionIndex: "asc" } }, { id: "asc" }],
+                    take: 199, select: backupDocumentSelect,
+                }) : [];
+            return { seed, peers };
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }));
     }
 
     findFile(fileId: string) {

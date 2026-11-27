@@ -56,9 +56,6 @@ import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import { EformsignDocReconcileSchedulerService } from "application/services/eformsign-doc-reconcile-scheduler.service";
-import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
-import { EFORMSIGN_WEBHOOK_EVENT_REPOSITORY } from "domain/repositories/eformsign-webhook-event.repository.interface";
-import { SbEformsignWebhookEventRepository } from "infrastructure/database/repositories/sb.eformsign-webhook-event.repository";
 import { ContractAutoFinalizeSchedulerService } from "application/services/contract-auto-finalize-scheduler.service";
 import { NotificationModule } from "module/notification.module";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
@@ -124,6 +121,7 @@ import { SupabaseStorageAdapter } from "infrastructure/adapters/supabase-storage
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
 import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifier.service";
 import { HolidayModule } from "./holiday.module";
+import { EformsignWebhookEventModule } from "./eformsign-webhook-event.module";
 
 @Module({
     imports: [
@@ -133,6 +131,7 @@ import { HolidayModule } from "./holiday.module";
         SystemSettingModule,
         NotificationModule,
         HolidayModule,
+        EformsignWebhookEventModule,
     ],
     controllers: [EformsignDocController],
     providers: [
@@ -187,13 +186,6 @@ import { HolidayModule } from "./holiday.module";
         EformsignBackfillLockService,
         EformsignOperationLockService,
         EformsignDocReconcileSchedulerService,
-        // The scheduler owns the ledger's retention sweep; the writer itself is
-        // also provided by the webhook module, which has its own instance.
-        EformsignWebhookEventWriter,
-        {
-            provide: EFORMSIGN_WEBHOOK_EVENT_REPOSITORY,
-            useClass: SbEformsignWebhookEventRepository,
-        },
         ContractAutoFinalizeSchedulerService,
         EformsignDocumentMirrorService,
         ServiceRecordLifecycleService,

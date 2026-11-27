@@ -1,10 +1,11 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 
 import {
     EFORMSIGN_WEBHOOK_DROPPED_OUTCOMES,
     EFORMSIGN_WEBHOOK_OUTCOME,
     type EformsignWebhookOutcome,
 } from "domain/constants/eformsign-webhook-outcome.constants";
+import { BACKUP_READY_DOC_ID } from "domain/repositories/eformsign-backup.repository.interface";
 import {
     EFORMSIGN_WEBHOOK_EVENT_REPOSITORY,
     IEformsignWebhookEventRepository,
@@ -79,6 +80,7 @@ export class EformsignWebhookEventWriter {
     constructor(
         @Inject(EFORMSIGN_WEBHOOK_EVENT_REPOSITORY)
         private readonly repository: IEformsignWebhookEventRepository,
+        @Optional() private readonly backupWake?: { notify(): void },
     ) {}
 
     /**
@@ -87,12 +89,15 @@ export class EformsignWebhookEventWriter {
      * would be a far worse trade than losing one ledger row.
      */
     async append(input: EformsignWebhookEventInput): Promise<void> {
+        let ready: boolean;
         try {
+            const eventType = clip(input.eventType, COLUMN_LIMITS.eventType);
+            const documentId = clip(input.documentId, COLUMN_LIMITS.documentId);
             await this.repository.append({
                 webhookId: clip(input.webhookId, COLUMN_LIMITS.webhookId),
-                eventType: clip(input.eventType, COLUMN_LIMITS.eventType),
+                eventType,
                 companyId: clip(input.companyId, COLUMN_LIMITS.companyId),
-                documentId: clip(input.documentId, COLUMN_LIMITS.documentId),
+                documentId,
                 rawStatus: clip(input.rawStatus, COLUMN_LIMITS.rawStatus),
                 statusType: clip(input.statusType, COLUMN_LIMITS.statusType),
                 statusDetail: clip(input.statusDetail, COLUMN_LIMITS.statusDetail),
@@ -101,10 +106,16 @@ export class EformsignWebhookEventWriter {
                     ?? EFORMSIGN_WEBHOOK_OUTCOME.UNRECORDED,
                 outcomeReason: clip(input.outcomeReason, COLUMN_LIMITS.outcomeReason),
             });
+            ready = eventType === "ready_document_pdf" && documentId !== null && BACKUP_READY_DOC_ID.test(documentId);
         } catch (error) {
             this.logger.warn(
                 `Failed to record eformsign webhook event for ${input.documentId ?? "unknown document"}: ${safeDatabaseFailureSummary(error, "append")}`,
             );
+            return;
+        }
+        if (ready) {
+            try { this.backupWake?.notify(); }
+            catch { this.logger.warn("Archive wake notification unavailable"); }
         }
     }
 

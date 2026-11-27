@@ -2,9 +2,6 @@ import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { EformsignWebhookController } from "interface/controllers/eformsign-webhook.controller";
 import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
-import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
-import { EFORMSIGN_WEBHOOK_EVENT_REPOSITORY } from "domain/repositories/eformsign-webhook-event.repository.interface";
-import { SbEformsignWebhookEventRepository } from "infrastructure/database/repositories/sb.eformsign-webhook-event.repository";
 import {
     UpdateEformsignDocStatusUsecase,
     LinkDocumentToClientUsecase,
@@ -22,21 +19,17 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { WebhookGuard } from "infrastructure/auth/webhook.guard";
 import { createEformsignClientRepository } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 import { EformsignDocModule } from "./eformsign-doc.module";
+import { EformsignWebhookEventModule } from "./eformsign-webhook-event.module";
 import { NotificationModule } from "./notification.module";
 import { ServiceRecordEntryModule } from "./service-record-entry.module";
 import { HolidayModule } from "./holiday.module";
 
 @Module({
-    imports: [DatabaseModule, EformsignDocModule, NotificationModule, ServiceRecordEntryModule, HolidayModule],
+    imports: [DatabaseModule, EformsignDocModule, EformsignWebhookEventModule, NotificationModule, ServiceRecordEntryModule, HolidayModule],
     controllers: [EformsignWebhookController],
     providers: [
         WebhookGuard,
         EformsignWebhookService,
-        EformsignWebhookEventWriter,
-        {
-            provide: EFORMSIGN_WEBHOOK_EVENT_REPOSITORY,
-            useClass: SbEformsignWebhookEventRepository,
-        },
         UpdateEformsignDocStatusUsecase,
         LinkDocumentToClientUsecase,
         {

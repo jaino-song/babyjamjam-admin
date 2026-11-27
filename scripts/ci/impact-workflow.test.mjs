@@ -164,6 +164,31 @@ function stepsWithoutStandbyContractTests(steps,label) {
   copy[index].run=[...lines.slice(0,anchor+1),...lines.slice(anchor+1+standbyContractAdditions.length)].map(line=>line===contractGlobApproved?contractGlobBase:line).join('\n');
   return copy;
 }
+// Require the approved tool installation before projecting it out of either pinned graph.
+const deploymentContractToolsStep = {
+  name: 'Install PDF and archive tools for deployment contracts',
+  shell: 'bash',
+  run: [
+    'sudo apt-get update',
+    'sudo apt-get install -y --no-install-recommends ghostscript qpdf rclone redis-server',
+    '/usr/bin/qpdf --version',
+    '/usr/bin/rclone version',
+    'redis-server --version',
+    'gs --version',
+    'gs -h | grep -w pdfimage24',
+    '',
+  ].join('\n'),
+};
+function stepsWithoutDeploymentContractTools(steps, label) {
+  assert.equal(steps.filter(step => step.name === deploymentContractToolsStep.name).length, 1,
+    `${label}: exactly one deployment contract tools step`);
+  const contractIndex = steps.findIndex(step => step.name === standbyContractStep);
+  assert.ok(contractIndex > 0, `${label}: deployment contract step must have a prerequisite`);
+  const toolsIndex = contractIndex - 1;
+  assert.deepEqual(steps[toolsIndex], deploymentContractToolsStep,
+    `${label}: the exact deployment contract tools step must run immediately before the deployment contracts`);
+  return steps.filter((_, index) => index !== toolsIndex);
+}
 // The only job the warm-standby change adds. Asserts it exists with exactly its approved
 // dependencies and that no other job was added or removed; every pre-existing job is
 // still compared exactly by the callers. `routingJobs` are the jobs the CI impact routing
@@ -197,7 +222,8 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     const checkout=j[id].steps.find(s=>s.uses?.startsWith('actions/checkout@'));assert.equal(checkout.with['persist-credentials'],false);
     if(id==='verify') assert.equal(checkout.with['fetch-depth'],0);
   }
-  const appSteps = j.checks.steps.filter(step=>step.name!=='CI impact routing contracts').map(step=> {
+  const checksSteps = app === 'backend' ? stepsWithoutDeploymentContractTools(j.checks.steps, file) : j.checks.steps;
+  const appSteps = checksSteps.filter(step=>step.name!=='CI impact routing contracts').map(step=> {
     if(app==='backend' && step.uses?.startsWith('actions/checkout@')) {const copy=structuredClone(step);delete copy.with['fetch-depth'];return copy;}
     return step;
   });
@@ -289,13 +315,14 @@ test('backend installs declared compiler before executing CI impact contracts; o
   const text = withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(read('backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
   assertBackendChecksRunner(workflow.jobs.checks);
   const steps = workflow.jobs.checks.steps;
+  const appSteps = stepsWithoutDeploymentContractTools(steps, 'backend-ci.yml');
   const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
   const install = steps.findIndex(step => step.name === 'Install dependencies');
   assert.ok(install >= 0 && contracts > install, 'compiler consumer contracts require installed declared TypeScript');
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
   assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
-  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(steps,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
+  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(appSteps,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }

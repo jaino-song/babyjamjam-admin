@@ -16,9 +16,6 @@ import { SystemSettingController } from "interface/controllers/system-setting.co
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { PublicSettingsController } from "interface/controllers/public-settings.controller";
 import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
-import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
-import { EFORMSIGN_WEBHOOK_EVENT_REPOSITORY } from "domain/repositories/eformsign-webhook-event.repository.interface";
-import { SbEformsignWebhookEventRepository } from "infrastructure/database/repositories/sb.eformsign-webhook-event.repository";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -28,8 +25,10 @@ import { CanceledAutomationRetrySettingsService } from "application/services/can
 import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
 import { CanceledAutomationRetrySettingsController } from "interface/controllers/canceled-automation-retry-settings.controller";
 
+import { EformsignWebhookEventModule } from "./eformsign-webhook-event.module";
+
 @Module({
-    imports: [DatabaseModule],
+    imports: [DatabaseModule, EformsignWebhookEventModule],
     controllers: [SystemSettingController, PublicSettingsController, CanceledAutomationRetrySettingsController],
     providers: [
         { provide: MESSAGE_TRIGGER_RULE_REPOSITORY, useClass: SbMessageTriggerRuleRepository },
@@ -42,11 +41,6 @@ import { CanceledAutomationRetrySettingsController } from "interface/controllers
         BranchManagerGuard,
         MessageSenderApprovalService,
         EformsignAutomationStatusService,
-        EformsignWebhookEventWriter,
-        {
-            provide: EFORMSIGN_WEBHOOK_EVENT_REPOSITORY,
-            useClass: SbEformsignWebhookEventRepository,
-        },
         AdminAuditEventWriter,
         { provide: MESSAGE_AUTOMATION_DATABASE, useExisting: PrismaService },
         MessageAutomationBranchLockService,
