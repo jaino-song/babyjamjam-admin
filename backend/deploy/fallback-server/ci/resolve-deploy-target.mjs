@@ -1,11 +1,24 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolve4 } from "node:dns/promises";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const LIGHTNODE_REQUEST = "Production-Deploy-Target: lightnode";
+
+function requiresLightNode(commitMessage) {
+  const lines = commitMessage.split(/\r?\n/);
+  const requests = lines.filter((line) => /^\s*Production-Deploy-Target\b/i.test(line));
+  if (requests.length === 0) return false;
+  if (requests.length !== 1 || requests[0] !== LIGHTNODE_REQUEST
+      || lines.findLast((line) => line.trim()) !== LIGHTNODE_REQUEST) {
+    throw new Error("Expected one final Production-Deploy-Target: lightnode trailer.");
+  }
+  return true;
+}
 
 function requireApprovedHashes(fallbackDnsSha256, lightsailDnsSha256) {
   if (!SHA256_PATTERN.test(fallbackDnsSha256 ?? "")
@@ -32,21 +45,37 @@ export function resolveDeployTarget({
   dnsRecords = [],
   fallbackDnsSha256,
   lightsailDnsSha256,
+  commitMessage = "",
 }) {
   if (refName === "preview") return "cloudrun";
   if (refName !== "main") {
     throw new Error("Only preview and main may resolve a backend deployment target.");
   }
 
+  const lightnodeRequired = requiresLightNode(commitMessage);
   requireApprovedHashes(fallbackDnsSha256, lightsailDnsSha256);
   const currentDnsSha256 = canonicalDnsHash(dnsRecords);
   if (currentDnsSha256 === fallbackDnsSha256) return "lightnode";
-  if (currentDnsSha256 === lightsailDnsSha256) return "lightsail";
+  if (currentDnsSha256 === lightsailDnsSha256) {
+    if (lightnodeRequired) {
+      throw new Error("This release requires LightNode, but the approved production route is Lightsail.");
+    }
+    return "lightsail";
+  }
   throw new Error("The current production route does not match an approved production target.");
+}
+
+function readPushedCommitMessage() {
+  const head = execFileSync("git", ["rev-parse", "--verify", "HEAD"], { encoding: "utf8" }).trim();
+  if (head !== process.env.GITHUB_SHA) {
+    throw new Error("The checked-out HEAD must match GITHUB_SHA.");
+  }
+  return execFileSync("git", ["log", "-1", "--format=%B", head, "--"], { encoding: "utf8" });
 }
 
 async function main() {
   const refName = process.env.DEPLOY_REF_NAME ?? "";
+  const commitMessage = refName === "main" ? readPushedCommitMessage() : "";
   const apiHost = process.env.PUBLIC_API_HOST ?? "api.babyjamjam.com";
   const dnsRecords = refName === "preview"
     ? []
@@ -58,6 +87,7 @@ async function main() {
     dnsRecords,
     fallbackDnsSha256: process.env.FALLBACK_DNS_SHA256,
     lightsailDnsSha256: process.env.LIGHTSAIL_DNS_SHA256,
+    commitMessage,
   });
   process.stdout.write(`target=${target}\n`);
 }
