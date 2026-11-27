@@ -1262,17 +1262,22 @@
           "ContractInfoMismatchIcon",
           "ContractInfoMismatchPill",
           "ContractInfoChangeList",
+          "ContractInfoChangeListGroup",
           "getContractInfoMismatchNotice",
           "CONTRACT_INFO_MISMATCH_HINT",
           "CONTRACT_INFO_MISMATCH_NOTICE_TEXT",
           "CONTRACT_INFO_CHANGE_CONFIRM_TITLE",
           "CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION",
           "CONTRACT_INFO_CHANGE_LIST_TITLE",
+          "CONTRACT_AND_RECORD_DOCUMENT_CHANGE_CONFIRM_DESCRIPTION",
+          "SERVICE_RECORD_DOCUMENT_CHANGE_LIST_TITLE",
+          "ContractInfoChangeListGroupProps",
           "ContractInfoChangeListProps",
           "ContractInfoChangeListRow"
         ],
         "requiredFor": [
-          "\"정보 불일치\" list icon, detail pill and header notice, and the changed-fields card of the edit confirmation"
+          "\"정보 불일치\" list icon, detail pill and header notice, and the changed-fields card of the edit confirmation",
+          "the contract and service-record change cards stacked in one confirmation when both documents are completed"
         ]
       },
       {

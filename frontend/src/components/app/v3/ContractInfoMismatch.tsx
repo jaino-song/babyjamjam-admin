@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { ArrowRight, TriangleAlert } from "lucide-react";
 
 import { StatusPill } from "@/components/app/ui/status-badge";
@@ -20,6 +21,10 @@ export const CONTRACT_INFO_CHANGE_CONFIRM_TITLE = "확인이 필요해요";
 export const CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION =
   "계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?";
 export const CONTRACT_INFO_CHANGE_LIST_TITLE = "계약서와 달라지는 수정 사항";
+/** The one confirmation shown when a save changes both a completed contract and a completed service record. */
+export const CONTRACT_AND_RECORD_DOCUMENT_CHANGE_CONFIRM_DESCRIPTION =
+  "계약서와 제공기록지 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?";
+export const SERVICE_RECORD_DOCUMENT_CHANGE_LIST_TITLE = "제공기록지와 달라지는 수정 사항";
 
 const ICON_STROKE_WIDTH = 2.25;
 
@@ -81,10 +86,16 @@ export interface ContractInfoChangeListRow {
 export interface ContractInfoChangeListProps {
   "data-component": string;
   rows: ContractInfoChangeListRow[];
+  /** Which document the card compares against; defaults to the contract. */
+  title?: string;
 }
 
-/** The card listing each contract field a save changes: old value struck through, then the new one. */
-export function ContractInfoChangeList({ "data-component": dataComponent, rows }: ContractInfoChangeListProps) {
+/** The card listing each document field a save changes: old value struck through, then the new one. */
+export function ContractInfoChangeList({
+  "data-component": dataComponent,
+  rows,
+  title = CONTRACT_INFO_CHANGE_LIST_TITLE,
+}: ContractInfoChangeListProps) {
   return (
     <div
       data-component={dataComponent}
@@ -92,7 +103,7 @@ export function ContractInfoChangeList({ "data-component": dataComponent, rows }
       className="grid gap-[calc(10px*var(--glint-ui-scale,1))] rounded-[18px] bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
     >
       <p data-component={`${dataComponent}_title`} className={APP_CONTENT_CARD_TITLE_CLASS_NAME}>
-        {CONTRACT_INFO_CHANGE_LIST_TITLE}
+        {title}
       </p>
       <dl className="m-0 grid gap-[calc(10px*var(--glint-ui-scale,1))]">
         {rows.map((row) => (
@@ -115,6 +126,24 @@ export function ContractInfoChangeList({ "data-component": dataComponent, rows }
           </div>
         ))}
       </dl>
+    </div>
+  );
+}
+
+export interface ContractInfoChangeListGroupProps {
+  "data-component": string;
+  children: ReactNode;
+}
+
+/** Stacks one change card per completed document (the contract first, then the service record). */
+export function ContractInfoChangeListGroup({ "data-component": dataComponent, children }: ContractInfoChangeListGroupProps) {
+  return (
+    <div
+      data-component={dataComponent}
+      data-source-component="ContractInfoChangeListGroup"
+      className="grid gap-[calc(12px*var(--glint-ui-scale,1))]"
+    >
+      {children}
     </div>
   );
 }

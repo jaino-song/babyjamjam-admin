@@ -16,17 +16,24 @@ export type { PanelTitleNotice, PanelTitleNoticeTone } from './PanelTitleGroup';
 export { ClientBadgeMark, ClientListStatus } from './ClientListStatus';
 export type { ClientBadgeMarkProps, ClientListStatusProps } from './ClientListStatus';
 export {
+  CONTRACT_AND_RECORD_DOCUMENT_CHANGE_CONFIRM_DESCRIPTION,
   CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION,
   CONTRACT_INFO_CHANGE_CONFIRM_TITLE,
   CONTRACT_INFO_CHANGE_LIST_TITLE,
   CONTRACT_INFO_MISMATCH_HINT,
   CONTRACT_INFO_MISMATCH_NOTICE_TEXT,
   ContractInfoChangeList,
+  ContractInfoChangeListGroup,
   ContractInfoMismatchIcon,
   ContractInfoMismatchPill,
   getContractInfoMismatchNotice,
+  SERVICE_RECORD_DOCUMENT_CHANGE_LIST_TITLE,
 } from './ContractInfoMismatch';
-export type { ContractInfoChangeListProps, ContractInfoChangeListRow } from './ContractInfoMismatch';
+export type {
+  ContractInfoChangeListGroupProps,
+  ContractInfoChangeListProps,
+  ContractInfoChangeListRow,
+} from './ContractInfoMismatch';
 export { FilterChips } from './FilterChips';
 export { SearchFilterBar } from './SearchFilterBar';
 export { InfoCard } from './InfoCard';

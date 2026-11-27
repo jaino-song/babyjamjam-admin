@@ -96,6 +96,13 @@ const openForm = async (client: Client = contractedClient) => {
 
 const contractQuestion = "계약서 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?";
 const recordDocumentQuestion = "제공기록지 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?";
+const bothDocumentsQuestion = "계약서와 제공기록지 전자문서가 완료된 상태여서 전자문서는 변경할 수 없어요. 그래도 수정할까요?";
+const contractListTitle = "계약서와 달라지는 수정 사항";
+const recordListTitle = "제공기록지와 달라지는 수정 사항";
+const changeCard = (modal: HTMLElement, title: string) =>
+  within(modal).getByText(title).closest('[data-source-component="ContractInfoChangeList"]') as HTMLElement;
+const changedFields = (card: HTMLElement) =>
+  Array.from(card.querySelectorAll("[data-field]")).map((row) => row.getAttribute("data-field"));
 
 const findRecordDocumentDialog = async () =>
   (await screen.findByText(recordDocumentQuestion)).closest('[role="dialog"]') as HTMLElement;
@@ -190,26 +197,70 @@ describe("ClientFormDialog confirmation before changing a completed contract's f
   describe("with a completed service-record document", () => {
     const recordedClient: Client = { ...contractedClient, serviceRecordCompleted: true };
 
-    it("asks about the service-record document after the contract, and saves once on 수정", async () => {
+    it("asks once about both documents, with a card for each, and saves once on 수정", async () => {
       await openForm(recordedClient);
 
       fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "QA-이름변경" } });
+      fireEvent.change(screen.getByLabelText(/주소/), { target: { value: "인천시 연수구" } });
       fireEvent.click(screen.getByRole("button", { name: "저장" }));
-      const contract = await screen.findByRole("dialog", { name: "확인이 필요해요" });
-      expect(within(contract).getByText(contractQuestion)).toBeVisible();
-      fireEvent.click(within(contract).getByRole("button", { name: "수정" }));
 
-      const records = await findRecordDocumentDialog();
-      expect(records).toHaveAttribute("data-component", "desktop_clients_form-dialog_record-document-change-confirmation");
-      await waitFor(() => expect(screen.queryByText(contractQuestion)).not.toBeInTheDocument());
+      const modal = await screen.findByRole("dialog", { name: "확인이 필요해요" });
+      expect(modal).toHaveAttribute("data-component", "desktop_clients_form-dialog_contract-info-change-confirmation");
+      expect(within(modal).getByText(bothDocumentsQuestion)).toBeVisible();
+      expect(screen.queryByText(contractQuestion)).not.toBeInTheDocument();
+      expect(screen.queryByText(recordDocumentQuestion)).not.toBeInTheDocument();
+      // The contract card lists every contract field; the service-record card only the ones it carries.
+      expect(changedFields(changeCard(modal, contractListTitle))).toEqual(["name", "address"]);
+      const recordCard = changeCard(modal, recordListTitle);
+      expect(changedFields(recordCard)).toEqual(["name"]);
+      expect(within(recordCard).getByText("QA-계약완료").tagName).toBe("DEL");
+      expect(within(recordCard).getByText("QA-이름변경").tagName).toBe("STRONG");
       expect(mockUpdateClient).not.toHaveBeenCalled();
-      fireEvent.click(within(records).getByRole("button", { name: "수정" }));
+
+      fireEvent.click(within(modal).getByRole("button", { name: "수정" }));
 
       await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
       expect(mockUpdateClient).toHaveBeenCalledWith({
         id: contractedClient.id,
-        dto: expect.objectContaining({ name: "QA-이름변경" }),
+        dto: expect.objectContaining({ name: "QA-이름변경", address: "인천시 연수구" }),
       });
+      expect(screen.queryByText(recordDocumentQuestion)).not.toBeInTheDocument();
+    });
+
+    it("asks once about both documents after the service-period question for an end-date edit", async () => {
+      await openForm(recordedClient);
+
+      fireEvent.change(screen.getByLabelText("종료일"), { target: { value: "2026-11-18" } });
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      fireEvent.click(within(await screen.findByRole("dialog", { name: "서비스 기간 확인" })).getByRole("button", { name: "확인" }));
+
+      const modal = await screen.findByRole("dialog", { name: "확인이 필요해요" });
+      expect(within(modal).getByText(bothDocumentsQuestion)).toBeVisible();
+      expect(changedFields(changeCard(modal, contractListTitle))).toEqual(["endDate"]);
+      const recordRow = within(changeCard(modal, recordListTitle)).getByText("종료일").closest("[data-field]") as HTMLElement;
+      expect(within(recordRow).getByText("2026.11.17")).toBeInTheDocument();
+      expect(within(recordRow).getByText("2026.11.18")).toBeInTheDocument();
+      fireEvent.click(within(modal).getByRole("button", { name: "수정" }));
+
+      await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+      expect(mockUpdateClient).toHaveBeenCalledWith({
+        id: contractedClient.id,
+        dto: expect.objectContaining({ endDate: "2026-11-18", allowBusinessDayMismatch: true }),
+      });
+    });
+
+    it("saves nothing on 취소 in the question about both documents", async () => {
+      await openForm(recordedClient);
+
+      fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "QA-이름변경" } });
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      const modal = await screen.findByRole("dialog", { name: "확인이 필요해요" });
+      expect(within(modal).getByText(bothDocumentsQuestion)).toBeVisible();
+      fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
+
+      await waitFor(() => expect(screen.queryByText(bothDocumentsQuestion)).not.toBeInTheDocument());
+      expect(mockUpdateClient).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/이름/)).toHaveValue("QA-이름변경");
     });
 
     it("asks only about the service-record document when the contract is not completed", async () => {
@@ -220,7 +271,9 @@ describe("ClientFormDialog confirmation before changing a completed contract's f
       fireEvent.click(within(await screen.findByRole("dialog", { name: "서비스 기간 확인" })).getByRole("button", { name: "확인" }));
 
       const records = await findRecordDocumentDialog();
+      expect(records).toHaveAttribute("data-component", "desktop_clients_form-dialog_record-document-change-confirmation");
       expect(screen.queryByText(contractQuestion)).not.toBeInTheDocument();
+      expect(screen.queryByText(bothDocumentsQuestion)).not.toBeInTheDocument();
       fireEvent.click(within(records).getByRole("button", { name: "수정" }));
 
       await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
@@ -243,12 +296,15 @@ describe("ClientFormDialog confirmation before changing a completed contract's f
       expect(screen.getByLabelText(/이름/)).toHaveValue("QA-이름변경");
     });
 
-    it("does not ask about the service-record document for a field it does not carry", async () => {
+    it("asks only about the contract for a field the service-record document does not carry", async () => {
       await openForm(recordedClient);
 
       fireEvent.change(screen.getByLabelText(/주소/), { target: { value: "인천시 연수구" } });
       fireEvent.click(screen.getByRole("button", { name: "저장" }));
-      fireEvent.click(within(await screen.findByRole("dialog", { name: "확인이 필요해요" })).getByRole("button", { name: "수정" }));
+      const modal = await screen.findByRole("dialog", { name: "확인이 필요해요" });
+      expect(within(modal).getByText(contractQuestion)).toBeVisible();
+      expect(within(modal).queryByText(recordListTitle)).not.toBeInTheDocument();
+      fireEvent.click(within(modal).getByRole("button", { name: "수정" }));
 
       await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
       expect(screen.queryByText(recordDocumentQuestion)).not.toBeInTheDocument();

@@ -54,9 +54,12 @@ import {
     type ContractInfoChangeRow,
 } from "./contract-info-changes";
 import {
+    CONTRACT_AND_RECORD_DOCUMENT_CHANGE_CONFIRM_DESCRIPTION,
     CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION,
     CONTRACT_INFO_CHANGE_CONFIRM_TITLE,
     ContractInfoChangeList,
+    ContractInfoChangeListGroup,
+    SERVICE_RECORD_DOCUMENT_CHANGE_LIST_TITLE,
 } from "@/components/app/v3/ContractInfoMismatch";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -672,9 +675,11 @@ function ClientFormContent({
         confirmedPeriod?: string;
         key: string;
         rows: ContractInfoChangeRow[];
+        /** Set when the service-record document is completed too: one question covers both. */
+        recordDocument?: { key: string; rows: ContractInfoChangeRow[] };
     } | null>(null);
-    // A completed service-record document keeps the old name and dates, so a save that changes
-    // them asks once more after the contract question, remembering both answers given so far.
+    // A completed service-record document keeps the old name and dates. When the contract is not
+    // completed, a save that changes them asks this on its own, remembering the period answer.
     const [pendingRecordDocumentChange, setPendingRecordDocumentChange] = useState<{
         confirmedPeriod?: string;
         contractInfoChangeKey?: string;
@@ -1971,31 +1976,41 @@ function ClientFormContent({
             setPendingDurationConfirmation(null);
 
             if (isEditMode && client) {
-                // The completed contract can no longer change, so saving one of its fields leaves the
-                // client and the contract disagreeing. Ask first, bound to these exact values.
-                if (isContractLocked(client.documentStatus)) {
-                    const contractInfoChanges = getContractInfoChanges(getEffectiveBaseline(), formData);
-                    const contractInfoChangeKey = getContractInfoChangeKey(contractInfoChanges);
-                    if (contractInfoChanges.length > 0 && confirmedContractInfoChangeKey !== contractInfoChangeKey) {
-                        setPendingContractInfoChange({ confirmedPeriod, key: contractInfoChangeKey, rows: contractInfoChanges });
-                        return;
-                    }
+                // A completed contract or service-record document can no longer change, so saving one
+                // of its fields leaves the client and that document disagreeing. Ask first, bound to
+                // these exact values. The service record carries only contract fields, so when both
+                // documents are completed a save that touches the service record asks once, showing
+                // both lists.
+                const documentBaseline = getEffectiveBaseline();
+                const contractInfoChanges = isContractLocked(client.documentStatus)
+                    ? getContractInfoChanges(documentBaseline, formData)
+                    : [];
+                const contractInfoChangeKey = getContractInfoChangeKey(contractInfoChanges);
+                const recordDocumentChanges = client.serviceRecordCompleted === true
+                    ? getServiceRecordDocumentChanges(documentBaseline, formData)
+                    : [];
+                const recordDocumentChangeKey = getContractInfoChangeKey(recordDocumentChanges);
+                const asksRecordDocument = recordDocumentChanges.length > 0
+                    && confirmedRecordDocumentChangeKey !== recordDocumentChangeKey;
+                if (contractInfoChanges.length > 0 && confirmedContractInfoChangeKey !== contractInfoChangeKey) {
+                    setPendingContractInfoChange({
+                        confirmedPeriod,
+                        key: contractInfoChangeKey,
+                        rows: contractInfoChanges,
+                        recordDocument: asksRecordDocument
+                            ? { key: recordDocumentChangeKey, rows: recordDocumentChanges }
+                            : undefined,
+                    });
+                    return;
                 }
                 setPendingContractInfoChange(null);
-                // A completed service-record document keeps its name and dates as well. Ask about it
-                // on its own, after the contract, bound to these exact values.
-                if (client.serviceRecordCompleted === true) {
-                    const recordDocumentChangeKey = getContractInfoChangeKey(
-                        getServiceRecordDocumentChanges(getEffectiveBaseline(), formData),
-                    );
-                    if (recordDocumentChangeKey !== "[]" && confirmedRecordDocumentChangeKey !== recordDocumentChangeKey) {
-                        setPendingRecordDocumentChange({
-                            confirmedPeriod,
-                            contractInfoChangeKey: confirmedContractInfoChangeKey,
-                            key: recordDocumentChangeKey,
-                        });
-                        return;
-                    }
+                if (asksRecordDocument) {
+                    setPendingRecordDocumentChange({
+                        confirmedPeriod,
+                        contractInfoChangeKey: confirmedContractInfoChangeKey,
+                        key: recordDocumentChangeKey,
+                    });
+                    return;
                 }
                 setPendingRecordDocumentChange(null);
                 // Send only what the user changed since the form was opened. The backend moves the
@@ -3259,6 +3274,12 @@ function ClientFormContent({
         />
     );
 
+    const toChangeListRows = (rows: ContractInfoChangeRow[]) => rows.map((row) => ({
+        key: row.field,
+        label: t(locale, row.labelKey),
+        previous: row.previous,
+        next: row.next,
+    }));
     const contractInfoChangeConfirmationDialog = (
         <TwoButtonModal
             data-component={`${base}_contract-info-change-confirmation`}
@@ -3267,26 +3288,36 @@ function ClientFormContent({
             size="review"
             layout="question"
             title={CONTRACT_INFO_CHANGE_CONFIRM_TITLE}
-            description={CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION}
+            description={pendingContractInfoChange?.recordDocument
+                ? CONTRACT_AND_RECORD_DOCUMENT_CHANGE_CONFIRM_DESCRIPTION
+                : CONTRACT_INFO_CHANGE_CONFIRM_DESCRIPTION}
             cancelLabel="취소"
             approvalLabel="수정"
             approvalDisabled={isSubmitting || isUnknownOutcome}
             onApprove={() => {
                 if (pendingContractInfoChange !== null) {
-                    void handleSubmit(pendingContractInfoChange.confirmedPeriod, pendingContractInfoChange.key);
+                    void handleSubmit(
+                        pendingContractInfoChange.confirmedPeriod,
+                        pendingContractInfoChange.key,
+                        pendingContractInfoChange.recordDocument?.key,
+                    );
                 }
             }}
         >
             {pendingContractInfoChange ? (
-                <ContractInfoChangeList
-                    data-component={`${base}_contract-info-change-confirmation_body_changes`}
-                    rows={pendingContractInfoChange.rows.map((row) => ({
-                        key: row.field,
-                        label: t(locale, row.labelKey),
-                        previous: row.previous,
-                        next: row.next,
-                    }))}
-                />
+                <ContractInfoChangeListGroup data-component={`${base}_contract-info-change-confirmation_body_lists`}>
+                    <ContractInfoChangeList
+                        data-component={`${base}_contract-info-change-confirmation_body_changes`}
+                        rows={toChangeListRows(pendingContractInfoChange.rows)}
+                    />
+                    {pendingContractInfoChange.recordDocument ? (
+                        <ContractInfoChangeList
+                            data-component={`${base}_contract-info-change-confirmation_body_record-document-changes`}
+                            title={SERVICE_RECORD_DOCUMENT_CHANGE_LIST_TITLE}
+                            rows={toChangeListRows(pendingContractInfoChange.recordDocument.rows)}
+                        />
+                    ) : null}
+                </ContractInfoChangeListGroup>
             ) : null}
         </TwoButtonModal>
     );
