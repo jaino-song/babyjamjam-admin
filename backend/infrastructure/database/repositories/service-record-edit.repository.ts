@@ -1,8 +1,18 @@
+import { resolveAdminServiceRecordTarget } from "application/services/admin-service-record-target";
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 
-import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import {
+    INITIAL_FINALIZATION_REQUEST_PREFIX,
+    initialFinalizationStateSql,
+    initialRegenerationReadiness,
+    type InitialRegenerationReadiness,
+    isInitialFinalizationWorkflowScopeForRevision,
+    newestInitialFinalizationStateSql,
+    releaseTerminalInitialFinalizationKey,
+} from "application/policies/service-record-initial-finalization.policy";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 
 import {
     ServiceRecordEditConflictError,
@@ -20,6 +30,7 @@ import {
 } from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
+import { RECEIPT_LINK_KIND } from "domain/repositories/receipt-link-token.repository.interface";
 import {
     type AppendServiceRecordRevisionInput,
     type ServiceRecordEditConfirmInput,
@@ -42,6 +53,7 @@ import {
     type ServiceRecordEditRevisionFactsReceiptToken,
     type ServiceRecordRevision,
     type ServiceRecordRevisionDocumentState,
+    type ServiceRecordRevisionHistoryResponse,
     type CreateServiceRecordRevisionDocumentStateInput,
     type AdvanceServiceRecordRevisionDocumentStateInput,
     type RetryServiceRecordRevisionDocumentInput,
@@ -51,7 +63,9 @@ import {
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
+import { noProviderDocumentConfirmable } from "infrastructure/database/utils/service-record-initial-no-provider-document-projection";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { initialFinalizationSupersessionMarkerSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { readHolidayCalendarRows } from "./sb.holiday-calendar.repository";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
@@ -73,7 +87,6 @@ import type {
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionOperationJobPayload,
-    ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 
 type DraftRow = Prisma.service_record_edit_draftGetPayload<Record<string, never>>;
@@ -165,7 +178,7 @@ type DocumentScopeRow = {
     createdDate: Date;
     receiptLinkTokens?: Array<{
         id: string;
-        eformsignDocId: number;
+        eformsignDocId: number | null;
         clientId: number | null;
         branchId: string;
         active: boolean;
@@ -233,7 +246,7 @@ async function loadDocumentScope(
     branchId: string,
     record: DocumentScopeRecord,
     client: DocumentScopeClient,
-    scheduleIds: number[],
+    legacyScheduleIds: number[],
 ): Promise<ServiceRecordEditDocumentScope> {
     const fallback = unverifiedDocumentScope(record.formVersion);
     const documentDelegate = tx.eformsign_doc;
@@ -254,8 +267,8 @@ async function loadDocumentScope(
                     branchId,
                     OR: [
                         { documentKind: "service_record_snapshot", serviceRecordCaseId: record.id },
-                        ...(scheduleIds.length > 0
-                            ? [{ documentKind: "service_record_snapshot", employeeScheduleId: { in: scheduleIds } }]
+                        ...(legacyScheduleIds.length > 0
+                            ? [{ documentKind: "service_record_snapshot", serviceRecordCaseId: null, employeeScheduleId: { in: legacyScheduleIds } }]
                             : []),
                         { documentKind: "contract", clientId: client.id },
                     ],
@@ -275,6 +288,7 @@ async function loadDocumentScope(
                     updatedDate: true,
                     createdDate: true,
                     receiptLinkTokens: {
+                        where: { kind: RECEIPT_LINK_KIND.CONTRACT },
                         select: {
                             id: true,
                             eformsignDocId: true,
@@ -312,9 +326,11 @@ async function loadDocumentScope(
 
     const snapshots = documents.filter((document) => (
         document.documentKind === "service_record_snapshot"
+        && (document.clientId === client.id || document.clientId === null)
         && (
             document.serviceRecordCaseId === record.id
-            || (document.employeeScheduleId !== null && scheduleIds.includes(document.employeeScheduleId))
+            || (document.serviceRecordCaseId === null && document.employeeScheduleId !== null
+                && legacyScheduleIds.includes(document.employeeScheduleId))
         )
     ));
     const snapshotChunks: ServiceRecordEditDocumentChunk[] = snapshots
@@ -349,6 +365,7 @@ async function loadDocumentScope(
         .filter((token) => (
             token.branchId === branchId
             && token.clientId === client.id
+            && token.eformsignDocId !== null
             && token.active
             && token.revokedAt === null
         ));
@@ -496,6 +513,7 @@ export async function loadRevisionFactsSource(
                 stepRecipientSms: true,
                 detailPayload: true,
                 receiptLinkTokens: {
+                    where: { kind: RECEIPT_LINK_KIND.CONTRACT },
                     select: {
                         id: true,
                         eformsignDocId: true,
@@ -526,14 +544,14 @@ export async function loadRevisionFactsSource(
                 : toDomainJson(row.detailPayload),
         });
         const toFactsTokens = (row: FactsRow): ServiceRecordEditRevisionFactsReceiptToken[] => row.receiptLinkTokens
-            .map((token) => ({
+            .flatMap((token) => token.eformsignDocId === null ? [] : [{
                 id: token.id,
                 eformsignDocId: token.eformsignDocId,
                 branchId: token.branchId,
                 clientId: token.clientId,
                 active: token.active,
                 revokedAt: token.revokedAt,
-            }));
+            }]);
 
         const contractRow = factsDocumentId === null
             ? null
@@ -1189,6 +1207,7 @@ async function lockRevisionDocumentTargets(
         documentStateId: string;
         generation: string;
     },
+    initial = false,
 ): Promise<void> {
     const transaction = tx as OptionalQueryTransaction;
     if (typeof transaction.$queryRaw !== "function") return;
@@ -1215,6 +1234,9 @@ async function lockRevisionDocumentTargets(
     )].sort((left, right) => left - right);
     await lockRowsByBranchAndIds(tx, "employee", "employee", input.branchId, employeeIds, false);
     await lockRowsByBranchAndIds(tx, "service_record_case", "service_record_case", input.branchId, [input.serviceRecordCaseId], true);
+    if (initial) {
+        await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    }
     const scheduleIds = [...new Set(
         discovered
             .map((row) => row.scheduleId)
@@ -1226,7 +1248,9 @@ async function lockRevisionDocumentTargets(
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "eformsign_doc", "eformsign_doc", "service_record_case_id");
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_snapshot_chunk", "service_record_snapshot_chunk", "service_record_case_id");
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_revision", "service_record_revision", "service_record_case_id");
-    await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    if (!initial) {
+        await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    }
     await transaction.$queryRaw(Prisma.sql`
         SELECT job.id
         FROM "eformsign_document_job" AS job
@@ -1513,7 +1537,7 @@ function isServiceRecordRevisionGenerationPayload(value: unknown, requestKey?: u
     if (excludedRequestKey) return false;
     if (normalizedRequestKey !== null && (
         normalizedRequestKey.startsWith("service-record-revision:")
-        || normalizedRequestKey.startsWith("service-record-initial-finalization:")
+        || normalizedRequestKey.startsWith(INITIAL_FINALIZATION_REQUEST_PREFIX)
     )) {
         return true;
     }
@@ -1544,7 +1568,7 @@ function documentJobSupersessionPredicate(
                 AND (
                     job.payload->>'kind' = 'service_record_revision'
                     OR COALESCE(job.request_key, '') LIKE 'service-record-revision:%'
-                    OR COALESCE(job.request_key, '') LIKE 'service-record-initial-finalization:%'
+                    OR ${initialFinalizationSupersessionMarkerSql}
                 )
             )
         `;
@@ -1594,6 +1618,8 @@ function eformsignDocumentJobOwnershipPredicate(
 
 type BlockingRevisionDocumentStateRow = {
     id: string;
+    revisionId: string;
+    workflowScope: Prisma.JsonValue;
     operation: string;
     status: string;
     step: string;
@@ -1666,6 +1692,13 @@ function operationRevisionDispatchContext(
     };
 }
 
+export async function assertNoBlockingRevisionDocumentStates(
+    tx: Prisma.TransactionClient,
+    input: { branchId: string; clientId: number; serviceRecordCaseId: string },
+): Promise<void> {
+    await checkRevisionDocumentStatesForConfirm(tx, input);
+}
+
 /**
  * A new confirmation may proceed only after the current revision's external
  * operation markers have reached a terminal outcome.  The partial record
@@ -1678,16 +1711,19 @@ function operationRevisionDispatchContext(
  * were unavailable at confirm time (see SERVICE_RECORD_BORN_STUCK_ERROR_CODES).
  * It has no provider job and no target document, so it cannot duplicate a
  * send; blocking on it would make the record uneditable forever.
+ * Returns whether a terminal INITIAL was ready after lazy key release.
  */
-export async function assertNoBlockingRevisionDocumentStates(
+async function checkRevisionDocumentStatesForConfirm(
     tx: Prisma.TransactionClient,
     input: { branchId: string; clientId: number; serviceRecordCaseId: string },
-): Promise<void> {
+): Promise<boolean> {
     const transaction = tx as OptionalQueryTransaction;
-    if (typeof transaction.$queryRaw !== "function") return;
+    if (typeof transaction.$queryRaw !== "function") return false;
     const rows = await transaction.$queryRaw<BlockingRevisionDocumentStateRow[]>(Prisma.sql`
         SELECT
             state.id,
+            state.revision_id AS "revisionId",
+            state.workflow_scope AS "workflowScope",
             state.operation,
             state.status,
             state.step,
@@ -1701,27 +1737,41 @@ export async function assertNoBlockingRevisionDocumentStates(
         WHERE owner_case.branch_id = ${input.branchId}::uuid
           AND owner_case.client_id = ${input.clientId}
           AND owner_case.id = ${input.serviceRecordCaseId}::uuid
+          AND (NOT ${initialFinalizationStateSql("state")} OR ${newestInitialFinalizationStateSql("state")})
           AND NOT (
-                state.status IN ('not_required', 'completed')
-                OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
-                OR (
-                    state.status = 'manual_review'
-                    AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
-                    AND state.target_document_id IS NULL
-                )
+                state.status = 'completed'
+                OR (NOT ${initialFinalizationStateSql("state")} AND (
+                    state.status = 'not_required'
+                    OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
+                    OR (
+                        state.status = 'manual_review'
+                        AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
+                        AND state.target_document_id IS NULL
+                    )
+                ))
           )
         ORDER BY state.created_at ASC, state.id ASC
         FOR UPDATE OF state
     `);
-    const blocking = rows[0];
-    if (!blocking) return;
-    const detail = blocking.lastErrorCode ?? `${blocking.operation}:${blocking.step}`;
-    throw new ServiceRecordRevisionOperationUnresolvedError(
-        `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
-        blocking.operation,
-        blocking.status,
-        blocking.lastErrorCode,
-    );
+    let terminalInitialReady = false;
+    for (const blocking of rows) {
+        let reason = blocking.lastErrorCode;
+        if (blocking.operation === "record_snapshot"
+            && isInitialFinalizationWorkflowScopeForRevision(blocking.workflowScope, blocking.revisionId)) {
+            const readiness = await releaseTerminalInitialFinalizationKey(tx, input.serviceRecordCaseId, blocking.revisionId);
+            if (readiness.ready) {
+                terminalInitialReady = true;
+                continue;
+            }
+            reason = readiness.reason;
+        }
+        const detail = reason ?? `${blocking.operation}:${blocking.step}`;
+        throw new ServiceRecordRevisionOperationUnresolvedError(
+            `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
+            blocking.operation, blocking.status, reason,
+        );
+    }
+    return terminalInitialReady;
 }
 
 /**
@@ -2065,7 +2115,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return this.prisma.$transaction(async (tx) => {
             const draft = await this.findDraftByIdWithClient(tx, branchId, draftId);
             if (!draft) return null;
-            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId });
+            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId, writable: true });
             if (!source) return null;
             const revisionFactsSource = await loadRevisionFactsSource(tx, branchId, source, new Set(serviceRecordTemplateIds));
             return { draft, source, revisionFactsSource };
@@ -2079,14 +2129,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         return this.prisma.$transaction(async (tx) => {
             const draft = await this.findDraftByIdWithClient(tx, branchId, draftId);
             if (!draft) return null;
-            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId });
+            const source = await this.loadSourceWithClient(tx, branchId, { caseId: draft.serviceRecordCaseId, writable: true });
             return source ? { draft, source } : null;
         }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     }
 
     async loadSource(
         branchId: string,
-        target: { clientId?: number; caseId?: string },
+        target: { clientId?: number; caseId?: string; writable?: boolean },
     ): Promise<ServiceRecordEditSource | null> {
         return this.prisma.$transaction(
             (tx) => this.loadSourceWithClient(tx, branchId, target),
@@ -2097,29 +2147,31 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     private async loadSourceWithClient(
         tx: Prisma.TransactionClient,
         branchId: string,
-        target: { clientId?: number; caseId?: string },
+        target: { clientId?: number; caseId?: string; writable?: boolean },
     ): Promise<ServiceRecordEditSource | null> {
         if (target.clientId === undefined && target.caseId === undefined) return null;
-        let clientId = target.clientId;
-        if (clientId !== undefined) {
-            const ownedClient = await tx.client.findFirst({
-                where: { id: clientId, branchId },
-                select: { id: true },
-            });
-            if (!ownedClient) return null;
-        }
+        const selected = target.clientId === undefined ? null : await resolveAdminServiceRecordTarget(
+            tx,
+            { branchId, clientId: target.clientId, caseId: target.caseId },
+            target.writable ? "write" : "read",
+        );
+        const caseId = selected?.caseId ?? target.caseId;
+        if (!caseId) return null;
 
         const record = await tx.service_record_case.findFirst({
             where: {
                 branchId,
-                ...(target.caseId ? { id: target.caseId } : {}),
-                ...(clientId !== undefined ? { clientId } : {}),
+                id: caseId,
+                ...(target.clientId !== undefined ? { clientId: target.clientId } : {}),
+                client: { branchId, deletedAt: null },
+                ...(target.writable ? { OR: [{ babyId: null }, { baby: { active: true } }] } : {}),
             },
             select: {
                 id: true,
                 branch: { select: { name: true } },
                 clientId: true,
                 version: true,
+                babyId: true,
                 formVersion: true,
                 status: true,
                 completedAt: true,
@@ -2170,7 +2222,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             },
         });
         if (!record || record.clientId === null) return null;
-        clientId = record.clientId;
+        const clientId = record.clientId;
 
         const client = await tx.client.findFirst({
             where: { id: record.clientId, branchId },
@@ -2191,7 +2243,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!client) return null;
 
         const schedules = await tx.employee_schedule.findMany({
-            where: { branchId, clientId },
+            where: { branchId, clientId, primaryEmployee: { branchId } },
             orderBy: { id: "asc" },
             select: {
                 id: true,
@@ -2203,20 +2255,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 primaryEmployeeId: true,
                 secondaryEmployeeId: true,
                 primaryEmployee: { select: { name: true } },
-                serviceRecordAssignment: {
-                    select: {
-                        id: true,
-                        branchId: true,
-                        serviceRecordCaseId: true,
-                        scheduleId: true,
-                        employeeId: true,
-                        startDate: true,
-                        endDate: true,
-                        employeeNameSnapshot: true,
-                    },
-                },
             },
         });
+        const caseAssignments = await tx.service_record_assignment.findMany({
+            where: { branchId, serviceRecordCaseId: caseId, scheduleId: { in: schedules.map(({ id }) => id) } },
+        });
+        const assignmentsBySchedule = new Map(caseAssignments.map((assignment) => [assignment.scheduleId, assignment]));
 
         const rawSessions = record.days.map((day) => ({
             id: day.id,
@@ -2249,31 +2293,38 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             ambiguous: (sessionIndexCounts.get(session.sessionIndex) ?? 0) > 1,
         }));
 
-        const assignments: ServiceRecordEditSourceAssignment[] = schedules.map((schedule) => ({
-            id: schedule.serviceRecordAssignment?.id ?? null,
-            branchId: schedule.serviceRecordAssignment?.branchId ?? schedule.branchId ?? null,
-            serviceRecordCaseId: schedule.serviceRecordAssignment?.serviceRecordCaseId ?? null,
-            scheduleId: schedule.id,
-            employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
-            startDate: dateOnly(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate) ?? "",
-            endDate: dateOnly(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate) ?? "",
-            replaced: schedule.replaced,
-            employeeName: schedule.serviceRecordAssignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
-            scheduleStartDate: dateOnly(schedule.startDate) ?? "",
-            scheduleEndDate: dateOnly(schedule.endDate) ?? "",
-            scheduleTerminatedAt: instant(schedule.terminatedAt),
-            primaryEmployeeId: schedule.primaryEmployeeId,
-            secondaryEmployeeId: schedule.secondaryEmployeeId ?? null,
-            primaryEmployeeName: schedule.primaryEmployee.name,
-        }));
+        const assignments: ServiceRecordEditSourceAssignment[] = schedules.map((schedule) => {
+            const assignment = assignmentsBySchedule.get(schedule.id);
+            return {
+                id: assignment?.id ?? null,
+                branchId: assignment?.branchId ?? schedule.branchId ?? null,
+                serviceRecordCaseId: assignment?.serviceRecordCaseId ?? null,
+                scheduleId: schedule.id,
+                employeeId: assignment?.employeeId ?? schedule.primaryEmployeeId,
+                startDate: dateOnly(assignment?.startDate ?? schedule.startDate) ?? "",
+                endDate: dateOnly(assignment?.endDate ?? schedule.endDate) ?? "",
+                replaced: schedule.replaced,
+                employeeName: assignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
+                scheduleStartDate: dateOnly(schedule.startDate) ?? "",
+                scheduleEndDate: dateOnly(schedule.endDate) ?? "",
+                scheduleTerminatedAt: instant(schedule.terminatedAt),
+                primaryEmployeeId: schedule.primaryEmployeeId,
+                secondaryEmployeeId: schedule.secondaryEmployeeId ?? null,
+                primaryEmployeeName: schedule.primaryEmployee.name,
+            };
+        });
 
-        const [sourceSignatureMetadata, documentScope] = await Promise.all([
-            Promise.resolve(signatureMetadata(rawSessions)),
-            loadDocumentScope(tx, branchId, record, client, schedules.map((schedule) => schedule.id)),
-        ]);
+        const implicit = !target.caseId && selected ? selected
+            : await resolveAdminServiceRecordTarget(tx, { branchId, clientId }, "overview");
+        const sharedHousehold = implicit?.caseId !== record.id;
+        const legacy = !sharedHousehold && record.babyId === null;
+        const sourceSignatureMetadata = signatureMetadata(rawSessions);
+        const documentScope = await loadDocumentScope(tx, branchId, record, client,
+            legacy ? schedules.map(({ id }) => id) : []);
 
         return {
             caseId: record.id,
+            ...(sharedHousehold ? { sharedHousehold: true } : {}),
             caseVersion: record.version,
             formVersion: record.formVersion,
             branchName: record.branch?.name ?? null,
@@ -2333,6 +2384,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     branchId: input.branchId,
                     serviceRecordCaseId: input.serviceRecordCaseId,
                     status: "ACTIVE",
+                    serviceRecordCase: {
+                        branchId: input.branchId,
+                        AND: [
+                            { OR: [{ clientId: null }, { client: { branchId: input.branchId, deletedAt: null } }] },
+                            { OR: [{ babyId: null }, { baby: { active: true } }] },
+                        ],
+                    },
                     draftVersion: input.expectedDraftVersion,
                 },
                 data: {
@@ -2366,6 +2424,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     branchId: input.branchId,
                     serviceRecordCaseId: input.serviceRecordCaseId,
                     status: "ACTIVE",
+                    serviceRecordCase: {
+                        branchId: input.branchId,
+                        AND: [
+                            { OR: [{ clientId: null }, { client: { branchId: input.branchId, deletedAt: null } }] },
+                            { OR: [{ babyId: null }, { baby: { active: true } }] },
+                        ],
+                    },
                     draftVersion: input.expectedDraftVersion,
                 },
                 data: {
@@ -2446,14 +2511,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }
     }
 
-    async findRevisionForChanges(branchId: string, clientId: number, revisionId: string) {
+    async findRevisionForChanges(branchId: string, clientId: number, revisionId: string, caseId?: string) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         // Do not send malformed identifiers to PostgreSQL's uuid cast (or the
         // conflict-oriented write validator). All unavailable revisions are 404.
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revisionId)) return null;
         const revision = await this.prisma.service_record_revision.findFirst({
-            where: { id: revisionId, branchId, serviceRecordCase: { branchId, clientId } },
+            where: { id: revisionId, branchId, serviceRecordCase: { branchId, clientId, ...(caseId ? { id: caseId } : {}) } },
             select: {
                 id: true,
                 revisionNumber: true,
@@ -2477,7 +2542,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
      * The payload is reduced to startDate, endDate, header and sessions.
      * Sessions carry clientSignatureFingerprint instead of clientSignature.
      */
-    async listRevisionsForChanges(branchId: string, clientId: number) {
+    async listRevisionsForChanges(branchId: string, clientId: number, caseId?: string) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         const revisions = await this.prisma.$queryRaw<RevisionChangeRow[]>(Prisma.sql`
@@ -2508,6 +2573,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             WHERE r.branch_id = ${branchId}::uuid
               AND c.branch_id = ${branchId}::uuid
               AND c.client_id = ${clientId}
+              ${caseId ? Prisma.sql`AND c.id = ${caseId}::uuid` : Prisma.empty}
               AND r.before_snapshot IS NOT NULL
             ORDER BY r.revision_number ASC
         `);
@@ -2519,13 +2585,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }));
     }
 
-    async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string) {
+    async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string, caseId?: string) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         // Same 404 contract as revisions: a malformed id never reaches the uuid cast.
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(editId)) return null;
         const edit = await this.prisma.service_record_day_edit_log.findFirst({
-            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId } },
+            where: { id: editId, branchId, serviceRecordCase: { branchId, clientId, ...(caseId ? { id: caseId } : {}) } },
             select: {
                 id: true,
                 editedAt: true,
@@ -2545,11 +2611,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     async listRevisionHistory(
         branchId: string,
         clientId: number,
+        caseId?: string,
     ): Promise<ServiceRecordRevisionHistoryResponse | null> {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
         return this.prisma.$transaction(
-            (tx) => this.listRevisionHistoryWithClient(tx, branchId, clientId),
+            (tx) => this.listRevisionHistoryWithClient(tx, branchId, clientId, caseId),
             { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
         );
     }
@@ -2558,6 +2625,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         tx: Prisma.TransactionClient,
         branchId: string,
         clientId: number,
+        caseId?: string,
     ): Promise<ServiceRecordRevisionHistoryResponse | null> {
         const cases = await rawStateQuery<Array<{
             caseId: string;
@@ -2573,10 +2641,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             FROM "service_record_case"
             WHERE branch_id = ${branchId}::uuid
               AND client_id = ${clientId}
-            LIMIT 1
+              ${caseId ? Prisma.sql`AND id = ${caseId}::uuid` : Prisma.empty}
+            LIMIT 2
         `);
         const ownerCase = cases[0];
-        if (!ownerCase) return null;
+        if (!ownerCase || cases.length !== 1) return null;
 
         const revisions = await rawStateQuery<Array<{
             id: string;
@@ -2623,6 +2692,17 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             documentsByRevision.set(state.revisionId, existing);
         }
 
+        let initialReadiness: InitialRegenerationReadiness | undefined;
+        if (ownerCase.currentRevisionId && states.some(state => state.revisionId === ownerCase.currentRevisionId
+            && state.operation === "record_snapshot" && state.status === "failed"
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId))) {
+            initialReadiness = await initialRegenerationReadiness(tx, ownerCase.caseId, ownerCase.currentRevisionId, { lock: false });
+        }
+        const readyInitialStateId = initialReadiness?.ready ? initialReadiness.state.id : null;
+
+        const confirmable = ownerCase.currentRevisionId && states.some(state => state.status === "manual_review")
+            ? await noProviderDocumentConfirmable(tx, branchId, ownerCase.caseId) : [];
+        const attestableByState = new Map(confirmable.map(projection => [projection.stateId, projection]));
         return {
             caseId: ownerCase.caseId,
             caseVersion: ownerCase.caseVersion,
@@ -2641,11 +2721,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         generation: state.generation,
                         status: state.status,
                         documentVersion: state.documentVersion,
-                        canRetry: canRetryRevisionDocumentState(state)
-                            && !(state.operation === "record_snapshot"
-                                && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(state.revisionId))
-                                && revisionSnapshotRetryJobScope(state) === null),
+                        canRetry: state.operation === "record_snapshot"
+                            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId)
+                            ? state.id === readyInitialStateId : canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
+                        ...(state.status === "failed" && initialReadiness?.ready === false && initialReadiness.state?.id === state.id
+                            ? { regenerationBlockedReason: initialReadiness.reason } : {}),
+                        ...(attestableByState.has(state.id) ? { noProviderDocumentConfirmable: attestableByState.get(state.id) } : {}),
                     })),
             })),
             caregiverEdits: caregiverEdits.map((edit) => ({
@@ -2681,11 +2763,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         branchId: string,
         revisionId: string,
         stateId: string,
+        context?: ServiceRecordEditTransactionContext,
     ): Promise<ServiceRecordRevisionDocumentState | null> {
         assertUuid(branchId, "branch");
         assertUuid(revisionId, "revision");
         assertUuid(stateId, "state");
-        const rows = await selectRevisionDocumentStateForBranch(this.prisma, {
+        const rows = await selectRevisionDocumentStateForBranch(context?.tx ?? this.prisma, {
             branchId,
             revisionId,
             stateId,
@@ -3236,9 +3319,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     async recordInitialFinalizationDocumentsCreatedInTransaction(
         context: ServiceRecordEditTransactionContext,
         input: PromoteServiceRecordRevisionSnapshotInput,
+        precondition?: "cancelled_after_dispatch",
     ): Promise<boolean> {
         assertRevisionPromotionInput(input);
-        await lockRevisionDocumentTargets(context.tx, input);
+        // Recovery already owns case -> state -> chunk/doc locks. Do not acquire
+        // client/employee locks here, which would invert the lifecycle lock order.
+        if (!precondition) await lockRevisionDocumentTargets(context.tx, input, true);
         const ownerCase = await selectRevisionGenerationCase(context.tx, input);
         if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId
             || !["READY_TO_FINALIZE", "FINALIZATION_FAILED", "FINALIZING", "DOCUMENTS_CREATED"].includes(ownerCase.status)) {
@@ -3252,16 +3338,22 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!state || state.operation !== "record_snapshot") return false;
         const current = toRevisionDocumentState(state);
         if (current.documentVersion !== input.documentVersion
-            || !isInitialFinalizationWorkflowScope(current.workflowScope, initialFinalizationRequestKey(input.revisionId))) return false;
+            || !isInitialFinalizationWorkflowScopeForRevision(current.workflowScope, input.revisionId)) return false;
         const replay = current.status === "processing" && current.step === "documents_created"
             && ownerCase.status === "DOCUMENTS_CREATED";
-        if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"
+        if (precondition === "cancelled_after_dispatch") {
+            if (current.status !== "manual_review" || current.lastErrorCode !== "JOB_CANCELLED_AFTER_DISPATCH"
+                || !["READY_TO_FINALIZE", "FINALIZATION_FAILED"].includes(ownerCase.status)) return false;
+        } else if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"
             || ownerCase.status === "DOCUMENTS_CREATED")) return false;
         const rows = await selectRevisionSnapshotChunks(context.tx, input);
         if (rows.length !== input.chunkCount) return false;
         const persistedIds = new Set<string>();
         const indexes = new Set<number>();
         for (const row of rows) {
+            const tombstone = row.documentStatusType === "049" && row.documentClientId === null
+                && row.documentCaseId === null && row.documentKind === null
+                && row.documentSnapshotVersion === null && row.documentSnapshotChunkIndex === null;
             if (
                 row.revisionId !== input.revisionId
                 || row.snapshotVersion !== input.documentVersion
@@ -3274,13 +3366,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 || !row.documentId
                 || !row.storedDocumentId
                 || row.documentId !== row.storedDocumentId
-                || row.documentRevisionId !== input.revisionId
+                || (row.documentRevisionId !== input.revisionId
+                    && !(tombstone && row.documentRevisionId === null))
                 || row.documentBranchId !== input.branchId
-                || row.documentClientId !== input.clientId
-                || row.documentCaseId !== input.serviceRecordCaseId
-                || row.documentKind !== "service_record_snapshot"
-                || row.documentSnapshotVersion !== input.documentVersion
-                || row.documentSnapshotChunkIndex !== row.chunkIndex
+                || (!tombstone && (row.documentClientId !== input.clientId
+                    || row.documentCaseId !== input.serviceRecordCaseId
+                    || row.documentKind !== "service_record_snapshot"
+                    || row.documentSnapshotVersion !== input.documentVersion
+                    || row.documentSnapshotChunkIndex !== row.chunkIndex))
             ) return false;
             indexes.add(row.chunkIndex);
             persistedIds.add(row.documentId);
@@ -3291,7 +3384,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             return false;
         }
 
-        if (replay) return true;
+        if (replay) {
+            for (const documentId of persistedIds) {
+                await ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction({ branchId: input.branchId, documentId }, context.tx);
+            }
+            return true;
+        }
         const stateUpdated = await rawStateExecute(context.tx, Prisma.sql`
             UPDATE "service_record_revision_document_state"
             SET status = 'processing', step = 'documents_created', last_error_code = NULL,
@@ -3313,6 +3411,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             UPDATE "service_record_token" SET active = false, revoked_at = now()
             WHERE service_record_case_id = ${input.serviceRecordCaseId}::uuid AND active = true
         `);
+        for (const documentId of persistedIds) {
+            await ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction({ branchId: input.branchId, documentId }, context.tx);
+        }
         return true;
     }
 
@@ -3665,11 +3766,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const discoveredSource = lockedSource ?? await this.loadSourceWithClient(
             tx,
             input.branchId,
-            { caseId: discovered.serviceRecordCaseId },
+            { caseId: discovered.serviceRecordCaseId, writable: true },
         );
         if (!discoveredSource) throw new ServiceRecordEditNotFoundError();
         if (!lockedSource) await this.lockConfirmSourceTargets(tx, input.branchId, discoveredSource);
-        await this.lockConfirmDraftTargets(tx, input.branchId, discoveredSource, input.draftId);
+        const terminalInitialReady = await this.lockConfirmDraftTargets(tx, input.branchId, discoveredSource, input.draftId);
 
         // The parent/case/employee locks serialize all cooperating writers.
         // Re-read every business row after those locks and reject a writer
@@ -3691,7 +3792,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (draft.draftVersion !== input.expectedDraftVersion) {
             throw new ServiceRecordEditDraftConflictError();
         }
-        const source = lockedSource ?? await this.loadSourceWithClient(tx, input.branchId, { caseId: draft.serviceRecordCaseId });
+        const source = lockedSource ?? await this.loadSourceWithClient(tx, input.branchId, { caseId: draft.serviceRecordCaseId, writable: true });
         if (!source) throw new ServiceRecordEditNotFoundError();
         if (
             source.client.id !== discoveredSource.client.id
@@ -3833,13 +3934,18 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         ...(plan.finalizationDueAt ? { finalizationDueAt: new Date(plan.finalizationDueAt) } : {}),
                     } : {}),
                     ...(revision ? { currentRevisionId: revision.id } : {}),
+                    // Terminal INITIAL failures have no retry time. Make the new revision due
+                    // for the scheduler in the same write that installs it.
+                    ...(revision && terminalInitialReady && source.caseLifecycle.status === "FINALIZATION_FAILED"
+                        ? { nextAttemptAt: now }
+                        : {}),
                     version: { increment: 1 },
                 },
                 select: { version: true },
             });
             caseVersion = caseUpdate.version;
 
-            if (!contentOnly) {
+            if (!contentOnly && !source.sharedHousehold) {
                 await tx.client.updateMany({
                     where: { id: source.client.id, branchId: input.branchId },
                     data: {
@@ -3863,7 +3969,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         notes: session.notes,
                     },
                 });
-                if (contentOnly && written.count !== 1) throw new ServiceRecordEditConflictError();
+                if (written.count !== 1) throw new ServiceRecordEditConflictError();
             }
             for (const session of plan.newSessions) {
                 const serviceDate = dateValue(session.serviceDate);
@@ -3907,7 +4013,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         },
                     });
                 }
-                if (assignment.scheduleId !== null) {
+                if (assignment.scheduleId !== null && !source.sharedHousehold) {
                     await tx.employee_schedule.updateMany({
                         where: { id: assignment.scheduleId, branchId: input.branchId },
                         data: {
@@ -4053,7 +4159,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
         }
 
-        if (!contentOnly) {
+        if (!contentOnly && !source.sharedHousehold) {
             await this.persistReevaluationIntents(tx, input.branchId, source, plan, `${input.draftId}:${draft.draftVersion}`, now);
         }
 
@@ -4172,13 +4278,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         branchId: string,
         source: ServiceRecordEditSource,
         draftId: string,
-    ): Promise<void> {
+    ): Promise<boolean> {
         await lockRowsByBranchAndIds(tx, "service_record_edit_draft", "service_record_edit_draft", branchId, [draftId], true);
         await lockCaseChildren(tx, branchId, source.caseId, "service_record_revision", "service_record_revision", "service_record_case_id");
         // Operation state is a document child and must be locked before jobs
         // in the common order. Only the current revision blocks a new
         // confirmation; retained partial record history is explicitly safe.
-        await assertNoBlockingRevisionDocumentStates(tx, {
+        const terminalInitialReady = await checkRevisionDocumentStatesForConfirm(tx, {
             branchId,
             clientId: source.client.id,
             serviceRecordCaseId: source.caseId,
@@ -4209,6 +4315,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 select: { id: true },
             });
         }
+        return terminalInitialReady;
     }
 
     private async invalidateSupersededJobs(
@@ -4607,6 +4714,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             FROM service_record_case
             WHERE id = ${serviceRecordCaseId}::uuid
               AND branch_id = ${branchId}::uuid
+              AND NOT EXISTS (SELECT 1 FROM client
+                  WHERE client.id = service_record_case.client_id AND client.deleted_at IS NOT NULL)
+              AND (baby_id IS NULL OR EXISTS (SELECT 1 FROM client_baby
+                  WHERE client_baby.id = service_record_case.baby_id AND client_baby.active))
             FOR UPDATE
         `);
         if (rows.length !== 1) throw new ServiceRecordEditNotFoundError();

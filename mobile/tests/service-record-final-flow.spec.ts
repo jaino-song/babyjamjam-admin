@@ -333,3 +333,77 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   await expect(page.getByLabel("신생아 성명", { exact: true })).toHaveValue(header.babyName);
   await expect(babyBirth).toHaveValue(header.babyBirth);
 });
+
+test("switching first to second and back keeps each baby draft", async ({ page, context }) => {
+  const babies = [
+    { token: "qa-first-baby", rank: 1, title: "첫째 아기 제공기록지" },
+    { token: "qa-second-baby", rank: 2, title: "둘째 아기 제공기록지" },
+  ] as const;
+  const cookieName = "service_record_access";
+  const apiPath = (token: string) => `/api/service-record/${token}`;
+  const verified = new Set<string>();
+
+  await mockShellRequests(page);
+  for (const { token, rank } of babies) {
+    const path = apiPath(token);
+    await page.route(`**${path}/link`, route => route.fulfill({ json: { valid: true } }));
+    await page.route(`**${path}/verify`, async route => {
+      expect(route.request().postDataJSON()).toEqual({ phone: "010-0000-9001" });
+      verified.add(token);
+      await route.fulfill({
+        status: 201, json: { ok: true },
+        headers: { "set-cookie": `${cookieName}=fixture-${rank}; Path=${path}; HttpOnly; SameSite=Lax` },
+      });
+    });
+    await page.route(`**${path}/context`, async route => {
+      const cookie = await route.request().headerValue("cookie");
+      const scopedCookies = (cookie ?? "").split("; ").filter(part => part.startsWith(`${cookieName}=`));
+      if (!scopedCookies.length) {
+        await route.fulfill({ status: 401, json: { code: "AUTH_REQUIRED" } });
+        return;
+      }
+      expect(scopedCookies).toEqual([`${cookieName}=fixture-${rank}`]);
+      await route.fulfill({
+        json: {
+          header, babyId: token, babyRank: rank, babyCount: 2, totalSessions: 2, startDate: todayKst,
+          sessions: [{ sessionIndex: 1, serviceDate: todayKst, locked: false, answers: { meals_meal: rank } }],
+        },
+      });
+    });
+  }
+
+  const phoneInput = page.getByLabel("휴대폰 번호", { exact: true });
+  const meal = page.getByLabel("식사", { exact: true });
+  async function openDraft(baby: typeof babies[number], needsVerification: boolean) {
+    await page.goto(`/service-record/${baby.token}`);
+    const title = page.getByRole("heading", { name: baby.title });
+    if (needsVerification) {
+      await expect(phoneInput).toBeVisible();
+      await expect(title).toHaveCount(0);
+      await phoneInput.fill("01000009001");
+      await page.getByRole("button", { name: "확인하기" }).click();
+    }
+    await expect(title).toBeVisible();
+    await expect(phoneInput).toHaveCount(0);
+    await page.getByRole("button", { name: "기록 시작" }).click();
+    await expect(meal).toBeVisible();
+  }
+
+  await openDraft(babies[0], true);
+  await expect(meal).toHaveValue("1");
+  await meal.fill("3");
+  await openDraft(babies[1], true);
+  await expect(meal).toHaveValue("2");
+  await meal.fill("4");
+  await openDraft(babies[0], false);
+  await expect(meal).toHaveValue("3");
+  await openDraft(babies[1], false);
+  await expect(meal).toHaveValue("4");
+
+  expect(verified).toEqual(new Set(babies.map(baby => baby.token)));
+  const cookies = (await context.cookies()).filter(cookie => cookie.name === cookieName);
+  expect(cookies.map(({ path, httpOnly }) => ({ path, httpOnly }))).toEqual(expect.arrayContaining(
+    babies.map(baby => ({ path: apiPath(baby.token), httpOnly: true })),
+  ));
+  expect(cookies).toHaveLength(2);
+});

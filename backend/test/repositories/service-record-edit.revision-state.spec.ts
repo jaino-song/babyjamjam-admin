@@ -62,6 +62,31 @@ describe("ServiceRecordEditRepository revision state branch lookup", () => {
         ]);
     });
 
+    it("returns the current INITIAL readiness blocker alongside a partial-dispatch outcome", async () => {
+        const state = { ...stateRow(), documentVersion: 2, status: "failed", step: "failed",
+            lastErrorCode: "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH", workflowScope: {
+                requestKey: `service-record-initial-finalization:${revisionId}`, generationKind: "INITIAL_FINALIZATION",
+            } };
+        const owner = { id: state.serviceRecordCaseId, branchId, clientId: state.clientId,
+            caseId: state.serviceRecordCaseId, caseVersion: 1, currentRevisionId: revisionId, currentUsableRevisionId: null };
+        const tx = { $queryRaw: jest.fn(async (sql: { text: string }) => {
+            if (sql.text.includes('FROM "service_record_case"')) return [owner];
+            if (sql.text.includes('FROM "service_record_revision_document_state"')) return [state];
+            if (sql.text.includes('FROM "service_record_revision"')) return [{ id: revisionId, revisionNumber: 1, confirmedAt: state.createdAt }];
+            if (sql.text.includes('FROM "service_record_snapshot_chunk"')) return [
+                { documentId: "signed", chunkIndex: 1, chunkCount: 2 }, { documentId: null, chunkIndex: 2, chunkCount: 2 },
+            ];
+            if (sql.text.includes('FROM "eformsign_doc"')) return [{ documentId: "signed", statusType: "003", voided: false, purgePending: false }];
+            return [];
+        }) };
+        const prisma = { $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)) };
+        const result = await new ServiceRecordEditRepository(prisma as never).listRevisionHistory(branchId, state.clientId);
+        expect(result?.revisions[0]?.documents[0]).toMatchObject({
+            id: stateId, canRetry: false, reasonCode: "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH",
+            regenerationBlockedReason: "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED",
+        });
+    });
+
     it("resolves the owning client from the branch/revision/state join", async () => {
         const prisma = {
             $queryRaw: jest.fn().mockResolvedValue([stateRow()]),

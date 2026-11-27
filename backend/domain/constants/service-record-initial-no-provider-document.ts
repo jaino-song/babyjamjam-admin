@@ -1,0 +1,26 @@
+export const SERVICE_RECORD_INITIAL_NO_DOC_REASONS = {
+    NOT_ELIGIBLE: "SERVICE_RECORD_INITIAL_NO_DOC_NOT_ELIGIBLE",
+    GENERATION_CHANGED: "SERVICE_RECORD_INITIAL_NO_DOC_GENERATION_CHANGED",
+    SETTLING: "SERVICE_RECORD_INITIAL_NO_DOC_SETTLING",
+    VENDOR_CHECK_IN_PROGRESS: "SERVICE_RECORD_INITIAL_NO_DOC_VENDOR_CHECK_IN_PROGRESS",
+    VENDOR_CHECK_INCOMPLETE: "SERVICE_RECORD_INITIAL_NO_DOC_VENDOR_CHECK_INCOMPLETE",
+    PROVIDER_DOCUMENT_FOUND: "SERVICE_RECORD_INITIAL_NO_DOC_PROVIDER_DOCUMENT_FOUND",
+    LEFT_TO_PROVIDER_RECOVERY: "SERVICE_RECORD_INITIAL_NO_DOC_LEFT_TO_PROVIDER_RECOVERY",
+    STATE_CHANGED: "SERVICE_RECORD_INITIAL_NO_DOC_STATE_CHANGED",
+    NOT_READY_AFTER_OUTCOME: "SERVICE_RECORD_INITIAL_NO_DOC_NOT_READY_AFTER_OUTCOME",
+} as const;
+
+export type InitialNoProviderDocumentReason =
+    (typeof SERVICE_RECORD_INITIAL_NO_DOC_REASONS)[keyof typeof SERVICE_RECORD_INITIAL_NO_DOC_REASONS];
+
+export interface InitialNoProviderDocumentProjection {
+    stateId: string;
+    revisionId: string;
+    generation: string;
+    suffix: string;
+    unlinkedChunkOrdinals: string[];
+}
+
+export function cancelledInitialSuffix(caseId: string, revisionNumber: number, documentVersion: number): string {
+    return `[SR-${caseId.slice(0, 8)}-r${revisionNumber}-v${documentVersion}]`;
+}

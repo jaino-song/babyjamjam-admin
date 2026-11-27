@@ -26,7 +26,8 @@ function dropDatabase() {
 try {
     dropDatabase();
     run("createdb", ["--host", "localhost", "--username", "postgres", databaseName]);
-    run("pnpm", ["exec", "prisma", "db", "push", "--skip-generate"]);
+    // Include SQL-only indexes and constraints used by the production send and retry paths.
+    run("pnpm", ["exec", "prisma", "migrate", "deploy"]);
     run("pnpm", ["run", "db:seed:e2e"]);
     run("pnpm", [
         "exec",

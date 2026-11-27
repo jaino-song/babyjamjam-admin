@@ -25,7 +25,7 @@ const incarnationId = "76000000-0000-4000-8000-000000000003";
 
 function setup(links: Array<{ token: ServiceRecordLinkTokenSource | null }>, serviceRecordCase: object | null) {
     const prisma = {
-        service_record_case: { findFirst: jest.fn().mockResolvedValue(serviceRecordCase) },
+        service_record_case: { findMany: jest.fn().mockResolvedValue(serviceRecordCase ? [serviceRecordCase] : []) },
         employee_schedule: {
             findMany: jest.fn().mockResolvedValue(links.map(({ token }) => ({
                 id: scheduleId,
@@ -37,7 +37,7 @@ function setup(links: Array<{ token: ServiceRecordLinkTokenSource | null }>, ser
                 replaced: false,
                 terminatedAt: null,
                 primaryEmployeeId: 71,
-                client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active" },
+                client: { id: clientId, name: "합성 고객", branchId, createdAt: now, serviceStatus: "active", fetalConfirmation: null },
                 primaryEmployee: { id: 71, name: "합성 관리사", phone: "01000000071", branchId, deletedAt: null },
                 serviceRecordTokens: token ? [token] : [],
             }))),
@@ -166,7 +166,7 @@ describe("client automation source reader service-record links", () => {
 
         const links = await sources.readClientAutomationServiceRecordLinks(branchId, clientId);
 
-        expect(prisma.service_record_case.findFirst).toHaveBeenCalledWith(
+        expect(prisma.service_record_case.findMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: { branchId, clientId } }),
         );
         const link = singleLink(links);

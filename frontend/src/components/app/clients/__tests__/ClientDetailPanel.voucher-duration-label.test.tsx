@@ -11,6 +11,7 @@ jest.mock("@/providers/LocaleProvider", () => ({ useLocale: () => "ko" }));
 jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: () => ({ data: null }) }));
 jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("@/features/clients/hooks/use-clients", () => ({
+    useClient: () => ({}),
   useConfirmBooking: () => ({ isPending: false }),
 }));
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => {

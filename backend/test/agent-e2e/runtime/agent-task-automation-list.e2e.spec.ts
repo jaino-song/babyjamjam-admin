@@ -43,6 +43,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
     const createModel = jest.fn(() => { throw new Error("No model call is allowed in rule-list DB proof"); });
 
     async function cleanup() {
+        await prisma.message_occurrence_claim.deleteMany({ where: { branchId } });
         await prisma.message_log.deleteMany({ where: { branchId } });
         await prisma.message_trigger_job.deleteMany({ where: { branchId } });
         await prisma.message_trigger_rule_branch_override.deleteMany({ where: { branchId } });

@@ -2,6 +2,7 @@
 
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
+import { registrationScopeHeaders, type ClientRegistrationScope } from "@/features/clients/api/registration-scope";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
 import { employeeQueryKeys } from "@/hooks/useEmployees";
@@ -163,8 +164,10 @@ export function useCreateClient() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async (dto: CreateClientDto) => {
-            const { data } = await api.post("/clients", dto);
+        mutationFn: async (input: CreateClientDto | { dto: CreateClientDto; registrationScope: ClientRegistrationScope }) => {
+            const { data } = "registrationScope" in input
+                ? await api.post("/clients", input.dto, { headers: registrationScopeHeaders(input.registrationScope) })
+                : await api.post("/clients", input);
             return data as Client;
         },
         onSuccess: async () => {
@@ -194,7 +197,7 @@ export function useUpdateClient() {
             await queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
             await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(variables.id) });
-            if (variables.dto.primaryEmployeeId !== undefined || variables.dto.secondaryEmployeeId !== undefined) {
+            if (variables.dto.providers !== undefined || variables.dto.primaryEmployeeId !== undefined || variables.dto.secondaryEmployeeId !== undefined) {
                 await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
             }
         },

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { test } from "node:test";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const WORKSPACE_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
+const BABY_CASE_KEYS_MIGRATION_NAME = "20261126010000_baby_case_keys";
+const MANUAL_BABY_CASE_KEYS_MIGRATION = `prisma/migrations/${BABY_CASE_KEYS_MIGRATION_NAME}/migration.sql`;
 
 async function readWorkflow(fileName) {
     return readFile(resolve(WORKSPACE_ROOT, ".github/workflows", fileName), "utf8");
@@ -456,6 +458,18 @@ test("database patch jobs apply the call-processing claim lease migration after 
     }
 });
 
+test("manual baby case keys stay outside automatic database patches", async () => {
+    const migration = await stat(resolve(WORKSPACE_ROOT, "backend", MANUAL_BABY_CASE_KEYS_MIGRATION));
+    assert.ok(migration.isFile(), "the canonical baby case keys migration must exist");
+
+    for (const fileName of await workflowFiles()) {
+        const workflow = await readWorkflow(fileName);
+        for (const manualScript of [BABY_CASE_KEYS_MIGRATION_NAME, "stage-baby-case-keys.sql"]) {
+            assert.ok(!workflow.includes(manualScript), `${fileName} must not invoke ${manualScript}`);
+        }
+    }
+});
+
 test("database patch jobs apply every schema migration after the pre-applied baseline", async () => {
     const fileName = "database-patches.yml";
     const workflow = await readWorkflow(fileName);
@@ -471,7 +485,8 @@ test("database patch jobs apply every schema migration after the pre-applied bas
     assert.notEqual(baselineNameIndex, -1, `${fileName} must retain the pre-applied baseline migration directory`);
     const postBaselineMigrations = migrationNames
         .slice(baselineNameIndex + 1)
-        .map((name) => `prisma/migrations/${name}/migration.sql`);
+        .map((name) => `prisma/migrations/${name}/migration.sql`)
+        .filter((migrationPath) => migrationPath !== MANUAL_BABY_CASE_KEYS_MIGRATION);
     assert.ok(postBaselineMigrations.length > 0, `${fileName} must have post-baseline migrations to verify`);
 
     for (const jobId of ["apply-dev", "apply-preview", "apply-production"]) {
@@ -488,12 +503,18 @@ test("database patch jobs apply every schema migration after the pre-applied bas
             const migrationIndex = steps.indexOf(migrationSteps[0]);
             assert.ok(migrationIndex > baselineIndex, `${fileName} ${jobId} must apply ${migrationPath} after the pre-applied baseline`);
             const migrationOffset = jobText.indexOf(migrationPath);
+            assert.equal(jobText.lastIndexOf(migrationPath), migrationOffset, `${fileName} ${jobId} must reference ${migrationPath} exactly once`);
             assert.ok(migrationOffset > previousMigrationOffset, `${fileName} ${jobId} must apply ${migrationPath} in chronological migration order`);
             previousMigrationOffset = migrationOffset;
-            const migrationText = migrationSteps[0].join("\n");
+            const migrationStep = migrationSteps[0];
+            const migrationText = migrationStep.join("\n");
+            const command = `./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file ${migrationPath}`;
             assert.match(migrationText, /working-directory: backend/);
             assert.match(migrationText, /run:\s*(?:\||\.\/scripts\/run-prisma-db-execute\.sh)/);
-            assert.match(migrationText, /run-prisma-db-execute\.sh/);
+            assert.ok(
+                migrationStep.some((line) => line.trim() === command || line.trim() === `run: ${command}`),
+                `${fileName} ${jobId} must execute ${migrationPath} through the safe runner`,
+            );
         }
     }
 });

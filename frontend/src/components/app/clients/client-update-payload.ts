@@ -1,4 +1,4 @@
-import type { ClientFormData, UpdateClientDto } from "@/features/clients/types";
+import type { ClientAllocationWrite, ClientFormData, UpdateClientDto } from "@/features/clients/types";
 
 /**
  * What the client edit form sends to `PATCH /clients/:id`.
@@ -63,18 +63,21 @@ export interface BuildClientUpdatePayloadInput {
     current: ClientFormData;
     /** Set after the user confirmed a service period whose length differs from its business days. */
     allowBusinessDayMismatch?: boolean;
+    allocation?: ClientAllocationWrite & Pick<UpdateClientDto, "legacyRecordBinding"> & { expectedAllocationVersion: string };
 }
 
 export function buildClientUpdatePayload({
     baseline,
     current,
     allowBusinessDayMismatch,
+    allocation,
 }: BuildClientUpdatePayloadInput): UpdateClientDto {
     const baselineFields = serializeClientUpdateFields(baseline);
     const currentFields = serializeClientUpdateFields(current);
 
     const payload: Record<string, unknown> = {};
     for (const key of Object.keys(currentFields) as Array<keyof UpdateClientDto>) {
+        if (allocation && (key === "primaryEmployeeId" || key === "secondaryEmployeeId")) continue;
         const value = currentFields[key];
         if (value === undefined || value === baselineFields[key]) continue;
         payload[key] = value;
@@ -88,7 +91,7 @@ export function buildClientUpdatePayload({
         if (allowBusinessDayMismatch) payload.allowBusinessDayMismatch = true;
     }
 
-    return payload as UpdateClientDto;
+    return { ...payload, ...allocation } as UpdateClientDto;
 }
 
 /** Splits a remembered start-date-change body: the backend refuses a start change and a caregiver change in one request. */
@@ -96,6 +99,8 @@ export function splitEmployeeChangeFromStartDateChange(dto: UpdateClientDto): {
     startDateDto: UpdateClientDto;
     employeeDto: UpdateClientDto | null;
 } {
+    if (dto.providers !== undefined) return { startDateDto: dto, employeeDto: null };
+
     const startDateDto = { ...dto };
     const employeeDto: UpdateClientDto = {};
     for (const key of ["primaryEmployeeId", "secondaryEmployeeId"] as const) {

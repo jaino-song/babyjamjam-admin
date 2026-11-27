@@ -98,6 +98,7 @@ function build(params: { contracts: ContractFixture[]; tokenDocId: number }) {
         findByLinkTokenHash: jest.fn(
             async (): Promise<ReceiptLinkTokenRecord> => ({
                 id: "tok-A",
+                kind: "contract",
                 eformsignDocId: params.tokenDocId,
                 accessTokenHash: null,
                 expectedBirthdayHash: "h",

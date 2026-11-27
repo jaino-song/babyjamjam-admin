@@ -10,6 +10,7 @@ import {
 import { ServiceRecordStepHeader } from "@/components/app/v3/ServiceRecordStepHeader";
 import { DEFAULT_PROVIDER_NAME, ProviderInfo } from "@/components/service-record/provider-info";
 import { Skeleton } from "@/components/ui/skeleton";
+import { t } from "@/lib/i18n/translations";
 
 import { ServiceRecordGuide } from "../guide";
 import type { MobileServiceRecordWizardProps } from "../ServiceRecordWizard";
@@ -147,6 +148,11 @@ export function MobileServiceRecordScreen({
     const phoneState = usePhoneFieldState(phone);
     const headerState = useHeaderFieldState(header);
     const progress = getWizardProgress(screen, pageIdx);
+    const verified = screen === "service" || screen === "overview" || screen === "day" || screen === "done";
+    const rank = context?.babyRank;
+    const title = verified && context?.babyId && (context.babyCount ?? 0) > 1 && rank && rank > 0
+        ? t("ko", `service-record.baby-${rank <= 6 ? rank : "n"}`).replace("{rank}", String(rank))
+        : SCREEN_TITLE;
 
     const crumbs = (
         <>
@@ -166,11 +172,11 @@ export function MobileServiceRecordScreen({
         >
             <ServiceRecordStepHeader
                 data-component={child("top-bar")}
-                title={SCREEN_TITLE}
+                title={title}
                 meta={(
                     <ProviderInfo
                         data-component={child("top-bar_meta_provider-name")}
-                        providerName={context?.org?.name ?? DEFAULT_PROVIDER_NAME}
+                        providerName={(verified ? context?.org?.name : undefined) ?? DEFAULT_PROVIDER_NAME}
                     />
                 )}
                 crumbs={crumbs}

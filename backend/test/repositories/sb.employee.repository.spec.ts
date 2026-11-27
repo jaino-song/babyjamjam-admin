@@ -200,6 +200,7 @@ describe("SbEmployeeRepository", () => {
                     OR: [
                         { primaryEmployeeId: 7 },
                         { secondaryEmployeeId: 7 },
+                        { recordTeamSlots: { some: { branchId, active: true, slot: { gte: 2 }, employeeId: 7 } } },
                     ],
                 },
                 select: {
@@ -271,6 +272,7 @@ describe("SbEmployeeRepository", () => {
                     OR: [
                         { primaryEmployeeId: 7 },
                         { secondaryEmployeeId: 7 },
+                        { recordTeamSlots: { some: { branchId, active: true, slot: { gte: 2 }, employeeId: 7 } } },
                     ],
                     AND: [{ OR: [{ replaced: true }, { terminatedAt: { not: null } }, { endDate: { lt: expect.any(Date) } }] }],
                 },
@@ -401,6 +403,8 @@ describe("SbEmployeeRepository", () => {
                 ["active primary schedule and closed", { openToNextWork: false, primaryEmployeeSchedules: [{ id: 1 }] }, "working", false],
                 ["active secondary schedule and open", { openToNextWork: true, secondaryEmployeeSchedules: [{ id: 2 }] }, "working", true],
                 ["active secondary schedule and closed", { openToNextWork: false, secondaryEmployeeSchedules: [{ id: 2 }] }, "working", false],
+                ["only an active additional team slot and open", { openToNextWork: true, recordTeamSlots: [{ id: 3 }] }, "working", true],
+                ["only an active additional team slot and closed", { openToNextWork: false, recordTeamSlots: [{ id: 3 }] }, "working", false],
                 ["no active schedule and open", { openToNextWork: true }, "available", true],
                 ["no active schedule and closed", { openToNextWork: false }, "unavailable", false],
             ] as const)(
@@ -447,6 +451,17 @@ describe("SbEmployeeRepository", () => {
                                 terminatedAt: null,
                             },
                             take: 1,
+                        },
+                        recordTeamSlots: {
+                            where: {
+                                branchId, active: true, slot: { gte: 2 },
+                                schedule: {
+                                    branchId, replaced: false, terminatedAt: null,
+                                    startDate: { lte: expect.any(Date) }, endDate: { gte: expect.any(Date) },
+                                },
+                            },
+                            take: 1,
+                            select: { id: true },
                         },
                     },
                 });
@@ -506,9 +521,30 @@ describe("SbEmployeeRepository", () => {
                         where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
                         take: 1,
                     },
+                    recordTeamSlots: {
+                        where: {
+                            branchId, active: true, slot: { gte: 2 },
+                            schedule: {
+                                branchId, replaced: false, terminatedAt: null,
+                                startDate: { lte: given }, endDate: { gte: given },
+                            },
+                        },
+                        take: 1,
+                        select: { id: true },
+                    },
                 },
             });
             expect(result[0]).toMatchObject({ id: 1, status: "working" });
+        });
+
+        it("returns working when only an additional team slot is active on the given date", async () => {
+            const given = new Date("2026-09-24T00:00:00.000Z");
+            const row = createEmployeeRow({ openToNextWork: true, recordTeamSlots: [{ id: 3 }] });
+            employeeModel.findMany.mockResolvedValue([row]);
+
+            const result = await repository.findAllForDate(branchId, given);
+
+            expect(result).toMatchObject([{ id: row.id, status: "working", openToNextWork: true }]);
         });
 
         it("excludes soft-deleted employees like findAll", async () => {
@@ -543,6 +579,17 @@ describe("SbEmployeeRepository", () => {
                         where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
                         take: 1,
                     },
+                    recordTeamSlots: {
+                        where: {
+                            branchId, active: true, slot: { gte: 2 },
+                            schedule: {
+                                branchId, replaced: false, terminatedAt: null,
+                                startDate: { lte: given }, endDate: { gte: given },
+                            },
+                        },
+                        take: 1,
+                        select: { id: true },
+                    },
                     secondaryEmployeeSchedules: {
                         where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
                         take: 1,
@@ -550,6 +597,16 @@ describe("SbEmployeeRepository", () => {
                 },
             });
             expect(result).toMatchObject({ id: 7, status: "working" });
+        });
+
+        it("returns working when only an additional team slot is active on the given date", async () => {
+            const given = new Date("2026-09-24T00:00:00.000Z");
+            const row = createEmployeeRow({ openToNextWork: false, recordTeamSlots: [{ id: 3 }] });
+            employeeModel.findFirst.mockResolvedValue(row);
+
+            const result = await repository.findByIdForDate(branchId, row.id, given);
+
+            expect(result).toMatchObject({ id: row.id, status: "working", openToNextWork: false });
         });
     });
 
@@ -722,6 +779,7 @@ describe("SbEmployeeRepository", () => {
                     OR: [
                         { primaryEmployeeId: 3 },
                         { secondaryEmployeeId: 3 },
+                        { recordTeamSlots: { some: { branchId, active: true, slot: { gte: 2 }, employeeId: 3 } } },
                     ],
                 },
             });

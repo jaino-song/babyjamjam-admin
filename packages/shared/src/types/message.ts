@@ -149,6 +149,7 @@ export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
     "serviceEndDate",
     "buttonUrl",
     "serviceRecordUrl",
+    "serviceRecordLinks",
   ],
   CLIENT_GREETING: ["name", "clientName", "phone"],
   PRICE_INFO: [
@@ -604,7 +605,12 @@ export interface MessageDeliverySmsDuplicateCheckResponse {
 
 export type MessageDeliverySmsDuplicateCheckRequest = SendMessageDeliverySmsRequest;
 
+export type MessageDeliverySmsTemplateRef =
+  | { kind: "system"; key: SystemTemplateKey }
+  | { kind: "branch"; id: string };
+
 export interface SendMessageDeliverySmsRequest {
+  templateRef?: MessageDeliverySmsTemplateRef;
   receiver: string;
   message: string;
   title?: string;
@@ -800,4 +806,31 @@ export interface MessageAutomationPolicyPreviewResponse {
   futureProviderReservations: number;
   canEnableQuietHours: boolean;
   warnings: MessagePolicyWarning[];
+}
+
+export type CanceledAutomationRetryReason =
+  | "target_client_status_not_met"
+  | "live_unsigned_contract"
+  | "missing_birthday"
+  | "missing_current_contract"
+  | "current_contract_pdf_pending"
+  | "pre_booking";
+
+export interface CanceledAutomationRetryRoutine {
+  id: string;
+  label: string;
+  eligible: boolean;
+  unavailableReason: "dispatch_disabled" | "routine_disabled" | "unsupported" | null;
+  recoverableReasons: readonly CanceledAutomationRetryReason[];
+  enabled: boolean;
+  enabledAt: string | null;
+}
+
+export interface CanceledAutomationRetrySettings {
+  routines: CanceledAutomationRetryRoutine[];
+  canManageActivation: boolean;
+}
+
+export interface UpdateCanceledAutomationRetryRequest {
+  enabled: boolean;
 }

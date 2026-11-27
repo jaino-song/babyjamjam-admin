@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { render } from "@/test-utils/render-client-form";
 
 import { api } from "@/lib/api/client";
 import type { Client } from "@/lib/client/types";
@@ -227,7 +228,7 @@ describe("ClientForm legacy no-op relink", () => {
     const { rerender } = render(
       <ClientFormPanel
         open
-        activeStep={2}
+        activeStep={1}
         client={clientWithAutoPrice}
         onClose={onClose}
       />,
@@ -273,7 +274,7 @@ describe("ClientForm legacy no-op relink", () => {
     const { rerender } = render(
       <ClientFormPanel
         open
-        activeStep={2}
+        activeStep={1}
         client={clientWithAutoPrice}
         onClose={jest.fn()}
       />,

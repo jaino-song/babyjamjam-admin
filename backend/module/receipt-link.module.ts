@@ -4,7 +4,7 @@ import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interfa
 import { EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { RECEIPT_LINK_TOKEN_REPOSITORY } from "domain/repositories/receipt-link-token.repository.interface";
 import { MESSAGE_TRIGGER_RULE_REPOSITORY } from "domain/repositories/message-trigger-rule.repository.interface";
-import { FILE_STORAGE_PORT } from "domain/ports/file-storage.port";
+import { FILE_STORAGE_PORT, STANDALONE_RECEIPT_STORAGE, type FileStoragePort } from "domain/ports/file-storage.port";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbEformsignDocumentMirrorRepository } from "infrastructure/database/repositories/sb.eformsign-document-mirror.repository";
@@ -18,6 +18,10 @@ import { ReceiptLinkDeliveryEnricher } from "application/services/receipt-link-d
 import { ReceiptLinkIssueService } from "application/services/receipt-link-issue.service";
 import { ReceiptLinkTokenService } from "application/services/receipt-link-token.service";
 import { ReceiptLinkManualSendService } from "application/services/receipt-link-manual-send.service";
+import { StandaloneReceiptTemplateLoader } from "infrastructure/pdf/standalone-receipt-template.loader";
+import { StandaloneReceiptRenderer } from "infrastructure/pdf/standalone-receipt-renderer";
+import { StandaloneReceiptIssueService } from "application/services/standalone-receipt-issue.service";
+import { StandaloneReceiptPreparationService } from "application/services/standalone-receipt-preparation.service";
 import { ReceiptLinkAdminController } from "interface/controllers/receipt-link-admin.controller";
 import { ReceiptLinkController } from "interface/controllers/receipt-link.controller";
 import { EformsignDocModule } from "./eformsign-doc.module";
@@ -41,7 +45,8 @@ import { SystemSettingModule } from "./system-setting.module";
     controllers: [ReceiptLinkAdminController, ReceiptLinkController],
     providers: [
         SupabaseStorageAdapter,
-        { provide: FILE_STORAGE_PORT, useClass: SupabaseStorageAdapter },
+        { provide: FILE_STORAGE_PORT, useExisting: SupabaseStorageAdapter },
+        { provide: STANDALONE_RECEIPT_STORAGE, useExisting: SupabaseStorageAdapter },
         { provide: CLIENT_REPOSITORY, useClass: SbClientRepository },
         { provide: EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY, useClass: SbEformsignDocumentMirrorRepository },
         { provide: RECEIPT_LINK_TOKEN_REPOSITORY, useClass: SbReceiptLinkTokenRepository },
@@ -50,6 +55,14 @@ import { SystemSettingModule } from "./system-setting.module";
         PdfPageRasterizerService,
         ReceiptLinkTokenService,
         ReceiptLinkIssueService,
+        {
+            provide: StandaloneReceiptTemplateLoader,
+            inject: [FILE_STORAGE_PORT],
+            useFactory: (storage: FileStoragePort) => new StandaloneReceiptTemplateLoader(storage),
+        },
+        { provide: StandaloneReceiptRenderer, useFactory: () => new StandaloneReceiptRenderer() },
+        StandaloneReceiptIssueService,
+        StandaloneReceiptPreparationService,
         ReceiptLinkDeliveryEnricher,
         ReceiptLinkManualSendService,
         ReceiptLinkCleanupSchedulerService,

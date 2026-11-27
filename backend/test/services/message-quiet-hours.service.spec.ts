@@ -43,6 +43,16 @@ import { mapHttpProblem } from "infrastructure/filters/problem-response";
 
 const PHONE = "01000000011";
 const NIGHT = "2026-11-03T13:00:00.000Z";
+function matchesJobFence(job: MessageTriggerJobEntity, where: {
+    updatedAt?: Date; processingDeadlineAt?: Date | { equals: Date; gt: Date } | null;
+}) {
+    if (where.updatedAt && job.updatedAt.getTime() !== where.updatedAt.getTime()) return false;
+    const deadline = where.processingDeadlineAt;
+    if (deadline === undefined) return true;
+    if (deadline === null) return job.processingDeadlineAt === null;
+    if ("getTime" in deadline) return job.processingDeadlineAt?.getTime() === deadline.getTime();
+    return job.processingDeadlineAt?.getTime() === deadline.equals.getTime() && job.processingDeadlineAt > deadline.gt;
+}
 function boundaryFixture() {
     let active = false;
     const policy = defaultMessageAutomationPolicy();
@@ -89,8 +99,8 @@ function boundaryFixture() {
             }),
             findUnique: jest.fn(async () => stored ? { ...structuredClone(stored), rule: { id: "rule-auto" } } : null),
             findFirst: jest.fn(async () => stored ? structuredClone(stored) : null),
-            updateMany: jest.fn(async ({ data }: { data: Partial<MessageTriggerJobEntity> }) => {
-                if (!stored) return { count: 0 };
+            updateMany: jest.fn(async ({ where, data }: { where: Parameters<typeof matchesJobFence>[1]; data: Partial<MessageTriggerJobEntity> }) => {
+                if (!stored || !matchesJobFence(stored, where)) return { count: 0 };
                 Object.assign(stored, structuredClone(data)); return { count: 1 };
             }),
         },
@@ -162,13 +172,17 @@ function manualController(f: ReturnType<typeof boundaryFixture>, quiet: MessageQ
         { read: () => ({ availability: "available", provider: "aligo", mode: "stub", version: 1, identityDigest: "a".repeat(64) }) } as never);
 }
 function manualJob(kind: "agent" | "admin" | "automatic") {
+    const serviceRecordUrl = "https://mobile.test/service-record/efl_token";
     const job = MessageTriggerJobEntity.create({ branchId: "branch-a", ruleId: kind === "agent" ? "agent-sms:test" : kind === "admin" ? "system:service_record_link" : "rule-auto",
         scheduledFor: new Date("2026-11-03T12:00:00Z"), clientId: 7, recipientType: MessageTriggerRecipientType.CLIENT, recipientPhone: PHONE,
         templateKey: kind === "admin" ? MessageTriggerTemplateKey.SERVICE_RECORD_LINK : MessageTriggerTemplateKey.SERVICE_INFO,
         dedupeKey: kind === "admin" ? "system:service_record_link:schedule:91:primary:manual:55000000-0000-4000-8000-000000000001" : "test-dedupe",
-        payload: { clientId: 7, memberId: "7", recipientName: "합성 고객", recipientPhone: PHONE, messageBody: "합성 본문",
+        payload: { clientId: 7, memberId: "7", recipientName: "합성 고객", recipientPhone: PHONE,
+            ...(kind === "admin" ? { buttonUrl: serviceRecordUrl, messageBody: `합성 제공기록지 안내\n${serviceRecordUrl}` }
+                : { messageBody: "합성 본문" }),
             templateVariables: { triggerType: "agent_scheduled" } } });
-    Object.assign(job, { id: "55000000-0000-4000-8000-000000000099", status: "dispatching", claimToken: "claim-a" }); return job;
+    Object.assign(job, { id: "55000000-0000-4000-8000-000000000099", status: "dispatching", claimToken: "claim-a",
+        processingDeadlineAt: new Date(Date.now() + 600_000), updatedAt: new Date(Date.now()) }); return job;
 }
 function triggerService(f: ReturnType<typeof boundaryFixture>, withGuard = true) {
     const gate = new AgentAutomationDeliveryGateService(f.db as never, f.lock, {} as never);
@@ -346,8 +360,8 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
             findFirst: jest.fn(async ({ where }: { where: { id?: string; status?: string; claimToken?: string } }) =>
                 (!where.id || where.id === stored.id) && (!where.status || where.status === stored.status)
                     && (!where.claimToken || where.claimToken === stored.claimToken) ? structuredClone(stored) : null),
-            updateMany: jest.fn(async ({ where, data }: { where: { status?: string; claimToken?: string }; data: Partial<typeof stored> }) => {
-                if (where.status && where.status !== stored.status || where.claimToken && where.claimToken !== stored.claimToken) return { count: 0 };
+            updateMany: jest.fn(async ({ where, data }: { where: Parameters<typeof matchesJobFence>[1] & { status?: string; claimToken?: string }; data: Partial<typeof stored> }) => {
+                if (!matchesJobFence(stored, where) || where.status && where.status !== stored.status || where.claimToken && where.claimToken !== stored.claimToken) return { count: 0 };
                 Object.assign(stored, structuredClone(data)); return { count: 1 };
             }),
         },
@@ -370,11 +384,21 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
     Object.assign(quietPolicy.quietHours, { enabled: true, action: "CANCEL" });
     const settings = new SystemSettingService({ execute: async () => JSON.stringify(quietPolicy) } as never, {} as never);
     const quiet = new MessageQuietHoursService(settings, logs as never, lock);
-    const service = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, undefined, undefined, gate, undefined,
+    const acceptance = new SmsProviderAcceptanceService({
+        ...logs,
+        prepareProviderAttempt: logs.save,
+        claimProviderAttempt: async (log: MessageLogEntity) => { log.markProviderCallStarted(); return log; },
+    } as never);
+    const service = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, acceptance, undefined, gate, undefined,
         settings, f.templates, quiet);
     const render = (candidate: MessageTriggerJobEntity, transaction: Parameters<typeof service.resolveCanonicalDeliverySnapshot>[1]) => service.resolveCanonicalDeliverySnapshot(candidate, transaction);
     const store = () => { stored = structuredClone(job); };
-    const start = async () => { job.markProcessing("claim-caregiver"); store(); return gate.authorizePreparation(job, render as never, async () => ({ kind: "allow" })); };
+    const start = async () => {
+        job.markProcessing("claim-caregiver");
+        job.processingDeadlineAt = new Date(Date.now() + 600_000);
+        store();
+        return gate.authorizePreparation(job, render as never, async () => ({ kind: "allow" }));
+    };
     const dispatch = async () => {
         const preparation = await service.prepareJob(job);
         if (!preparation) return false;
@@ -542,7 +566,8 @@ function cancellationPersistenceFixture() {
     });
     const updateJob = jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: object }) => {
         const current = await f.db.message_trigger_job.findFirst();
-        if (!current || !matches(current, where)) return { count: 0 };
+        const { updatedAt, processingDeadlineAt, ...rest } = where as Parameters<typeof matchesJobFence>[1] & Record<string, unknown>;
+        if (!current || !matchesJobFence(current, { updatedAt, processingDeadlineAt }) || !matches(current, rest)) return { count: 0 };
         f.store(Object.assign(current, structuredClone(data))); return { count: 1 };
     });
     Object.assign(f.db.message_trigger_job, { updateMany: updateJob });
@@ -758,7 +783,7 @@ describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
         Object.assign(job, { id: id.job, branchId: id.branch, ruleId, clientId: id.client, claimToken: "claim-quiet-c1", dedupeKey: `quiet-c1:${id.job}` });
         job.payload = { ...job.payload, clientId: id.client };
         await createMessageTriggerJob(handle.raw, tracker, { ruleId }, { id: job.id, branchId: id.branch, clientId: id.client,
-            status: "dispatching", claimToken: job.claimToken, processingDeadlineAt: null, scheduledFor: job.scheduledFor,
+            status: "dispatching", claimToken: job.claimToken, processingDeadlineAt: job.processingDeadlineAt, scheduledFor: job.scheduledFor,
             recipientType: job.recipientType, recipientPhone: PHONE, templateKey: job.templateKey, dedupeKey: job.dedupeKey,
             payload: job.payload as unknown as Prisma.InputJsonValue });
         const repository = new SbMessageLogRepository(handle.service);
@@ -783,19 +808,29 @@ describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
         let releaseSecond!: () => void; const secondMayEnter = new Promise<void>(resolve => { releaseSecond = resolve; });
         const admission = f.quiet.runAdmission.bind(f.quiet);
         jest.spyOn(f.quiet, "runAdmission").mockImplementation((async (...args: any[]) => {
+            if (args[3]) return (admission as any)(...args);
             const ordinal = ++arrivals; if (ordinal === 2) releasePrepared(); await bothPrepared;
             if (ordinal === 2) await secondMayEnter; return (admission as any)(...args);
         }) as never);
         const current = await f.settings.getMessageAutomationPolicyConfig(f.job.branchId!);
-        const first = f.service.sendJob(f.job); const second = f.service.sendJob(duplicate);
-        expect(await first).toBe(false);
-        const stored = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: "87000000-0000-4000-8000-000000008201" } });
-        expect(stored).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", claimToken: null, nextAttemptAt: null });
-        expect(await handle.raw.message_log.count({ where: { triggerJobId: stored.id, status: "failed", providerAcceptanceState: "prepared", nextRetryAt: null,
-            variables: { path: ["quietHoursDisposition"], equals: "CANCEL" } } })).toBe(1);
-        const off = structuredClone(current.configuration); off.quietHours.enabled = false;
-        await f.settings.setMessageAutomationPolicyConfig(f.job.branchId!, current.version, off); releaseSecond();
-        expect(await second).toBe(false); expect(f.aligo.sendSms).toHaveBeenCalledTimes(0);
+        const sends = [f.service.sendJob(f.job), f.service.sendJob(duplicate)];
+        // Either PostgreSQL preparation can reach the admission gate first.
+        let stored;
+        try {
+            expect(await Promise.race(sends)).toBe(false);
+            expect(arrivals).toBe(2);
+            stored = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.job.id } });
+            expect(stored).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", claimToken: null, nextAttemptAt: null });
+            expect(await handle.raw.message_log.count({ where: { triggerJobId: stored.id, status: "failed", providerAcceptanceState: "prepared", nextRetryAt: null,
+                variables: { path: ["quietHoursDisposition"], equals: "CANCEL" } } })).toBe(1);
+            const off = structuredClone(current.configuration); off.quietHours.enabled = false;
+            await f.settings.setMessageAutomationPolicyConfig(f.job.branchId!, current.version, off);
+        } finally {
+            releasePrepared();
+            releaseSecond();
+        }
+        expect(await Promise.all(sends)).toEqual([false, false]);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(0);
         jest.mocked(Date.now).mockReturnValue(stored.updatedAt.getTime() + 2 * 60 * 60_000);
         const jobs = new SbMessageTriggerJobRepository(handle.service);
         const core = Object.assign(Object.create(MessageTriggerService.prototype), { jobRepository: jobs, messageLogRepository: f.repository });

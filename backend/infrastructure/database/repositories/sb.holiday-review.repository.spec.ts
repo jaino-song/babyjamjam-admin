@@ -241,7 +241,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             endDate: day("2026-11-13"),
             duration: 10,
             serviceStatus: "terminated",
-            serviceRecordCase: { status: "COMPLETED", days: [{ serviceDate: day("2026-11-03"), locked: true }] },
+            serviceRecordCases: [{ status: "COMPLETED", days: [{ serviceDate: day("2026-11-03"), locked: true }] }],
         });
 
         await expect(repository.findFixSnapshot(BRANCH, 7)).resolves.toEqual({
@@ -265,7 +265,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             allowSaturdayService: true,
             allowSundayService: false,
             allowHolidayService: true,
-            serviceRecordCase: null,
+            serviceRecordCases: [],
         });
 
         await expect(repository.findFixSnapshot(BRANCH, 7)).resolves.toMatchObject({
@@ -293,7 +293,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             allowSaturdayService: false,
             allowSundayService: true,
             allowHolidayService: false,
-            serviceRecordCase: null,
+            serviceRecordCases: [],
         }]);
 
         await expect(repository.findReviewCandidates(BRANCH, "2026-11-10")).resolves.toMatchObject([{
@@ -322,7 +322,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             endDate,
             duration: 10,
             serviceStatus: "active",
-            serviceRecordCase: null,
+            serviceRecordCases: [],
         });
 
         it.each([

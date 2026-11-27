@@ -267,8 +267,16 @@ reported as mathematically zero downtime.
 production target from the current `api.babyjamjam.com` A-record set. The
 canonical A-record hash must match either the protected Lightsail identity or
 the protected LightNode identity. Unknown, mixed, missing, or changed routing
-fails closed before either deployment job starts. Preview never uses this
-resolver path; it always deploys to Cloud Run.
+fails closed before either deployment job starts. Preview always targets Cloud Run.
+
+To require LightNode for one approved production release, use a direct GitHub
+merge commit into `main` with a custom body (`gh pr merge --merge --body-file`).
+Put `Production-Deploy-Target: lightnode` on its own line as the final nonblank
+line of the merge commit message. The merge queue cannot guarantee that message.
+The resolver checks that the checkout's `HEAD` matches `GITHUB_SHA`, then reads
+the message of that commit. With the trailer present, it emits a target only if
+the current route matches the protected LightNode identity. Subsequent `main`
+pushes resolve from the current route unless their own commit message opts in.
 
 When Lightsail owns the public route, `deploy-lightsail` runs first. If it succeeds,
 `deploy-lightnode-standby` connects the same way as below, but calls the

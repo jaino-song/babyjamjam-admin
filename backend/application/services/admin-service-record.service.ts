@@ -1,16 +1,23 @@
+import { readBackfilledScalarHousehold } from "application/policies/baby-record-provenance.policy";
+import { resolveAdminServiceRecordTarget } from "./admin-service-record-target";
+import { IMMUTABLE_FINALIZATION_STATUSES, SERVICE_RECORD_CASE_STATUS } from "./service-record-lifecycle.service";
+import { ServiceRecordFinalizationService } from "./service-record-finalization.service";
 import {
     ConflictException,
     ForbiddenException,
     Inject,
     Injectable,
+    InternalServerErrorException,
     Logger,
     NotFoundException,
     Optional,
 } from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import { AdminAuditEventWriter } from "./admin-audit-event.service";
+import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import { codeOnlyProblemBody, codeOnlyProblemException } from "application/utils/problem-bodies";
+import { isInitialFinalizationWorkflowScopeForRevision } from "application/policies/service-record-initial-finalization.policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
@@ -26,6 +33,9 @@ import {
     type IServiceRecordEditRepository,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { ServiceRecordPeriodMismatchService, hasAuthoritativeServiceRecordCount, servicePeriodSessionCount } from "./service-record-period-mismatch.service";
+import {
+    ServiceRecordLinkGroupService, type RecordLinkPrepareSelection, type RecordLinkSelection, type RecordLinkSendSelection,
+} from "./service-record-link-group.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { MessageTriggerService } from "./message-trigger.service";
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
@@ -56,6 +66,7 @@ import {
 } from "application/policies/service-record-revision-changes.policy";
 import type { ServiceRecordRevisionChangesResponse } from "interface/dto/admin-service-record-edit.dto";
 import type {
+    AdminServiceRecordCaseSummary,
     ServiceRecordCaregiverEditChangesResponse,
     ServiceRecordCaregiverEditSummary,
 } from "@babyjamjam/shared/types/service-record";
@@ -64,11 +75,13 @@ type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     include: {
         client: true;
         primaryEmployee: true;
-        serviceRecord: true;
         serviceRecordDays: true;
         serviceRecordTokens: true;
     };
-}>;
+}> & {
+    serviceRecord: Prisma.service_recordGetPayload<object> | null;
+    recordEmployee?: AdminServiceRecordAssignmentDto["employee"];
+};
 type CaseForOverview = Prisma.service_record_caseGetPayload<{
     include: { days: true };
 }>;
@@ -134,23 +147,53 @@ export class AdminServiceRecordService {
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly editRepository?: IServiceRecordEditRepository,
         @Optional() private readonly periodMismatchService?: ServiceRecordPeriodMismatchService,
+        @Optional() private readonly finalizationService?: ServiceRecordFinalizationService,
+        @Optional() private readonly linkGroups?: ServiceRecordLinkGroupService,
+        @Optional() private readonly lifecycle?: ServiceRecordLifecycleService,
+        @Optional() private readonly adminAudit?: AdminAuditEventWriter,
     ) {}
 
-    async keepPeriodMismatch(branchId: string, clientId: number, sessionIndexes: number[]): Promise<{ keptSessionIndexes: number[] }> {
+    async adoptLegacyCase(
+        scope: { branchId: string; clientId: number; caseId: string; babyId: string },
+        actor: ServiceRecordAdminActor,
+    ): Promise<{ caseId: string; babyId: string }> {
+        if (!scope.branchId || !actor.userId) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        const { lifecycle, adminAudit } = this;
+        if (!lifecycle || !adminAudit) throw new InternalServerErrorException();
+
+        const calendar = await this.holidayCalendar.forBranch(scope.branchId, { fresh: true });
+        return this.prisma.$transaction(async (tx) => {
+            const result = await lifecycle.linkLegacyCaseToBaby(scope, tx, calendar);
+            await adminAudit.appendInTransaction(tx, {
+                action: "service_record.legacy_case_adopt",
+                targetType: "service_record_case",
+                targetId: result.caseId,
+                branchId: scope.branchId,
+                actor,
+                after: { clientId: scope.clientId, babyId: result.babyId },
+                outcome: "success",
+            });
+            return result;
+        });
+    }
+
+    async keepPeriodMismatch(branchId: string, clientId: number, sessionIndexes: number[], caseId?: string): Promise<{ keptSessionIndexes: number[] }> {
         if (!branchId) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         return this.prisma.$transaction((tx) => this.periodMismatchService!.keepInTransaction(tx, {
-            branchId, clientId, sessionIndexes, calendar,
+            branchId, clientId, caseId, sessionIndexes, calendar,
         }));
     }
 
-    async fitPeriodMismatch(branchId: string, clientId: number): Promise<{ startDate: string | null; endDate: string | null }> {
+    async fitPeriodMismatch(branchId: string, clientId: number, caseId?: string): Promise<{ startDate: string | null; endDate: string | null }> {
         if (!branchId) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         let committed: { scheduleIds: number[] } | undefined;
         try {
             const result = await this.prisma.$transaction((tx) => this.periodMismatchService!.fitInTransaction(tx, {
-                branchId, clientId, calendar,
+                branchId, clientId, caseId, calendar,
             }));
             if (result.changed) committed = { scheduleIds: result.scheduleIds };
             return { startDate: result.startDate, endDate: result.endDate };
@@ -169,93 +212,194 @@ export class AdminServiceRecordService {
     async getClientOverview(
         branchId: string,
         clientId: number,
-        options: { includeSignatures?: boolean } = {},
+        caseId?: string,
     ): Promise<AdminServiceRecordOverviewDto> {
-        const [record, schedules, clientFlags] = await Promise.all([
-            this.prisma.service_record_case.findFirst({
-                where: { branchId, clientId },
-                include: { days: { orderBy: { caseSessionIndex: "asc" } } },
+        return this.loadOverview(branchId, clientId, caseId, false);
+    }
+
+    private async loadOverview(
+        branchId: string,
+        clientId: number,
+        caseId: string | undefined,
+        includeSignatures: boolean,
+    ): Promise<AdminServiceRecordOverviewDto> {
+        const scope = { branchId, clientId };
+        const client = await this.prisma.client.findFirst({
+            where: { id: clientId, branchId, deletedAt: null },
+            select: { fetalConfirmation: true, serviceStatus: true, allowSaturdayService: true, allowSundayService: true, allowHolidayService: true },
+        });
+        if (!client) {
+            if (includeSignatures || caseId !== undefined) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            return { record: null, assignments: [], legacyLinkAssignment: null };
+        }
+        const target = await resolveAdminServiceRecordTarget(
+            this.prisma, { ...scope, caseId }, includeSignatures && caseId !== undefined ? "read" : "overview",
+        );
+        const serviceDays = {
+            saturday: client.allowSaturdayService ?? false,
+            sunday: client.allowSundayService ?? false,
+            holiday: client.allowHolidayService ?? false,
+        };
+        const branchCalendar = await this.holidayCalendar.forBranch(branchId);
+        const calendar = branchCalendar.withServiceDays(serviceDays);
+        const [caseRows, babies, activeOwners, currentSchedule] = await Promise.all([
+            this.prisma.service_record_case.findMany({
+                where: { ...scope, client: { branchId, deletedAt: null } },
+                include: { _count: { select: { days: { where: { branchId, locked: true } } } } },
+                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
             }),
+            this.prisma.client_baby.findMany({
+                where: scope,
+                select: { id: true, active: true },
+                orderBy: { ordinal: "asc" },
+            }),
+            this.prisma.service_record_baby_assignment.findMany({
+                where: { ...scope, activeOwner: true, schedule: { replaced: false, terminatedAt: null } },
+                select: {
+                    babyId: true, scheduleId: true, version: true, endedAt: true,
+                    employee: { select: { id: true, name: true, phone: true, branchId: true, deletedAt: true } },
+                    teamSlot: { select: { active: true } },
+                },
+                orderBy: { scheduleId: "asc" },
+            }),
+            this.prisma.employee_schedule.findFirst({
+                where: { ...scope, replaced: false, terminatedAt: null, client: { branchId, deletedAt: null } },
+                orderBy: { id: "desc" },
+                select: {
+                    id: true,
+                    primaryEmployee: { select: { id: true, branchId: true, deletedAt: true } },
+                },
+            }),
+        ]);
+        const activeBabies = babies.filter(({ active }) => active);
+        const canUseCurrentSchedule = Boolean(currentSchedule) && client.serviceStatus !== "terminated";
+        const isWritable = (record: Pick<typeof caseRows[number], "status" | "completedAt" | "finalizedAt">) =>
+            !record.completedAt && !record.finalizedAt && !IMMUTABLE_FINALIZATION_STATUSES.has(record.status)
+            && record.status !== SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED
+            && record.status !== SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED;
+        const historical = canUseCurrentSchedule && client.fetalConfirmation === "CONFIRMED"
+            && caseRows.length === 1 && caseRows[0]?.babyId && isWritable(caseRows[0])
+            ? await readBackfilledScalarHousehold(this.prisma, scope) : null;
+        const cases: AdminServiceRecordCaseSummary[] = caseRows.map((record) => {
+            const rank = activeBabies.findIndex(({ id }) => id === record.babyId) + 1;
+            const owners = activeOwners.filter(({ babyId }) => babyId === record.babyId);
+            const assignees = owners.map(({ employee }) => ({ id: employee.id, name: employee.name }));
+            const currentOwners = owners.filter(({ scheduleId }) => scheduleId === currentSchedule?.id);
+            const [owner] = currentOwners;
+            const linkAssignments = historical?.caseId !== record.id && canUseCurrentSchedule && rank > 0 && isWritable(record)
+                && client.fetalConfirmation === "CONFIRMED" && currentOwners.length === 1
+                && owner && owner.endedAt === null && owner.teamSlot.active
+                && owner.employee.branchId === branchId && owner.employee.deletedAt === null
+                && owner.version > 0
+                ? [{ scheduleId: owner.scheduleId, employeeId: owner.employee.id, assignmentVersion: owner.version }]
+                : [];
+            return {
+                caseId: record.id, babyId: record.babyId, rank: rank || null,
+                babyCount: client.fetalConfirmation === "CONFIRMED" ? activeBabies.length : null,
+                legacyName: record.babyId === null ? record.babyName : null,
+                retired: record.babyId !== null && rank === 0,
+                status: record.status,
+                linkAssignments,
+                assignees: [...new Map(assignees.map((employee) => [employee.id, employee])).values()],
+                totalSessions: servicePeriodSessionCount(record.startDate, record.endDate,
+                    record.requiredSessionCount, calendar, hasAuthoritativeServiceRecordCount(record)),
+                submittedSessions: record._count.days,
+            };
+        }).sort((left, right) => (left.rank ?? Infinity) - (right.rank ?? Infinity));
+        // An ambiguous household gets a list only. Never combine unbound schedule data with siblings.
+        if (!target && (cases.length > 0 || activeBabies.length > 1)) {
+            return { cases, record: null, assignments: [], legacyLinkAssignment: null, serviceDays };
+        }
+
+        const selectedId = target?.caseId;
+        const legacy = caseRows.length <= 1 && activeBabies.length <= 1
+            && target?.kind !== "retired";
+        const legacyRecord = caseRows[0];
+        const legacyLinkAssignment = legacy && canUseCurrentSchedule && currentSchedule
+            && currentSchedule.primaryEmployee.branchId === branchId
+            && currentSchedule.primaryEmployee.deletedAt === null
+            && (!legacyRecord || (legacyRecord.babyId === null && isWritable(legacyRecord))
+                || (historical?.caseId === legacyRecord.id && historical.scheduleId === currentSchedule.id
+                    && historical.employeeId === currentSchedule.primaryEmployee.id))
+            ? { scheduleId: currentSchedule.id, employeeId: currentSchedule.primaryEmployee.id }
+            : null;
+        const ownedRecord = selectedId ? await this.prisma.service_record_case.findFirst({
+            where: { ...scope, id: selectedId, client: { branchId, deletedAt: null } },
+            include: { days: { where: { branchId }, orderBy: { caseSessionIndex: "asc" } } },
+        }) : null;
+        if (selectedId && !ownedRecord) throw codeOnlyProblemException("RESOURCE_NOT_FOUND");
+        const caseFilter: { serviceRecordCaseId: string | null }[] = [
+            ...(selectedId ? [{ serviceRecordCaseId: selectedId }] : []),
+            ...(legacy ? [{ serviceRecordCaseId: null }] : []),
+        ];
+        const [scheduleRows, headers, recordAssignments] = await Promise.all([
             this.prisma.employee_schedule.findMany({
-                where: { branchId, clientId },
+                where: { ...scope, client: { branchId, deletedAt: null }, primaryEmployee: { branchId } },
                 include: {
                     client: true,
                     primaryEmployee: true,
-                    serviceRecord: true,
-                    serviceRecordDays: { orderBy: { sessionIndex: "asc" } },
+                    serviceRecordDays: { where: { branchId, OR: caseFilter }, orderBy: { sessionIndex: "asc" } },
                     serviceRecordTokens: {
-                        where: {
-                            OR: [
-                                { active: true },
-                                { revokedAt: { not: null } },
-                            ],
-                        },
+                        where: { branchId, AND: [{ OR: caseFilter }, { OR: [{ active: true }, { revokedAt: { not: null } }] }] },
                         orderBy: { createdAt: "desc" },
                     },
                 },
                 orderBy: { startDate: "desc" },
             }),
-            // Read on its own: the schedules' client include is empty for a client without schedules.
-            this.prisma.client.findFirst({
-                where: { id: clientId, branchId },
-                select: {
-                    allowSaturdayService: true,
-                    allowSundayService: true,
-                    allowHolidayService: true,
-                },
+            this.prisma.service_record.findMany({
+                where: { branchId, OR: caseFilter, schedule: { ...scope, client: { branchId, deletedAt: null } } },
             }),
+            selectedId ? this.prisma.service_record_assignment.findMany({
+                where: { branchId, serviceRecordCaseId: selectedId, employee: { branchId } },
+                select: { scheduleId: true, employee: { select: { id: true, name: true, phone: true } } },
+            }) : [],
         ]);
-        const serviceDays = clientFlags && clientFlags.allowSaturdayService !== undefined
-            ? {
-                saturday: clientFlags.allowSaturdayService ?? false,
-                sunday: clientFlags.allowSundayService ?? false,
-                holiday: clientFlags.allowHolidayService ?? false,
-            }
-            : undefined;
-
-        const scheduleIds = schedules.map((schedule) => schedule.id);
-        const jobs = scheduleIds.length > 0 ? await this.prisma.message_trigger_job.findMany({
-            where: {
-                branchId,
-                employeeScheduleId: { in: scheduleIds },
-                ruleId: SERVICE_RECORD_LINK_RULE_ID,
-            },
-            orderBy: { createdAt: "desc" },
-        }) : [];
+        const schedules: ScheduleForOverview[] = scheduleRows.flatMap((schedule) => {
+            const historical = recordAssignments.find(({ scheduleId }) => scheduleId === schedule.id);
+            const owner = activeOwners.find(({ babyId, scheduleId }) => babyId === target?.babyId && scheduleId === schedule.id);
+            if (!legacy && !owner && !historical && schedule.serviceRecordDays.length === 0) return [];
+            return [{
+                ...schedule,
+                serviceRecord: headers.find((header) => header.scheduleId === schedule.id && header.serviceRecordCaseId === selectedId)
+                    ?? headers.find((header) => header.scheduleId === schedule.id && header.serviceRecordCaseId === null)
+                    ?? null,
+                recordEmployee: owner?.employee ?? historical?.employee ?? (legacy ? schedule.primaryEmployee : undefined),
+            }];
+        }).filter((schedule) => schedule.recordEmployee !== undefined);
+        const legacySummary = cases.find((item) => item.caseId === selectedId && item.babyId === null);
+        if (legacySummary && legacy) {
+            legacySummary.assignees = [...new Map(schedules.filter(({ replaced }) => !replaced)
+                .map(({ primaryEmployee: { id, name } }) => [id, { id, name }])).values()];
+        }
+        const scheduleIds = schedules.map(({ id }) => id);
+        const [jobs, signatureDocs] = await Promise.all([
+            scheduleIds.length > 0 ? this.prisma.message_trigger_job.findMany({
+                where: {
+                    branchId, employeeScheduleId: { in: scheduleIds }, ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                    ...(legacy ? {} : { recordMembers: { some: { ...scope, serviceRecordCaseId: selectedId } } }),
+                },
+                orderBy: { createdAt: "desc" },
+            }) : [],
+            this.findServiceRecordSignatureDocs(branchId, clientId, scheduleIds, selectedId ?? null, legacy),
+        ]);
         const jobIds = jobs.map((job) => job.id);
-        const logs = scheduleIds.length > 0 ? await this.prisma.message_log.findMany({
-            where: {
-                branchId,
-                templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
-                OR: [
-                    ...(jobIds.length > 0 ? [{ triggerJobId: { in: jobIds } }] : []),
-                    { clientId, triggerJobId: null },
-                ],
-            },
+        const logScopes = [
+            ...(jobIds.length > 0 ? [{ triggerJobId: { in: jobIds } }] : []),
+            ...(legacy ? [{ clientId, triggerJobId: null }] : []),
+        ];
+        const logs = logScopes.length > 0 ? await this.prisma.message_log.findMany({
+            where: { branchId, templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY, OR: logScopes },
             orderBy: { createdAt: "desc" },
         }) : [];
-        const signatureDocs = await this.findServiceRecordSignatureDocs(
-            branchId,
-            scheduleIds,
-            record?.id ?? null,
-        );
         const signatureDocByScheduleId = latestSignatureDocByScheduleId(signatureDocs);
-        // The editor source is the authoritative schedule vector for dates
-        // that do not have persisted day rows yet.  Expose the same
-        // tenant-scoped projection to the regular overview when the edit
-        // repository is available, while retaining the legacy two-key shape
-        // for callers that do not register that optional repository.
-        // Overview totals and the projection are display-only, so the cached branch calendar is enough.
-        // The client's own service days decide which dates count, so every projection and
-        // session count below follows the stored toggles.
-        const branchCalendar = await this.holidayCalendar.forBranch(branchId);
-        const calendar = serviceDays ? branchCalendar.withServiceDays(serviceDays) : branchCalendar;
         const scheduleProjection = this.editRepository
-            ? await this.loadScheduleProjection(branchId, clientId, calendar)
+            && selectedId ? await this.loadScheduleProjection(branchId, clientId, calendar, selectedId)
             : undefined;
 
         return {
-            record: record ? this.mapCase(record, signatureDocs, options.includeSignatures === true, calendar) : null,
+            cases,
+            legacyLinkAssignment,
+            record: ownedRecord ? this.mapCase(ownedRecord, signatureDocs, includeSignatures, calendar) : null,
             assignments: schedules.map((schedule) => this.mapAssignment(
                 schedule,
                 jobs.filter((job) => job.employeeScheduleId === schedule.id),
@@ -264,11 +408,11 @@ export class AdminServiceRecordService {
                     || (log.triggerJobId === null && logScheduleId(log) === schedule.id)
                 )),
                 signatureDocByScheduleId.get(schedule.id) ?? null,
-                options.includeSignatures === true,
+                includeSignatures,
                 calendar,
             )),
             ...(scheduleProjection ? { scheduleProjection } : {}),
-            ...(serviceDays ? { serviceDays } : {}),
+            serviceDays,
         };
     }
 
@@ -278,11 +422,16 @@ export class AdminServiceRecordService {
      * return an empty result for legacy callers, so assert the branch-owned
      * client before delegating to that existing read path.
      */
-    async getClientEditor(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
-        await this.assertClientBelongsToBranch(branchId, clientId);
-        const overview = await this.getClientOverview(branchId, clientId, { includeSignatures: true });
+    async getClientEditor(branchId: string, clientId: number, caseId?: string): Promise<AdminServiceRecordOverviewDto> {
+        const overview = await this.loadOverview(branchId, clientId, caseId, true);
+        const selectedId = overview.record?.id;
+        if (!selectedId) {
+            if (overview.cases?.length) return overview;
+            const calendar = await this.holidayCalendar.forBranch(branchId);
+            return { ...overview, scheduleProjection: await this.loadScheduleProjection(branchId, clientId, calendar) };
+        }
         if (this.editRepository) {
-            const revisions = await this.editRepository.listRevisionsForChanges(branchId, clientId);
+            const revisions = await this.editRepository.listRevisionsForChanges(branchId, clientId, selectedId);
             const confirmedAtBySession = new Map<number, Date>();
             for (const revision of revisions) {
                 const changes = buildServiceRecordRevisionChanges(revision);
@@ -303,7 +452,7 @@ export class AdminServiceRecordService {
         if (overview.scheduleProjection) return overview;
         const branchCalendar = await this.holidayCalendar.forBranch(branchId);
         const calendar = overview.serviceDays ? branchCalendar.withServiceDays(overview.serviceDays) : branchCalendar;
-        const scheduleProjection = await this.loadScheduleProjection(branchId, clientId, calendar);
+        const scheduleProjection = await this.loadScheduleProjection(branchId, clientId, calendar, selectedId);
         return { ...overview, scheduleProjection };
     }
 
@@ -311,10 +460,11 @@ export class AdminServiceRecordService {
     async getRevisionHistory(
         branchId: string,
         clientId: number,
+        caseId?: string,
     ): Promise<ServiceRecordRevisionHistoryResponse> {
-        await this.assertClientBelongsToBranch(branchId, clientId);
+        const target = await resolveAdminServiceRecordTarget(this.prisma, { branchId, clientId, caseId }, "read");
         const repository = this.getRevisionStatusRepository();
-        const result = await repository.listRevisionHistory(branchId, clientId);
+        const result = await repository.listRevisionHistory(branchId, clientId, target?.caseId);
         if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return normalizeRevisionHistoryResponse(result);
     }
@@ -323,13 +473,14 @@ export class AdminServiceRecordService {
         branchId: string,
         clientId: number,
         revisionId: string,
+        caseId?: string,
     ): Promise<ServiceRecordRevisionChangesResponse> {
         const normalizedRevisionId = normalizePathIdentifier(revisionId);
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedRevisionId)) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
-        await this.assertClientBelongsToBranch(branchId, clientId);
-        const result = await this.getRevisionStatusRepository().findRevisionForChanges(branchId, clientId, normalizedRevisionId);
+        const target = await resolveAdminServiceRecordTarget(this.prisma, { branchId, clientId, caseId }, "read");
+        const result = await this.getRevisionStatusRepository().findRevisionForChanges(branchId, clientId, normalizedRevisionId, target?.caseId);
         if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return buildServiceRecordRevisionChanges(result);
     }
@@ -339,13 +490,14 @@ export class AdminServiceRecordService {
         branchId: string,
         clientId: number,
         editId: string,
+        caseId?: string,
     ): Promise<ServiceRecordCaregiverEditChangesResponse> {
         const normalizedEditId = normalizePathIdentifier(editId);
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedEditId)) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
-        await this.assertClientBelongsToBranch(branchId, clientId);
-        const result = await this.getRevisionStatusRepository().findCaregiverEditForChanges(branchId, clientId, normalizedEditId);
+        const target = await resolveAdminServiceRecordTarget(this.prisma, { branchId, clientId, caseId }, "read");
+        const result = await this.getRevisionStatusRepository().findCaregiverEditForChanges(branchId, clientId, normalizedEditId, target?.caseId);
         if (result === null) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return buildServiceRecordCaregiverEditChanges(result);
     }
@@ -377,9 +529,16 @@ export class AdminServiceRecordService {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         if (state.operation === "record_snapshot"
-            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(normalizedRevisionId))) {
-            // INITIAL은 관리자 revision 재시도의 staff job scope가 없어 재발급할 수 없어요.
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, normalizedRevisionId)) {
+            if (!this.finalizationService) {
+                throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+            }
+            const regenerated = await this.finalizationService.regenerateInitialFinalization(branchId, {
+                revisionId: normalizedRevisionId, documentStateId: normalizedDocumentStateId,
+                expectedGeneration: normalizedGeneration,
+            });
+            return { ...normalizeRevisionDocumentSummaryResult(regenerated.state), canRetry: false };
+
         }
 
         void actorUserId;
@@ -390,6 +549,11 @@ export class AdminServiceRecordService {
                 WHERE id = ${state.serviceRecordCaseId}::uuid
                   AND branch_id = ${branchId}::uuid
                   AND client_id = ${state.clientId}
+                  AND EXISTS (SELECT 1 FROM client
+                      WHERE client.id = service_record_case.client_id
+                        AND client.branch_id = service_record_case.branch_id AND client.deleted_at IS NULL)
+                  AND (baby_id IS NULL OR EXISTS (SELECT 1 FROM client_baby
+                      WHERE client_baby.id = service_record_case.baby_id AND client_baby.active))
                 FOR UPDATE
             `);
             if (!ownerCases[0]) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
@@ -433,6 +597,7 @@ export class AdminServiceRecordService {
         branchId: string,
         clientId: number,
         calendar: KrBusinessDayCalendar,
+        caseId?: string,
     ): Promise<NonNullable<AdminServiceRecordOverviewDto["scheduleProjection"]>> {
         if (!this.editRepository) {
             return {
@@ -443,7 +608,7 @@ export class AdminServiceRecordService {
                 }],
             };
         }
-        const source = await this.editRepository.loadSource(branchId, { clientId });
+        const source = caseId ? await this.editRepository.loadSource(branchId, { clientId, caseId }) : null;
         if (!source) {
             return {
                 entries: [],
@@ -513,9 +678,10 @@ export class AdminServiceRecordService {
         branchId: string,
         scheduleId: number,
         recipientPhone?: string,
+        caseId?: string,
     ): Promise<AdminServiceRecordPreparedLinkDto> {
-        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
-        return this.serviceRecordLinkService.prepareLink(scheduleId, recipientPhone);
+        await this.assertLinkTarget(branchId, scheduleId, caseId);
+        return { kind: "legacy", ...await this.serviceRecordLinkService.prepareLink(scheduleId, recipientPhone) };
     }
 
     async resetLink(
@@ -526,7 +692,7 @@ export class AdminServiceRecordService {
         if (this.securityEventService && !actor?.userId) {
             throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
-        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
+        await this.assertLinkTarget(branchId, scheduleId);
         const reset = await this.serviceRecordLinkService.resetLink(scheduleId);
         this.securityEventService?.emit({
             outcome: "link_reissued",
@@ -534,7 +700,7 @@ export class AdminServiceRecordService {
             branchId,
             scheduleId,
         });
-        return reset;
+        return { kind: "legacy", ...reset };
     }
 
     async sendLinkNow(
@@ -542,13 +708,20 @@ export class AdminServiceRecordService {
         scheduleId: number,
         preparedLinkToken?: string,
         recipientPhone?: string,
+        caseId?: string,
+        actorUserId?: string,
     ) {
-        await this.assertScheduleBelongsToBranch(branchId, scheduleId);
+        await this.assertLinkTarget(branchId, scheduleId, caseId);
         const queued = await this.serviceRecordLinkService.sendNow(
             scheduleId,
             preparedLinkToken,
             recipientPhone,
+            ...(actorUserId ? [actorUserId] as const : [] as const),
         );
+        return this.dispatchRecordLink(branchId, queued);
+    }
+
+    private async dispatchRecordLink(branchId: string, queued: { jobId: string; scheduledFor: Date }) {
         const dispatched = await this.messageTriggerService.dispatchPendingJobNow(queued.jobId, {
             expectedBranchId: branchId,
         });
@@ -561,23 +734,59 @@ export class AdminServiceRecordService {
         };
     }
 
-    private async assertScheduleBelongsToBranch(branchId: string, scheduleId: number): Promise<void> {
+    async listLinkTargets(branchId: string, scheduleId: number) {
+        return this.linkGroups!.targets(branchId, scheduleId);
+    }
+
+    async prepareLinkGroup(branchId: string, scheduleId: number, input: RecordLinkPrepareSelection) {
+        return this.linkGroups!.prepare(branchId, scheduleId, input);
+    }
+
+    async sendLinkGroup(branchId: string, scheduleId: number, input: RecordLinkSendSelection, actorUserId: string) {
+        if (!actorUserId) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        const queued = await this.serviceRecordLinkService.sendGroupNow(branchId, scheduleId, input, actorUserId);
+        return this.dispatchRecordLink(branchId, queued);
+    }
+
+    async resetLinkGroup(branchId: string, scheduleId: number, input: RecordLinkSelection, actor: ServiceRecordAdminActor) {
+        if (!actor.userId) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        const result = await this.linkGroups!.reset(branchId, scheduleId, input);
+        this.securityEventService?.emit({
+            outcome: "link_reissued", actorUserId: actor.userId, branchId, scheduleId, employeeId: input.employeeId,
+        });
+        return result;
+    }
+
+    private async assertLinkTarget(branchId: string, scheduleId: number, caseId?: string): Promise<void> {
         const schedule = await this.prisma.employee_schedule.findFirst({
-            where: { id: scheduleId, branchId },
-            select: { id: true },
+            where: { id: scheduleId, branchId, client: { branchId, deletedAt: null } },
+            select: { id: true, clientId: true },
         });
         if (!schedule) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
-    }
-
-    private async assertClientBelongsToBranch(branchId: string, clientId: number): Promise<void> {
-        const client = await this.prisma.client.findFirst({
-            where: { id: clientId, branchId, deletedAt: null },
-            select: { id: true },
+        const scope = { branchId, clientId: schedule.clientId };
+        if (caseId !== undefined) {
+            await resolveAdminServiceRecordTarget(this.prisma, { ...scope, caseId }, "write");
+        }
+        const cases = await this.prisma.service_record_case.findMany({
+            where: scope,
+            select: { id: true, babyId: true },
+            take: 2,
         });
-        if (!client) {
-            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        const babies = await this.prisma.client_baby.count({ where: { ...scope, active: true } });
+        if (cases.length > 1 || babies > 1 || (caseId !== undefined && cases[0]?.id !== caseId)) {
+            throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_CASE_SELECTION_REQUIRED" });
+        }
+        if (cases.length === 1 && cases[0]?.babyId) {
+            const owner = await this.prisma.service_record_baby_assignment.findFirst({
+                where: { ...scope, scheduleId, babyId: cases[0].babyId, activeOwner: true,
+                    schedule: { replaced: false, terminatedAt: null } },
+                select: { employeeId: true, schedule: { select: { primaryEmployeeId: true } } },
+            });
+            if (!owner || owner.employeeId !== owner.schedule.primaryEmployeeId) {
+                throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_CASE_SELECTION_REQUIRED" });
+            }
         }
     }
 
@@ -589,16 +798,13 @@ export class AdminServiceRecordService {
         includeSignatures: boolean,
         calendar: KrBusinessDayCalendar,
     ): AdminServiceRecordAssignmentDto {
+        const employee = schedule.recordEmployee ?? schedule.primaryEmployee;
         return {
             scheduleId: schedule.id,
             startDate: schedule.startDate,
             endDate: schedule.endDate,
             replaced: schedule.replaced,
-            employee: {
-                id: schedule.primaryEmployee.id,
-                name: schedule.primaryEmployee.name,
-                phone: schedule.primaryEmployee.phone,
-            },
+            employee: { id: employee.id, name: employee.name, phone: employee.phone },
             link: this.deriveLink(jobs, logs, schedule.serviceRecordTokens[0] ?? null),
             header: schedule.serviceRecord ? this.mapHeader(schedule.serviceRecord) : null,
             totalSessions: servicePeriodSessionCount(
@@ -808,17 +1014,20 @@ export class AdminServiceRecordService {
 
     private async findServiceRecordSignatureDocs(
         branchId: string,
+        clientId: number,
         scheduleIds: number[],
         serviceRecordCaseId: string | null,
+        legacy: boolean,
     ): Promise<SignatureDocRow[]> {
         try {
             return await this.prisma.eformsign_doc.findMany({
                 where: {
                     branchId,
                     documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
+                    AND: [{ OR: [{ clientId }, { clientId: null }] }],
                     OR: [
                         ...(serviceRecordCaseId ? [{ serviceRecordCaseId }] : []),
-                        ...(scheduleIds.length > 0 ? [{ employeeScheduleId: { in: scheduleIds } }] : []),
+                        ...(legacy && scheduleIds.length > 0 ? [{ serviceRecordCaseId: null, employeeScheduleId: { in: scheduleIds } }] : []),
                     ],
                 },
                 select: {
@@ -1008,6 +1217,14 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         "lastErrorCode",
         "last_error_code",
     ]));
+    const regenerationBlockedReason = normalizeReasonCode(readField(row, ["regenerationBlockedReason", "regeneration_blocked_reason"]));
+    const projection = asObject(row["noProviderDocumentConfirmable"]);
+    const revisionId = readStringField(projection ?? {}, ["revisionId"]);
+    const suffix = readStringField(projection ?? {}, ["suffix"]);
+    const ordinals = projection?.["unlinkedChunkOrdinals"];
+    const noProviderDocumentConfirmable = projection?.["stateId"] === id && projection["generation"] === generation
+        && revisionId && suffix && Array.isArray(ordinals) && ordinals.every((ordinal): ordinal is string => typeof ordinal === "string")
+        ? { stateId: id, generation, revisionId, suffix, unlinkedChunkOrdinals: ordinals } : undefined;
     return {
         id,
         operation,
@@ -1016,6 +1233,8 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         documentVersion: readPositiveIntegerField(row, ["documentVersion", "document_version"]),
         canRetry: directCanRetry === true,
         reasonCode,
+        ...(regenerationBlockedReason ? { regenerationBlockedReason } : {}),
+        ...(noProviderDocumentConfirmable ? { noProviderDocumentConfirmable } : {}),
     };
 }
 

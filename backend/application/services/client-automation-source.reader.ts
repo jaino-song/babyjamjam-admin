@@ -1,3 +1,4 @@
+import { allowsLegacyServiceRecordLink } from "./service-record-legacy-link-target";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import type { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
@@ -170,28 +171,6 @@ export class ClientAutomationSourceReader {
         clientId: number,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientAutomationServiceRecordLinkSource[]> {
-        // The dispatch authority resolves the client-owned case by branch+client
-        // (AgentAutomationJobAuthorityService), never by following the token's
-        // serviceRecordCaseId relation: a legacy token can keep a stale null
-        // case id after a case exists, and trusting the relation here would let
-        // preview accept a token/case pair that dispatch later rejects. Read
-        // the same source so preview and dispatch evaluate identical inputs.
-        const serviceRecordCase = await (transaction ?? this.prisma).service_record_case.findFirst({
-            where: { branchId, clientId },
-            select: {
-                id: true,
-                branchId: true,
-                clientId: true,
-                status: true,
-                startDate: true,
-                endDate: true,
-                requiredSessionCount: true,
-                formVersion: true,
-                version: true,
-                finalizedAt: true,
-                updatedAt: true,
-            },
-        });
         const rows = await (transaction ?? this.prisma).employee_schedule.findMany({
             where: { branchId, clientId, replaced: false, terminatedAt: null },
             select: {
@@ -211,6 +190,7 @@ export class ClientAutomationSourceReader {
                         branchId: true,
                         createdAt: true,
                         serviceStatus: true,
+                        fetalConfirmation: true,
                     },
                 },
                 primaryEmployee: {
@@ -246,9 +226,36 @@ export class ClientAutomationSourceReader {
             take: 501,
         });
 
-        return rows.map((row) => {
+        // The dispatch authority resolves the client-owned case by branch+client
+        // (AgentAutomationJobAuthorityService), never by following the token's
+        // serviceRecordCaseId relation: a legacy token can keep a stale null
+        // case id after a case exists, and trusting the relation here would let
+        // preview accept a token/case pair that dispatch later rejects. Read
+        // the same source so preview and dispatch evaluate identical inputs.
+        const cases = await (transaction ?? this.prisma).service_record_case.findMany({
+            where: { branchId, clientId },
+            select: {
+                id: true,
+                branchId: true,
+                clientId: true,
+                status: true,
+                startDate: true,
+                endDate: true,
+                requiredSessionCount: true,
+                formVersion: true,
+                version: true,
+                finalizedAt: true,
+                updatedAt: true,
+            },
+            take: 2,
+        });
+        if (cases.length > 1) return [];
+        const [serviceRecordCase = null] = cases;
+        const sources: ClientAutomationServiceRecordLinkSource[] = [];
+        for (const row of rows) {
+            if (!await allowsLegacyServiceRecordLink(transaction ?? this.prisma, row)) continue;
             const token = row.serviceRecordTokens[0] ?? null;
-            return {
+            sources.push({
                 schedule: row as unknown as ServiceRecordLinkScheduleSource,
                 serviceRecordCase: token
                     ? serviceRecordCase as ServiceRecordLinkCaseSource | null
@@ -256,8 +263,9 @@ export class ClientAutomationSourceReader {
                 token: token
                     ? token as unknown as ServiceRecordLinkTokenSource
                     : null,
-            };
-        });
+            });
+        }
+        return sources;
     }
 
     async getRetroactiveSendConfig(

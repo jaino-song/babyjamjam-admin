@@ -11,7 +11,7 @@ import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 
 import {
-    initialFinalizationRequestKey,
+    isInitialFinalizationRequestKeyFor,
     isInitialFinalizationWorkflowScope,
 } from "application/policies/service-record-initial-finalization.policy";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
@@ -597,7 +597,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_INVALID" });
         }
         if (input.generationKind === "INITIAL_FINALIZATION"
-            && input.snapshotReference !== initialFinalizationRequestKey(input.revisionId!)) {
+            && !isInitialFinalizationRequestKeyFor(input.revisionId!, input.snapshotReference)) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_INVALID" });
         }
         if (input.documentSyncStatus === "capability_unverified") {
@@ -1018,10 +1018,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 serviceRecordCaseId: input.serviceRecordCaseId,
                 revisionId: input.revisionId,
                 snapshotVersion: documentVersion,
-                OR: [
-                    { status: { not: "CREATED" } },
-                    { status: "CREATED", eformsignDocumentId: null },
-                ],
+                eformsignDocumentId: null,
             },
             data: {
                 status: "CREATED",
@@ -1336,31 +1333,17 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         });
     }
 
-    private revisionChunkWhere(params: {
+    // Creation and reconciliation may write lastError only before the FK is set.
+    private unlinkedChunkWhere(params: {
         chunkId: string;
         revisionId?: string;
         snapshotVersion?: number;
     }): Prisma.service_record_snapshot_chunkWhereUniqueInput {
-        if (!params.revisionId) return { id: params.chunkId };
         return {
             id: params.chunkId,
-            revisionId: params.revisionId,
-            snapshotVersion: params.snapshotVersion,
+            AND: { eformsignDocumentId: null },
+            ...(params.revisionId ? { revisionId: params.revisionId, snapshotVersion: params.snapshotVersion } : {}),
         };
-    }
-
-    private revisionChunkFilter(params: {
-        chunkId: string;
-        revisionId?: string;
-        snapshotVersion?: number;
-    }): Prisma.service_record_snapshot_chunkWhereInput {
-        return params.revisionId
-            ? {
-                id: params.chunkId,
-                revisionId: params.revisionId,
-                snapshotVersion: params.snapshotVersion,
-            }
-            : { id: params.chunkId };
     }
 
     private async processChunk(params: {
@@ -1391,7 +1374,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             && params.chunkClaimedAt.getTime() <= Date.now() - CHUNK_CLAIM_STALE_MS
         ) {
             await this.prisma.service_record_snapshot_chunk.update({
-                where: this.revisionChunkWhere(params),
+                where: this.unlinkedChunkWhere(params),
                 data: { status: "FAILED", nextAttemptAt: new Date(), lastError: "Stale pre-create claim recovered" },
             });
             status = "FAILED";
@@ -1411,7 +1394,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         const now = new Date();
         const claim = await this.prisma.service_record_snapshot_chunk.updateMany({
             where: {
-                ...this.revisionChunkFilter(params),
+                ...this.unlinkedChunkWhere(params),
                 status: { in: ["PENDING", "FAILED"] },
                 OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
             },
@@ -1429,7 +1412,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         }
 
         await this.prisma.service_record_snapshot_chunk.update({
-            where: this.revisionChunkWhere(params),
+            where: this.unlinkedChunkWhere(params),
             data: { status: "CREATE_REQUESTED", createAttemptedAt: new Date() },
         });
 
@@ -1462,7 +1445,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 ? (attempts >= MAX_DEFINITIVE_CREATE_ATTEMPTS ? "MANUAL_REVIEW" : "FAILED")
                 : "RECONCILING";
             await this.prisma.service_record_snapshot_chunk.update({
-                where: this.revisionChunkWhere(params),
+                where: this.unlinkedChunkWhere(params),
                 data: {
                     status: statusAfterFailure,
                     nextAttemptAt: statusAfterFailure === "MANUAL_REVIEW"
@@ -1510,7 +1493,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 .filter((document) => document.document_name === params.chunk.documentName);
         if (documents.length > 1) {
             await this.prisma.service_record_snapshot_chunk.update({
-                where: this.revisionChunkWhere(params),
+                where: this.unlinkedChunkWhere(params),
                 data: {
                     status: "MANUAL_REVIEW",
                     nextAttemptAt: null,
@@ -1532,7 +1515,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         const attempts = params.chunkAttempts + 1;
         const manualReview = attempts >= MAX_RECONCILIATION_ATTEMPTS;
         await this.prisma.service_record_snapshot_chunk.update({
-            where: this.revisionChunkWhere(params),
+            where: this.unlinkedChunkWhere(params),
             data: {
                 status: manualReview ? "MANUAL_REVIEW" : "RECONCILING",
                 attempts: { increment: 1 },
@@ -1545,6 +1528,56 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 ? "SERVICE_RECORD_SNAPSHOT_MANUAL_REVIEW"
                 : "SERVICE_RECORD_SNAPSHOT_RECONCILIATION_PENDING",
         });
+    }
+
+    /** Frozen descriptors only: recovery must never read mutable customer/assignment rows. */
+    prepareCancelledInitialRecovery(input: ServiceRecordRevisionGenerationInput, rows: RevisionSnapshotChunkRow[]) {
+        this.assertRevisionGenerationInput(input, { branchId: input.branchId, source: "worker" });
+        const { record } = this.buildFrozenRevisionSource(input);
+        if (!rows.length) throw new ConflictException("Missing frozen chunk layout");
+        let nextSession = 1;
+        const chunks = rows.map((row, offset): PreparedSnapshotChunk => {
+            if (row.branchId !== input.branchId || row.serviceRecordCaseId !== input.serviceRecordCaseId
+                || row.revisionId !== input.revisionId || row.snapshotVersion !== input.documentVersion
+                || row.sourceHash !== input.payloadFingerprint || row.chunkIndex !== offset + 1
+                || row.chunkCount !== rows.length || row.firstSessionIndex !== nextSession
+                || row.lastSessionIndex < row.firstSessionIndex || row.lastSessionIndex > record.days.length) {
+                throw new ConflictException("Frozen chunk scope changed");
+            }
+            nextSession = row.lastSessionIndex + 1;
+            const days = record.days.slice(row.firstSessionIndex - 1, row.lastSessionIndex)
+                .map((day, index) => ({ ...day, sessionIndex: index + 1,
+                    answers: isRecord(day.answers) ? day.answers : {} }));
+            const assignment = record.assignments.find(item => item.id === row.assignmentId);
+            return {
+                assignmentId: row.assignmentId, scheduleId: assignment?.scheduleId ?? days[0]?.scheduleId ?? null,
+                employeeName: row.employeeNameSnapshot, chunkIndex: row.chunkIndex, chunkCount: row.chunkCount,
+                firstSessionIndex: row.firstSessionIndex, lastSessionIndex: row.lastSessionIndex,
+                sourceHash: row.sourceHash, compatibleSourceHashes: [], days, tier: days.length, templateId: "",
+                documentName: this.revisionDocumentName(record.client!.name, record.id, input.revisionNumber!,
+                    input.documentVersion, row.chunkIndex, row.chunkCount),
+            };
+        });
+        if (nextSession !== record.days.length + 1) throw new ConflictException("Incomplete frozen chunk layout");
+        return { input, record, chunks };
+    }
+
+    /** Link only, never create/send; caller owns the complete recovery transaction and locks. */
+    async persistCancelledInitialRemoteDocument(
+        tx: Prisma.TransactionClient,
+        prepared: ReturnType<CreateAndSendServiceRecordSnapshotUsecase["prepareCancelledInitialRecovery"]>,
+        chunkId: string,
+        chunkIndex: number,
+        remoteDocument: Awaited<ReturnType<IEformsignClientRepository["getDocument"]>>,
+    ): Promise<void> {
+        const chunk = prepared.chunks.find(item => item.chunkIndex === chunkIndex);
+        if (!chunk) throw new ConflictException("Missing frozen chunk");
+        await this.persistRemoteDocument({
+            record: prepared.record, chunk, chunkId, documentId: remoteDocument.id, remoteDocument,
+            templateId: remoteDocument.template.id, reviewer: { id: "", name: "" },
+            snapshotVersion: prepared.input.documentVersion, revisionId: prepared.input.revisionId!,
+            revisionNumber: prepared.input.revisionNumber!, generation: prepared.input.generation, recovery: true,
+        }, tx);
     }
 
     private async persistRemoteDocument(params: {
@@ -1560,7 +1593,8 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         revisionNumber?: number;
         generation?: string;
         idempotencyKey?: string;
-    }): Promise<void> {
+        recovery?: boolean;
+    }, transaction?: Prisma.TransactionClient): Promise<void> {
         const snapshotVersion = params.snapshotVersion ?? params.record.formVersion;
         const now = new Date();
         const remoteStatus = params.remoteDocument?.current_status;
@@ -1662,15 +1696,30 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             upsertCreate: typeof create,
             upsertUpdate: typeof update,
         ): Promise<void> => {
-            await this.prisma.$transaction(async (tx) => {
+            const persist = async (tx: Prisma.TransactionClient) => {
                 await tx.eformsign_doc.upsert({
-                    where: { documentId: params.documentId },
+                    where: { documentId: params.documentId, ...(params.recovery ? {
+                        permanentPurgeRequestedAt: null,
+                        updatedDate: { lte: new Date(params.remoteDocument!.updated_date) },
+                        statusType: { not: "049" },
+                        AND: [
+                            { OR: [{ branchId: params.record.branchId }, { branchId: null, clientId: null,
+                                employeeScheduleId: null, serviceRecordCaseId: null, revisionId: null,
+                                snapshotVersion: null, snapshotChunkIndex: null, documentKind: null }] },
+                            { OR: [{ clientId: null }, { clientId: params.record.clientId }] },
+                            { OR: [{ serviceRecordCaseId: null }, { serviceRecordCaseId: params.record.id }] },
+                            { OR: [{ revisionId: null }, { revisionId: params.revisionId }] },
+                            { OR: [{ snapshotVersion: null }, { snapshotVersion }] },
+                            { OR: [{ snapshotChunkIndex: null }, { snapshotChunkIndex: params.chunk.chunkIndex }] },
+                            { OR: [{ documentKind: null }, { documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT }] },
+                        ],
+                    } : {}) },
                     create: upsertCreate,
                     update: upsertUpdate,
                     select: { id: true },
                 });
                 await tx.service_record_snapshot_chunk.update({
-                    where: this.revisionChunkWhere(params),
+                    where: this.unlinkedChunkWhere(params),
                     data: {
                         status: "CREATED",
                         eformsignDocumentId: params.documentId,
@@ -1678,13 +1727,15 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                         lastError: null,
                     },
                 });
-            });
+            };
+            if (transaction) await persist(transaction);
+            else await this.prisma.$transaction(persist);
         };
 
         try {
             await persistInTransaction(create, update);
         } catch (error) {
-            if (!isPendingEformsignDocColumnError(error)) {
+            if (transaction || !isPendingEformsignDocColumnError(error)) {
                 throw error;
             }
             // PostgreSQL aborts a transaction after a statement error. Retry the complete
@@ -1701,7 +1752,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
 
     private async markChunkCreated(chunkId: string, documentId: string): Promise<void> {
         await this.prisma.service_record_snapshot_chunk.updateMany({
-            where: { id: chunkId, status: { not: "CREATED" } },
+            where: { id: chunkId, status: { not: "CREATED" }, eformsignDocumentId: null },
             data: {
                 status: "CREATED",
                 eformsignDocumentId: documentId,

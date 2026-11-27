@@ -145,7 +145,7 @@ export class ClientDueDateSchedulerService {
                     });
                     if (updated.count > 0) {
                         if (this.serviceRecordLifecycleService) {
-                            await this.serviceRecordLifecycleService.ensureForClient(client.id, tx, calendar);
+                            await this.serviceRecordLifecycleService.ensureAllForClient(client.id, tx, calendar);
                         }
                         if (this.messageAutomationIntentService && client.branchId && client.dueDate) {
                             await this.messageAutomationIntentService.persistClientIntent(tx, {

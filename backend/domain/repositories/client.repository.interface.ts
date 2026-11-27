@@ -266,6 +266,9 @@ export interface ClientWithInitialSchedule {
 
 /** Lean, observed projection evidence; no answers, signatures, tokens or documents. */
 export interface ServiceRecordAlertCandidate {
+    rank?: number | null;
+    babyCount?: number | null;
+    legacyName?: string | null;
     source: Pick<ServiceRecordEditSource,
         "caseId" | "caseVersion" | "requiredSessionCount" | "startDate" | "endDate"
         | "plannedSessions" | "assignments" | "client"> & {

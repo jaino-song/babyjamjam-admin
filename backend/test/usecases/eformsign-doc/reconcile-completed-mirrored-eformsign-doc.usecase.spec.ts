@@ -582,7 +582,7 @@ describe("ReconcileCompletedMirroredEformsignDocUsecase with the real linker and
             $transaction: jest.fn((work: (tx: typeof transaction) => Promise<unknown>) => work(transaction)),
         };
         const lifecycle = {
-            ensureForClient: jest.fn().mockResolvedValue(undefined),
+            ensureAllForClient: jest.fn().mockResolvedValue([]),
             resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
             syncEndDateFromMirroredContract: jest.fn().mockResolvedValue(true),
             completeServiceRecordSnapshotIfReady: jest.fn().mockResolvedValue(false),
@@ -652,7 +652,7 @@ describe("ReconcileCompletedMirroredEformsignDocUsecase with the real linker and
 
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
-        expect(lifecycle.ensureForClient).not.toHaveBeenCalled();
+        expect(lifecycle.ensureAllForClient).not.toHaveBeenCalled();
         expect(lifecycle.syncEndDateFromMirroredContract).not.toHaveBeenCalled();
         expect(clientRepository.update).not.toHaveBeenCalled();
     });
@@ -681,7 +681,7 @@ describe("ReconcileCompletedMirroredEformsignDocUsecase with the real linker and
             where: { id: 7, branchId: "branch-1", eDocId: null },
             data: { eDocId: "doc-1" },
         });
-        expect(lifecycle.ensureForClient).toHaveBeenCalledTimes(1);
+        expect(lifecycle.ensureAllForClient).toHaveBeenCalledTimes(1);
         expect(lifecycle.syncEndDateFromMirroredContract).toHaveBeenCalledWith(
             expect.objectContaining({
                 clientId: 7,

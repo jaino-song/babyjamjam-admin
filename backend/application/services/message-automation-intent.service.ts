@@ -85,10 +85,14 @@ export class MessageAutomationIntentService {
             includePast: boolean;
             intentAt: Date;
             replaceExisting?: boolean;
+            freshAssignment?: boolean;
             taskOrigin?: boolean;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<void> {
+        if (params.freshAssignment) {
+            await this.serviceRecordLinkService.observeAssignmentInTransaction(transaction, params.branchId, params.scheduleId);
+        }
         await persistScheduleMessageAutomationIntent(transaction, params);
     }
 
@@ -177,6 +181,10 @@ export class MessageAutomationIntentService {
                     params.scheduleId,
                     { taskAutomationReference: params.taskAutomationReference },
                 );
+            } else if (params.taskOrigin) {
+                // Unsealed task lineage cannot turn into a branch automation send.
+                await this.releaseIntent(claim);
+                return false;
             } else if (params.refreshServiceRecordLink) {
                 await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId, {
                     rescheduleAutomatic: true, branchId: params.branchId,

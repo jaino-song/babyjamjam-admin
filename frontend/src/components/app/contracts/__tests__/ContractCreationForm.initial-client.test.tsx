@@ -86,7 +86,6 @@ jest.mock("@/hooks/useClients", () => ({
   useCreateClient: () => ({ mutateAsync: mockCreateClientMutateAsync, isPending: false }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClientMutateAsync, isPending: false }),
   useDeleteClient: () => ({ mutateAsync: mockDeleteClientMutateAsync, isPending: false }),
-  // Only used when step 1 (client selector) is actually rendered.
   useAllClients: () => ({ data: mockClients, isLoading: false }),
 }));
 
@@ -426,6 +425,56 @@ describe("ContractCreationForm — initialClient mode", () => {
     expect(trigger).toBeDisabled();
   });
 
+  it("loads a saved date and enqueues the edited date even after an older client result arrives", async () => {
+    seedValidContract({ paymentDate: "" });
+    const queryClient = new QueryClient();
+    const form = () => (
+      <QueryClientProvider client={queryClient}>
+        <ContractCreationForm activeStep={3} onActiveStepChange={jest.fn()} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(form());
+    const payment = screen.getByLabelText("본인부담금 결제일");
+    expect(payment).toHaveValue("");
+    mockClients = [{ ...clientA, id: 42, copaymentReceivedDate: "2026-11-20" }];
+    rerender(form());
+    expect(payment).toHaveValue("2026-11-20");
+
+    fireEvent.change(payment, { target: { value: "2026-11-21" } });
+    mockClients = [{ ...mockClients[0], copaymentReceivedDate: "2026-11-19" }];
+    rerender(form());
+    expect(payment).toHaveValue("2026-11-21");
+    await submitQueue();
+    expect(mockEnqueueDocumentCreation).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 42,
+      contractData: expect.objectContaining({
+        copaymentReceivedDate: "2026-11-21", paymentYear: "26", paymentMonth: "11", paymentDay: "21",
+      }),
+    }));
+  });
+
+  it("uses an explicit historical date and clears the prior client's date on switch and cancel", () => {
+    const queryClient = new QueryClient();
+    const onClose = jest.fn();
+    const form = (client: Client, historical?: string) => (
+      <QueryClientProvider client={queryClient}>
+        <ContractCreationForm initialClient={client} initialPaymentDate={historical} onClose={onClose} />
+      </QueryClientProvider>
+    );
+    const saved = { ...clientA, copaymentReceivedDate: "2026-11-20" };
+    const { rerender } = render(form(saved, "2026-11-21"));
+    expect(useFormStore.getState().paymentDate).toBe("2026-11-21");
+    rerender(form(clientB));
+    expect(useFormStore.getState().paymentDate).toBe("");
+    rerender(form(saved));
+    expect(useFormStore.getState().paymentDate).toBe("2026-11-20");
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(useFormStore.getState().paymentDate).toBe("");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueDocumentCreation).not.toHaveBeenCalled();
+    expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
+  });
+
   it("still auto-sets paymentDate to the selected client's startDate without initialClient (contracts-page regression guard)", () => {
     mockClients = [clientC];
     renderWithProviders(<ContractCreationForm />);
@@ -442,6 +491,59 @@ describe("ContractCreationForm — initialClient mode", () => {
     fireEvent.click(screen.getByText(clientC.name, { selector: "span.font-medium" }));
 
     expect(useFormStore.getState().paymentDate).toBe(clientC.startDate);
+  });
+
+  it("clears or loads the payment date on client switches and preserves an edit on reselection", () => {
+    // Same-name options allow direct switches without clearing the selection to search.
+    const name = "테스트 고객";
+    const savedA = makeClient({
+      id: 101, name, phone: "010-1111-2222", copaymentReceivedDate: "2026-11-20",
+    });
+    const noDate = makeClient({
+      id: 303, name, phone: "010-5555-6666", copaymentReceivedDate: null, startDate: null,
+    });
+    const savedB = makeClient({
+      id: 202, name, phone: "010-3333-4444", copaymentReceivedDate: "2026-11-21",
+    });
+    mockClients = [savedA, noDate, savedB];
+
+    const queryClient = new QueryClient();
+    const form = (activeStep: number) => (
+      <QueryClientProvider client={queryClient}>
+        <ContractCreationForm activeStep={activeStep} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(form(0));
+
+    function openSelector() {
+      fireEvent.click(screen.getByRole("combobox", { name: "산모님 성함" }));
+    }
+
+    function selectClient(client: Client) {
+      fireEvent.click(screen.getByRole("option", { name: `${client.name} ${client.phone}` }));
+      expect(useFormStore.getState().clientId).toBe(client.id);
+      rerender(form(CONTRACT_INFO_STEP_INDEX));
+      return screen.getByLabelText("본인부담금 결제일");
+    }
+
+    openSelector();
+    fireEvent.change(screen.getByRole("combobox", { name: "산모님 성함 검색" }), {
+      target: { value: name },
+    });
+    expect(selectClient(savedA)).toHaveValue("2026-11-20");
+
+    rerender(form(0));
+    openSelector();
+    expect(selectClient(noDate)).toHaveValue("");
+    rerender(form(0));
+    openSelector();
+    const payment = selectClient(savedB);
+    expect(payment).toHaveValue("2026-11-21");
+
+    fireEvent.change(payment, { target: { value: "2026-11-22" } });
+    rerender(form(0));
+    openSelector();
+    expect(selectClient(savedB)).toHaveValue("2026-11-22");
   });
 
   it("re-applies cleanly for a different initialClient after unmount+remount, with no residue from the previous client", () => {

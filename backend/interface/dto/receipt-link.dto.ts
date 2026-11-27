@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsPositive, IsString, MaxLength } from "class-validator";
+import { Allow, IsInt, IsNotEmpty, IsOptional, IsPositive, IsString, MaxLength } from "class-validator";
 
 export class VerifyReceiptBirthdayDto {
     // Optional, not required: an absent/empty birthday must reach the service's
@@ -36,4 +36,17 @@ export class PrepareReceiptLinkDto {
     @IsInt()
     @IsPositive()
     clientId!: number;
+}
+
+
+// Domain validation emits the standalone receipt API's stable refusal codes.
+export class StandaloneReceiptLinkDto {
+    @Allow()
+    clientId!: number;
+
+    @Allow()
+    copaymentReceivedDate!: string;
+
+    @Allow()
+    requestId!: string;
 }

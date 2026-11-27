@@ -132,7 +132,7 @@ export class MessageRetrySchedulerService {
                     // under the branch lock before starting the provider.
                     if (quietHeldRetry && (log.triggerJobId !== null || manualQuietRetry)) {
                         try {
-                            await this.smsRetryService.retry(log, "automatic");
+                            await this.smsRetryService.retry(log, "automatic", () => this.schedulerLease.holdsLease());
                         } catch (error) {
                             try {
                                 captureBackendError(error instanceof Error ? error : new Error("Message retry scheduler quiet admission failed"), {
@@ -170,7 +170,7 @@ export class MessageRetrySchedulerService {
                             );
                             continue;
                         }
-                        await this.smsRetryService.retry(log, "automatic");
+                        await this.smsRetryService.retry(log, "automatic", () => this.schedulerLease.holdsLease());
                     } else {
                         log.markRetrySuperseded("지원이 종료된 메시지 공급자라 재시도하지 않습니다.");
                         await this.logRepository.update(log);

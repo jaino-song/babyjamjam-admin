@@ -6,6 +6,7 @@ import type { MessageTriggerRecipientType } from "domain/constants/message-trigg
 import type { ClientHistoryScope, MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
+    preserveReceiptRecoveryChild?: boolean;
     clientId?: number;
     employeeScheduleId?: number;
     scheduledBefore?: Date;
@@ -122,6 +123,7 @@ export interface MessageQuietHeldJob {
 }
 
 export interface IMessageTriggerJobRepository {
+    hasAcceptedOccurrence(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<boolean>;
     /** Outstanding immutable date work, including leased intents whose retry time is in the future. */
     findOutstandingDateIntents(branchId: string, clientId: number, transaction: Prisma.TransactionClient): Promise<Array<Pick<MessageTriggerJobEntity,
         "dedupeKey" | "employeeScheduleId" | "payload">>>;
@@ -157,6 +159,14 @@ export interface IMessageTriggerJobRepository {
      */
     claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
     findDueDispatchBranchIds(now: Date): Promise<string[]>;
+    fenceOrdinaryReceiptPending?(transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity, now: Date): Promise<boolean>;
+    findReceiptRecoveryCandidates?(now: Date, client?: { branchId: string; clientId: number }): Promise<Array<{ id: string; branchId: string }>>;
+    cancelDueReceiptJobsForDeniedSender?(branchId: string, now: Date, transaction: Prisma.TransactionClient, jobId?: string): Promise<void>;
+    findDueRecordLinkJobsForSenderCheck?(branchIds: string[], now: Date): Promise<MessageTriggerJobEntity[]>;
+    fenceServiceRecordLinkAttempt?(
+        transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity, now: Date,
+        stage: "pending" | "processing", senderOnly?: boolean,
+    ): Promise<{ kind: "allow" } | { kind: "lost" } | { kind: "stale"; reason: string }>;
     consumeDispatchSlotsAndFindDueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number, excludedJobIds?: readonly string[]): Promise<MessageDispatchSelectedJob[]>;
     reclaimWithClaimFence(job: MessageTriggerJobEntity, snapshot: MessageTriggerClaimSnapshot): Promise<boolean>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;

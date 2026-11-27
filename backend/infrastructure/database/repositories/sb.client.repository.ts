@@ -191,13 +191,15 @@ export class SbClientRepository implements IClientRepository {
             });
             if (clients.length === 0) break;
             const clientIds = clients.map((client) => client.id);
-            const [records, schedules] = await Promise.all([
-                this.prismaService.service_record_case.findMany({
-                    where: { branchId, clientId: { in: clientIds }, client: { branchId, deletedAt: null } },
-                    orderBy: { id: "asc" }, take: ALERT_CLIENT_PAGE_SIZE,
-                    select: { id: true, clientId: true, version: true, requiredSessionCount: true,
-                        startDate: true, endDate: true, plannedSessions: true },
-                }),
+            const [records, schedules, babies] = await Promise.all([
+                readAlertRelationPages((after: string | undefined) => this.prismaService.service_record_case.findMany({
+                    where: { branchId, clientId: { in: clientIds }, client: { branchId, deletedAt: null },
+                        OR: [{ babyId: null }, { baby: { active: true } }],
+                        ...(after === undefined ? {} : { id: { gt: after } }) },
+                    orderBy: { id: "asc" }, take: ALERT_RELATION_PAGE_SIZE,
+                    select: { id: true, babyId: true, clientId: true, version: true, requiredSessionCount: true,
+                        startDate: true, endDate: true, plannedSessions: true, babyName: true },
+                })),
                 readAlertRelationPages((after: number | undefined) => this.prismaService.employee_schedule.findMany({
                     where: { branchId, clientId: { in: clientIds }, client: { branchId, deletedAt: null },
                         primaryEmployee: { branchId }, ...(after === undefined ? {} : { id: { gt: after } }) },
@@ -206,13 +208,13 @@ export class SbClientRepository implements IClientRepository {
                         id: true, branchId: true, clientId: true, startDate: true, endDate: true,
                         replaced: true, terminatedAt: true, primaryEmployeeId: true, secondaryEmployeeId: true,
                         primaryEmployee: { select: { name: true } },
-                        serviceRecordAssignment: {
-                            where: { branchId, serviceRecordCase: { branchId, client: { branchId, deletedAt: null } } },
-                            select: { id: true, branchId: true, serviceRecordCaseId: true, scheduleId: true,
-                                employeeId: true, startDate: true, endDate: true, employeeNameSnapshot: true },
-                        },
                     },
                 })),
+                this.prismaService.client_baby.findMany({
+                    where: { branchId, clientId: { in: clientIds }, active: true },
+                    select: { id: true, clientId: true },
+                    orderBy: { ordinal: "asc" },
+                }),
             ]);
             const caseIds = records.map((record) => record.id);
             const scheduleIds = schedules.map((schedule) => schedule.id);
@@ -226,42 +228,45 @@ export class SbClientRepository implements IClientRepository {
                     select: { id: true, serviceRecordCaseId: true, scheduleId: true, caseSessionIndex: true,
                         sessionIndex: true, serviceDate: true, employeeId: true },
                 }));
-            const recordsByClient = new Map(records.map((record) => [record.clientId, record]));
-            const schedulesByClient = new Map<number, typeof schedules>();
-            for (const schedule of schedules) {
-                const group = schedulesByClient.get(schedule.clientId) ?? [];
-                group.push(schedule);
-                schedulesByClient.set(schedule.clientId, group);
-            }
+            const recordAssignments = caseIds.length === 0 ? [] : await readAlertRelationPages((after: string | undefined) =>
+                this.prismaService.service_record_assignment.findMany({
+                    where: { branchId, serviceRecordCaseId: { in: caseIds }, scheduleId: { in: scheduleIds },
+                        ...(after === undefined ? {} : { id: { gt: after } }) },
+                    orderBy: { id: "asc" }, take: ALERT_RELATION_PAGE_SIZE,
+                    select: { id: true, branchId: true, serviceRecordCaseId: true, scheduleId: true,
+                        employeeId: true, startDate: true, endDate: true, employeeNameSnapshot: true },
+                }));
+            const schedulesById = new Map(schedules.map((schedule) => [schedule.id, schedule]));
+            const clientsById = new Map(clients.map((client) => [client.id, client]));
             const daysByCase = new Map<string, typeof days>();
-            const daysBySchedule = new Map<number, typeof days>();
             for (const day of days) {
-                if (day.serviceRecordCaseId !== null) {
-                    const group = daysByCase.get(day.serviceRecordCaseId) ?? [];
-                    group.push(day);
-                    daysByCase.set(day.serviceRecordCaseId, group);
-                }
-                if (day.scheduleId !== null) {
-                    const group = daysBySchedule.get(day.scheduleId) ?? [];
-                    group.push(day);
-                    daysBySchedule.set(day.scheduleId, group);
-                }
+                if (day.serviceRecordCaseId === null) continue;
+                const group = daysByCase.get(day.serviceRecordCaseId) ?? [];
+                group.push(day);
+                daysByCase.set(day.serviceRecordCaseId, group);
             }
-            for (const client of clients) {
-                const record = recordsByClient.get(client.id);
-                const ownedSchedules = schedulesByClient.get(client.id) ?? [];
-                if (!record || ownedSchedules.length === 0 || ownedSchedules.some((schedule) =>
-                    !schedule.serviceRecordAssignment || schedule.serviceRecordAssignment.branchId !== branchId
-                    || schedule.serviceRecordAssignment.serviceRecordCaseId !== record.id)) continue;
-                const localDays = ownedSchedules.flatMap((schedule) => daysBySchedule.get(schedule.id) ?? []);
-                if (localDays.some((day) => day.serviceRecordCaseId !== null && day.serviceRecordCaseId !== record.id)) continue;
+            for (const record of records) {
+                const client = record.clientId === null ? undefined : clientsById.get(record.clientId);
+                if (!client) continue;
+                const caseAssignments = recordAssignments.filter(({ serviceRecordCaseId }) => serviceRecordCaseId === record.id);
+                if (caseAssignments.length === 0) continue;
+                const familyBabies = babies.filter(({ clientId }) => clientId === client.id);
+                const rank = familyBabies.findIndex((baby) => baby.id === record.babyId) + 1;
                 const sourceDays = daysByCase.get(record.id) ?? [];
+                const ownedScheduleIds = new Set(caseAssignments.map(({ scheduleId }) => scheduleId));
+                const singleton = records.filter(({ clientId }) => clientId === client.id).length === 1 && familyBabies.length <= 1;
+                const localDays = singleton
+                    ? [...sourceDays, ...days.filter((day) => day.serviceRecordCaseId === null && ownedScheduleIds.has(day.scheduleId))]
+                    : sourceDays;
                 const counts = new Map<number, number>();
                 for (const day of sourceDays) {
                     const index = day.caseSessionIndex ?? day.sessionIndex;
                     counts.set(index, (counts.get(index) ?? 0) + 1);
                 }
                 candidates.push({
+                    rank: rank || null,
+                    babyCount: familyBabies.length || null,
+                    legacyName: record.babyId === null ? record.babyName : null,
                     source: {
                         caseId: record.id, caseVersion: record.version, requiredSessionCount: record.requiredSessionCount,
                         startDate: alertDate(record.startDate), endDate: alertDate(record.endDate),
@@ -273,21 +278,22 @@ export class SbClientRepository implements IClientRepository {
                             ambiguous: (counts.get(day.caseSessionIndex ?? day.sessionIndex) ?? 0) > 1,
                         })),
                         // Same field precedence as ServiceRecordEditRepository.loadSourceWithClient.
-                        assignments: ownedSchedules.map((schedule) => ({
-                            id: schedule.serviceRecordAssignment?.id ?? null,
-                            branchId: schedule.serviceRecordAssignment?.branchId ?? schedule.branchId,
-                            serviceRecordCaseId: schedule.serviceRecordAssignment?.serviceRecordCaseId ?? null,
-                            scheduleId: schedule.id,
-                            employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
-                            startDate: alertDate(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate) ?? "",
-                            endDate: alertDate(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate) ?? "",
-                            replaced: schedule.replaced,
-                            employeeName: schedule.serviceRecordAssignment?.employeeNameSnapshot ?? schedule.primaryEmployee.name,
-                            scheduleStartDate: alertDate(schedule.startDate) ?? "", scheduleEndDate: alertDate(schedule.endDate) ?? "",
-                            scheduleTerminatedAt: schedule.terminatedAt?.toISOString() ?? null,
-                            primaryEmployeeId: schedule.primaryEmployeeId, secondaryEmployeeId: schedule.secondaryEmployeeId,
-                            primaryEmployeeName: schedule.primaryEmployee.name,
-                        })),
+                        assignments: caseAssignments.flatMap((assignment) => {
+                            const schedule = assignment.scheduleId === null ? undefined : schedulesById.get(assignment.scheduleId);
+                            if (!schedule || schedule.clientId !== client.id) return [];
+                            return [{
+                                id: assignment.id, branchId: assignment.branchId,
+                                serviceRecordCaseId: assignment.serviceRecordCaseId, scheduleId: schedule.id,
+                                employeeId: assignment.employeeId ?? schedule.primaryEmployeeId,
+                                startDate: alertDate(assignment.startDate) ?? "", endDate: alertDate(assignment.endDate) ?? "",
+                                replaced: schedule.replaced || schedule.terminatedAt !== null,
+                                employeeName: assignment.employeeNameSnapshot,
+                                scheduleStartDate: alertDate(schedule.startDate) ?? "", scheduleEndDate: alertDate(schedule.endDate) ?? "",
+                                scheduleTerminatedAt: schedule.terminatedAt?.toISOString() ?? null,
+                                primaryEmployeeId: schedule.primaryEmployeeId, secondaryEmployeeId: schedule.secondaryEmployeeId,
+                                primaryEmployeeName: assignment.employeeNameSnapshot,
+                            }];
+                        }),
                     },
                     assignmentSessions: localDays.flatMap((day) => day.scheduleId === null ? [] : [{
                         scheduleId: day.scheduleId, sessionIndex: day.caseSessionIndex ?? day.sessionIndex, serviceDate: alertDate(day.serviceDate) ?? "",
@@ -316,6 +322,7 @@ export class SbClientRepository implements IClientRepository {
             fullPrice: true,
             grant: true,
             actualPrice: true,
+            copaymentReceivedDate: true,
             startDate: true,
             endDate: true,
             careCenter: true,
@@ -800,6 +807,12 @@ export class SbClientRepository implements IClientRepository {
                 FROM (
                     SELECT 1 FROM "employee_schedule"
                     WHERE "client_id" = ${id}
+                    UNION ALL
+                    SELECT 1 FROM "client_baby"
+                    WHERE "branch_id" = ${branchid}::uuid AND "client_id" = ${id}
+                    UNION ALL
+                    SELECT 1 FROM "service_record_team_slot"
+                    WHERE "branch_id" = ${branchid}::uuid AND "client_id" = ${id}
                     UNION ALL
                     SELECT 1 FROM "service_record_case"
                     WHERE "client_id" = ${id}

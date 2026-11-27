@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getClientConflictPayload } from "@babyjamjam/shared";
+import { matchesRegistrationScope } from "@/features/clients/api/registration-scope.server";
 import { serverAPIClient } from "@/lib/api/server";
 import {
     authRequiredResponse,
     errorResponse,
     getAuthHeaders,
     getAuthToken,
+    localProblemResponse,
 } from "@/lib/api/route-utils";
 
 // A converted problem body must keep its public `code`; the legacy conflict
@@ -56,6 +58,9 @@ export async function POST(request: NextRequest) {
         const token = getAuthToken(request);
         if (!token) {
             return authRequiredResponse();
+        }
+        if (!await matchesRegistrationScope(request, token)) {
+            return localProblemResponse("ACCESS_DENIED");
         }
 
         const body = await request.json();

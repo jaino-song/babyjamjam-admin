@@ -1,3 +1,4 @@
+import { receiptRecoveryChildSql } from "./receipt-job-recovery.repository";
 import { MessageTriggerRuleGroupEntity } from "domain/entities/message-trigger-rule-group.entity";
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -409,6 +410,7 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 WHERE rule_id = ${expected.id}
                   AND branch_id = ${branchId}::uuid
                   AND status = 'pending'
+                  AND NOT ${receiptRecoveryChildSql()}
             `);
 
             return this.rawToDomain(updatedRows[0]);

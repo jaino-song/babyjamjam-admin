@@ -1,3 +1,4 @@
+import type { PrepareServiceRecordLinkResponse } from "@babyjamjam/shared/types/service-record";
 import { type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -6,14 +7,11 @@ import { TemplateFieldGrid } from "./TemplateFieldGrid";
 
 export type TemplateMessageDeliveryMode = "sms" | "service-feedback-link" | "receipt-link";
 
-export interface ServiceRecordLinkPreparation {
+export type ServiceRecordLinkPreparation = PrepareServiceRecordLinkResponse & {
   scheduleId: number;
   serviceStartDate: string;
-  serviceRecordUrl: string;
-  preparedLinkToken: string;
-  expiresAt: string;
   recipientPhone: string;
-}
+};
 
 export type ReceiptLinkPreparation = ReceiptLinkPreparationResponse;
 

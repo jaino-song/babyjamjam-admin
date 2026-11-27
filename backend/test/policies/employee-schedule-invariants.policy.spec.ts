@@ -20,6 +20,7 @@ const createTransaction = (conflict: { id: number } | null = null) => ({
     employee_schedule: {
         findFirst: jest.fn().mockResolvedValue(conflict),
     },
+    service_record_team_slot: {},
 });
 
 describe("employee schedule handover period", () => {
@@ -118,6 +119,7 @@ describe("employee schedule invariants policy", () => {
         });
         expect((error as ConflictException).getResponse()).not.toHaveProperty("conflictScheduleId");
 
+        expect(transaction.employee_schedule.findFirst).toHaveBeenCalledTimes(1);
         expect(transaction.employee_schedule.findFirst).toHaveBeenCalledWith({
             where: {
                 branchId: "branch-a",

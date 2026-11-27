@@ -93,6 +93,39 @@ describe("AligoApiClient SMS", () => {
         expect(debugSpy).toHaveBeenCalledWith("[Aligo] Sending sms to 01033334444");
     });
 
+    it.each([true, false])("handles the rejected HTTP response with confidential=%s", async confidential => {
+        const { client } = createClient({
+            ALIGO_SMS_API_URL: "https://provider.invalid", ALIGO_API_KEY: "fake-key",
+            ALIGO_USER_ID: "fake-user", ALIGO_SENDER_PHONE: "01000005431",
+        });
+        const receiver = "01000005432";
+        const url = "https://receipt.invalid/receipt/efr_synthetic_bearer";
+        const reflected = "synthetic HTTP rejection";
+        const response = new Response([receiver, url, reflected].join(" "), { status: 503 });
+        const readBody = jest.spyOn(response, "text");
+        jest.spyOn(global, "fetch").mockResolvedValue(response);
+        const debug = jest.spyOn(Logger.prototype, "debug").mockImplementation(() => undefined);
+        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+
+        const error: Error & { cause?: unknown } = await client.sendSms({
+            receiver, message: url, confidential,
+        }).then(() => { throw new Error("Expected HTTP rejection"); }, reason => reason);
+        if (confidential) {
+            expect(error.message).toBe("Aligo confidential SMS API error (503)");
+            expect(readBody).not.toHaveBeenCalled();
+            expect(debug).not.toHaveBeenCalled();
+            const diagnostic = JSON.stringify([error.stack, error.cause, ...[debug, errorLog, warn, log].map(spy => spy.mock.calls)]);
+            for (const sentinel of [receiver, url, reflected]) expect(diagnostic).not.toContain(sentinel);
+        } else {
+            expect(readBody).toHaveBeenCalledTimes(1);
+            expect(debug).toHaveBeenCalledWith(`[Aligo] Sending sms to ${receiver}`);
+            expect(error.message).toContain(reflected);
+            expect(errorLog).toHaveBeenCalledWith(expect.stringContaining(reflected));
+        }
+    });
+
     it("uses the default sender phone when no override is configured", async () => {
         const { client } = createClient({
             ALIGO_API_KEY: "api-key",

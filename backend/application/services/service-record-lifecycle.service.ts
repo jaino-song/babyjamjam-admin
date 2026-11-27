@@ -2,27 +2,46 @@ import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-ch
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
+import { GROUP_RECORD_LINK_PREFIX } from "application/policies/baby-record-provenance.policy";
 import {
-    initialFinalizationRequestKey,
-    isInitialFinalizationWorkflowScope,
+    EFORMSIGN_TOMBSTONE_STATUS,
+    EFORMSIGN_TOMBSTONE_STATUSES,
+    INITIAL_TERMINAL_PROVIDER_FAILURE_CODES,
+    eformsignStatusMatchesSql,
+    initialFinalizationStateSql,
+    initialTombstoneEvaluatedSql,
+    initialTombstoneEvaluationRecordSql,
+    newestInitialFinalizationStateSql,
+    isInitialFinalizationWorkflowScopeForRevision,
+    SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED,
+    SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN,
 } from "application/policies/service-record-initial-finalization.policy";
 import {
     getServiceRecordFinalizationDueAt,
     getServiceRecordTokenExpiresAt,
 } from "domain/constants/service-record-link-message";
-import { EFORMSIGN_COMPLETED_STATUS_CODES, EFORMSIGN_REJECTED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
+import {
+    EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_IN_PROGRESS_STATUS_CODES,
+    EFORMSIGN_REJECTED_STATUS_CODES,
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES,
+} from "domain/constants/eformsign-doc-status.constants";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, codeOnlyProblemException } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { INITIAL_PROVIDER_SETTLE_MS } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import {
     lockServiceRecordCaseForWrite,
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
+import { recordLinkHash, recordLinkPhone } from "./service-record-link-group-source";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 export const SERVICE_RECORD_CASE_STATUS = {
     WAITING_FOR_DETAILS: "WAITING_FOR_DETAILS",
@@ -50,7 +69,48 @@ export const IMMUTABLE_FINALIZATION_STATUSES = new Set<string>([
 ]);
 
 type DbClient = Prisma.TransactionClient | PrismaService;
+type InitialSnapshotTerminalOutcomeInput = {
+    branchId: string;
+    documentId: string;
+    /** Captured before purge by staff delete or its vendor retry. */
+    deletedDocuments?: ReadonlyArray<{ documentId: string; statusType: string }>;
+    fromSweep?: boolean;
+};
+
+const initialTombstoneSettledSql = Prisma.sql`doc.updated_date <= now() - (${INITIAL_PROVIDER_SETTLE_MS}::int * interval '1 millisecond')`;
+// Staged keys include the case or baby ID. A single-column collision here
+// means this database still has a pre-cutover key on a case artifact.
+function isLegacyBabyCaseKeyConflict(error: unknown): boolean {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
+    const model = error.meta?.["modelName"];
+    const columns = error.meta?.["target"];
+    if (!Array.isArray(columns) || columns.length !== 1) return false;
+    return (model === "service_record_case" && columns[0] === "client_id")
+        || ((model === "service_record" || model === "service_record_assignment") && columns[0] === "schedule_id");
+}
+
 type ServiceRecordCaseRecord = Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
+
+const lifecycleClientSelect = {
+    id: true,
+    branchId: true,
+    deletedAt: true,
+    fetalConfirmation: true,
+    startDate: true,
+    endDate: true,
+    duration: true,
+    serviceStatus: true,
+    bookingConfirmedAt: true,
+    allowSaturdayService: true,
+    allowSundayService: true,
+    allowHolidayService: true,
+    employeeSchedules: {
+        include: { primaryEmployee: { select: { id: true, name: true, phone: true } } },
+        orderBy: [{ startDate: "asc" }, { id: "asc" }],
+    },
+} satisfies Prisma.clientSelect;
+
+type LifecycleClient = Prisma.clientGetPayload<{ select: typeof lifecycleClientSelect }>;
 
 type LockedServiceRecordSnapshot = {
     id: number;
@@ -242,16 +302,17 @@ function isReadyCurrentSnapshot(snapshot: LockedServiceRecordSnapshot): boolean 
 
 /** The few caller frames above the lifecycle service, for the in-transaction calendar warning. */
 function callPath(): string {
-    const frames = (new Error().stack ?? "").split("\n").slice(1)
+    return (new Error().stack ?? "").split("\n").slice(1)
         .map((line) => line.trim().replace(/^at (async )?/, ""))
-        .filter((line) => line && !/service-record-lifecycle\.service\.(ts|js)/.test(line));
-    return frames.slice(0, 3).join(" <- ") || "unknown";
+        .filter((line) => line && !/service-record-lifecycle\.service\.(ts|js)/.test(line))
+        .slice(0, 3).join(" <- ") || "unknown";
 }
 
 export interface StartDateChangeDecision {
     mode: StartDateChangeMode;
     previousStartDate: Date | null;
     recordedSessionCount: number;
+    cases?: Array<{ caseId: string; previousStartDate: Date | null; recordedSessionCount: number }>;
 }
 
 @Injectable()
@@ -263,69 +324,57 @@ export class ServiceRecordLifecycleService {
         private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
-    async ensureForSchedule(
-        scheduleId: number,
-        tx?: Prisma.TransactionClient,
-    ): Promise<ServiceRecordCaseRecord | null> {
-        if (!tx && typeof this.prisma.$transaction === "function") {
-            // The calendar is read through the root client, so it must be read
-            // before the owning transaction pins a pooled connection.
-            const preRead = await this.prisma.employee_schedule.findUnique({
-                where: { id: scheduleId },
-                select: { clientId: true },
-            });
-            const calendar = preRead
-                ? await this.resolveCalendarBeforeTransaction(preRead.clientId)
-                : undefined;
-            return this.prisma.$transaction(async (transaction) => {
-                const schedule = await transaction.employee_schedule.findUnique({
-                    where: { id: scheduleId },
-                    select: { clientId: true },
-                });
-                if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-                return this.ensureForClient(
-                    schedule.clientId,
-                    transaction,
-                    schedule.clientId === preRead?.clientId ? calendar : undefined,
-                );
-            });
-        }
-        const db = tx ?? this.prisma;
-        const schedule = await db.employee_schedule.findUnique({
-            where: { id: scheduleId },
-            select: { clientId: true },
-        });
-        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-        return this.ensureForClient(schedule.clientId, tx);
+    async ensureForSchedule(scheduleId: number, tx?: Prisma.TransactionClient): Promise<ServiceRecordCaseRecord | null> {
+        const [record] = await this.ensureScheduleCases(scheduleId, tx, true);
+        return record ?? null;
     }
 
-    /**
-     * `calendar` is the branch calendar a transaction-opening caller already
-     * read (fresh) before its transaction began. It is optional: without it the
-     * calendar is read in here, and only when a count actually has to be
-     * derived (a brand-new case, a null N, or a period that really changed).
-     */
+    async ensureAllForSchedule(scheduleId: number, tx?: Prisma.TransactionClient): Promise<ServiceRecordCaseRecord[]> {
+        return this.ensureScheduleCases(scheduleId, tx, false);
+    }
+
+    private async ensureScheduleCases(scheduleId: number, tx: Prisma.TransactionClient | undefined, single: boolean) {
+        const schedule = await (tx ?? this.prisma).employee_schedule.findUnique({
+            where: { id: scheduleId },
+            select: { clientId: true, branchId: true },
+        });
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return this.ensureCases(schedule.clientId, tx, undefined, single, { ...schedule, id: scheduleId });
+    }
+
     async ensureForClient(
         clientId: number,
         tx?: Prisma.TransactionClient,
         calendar?: KrBusinessDayCalendar,
     ): Promise<ServiceRecordCaseRecord | null> {
-        // A no-transaction lifecycle call still performs a business write.
-        // Put the complete read/lock/reread/upsert sequence in one owning
-        // transaction so callers cannot observe a stale client or schedule
-        // set and then repair it from a separate root transaction.
+        const [record] = await this.ensureCases(clientId, tx, calendar, true);
+        return record ?? null;
+    }
+
+    async ensureAllForClient(
+        clientId: number,
+        tx?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
+        alreadyBoundCaseId?: string,
+    ): Promise<ServiceRecordCaseRecord[]> {
+        return this.ensureCases(clientId, tx, calendar, false, undefined, alreadyBoundCaseId);
+    }
+
+    private async ensureCases(
+        clientId: number,
+        tx: Prisma.TransactionClient | undefined,
+        calendar: KrBusinessDayCalendar | undefined,
+        single: boolean,
+        scheduleTarget?: { id: number; clientId: number; branchId: string | null },
+        alreadyBoundCaseId?: string,
+    ): Promise<ServiceRecordCaseRecord[]> {
         if (!tx && typeof this.prisma.$transaction === "function") {
-            // `holidayCalendar.forBranch` reads through the root client, so the
-            // calendar is resolved before this transaction takes a pooled
-            // connection; resolving it inside would hold one connection while
-            // waiting for a second.
-            const resolvedCalendar = calendar ?? await this.resolveCalendarBeforeTransaction(clientId);
+            const resolved = calendar ?? await this.resolveCalendarBeforeTransaction(clientId);
             return this.prisma.$transaction((transaction) =>
-                this.ensureForClient(clientId, transaction, resolvedCalendar));
+                this.ensureForClientInTransaction(clientId, transaction, resolved, single, scheduleTarget, undefined, alreadyBoundCaseId));
         }
-        // Captured here, before any await, while the caller's frames are still on the stack.
-        const callSite = tx && !calendar ? callPath() : undefined;
-        return this.ensureForClientInTransaction(clientId, tx, calendar, callSite);
+        return this.ensureForClientInTransaction(clientId, tx, calendar, single, scheduleTarget,
+            tx && !calendar ? callPath() : undefined, alreadyBoundCaseId);
     }
 
     /**
@@ -353,6 +402,7 @@ export class ServiceRecordLifecycleService {
                 branchId: true,
                 startDate: true,
                 endDate: true,
+                fetalConfirmation: true,
                 employeeSchedules: {
                     select: { branchId: true },
                     orderBy: [{ startDate: "asc" }, { id: "asc" }],
@@ -369,285 +419,340 @@ export class ServiceRecordLifecycleService {
             ?? client.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
             ?? null;
         if (!branchId) return undefined;
-        const existing = await this.prisma.service_record_case.findUnique({ where: { clientId } });
-        if (existing && existingCaseKeepsStoredCount(existing, period)) return undefined;
+        const scope = { branchId, clientId };
+        const existing = await this.prisma.service_record_case.findMany({ where: scope });
+        if (existing.length && existing.every((record) => existingCaseKeepsStoredCount(record, period))) {
+            if (client.fetalConfirmation !== "CONFIRMED" || existing.some(({ babyId }) => babyId === null)) return undefined;
+            const missing = await this.prisma.client_baby.count({
+                where: { ...scope, active: true, id: { notIn: existing.flatMap(({ babyId }) => babyId ? [babyId] : []) } },
+            });
+            if (missing === 0) return undefined;
+        }
         return this.holidayCalendar.forBranch(branchId, { fresh: true });
     }
 
     private async ensureForClientInTransaction(
         clientId: number,
-        tx?: Prisma.TransactionClient,
-        passedCalendar?: KrBusinessDayCalendar,
-        callSite?: string,
-    ): Promise<ServiceRecordCaseRecord | null> {
+        tx: Prisma.TransactionClient | undefined,
+        passedCalendar: KrBusinessDayCalendar | undefined,
+        single: boolean,
+        scheduleTarget?: { id: number; clientId: number; branchId: string | null },
+        caller?: string,
+        alreadyBoundCaseId?: string,
+    ): Promise<ServiceRecordCaseRecord[]> {
         const db = tx ?? this.prisma;
-        let client = await db.client.findUnique({
-            where: { id: clientId },
-            select: {
-                id: true,
-                branchId: true,
-                startDate: true,
-                endDate: true,
-                duration: true,
-                serviceStatus: true,
-                bookingConfirmedAt: true,
-                allowSaturdayService: true,
-                allowSundayService: true,
-                allowHolidayService: true,
-                employeeSchedules: {
-                    include: { primaryEmployee: true },
-                    orderBy: [{ startDate: "asc" }, { id: "asc" }],
-                },
-            },
-        });
+        const loadClient = () => db.client.findUnique({ where: { id: clientId }, select: lifecycleClientSelect });
+        let client = await loadClient();
         if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-        const branchId = client.branchId
-            ?? client.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
-            ?? null;
-        if (!branchId || !client.startDate) return null;
+        const owningBranch = (row: LifecycleClient) =>
+            row.branchId ?? row.employeeSchedules.find((schedule) => schedule.branchId)?.branchId ?? null;
+        const branchId = owningBranch(client);
+        if (!branchId || client.deletedAt) return [];
 
-        let existing = await db.service_record_case.findUnique({ where: { clientId } });
-
-        // Lifecycle synchronization is a business write. When an owning
-        // transaction is supplied, acquire the same client -> employee -> case
-        // -> schedule/assignment/day order as the schedule and entry writers,
-        // then reread the target set before deriving any values. This removes
-        // the old post-commit root transaction race without changing lifecycle
-        // status or duration semantics.
-        if (
-            tx
-            && typeof tx.$queryRaw === "function"
-        ) {
-            await lockServiceRecordWriteSet(tx, {
-                branchId,
-                clientId,
-                caseId: existing?.id,
-                scheduleIds: client.employeeSchedules.map((schedule) => schedule.id),
-                employeeIds: client.employeeSchedules.flatMap((schedule) => [
-                    schedule.primaryEmployeeId,
-                    schedule.secondaryEmployeeId,
-                ]),
-            });
-            const rereadClient = await db.client.findUnique({
-                where: { id: clientId },
-                select: {
-                    id: true,
-                    branchId: true,
-                    startDate: true,
-                    endDate: true,
-                    duration: true,
-                    serviceStatus: true,
-                    bookingConfirmedAt: true,
-                    allowSaturdayService: true,
-                    allowSundayService: true,
-                    allowHolidayService: true,
-                    employeeSchedules: {
-                        include: { primaryEmployee: true },
-                        orderBy: [{ startDate: "asc" }, { id: "asc" }],
-                    },
-                },
-            });
-            if (!rereadClient) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-            const rereadBranchId = rereadClient.branchId
-                ?? rereadClient.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
-                ?? null;
-            if (rereadBranchId !== branchId) {
+        const scope = { branchId, clientId };
+        if (tx && typeof tx.$queryRaw === "function") {
+            await lockServiceRecordWriteSet(tx, scope);
+            client = await loadClient();
+            if (!client || client.deletedAt || owningBranch(client) !== branchId) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
-            client = rereadClient;
-            existing = await db.service_record_case.findUnique({ where: { clientId } });
-            if (existing && (existing.branchId !== branchId || existing.clientId !== clientId)) {
+            if (scheduleTarget && !client.employeeSchedules.some(({ id, branchId, clientId }) =>
+                id === scheduleTarget.id && branchId === scheduleTarget.branchId && clientId === scheduleTarget.clientId)) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         }
-        if (
-            !existing
-            && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking"
-        ) {
-            return null;
+        if (!client.startDate) return [];
+        const existing = await db.service_record_case.findMany({ where: scope, orderBy: { id: "asc" } });
+        const babies = client.fetalConfirmation === "CONFIRMED"
+            ? await db.client_baby.findMany({ where: { ...scope, active: true },
+                select: { id: true, createdAt: true, legacyBackfilled: true }, orderBy: { ordinal: "asc" } })
+            : [];
+        const unbound = existing.find(({ babyId }) => babyId === null);
+        // Legacy consumers may only act on an unambiguous household.
+        // A retired sibling is historical when the remaining baby's case is identified.
+        if (single) {
+            if (babies.length > 1) return [];
+            const [baby] = babies;
+            if (existing.length > 1 && (unbound || !baby || !existing.some(({ babyId }) => babyId === baby.id))) return [];
         }
-        // The derived session count is persisted, so any calendar used for it
-        // is read fresh (or handed in by a caller that read it before opening
-        // its transaction). It is resolved lazily: a holiday-calendar edit must
-        // never change a stored N on its own, so an existing case with a stored
-        // N and an unchanged period needs no calendar at all.
+        const isPreBooking = getEffectiveClientServiceStatus(
+            client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt,
+        ) === "pre_booking";
+        if (unbound && babies.length > 1) return [unbound];
+        if (client.fetalConfirmation === "CONFIRMED" && babies.length === 0) return [];
+        if (babies.length === 0 && existing.some(({ babyId }) => babyId !== null)) return [];
+
+        const targets = unbound || babies.length === 0
+            ? [{ babyId: null, existing: unbound, firstAllocationAt: undefined }]
+            : babies.map(baby => ({
+                babyId: baby.id, existing: existing.find(({ babyId }) => babyId === baby.id),
+                firstAllocationAt: babies.length > 1 && !baby.legacyBackfilled ? baby.createdAt : undefined,
+            }));
         let calendar = passedCalendar;
-        // N and the planned dates are the CLIENT's service days: apply the
-        // service-day policy of the row read under the write lock, so a flag
-        // change racing this write cannot be missed. Callers hand in the branch
-        // calendar; re-wrapping replaces any policy already on it.
-        const resolveCalendar = async (): Promise<KrBusinessDayCalendar> => {
+        const resolveCalendar = async () => {
             if (!calendar) {
                 if (tx) {
-                    // The caller owns this transaction and did not hand a
-                    // calendar in: the read below goes through the root client
-                    // while the transaction holds a pooled connection. Name the
-                    // call path so the caller can resolve it beforehand.
                     this.logger.warn(
                         `[CALENDAR_READ_INSIDE_TRANSACTION] clientId=${clientId} branchId=${branchId} — `
-                        + "resolveCalendarBeforeTransaction() before opening the transaction and pass it "
-                        + `to ensureForClient. callPath=${callSite ?? "unknown"}`,
+                        + `Resolve the calendar before opening the transaction. callPath=${caller ?? "unknown"}`,
                     );
                 }
                 calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
             }
             return withClientServiceDays(calendar, client);
         };
-        const finalizationDueAt = client.endDate
-            ? getServiceRecordFinalizationDueAt(client.endDate)
-            : null;
-        const tokenExpiresAt = client.endDate
-            ? getServiceRecordTokenExpiresAt(client.endDate)
-            : null;
-        // N is a service-record fact, separate from the nominal voucher
-        // duration. A case keeps its initialized N through postponed or
-        // shortened outer periods; only a brand-new case may derive N from a
-        // complete supported client period. A legacy case (no revision) keeps
-        // its stored N unless the client's own period moved, in which case N is
-        // re-capped by the business days of the NEW period. A holiday-calendar
-        // change alone never lowers (or restores) N. Legacy null/zero values
-        // remain visible and are not silently backfilled.
+        const schedules = client.employeeSchedules.filter((schedule) => schedule.branchId === branchId);
+        const owners = babies.length > 0 && !unbound
+            ? await db.service_record_baby_assignment.findMany({
+                where: { ...scope, babyId: { in: babies.map(({ id }) => id) } },
+                select: {
+                    babyId: true, scheduleId: true, activeOwner: true,
+                    employee: { select: { id: true, name: true, phone: true } },
+                },
+                orderBy: [{ version: "desc" }, { id: "asc" }],
+            })
+            : [];
+        const canCreateBabyArtifacts = !!tx && !isPreBooking && !unbound;
+        const records: ServiceRecordCaseRecord[] = [];
+        for (const target of targets) {
+            if (alreadyBoundCaseId && target.existing?.id === alreadyBoundCaseId) {
+                // First allocation has proved the original owner and period.
+                // Its signed record and credential expiry are preserved as-is.
+                records.push(target.existing);
+                continue;
+            }
+            if (!target.existing && (isPreBooking || (target.babyId !== null && !canCreateBabyArtifacts))) continue;
+            const ownedSchedules = schedules.flatMap((schedule) => {
+                if (target.babyId === null) return [{ schedule, employee: schedule.primaryEmployee }];
+                const owner = owners.find((candidate) => candidate.babyId === target.babyId
+                    && candidate.scheduleId === schedule.id && (schedule.replaced || candidate.activeOwner === true));
+                return [{ schedule, employee: owner?.employee ?? null }];
+            });
+            try {
+                records.push(await this.syncCase(db, tx, {
+                    ...scope, ...target, client, ownedSchedules, resolveCalendar,
+                    legacyArtifacts: target.babyId === null && existing.length <= 1,
+                    canCreateBabyArtifacts,
+                }));
+            } catch (error) {
+                if (target.babyId !== null && isLegacyBabyCaseKeyConflict(error)) {
+                    throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_CASE_KEYS_NOT_STAGED" });
+                }
+                throw error;
+            }
+        }
+        return records;
+    }
+
+    private async syncCase(db: DbClient, tx: Prisma.TransactionClient | undefined, params: {
+        branchId: string;
+        clientId: number;
+        babyId: string | null;
+        existing: ServiceRecordCaseRecord | undefined;
+        client: LifecycleClient;
+        ownedSchedules: Array<{
+            schedule: LifecycleClient["employeeSchedules"][number];
+            employee: { id: number; name: string; phone: string | null } | null;
+        }>;
+        resolveCalendar: () => Promise<KrBusinessDayCalendar>;
+        legacyArtifacts: boolean;
+        canCreateBabyArtifacts: boolean;
+        firstAllocationAt?: Date;
+    }): Promise<ServiceRecordCaseRecord> {
+        const { branchId, clientId, babyId, existing, client, ownedSchedules, resolveCalendar, legacyArtifacts } = params;
+        if (existing && (IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
+            || existing.status === SERVICE_RECORD_CASE_STATUS.MIGRATION_REVIEW_REQUIRED)) return existing;
+
         const sessionCount = existing
             ? existingCaseKeepsStoredCount(existing, client)
                 ? existing.requiredSessionCount
-                : legacySessionCount(
-                    client.startDate,
-                    client.endDate,
-                    existing.requiredSessionCount,
-                    await resolveCalendar(),
-                )
+                : legacySessionCount(client.startDate, client.endDate, existing.requiredSessionCount, await resolveCalendar())
             : deriveInitialSessionCount({
-                startDate: client.startDate,
-                endDate: client.endDate,
-                calendar: await resolveCalendar(),
+                startDate: client.startDate, endDate: client.endDate, calendar: await resolveCalendar(),
             });
-        const immutableFinalized = Boolean(
-            existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status),
-        );
-        // A new client without a nominal duration may still be initialized
-        // from its complete service period. Never derive a nominal duration
-        // from an existing case's N.
-        if (
-            !existing
-            && client.duration === null
-            && sessionCount !== null
-            && typeof db.client.updateMany === "function"
-        ) {
-            await db.client.updateMany({
-                where: { id: clientId, branchId },
-                data: { duration: sessionCount },
-            });
+        if (!existing && client.duration === null && sessionCount !== null && typeof db.client.updateMany === "function") {
+            await db.client.updateMany({ where: { id: clientId, branchId, duration: null }, data: { duration: sessionCount } });
         }
-        const status = existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
-            ? existing.status
-            : this.deriveBaseStatus({
-                startDate: client.startDate,
-                endDate: client.endDate,
-                duration: sessionCount,
-                hasAssignment: client.employeeSchedules.some((schedule) => !schedule.replaced),
-                terminated: client.serviceStatus === "terminated",
-            });
 
-        const record = await db.service_record_case.upsert({
-            where: { clientId, branchId },
-            create: {
-                branchId,
-                clientId,
-                status,
-                startDate: client.startDate,
-                endDate: client.endDate,
-                requiredSessionCount: sessionCount,
-                finalizationDueAt,
-            },
-            update: {
-                branchId,
-                ...(immutableFinalized
-                    ? {}
-                    : {
-                        startDate: client.startDate,
-                        endDate: client.endDate,
-                        requiredSessionCount: sessionCount,
-                        finalizationDueAt,
-                        status,
-                        version: { increment: 1 },
-                    }),
-            },
+        const period = {
+            startDate: client.startDate,
+            endDate: client.endDate,
+            requiredSessionCount: sessionCount,
+            finalizationDueAt: client.endDate ? getServiceRecordFinalizationDueAt(client.endDate) : null,
+        };
+        const terminated = client.serviceStatus === "terminated";
+        const status = this.deriveBaseStatus({
+            ...period,
+            duration: sessionCount,
+            hasAssignment: ownedSchedules.some(({ schedule, employee }) => !schedule.replaced && !!employee),
+            terminated,
         });
+        const periodChanged = existing && (
+            isoDate(existing.startDate) !== isoDate(period.startDate)
+            || isoDate(existing.endDate) !== isoDate(period.endDate)
+            || existing.requiredSessionCount !== period.requiredSessionCount
+        );
+        const wasTerminated = existing?.status === SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED;
+        // Recompute treats termination as terminal, so persist the transition first.
+        const caseChanged = periodChanged || wasTerminated !== terminated;
+        const record = !existing
+            ? await db.service_record_case.create({ data: { ...period, branchId, clientId, babyId, status } })
+            : caseChanged
+                ? await db.service_record_case.update({
+                    where: { id: existing.id, branchId },
+                    data: { ...period, status, ...(terminated ? { version: { increment: 1 } } : {}) },
+                })
+                : existing;
 
-        // Finalization claims freeze the case's source, assignments, and
-        // planned vector. Lifecycle repair may still be invoked by an older
-        // writer after that claim, but it must not reproject mutable client or
-        // schedule fields onto the immutable case.
-        if (immutableFinalized) return record;
+        const serviceRecordCaseId = record.id;
+        const caseScope = { branchId, serviceRecordCaseId };
+        const schedules = ownedSchedules.map(({ schedule }) => schedule);
+        const scheduleIds = schedules.map(({ id }) => id);
 
-        for (const schedule of client.employeeSchedules) {
-            await db.service_record_assignment.upsert({
-                where: { scheduleId: schedule.id, branchId: schedule.branchId ?? branchId },
-                create: {
-                    branchId: schedule.branchId ?? branchId,
-                    serviceRecordCaseId: record.id,
-                    scheduleId: schedule.id,
-                    employeeId: schedule.primaryEmployeeId,
-                    employeeNameSnapshot: schedule.primaryEmployee.name,
-                    employeePhoneSnapshot: schedule.primaryEmployee.phone,
-                    startDate: schedule.startDate,
-                    endDate: schedule.endDate,
-                },
-                update: {
-                    serviceRecordCaseId: record.id,
-                    employeeId: schedule.primaryEmployeeId,
-                    employeeNameSnapshot: schedule.primaryEmployee.name,
-                    employeePhoneSnapshot: schedule.primaryEmployee.phone,
-                    startDate: schedule.startDate,
-                    endDate: schedule.endDate,
-                },
+        const assignments = scheduleIds.length ? await db.service_record_assignment.findMany({ where: caseScope }) : [];
+        let assignmentChanged = false;
+        for (const { schedule, employee } of ownedSchedules) {
+            const assignment = assignments.find(({ scheduleId }) => scheduleId === schedule.id);
+            if (!employee && !assignment) continue;
+            const data = {
+                employeeId: employee?.id ?? null,
+                employeeNameSnapshot: employee?.name ?? assignment?.employeeNameSnapshot ?? "",
+                employeePhoneSnapshot: employee ? employee.phone : assignment?.employeePhoneSnapshot ?? null,
+                startDate: schedule.startDate,
+                endDate: schedule.endDate,
+            };
+            if (!assignment) {
+                if (babyId !== null && !params.canCreateBabyArtifacts) continue;
+                await db.service_record_assignment.create({ data: { ...caseScope, scheduleId: schedule.id, ...data } });
+                assignmentChanged = true;
+            } else if (assignment.employeeId !== data.employeeId
+                || assignment.employeeNameSnapshot !== data.employeeNameSnapshot
+                || assignment.employeePhoneSnapshot !== data.employeePhoneSnapshot
+                || isoDate(assignment.startDate) !== isoDate(data.startDate)
+                || isoDate(assignment.endDate) !== isoDate(data.endDate)) {
+                await db.service_record_assignment.update({ where: { id: assignment.id, ...caseScope }, data });
+                assignmentChanged = true;
+            }
+        }
+
+        if (scheduleIds.length > 0 && legacyArtifacts) {
+            const unresolved = { branchId, scheduleId: { in: scheduleIds }, serviceRecordCaseId: null };
+            const linkedHeaders = await db.service_record.findMany({ where: caseScope, select: { scheduleId: true } });
+            await db.service_record.updateMany({
+                where: { ...unresolved, scheduleId: { in: scheduleIds, notIn: linkedHeaders.map(({ scheduleId }) => scheduleId) } },
+                data: { serviceRecordCaseId },
             });
+            await db.service_record_token.updateMany({ where: unresolved, data: { serviceRecordCaseId } });
+            await db.eformsign_doc.updateMany({
+                where: {
+                    branchId, employeeScheduleId: { in: scheduleIds }, serviceRecordCaseId: null,
+                    documentKind: "service_record_snapshot", revisionId: null,
+                },
+                data: { serviceRecordCaseId },
+            });
+            await this.linkLegacyDays(serviceRecordCaseId, schedules, db, branchId);
         }
-
-        const scheduleIds = client.employeeSchedules.map((schedule) => schedule.id);
-        if (scheduleIds.length > 0) {
-            await Promise.all([
-                db.service_record.updateMany({
-                    where: { scheduleId: { in: scheduleIds }, branchId },
-                    data: { serviceRecordCaseId: record.id },
-                }),
-                db.service_record_token.updateMany({
-                    where: { scheduleId: { in: scheduleIds }, branchId },
-                    data: { serviceRecordCaseId: record.id },
-                }),
-                db.eformsign_doc.updateMany({
+        if (scheduleIds.length > 0 && babyId !== null && params.canCreateBabyArtifacts) {
+            const headers = await db.service_record.findMany({ where: caseScope, select: { scheduleId: true } });
+            const missing = ownedSchedules.flatMap(({ schedule, employee }) =>
+                !headers.some(({ scheduleId }) => scheduleId === schedule.id) && (!schedule.replaced || employee)
+                    ? [schedule.id] : []);
+            if (missing.length) {
+                await db.service_record.createMany({ data: missing.map((scheduleId) => ({ ...caseScope, scheduleId })) });
+            }
+        }
+        if (client.endDate) {
+            const tokenExpiresAt = getServiceRecordTokenExpiresAt(client.endDate);
+            const { firstAllocationAt } = params;
+            const expiryCandidates: Prisma.service_record_tokenWhereInput[] | undefined = firstAllocationAt ? [
+                { createdAt: { gte: firstAllocationAt } },
+                { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } },
+            ] : undefined;
+            // The retained scalar link keeps its original expiry until the bound case end date moves later.
+            if (expiryCandidates && firstAllocationAt && babyId && existing?.endDate
+                && client.endDate > existing.endDate && !terminated && !existing.finalizedAt) {
+                const currentSchedule = schedules.filter(({ replaced, terminatedAt }) => !replaced && !terminatedAt)
+                    .sort((left, right) => right.id - left.id)[0];
+                const owner = currentSchedule && await db.service_record_baby_assignment.findFirst({
                     where: {
-                        branchId,
-                        employeeScheduleId: { in: scheduleIds },
-                        documentKind: "service_record_snapshot",
+                        branchId, clientId, babyId, scheduleId: currentSchedule.id,
+                        activeOwner: true, endedAt: null, teamSlot: { active: true },
+                        employee: { branchId, deletedAt: null },
                     },
-                    data: { serviceRecordCaseId: record.id },
-                }),
-            ]);
-            await this.linkLegacyDays(record.id, client.employeeSchedules, db, branchId);
-        }
-
-        if (tokenExpiresAt) {
-            // Raise expiresAt to the new grace-adjusted value, but never lower it —
-            // a later-reissued token (see resolveExpiry in service-record-link.service.ts)
-            // may already carry a further-out expiresAt and must not be clawed back.
+                    select: { employeeId: true, employee: { select: { phone: true } } },
+                });
+                const phone = recordLinkPhone(owner?.employee.phone);
+                if (currentSchedule && owner && phone) {
+                    expiryCandidates.push({
+                        scheduleId: currentSchedule.id, employeeId: owner.employeeId, expectedPhoneHash: recordLinkHash(phone),
+                        createdAt: { lt: firstAllocationAt }, expiresAt: { gt: new Date() },
+                    });
+                }
+            }
             await db.service_record_token.updateMany({
                 where: {
-                    serviceRecordCaseId: record.id,
-                    branchId,
-                    active: true,
-                    revokedAt: null,
-                    expiresAt: { lt: tokenExpiresAt },
+                    ...caseScope, active: true, revokedAt: null, expiresAt: { lt: tokenExpiresAt },
+                    ...(expiryCandidates ? { OR: expiryCandidates } : {}),
                 },
                 data: { expiresAt: tokenExpiresAt },
             });
         }
+        const calendar = sessionCount === null ? await resolveCalendar() : undefined;
+        return this.recompute(serviceRecordCaseId, tx, calendar, {
+            preserveVersion: !!existing && !caseChanged && !assignmentChanged,
+        });
+    }
 
-        return this.recompute(record.id, tx, calendar);
+    async linkLegacyCaseToBaby(
+        params: { branchId: string; clientId: number; caseId: string; babyId: string },
+        tx?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
+    ): Promise<{ caseId: string; babyId: string }> {
+        if (tx) return this.adoptLegacyCase(tx, params, calendar);
+        const { branchId, clientId, caseId } = params;
+        const target = await resolveServiceRecordCaseTarget(this.prisma, { branchId, clientId, caseId });
+        if (target.kind !== "resolved") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        const resolvedCalendar = calendar ?? await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        return this.prisma.$transaction((transaction) => this.adoptLegacyCase(transaction, params, resolvedCalendar));
+    }
+
+    private async adoptLegacyCase(
+        tx: Prisma.TransactionClient,
+        params: { branchId: string; clientId: number; caseId: string; babyId: string },
+        calendar?: KrBusinessDayCalendar,
+    ) {
+        const { branchId, clientId, caseId } = params;
+        const scope = { branchId, clientId };
+        const found = await resolveServiceRecordCaseTarget(tx, { ...scope, caseId });
+        if (found.kind !== "resolved") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        await lockServiceRecordWriteSet(tx, scope);
+        const target = await resolveServiceRecordCaseTarget(tx, { ...scope, caseId });
+        if (target.kind !== "resolved") throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        const [baby] = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT id FROM client_baby
+            WHERE branch_id = ${branchId}::uuid AND client_id = ${clientId} AND id::text = ${params.babyId.toLowerCase()} AND active
+            FOR UPDATE
+        `);
+        if (!baby || target.babyCount === null) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        const result = { caseId: target.caseId, babyId: baby.id };
+        if (target.babyId === baby.id) return result;
+        if (target.babyId !== null || await tx.service_record_case.count({ where: { ...scope, babyId: baby.id } })) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        const changed = await tx.service_record_case.updateMany({
+            where: { ...scope, id: target.caseId, babyId: null },
+            data: { babyId: baby.id },
+        });
+        if (changed.count !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        await this.ensureAllForClient(clientId, tx, calendar);
+        return result;
     }
 
     async validatePeriodChange(params: {
         clientId: number;
+        branchId?: string;
         startDate?: Date | null;
         endDate?: Date | null;
         duration?: number | null;
@@ -655,13 +760,34 @@ export class ServiceRecordLifecycleService {
         startDateChangeMode?: StartDateChangeMode;
     }, tx?: Prisma.TransactionClient): Promise<StartDateChangeDecision | null> {
         const db = tx ?? this.prisma;
-        const record = await db.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            include: {
-                days: { select: { serviceDate: true, locked: true, caseSessionIndex: true, sessionIndex: true } },
-            },
+        const records = await db.service_record_case.findMany({
+            where: { clientId: params.clientId, branchId: params.branchId },
+            include: { days: { select: { serviceDate: true, locked: true, caseSessionIndex: true, sessionIndex: true } } },
+            orderBy: { id: "asc" },
         });
-        if (!record) return null;
+        const decisions = records.flatMap((record) => {
+            const decision = this.validateCasePeriodChange(record, params);
+            return decision ? [{ caseId: record.id, ...decision }] : [];
+        });
+        const first = decisions[0];
+        if (!first) return null;
+        return {
+            mode: first.mode,
+            previousStartDate: first.previousStartDate,
+            recordedSessionCount: decisions.reduce((total, decision) => total + decision.recordedSessionCount, 0),
+            ...(records.length > 1 ? { cases: decisions } : {}),
+        };
+    }
+
+    private validateCasePeriodChange(
+        record: Pick<ServiceRecordCaseRecord, "status" | "startDate" | "endDate" | "requiredSessionCount"> & {
+            days: Array<{ serviceDate: Date; locked: boolean; caseSessionIndex: number | null; sessionIndex: number }>;
+        },
+        params: {
+            startDate?: Date | null; endDate?: Date | null; duration?: number | null;
+            now?: Date; startDateChangeMode?: StartDateChangeMode;
+        },
+    ): StartDateChangeDecision | null {
         const now = params.now ?? new Date();
 
         if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status)) {
@@ -809,7 +935,7 @@ export class ServiceRecordLifecycleService {
                 || currentDocument.branchId !== params.branchId
                 || (
                     currentDocument.serviceRecordCaseId !== null
-                    && currentDocument.serviceRecordCaseId !== lockedWriteSet.caseId
+                    && !lockedWriteSet.caseIds.includes(currentDocument.serviceRecordCaseId)
                 )
             ) {
                 return false;
@@ -820,7 +946,7 @@ export class ServiceRecordLifecycleService {
                 clientId: params.clientId,
                 documentId: params.documentId,
                 currentDocument,
-                caseId: lockedWriteSet.caseId,
+                caseIds: lockedWriteSet.caseIds,
             })) return false;
 
             await this.syncEndDateFromContractInTransaction(params, tx, calendar);
@@ -910,8 +1036,8 @@ export class ServiceRecordLifecycleService {
                     currentDocument.clientId !== params.clientId
                     || currentDocument.branchId !== params.branchId
                     || (
-                        (currentDocument.serviceRecordCaseId ?? null) !== null
-                        && (currentDocument.serviceRecordCaseId ?? null) !== lockedWriteSet?.caseId
+                        currentDocument.serviceRecordCaseId != null
+                        && !lockedWriteSet?.caseIds.includes(currentDocument.serviceRecordCaseId)
                     )
                 )
             ) {
@@ -931,7 +1057,7 @@ export class ServiceRecordLifecycleService {
                         serviceRecordCaseId: currentDocument.serviceRecordCaseId ?? null,
                         revisionId: currentDocument.revisionId ?? null,
                     },
-                    caseId: lockedWriteSet?.caseId ?? null,
+                    caseIds: lockedWriteSet?.caseIds ?? [],
                 })
             ) return false;
 
@@ -959,7 +1085,7 @@ export class ServiceRecordLifecycleService {
                 serviceRecordCaseId: string | null;
                 revisionId: string | null;
             };
-            caseId: string | null;
+            caseIds: string[];
         },
     ): Promise<boolean> {
         const clients = await tx.$queryRaw<Array<{
@@ -1004,7 +1130,15 @@ export class ServiceRecordLifecycleService {
                 : Prisma.empty}
             FOR UPDATE
         `);
-        if (revisionCases.length > 1) return false;
+        if (params.caseIds.length > 1) {
+            // Maternal contracts are household-wide. A document carrying a
+            // case/revision is never allowed to drive a sibling period write.
+            return params.currentDocument.serviceRecordCaseId === null
+                && params.currentDocument.revisionId === null
+                && revisionCases.length === params.caseIds.length
+                && revisionCases.every((record) => record.currentRevisionId === null
+                    && record.currentUsableRevisionId === null && record.currentUsableDocumentVersion === null);
+        }
         const ownerCase = revisionCases[0];
         if (ownerCase) {
             if (
@@ -1015,8 +1149,8 @@ export class ServiceRecordLifecycleService {
                     && ownerCase.id !== params.currentDocument.serviceRecordCaseId
                 )
                 || (
-                    params.caseId !== null
-                    && ownerCase.id !== params.caseId
+                    params.caseIds.length !== 1
+                    || ownerCase.id !== params.caseIds[0]
                 )
             ) return false;
             if (params.currentDocument.revisionId === null) {
@@ -1029,7 +1163,202 @@ export class ServiceRecordLifecycleService {
         }
         return params.currentDocument.revisionId === null
             && params.currentDocument.serviceRecordCaseId === null
-            && params.caseId === null;
+            && params.caseIds.length === 0;
+    }
+
+    async findSnapshotChunkBranchForDocument(documentId: string): Promise<string | null> {
+        const chunk = await this.prisma.service_record_snapshot_chunk.findUnique({
+            where: { eformsignDocumentId: documentId },
+            select: { branchId: true },
+        });
+        return chunk?.branchId ?? null;
+    }
+
+    async evaluateInitialSnapshotTerminalOutcome(params: InitialSnapshotTerminalOutcomeInput): Promise<boolean> {
+        return this.prisma.$transaction(tx =>
+            ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction(params, tx));
+    }
+
+    /** The caller must hold case before state/chunk/doc locks. This method never opens a nested transaction. */
+    static async evaluateInitialSnapshotTerminalOutcomeInTransaction(
+        params: InitialSnapshotTerminalOutcomeInput,
+        tx: Prisma.TransactionClient,
+    ): Promise<boolean> {
+        // The chunk retains its document FK, revision and version after the document is scrubbed.
+        const scopes = await tx.$queryRaw<Array<{ caseId: string; revisionId: string; snapshotVersion: number }>>(Prisma.sql`
+            SELECT service_record_case_id AS "caseId", revision_id AS "revisionId", snapshot_version AS "snapshotVersion"
+            FROM service_record_snapshot_chunk
+            WHERE branch_id = ${params.branchId}::uuid AND document_id = ${params.documentId}
+              AND revision_id IS NOT NULL
+        `);
+        const scope = scopes[0];
+        if (scopes.length !== 1 || !scope) return false;
+        const cases = await tx.$queryRaw<LockedServiceRecordCaseRevisionState[]>(Prisma.sql`
+            SELECT id, client_id AS "clientId", version, current_revision_id AS "currentRevisionId",
+                current_usable_revision_id AS "currentUsableRevisionId",
+                current_usable_document_version AS "currentUsableDocumentVersion"
+            FROM service_record_case
+            WHERE id = ${scope.caseId}::uuid AND branch_id = ${params.branchId}::uuid
+              AND current_revision_id = ${scope.revisionId}::uuid
+              AND status IN ('READY_TO_FINALIZE', 'FINALIZING', 'DOCUMENTS_CREATED', 'FINALIZATION_FAILED', 'COMPLETED')
+            FOR UPDATE
+        `);
+        const owner = cases[0];
+        if (!owner || owner.currentRevisionId !== scope.revisionId) return false;
+        const states = await tx.$queryRaw<Array<{
+            id: string; generation: string; version: number; workflowScope: Prisma.JsonValue;
+            status: string; step: string; lastErrorCode: string | null;
+        }>>(Prisma.sql`
+            SELECT id, generation, version, workflow_scope AS "workflowScope", status, step, last_error_code AS "lastErrorCode"
+            FROM service_record_revision_document_state AS state
+            WHERE branch_id = ${params.branchId}::uuid AND client_id = ${owner.clientId}
+              AND service_record_case_id = ${owner.id}::uuid AND revision_id = ${scope.revisionId}::uuid
+              AND document_version = ${scope.snapshotVersion} AND operation = 'record_snapshot'
+              AND ${newestInitialFinalizationStateSql("state")}
+            FOR UPDATE
+        `);
+        const eligible = states.filter(state => isInitialFinalizationWorkflowScopeForRevision(
+            state.workflowScope, scope.revisionId,
+        ));
+        if (eligible.length !== 1) return false;
+        const state = eligible[0]!;
+        // 삭제로 이미 완료된 기록 전체를 되돌리지 않는다.
+        if (state.status === "completed") return false;
+        const chunks = await tx.$queryRaw<Array<{ documentId: string | null; chunkIndex: number; chunkCount: number }>>(Prisma.sql`
+            SELECT document_id AS "documentId", chunk_index AS "chunkIndex", chunk_count AS "chunkCount"
+            FROM service_record_snapshot_chunk
+            WHERE branch_id = ${params.branchId}::uuid AND service_record_case_id = ${owner.id}::uuid
+              AND revision_id = ${scope.revisionId}::uuid AND snapshot_version = ${scope.snapshotVersion}
+            ORDER BY chunk_index, id FOR UPDATE
+        `);
+        if (!chunks.some(chunk => chunk.documentId === params.documentId)) return false;
+        const documents = await tx.$queryRaw<Array<{
+            documentId: string; statusType: string; voidedAt: Date | null; tombstoneEvaluated: boolean; tombstoneSettled: boolean;
+        }>>(Prisma.sql`
+            SELECT doc.document_id AS "documentId", doc.status_type AS "statusType", doc.voided_at AS "voidedAt",
+                ${initialTombstoneEvaluatedSql} AS "tombstoneEvaluated",
+                ${params.fromSweep ? initialTombstoneSettledSql : Prisma.sql`true`} AS "tombstoneSettled"
+            FROM service_record_snapshot_chunk AS chunk
+            JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id
+            WHERE chunk.branch_id = ${params.branchId}::uuid AND chunk.service_record_case_id = ${owner.id}::uuid
+              AND chunk.revision_id = ${scope.revisionId}::uuid AND chunk.snapshot_version = ${scope.snapshotVersion}
+              AND doc.branch_id = chunk.branch_id
+              AND (doc.revision_id = chunk.revision_id
+                   OR (doc.revision_id IS NULL AND ${eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_TOMBSTONE_STATUSES)}))
+            ORDER BY doc.id
+            FOR UPDATE OF doc
+        `);
+        const document = documents.find(doc => doc.documentId === params.documentId);
+        if (!document) return false;
+        const statusType = normalizeEformsignStatusCode(document.statusType);
+        const deleted = statusType === EFORMSIGN_TOMBSTONE_STATUS;
+        if (!deleted && document.voidedAt === null && !EFORMSIGN_REJECTED_STATUS_CODES.has(statusType)) return false;
+        const capturedStatuses = new Map(params.deletedDocuments?.map(doc => [doc.documentId, normalizeEformsignStatusCode(doc.statusType)]));
+        const tombstones = documents.filter(doc => normalizeEformsignStatusCode(doc.statusType) === EFORMSIGN_TOMBSTONE_STATUS);
+        const completedDeletion = tombstones.some(doc =>
+            EFORMSIGN_COMPLETED_STATUS_CODES.has(capturedStatuses.get(doc.documentId) ?? ""));
+        const safelyCaptured = tombstones.filter(doc => {
+            const code = capturedStatuses.get(doc.documentId);
+            return code !== undefined && code !== EFORMSIGN_TOMBSTONE_STATUS
+                && !EFORMSIGN_COMPLETED_STATUS_CODES.has(code)
+                && (EFORMSIGN_REJECTED_STATUS_CODES.has(code) || EFORMSIGN_IN_PROGRESS_STATUS_CODES.has(code)
+                    || EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES.has(code) || code === "090");
+        });
+        const unknownDeletion = (doc: typeof document) => !doc.tombstoneEvaluated
+            && !safelyCaptured.some(captured => captured.documentId === doc.documentId);
+        // N9-1: 완료 chunk 삭제 증거는 미연결 chunk나 이전 부재 판정보다 우선한다.
+        if (state.lastErrorCode === SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED) return false;
+        const wasFailed = state.status === "failed";
+        // A sibling can be purged after candidate discovery. Check again with the document rows locked.
+        if (params.fromSweep && tombstones.some(doc => !doc.tombstoneSettled
+            && (doc === document || (!wasFailed && unknownDeletion(doc))))) return false;
+        if (!completedDeletion) {
+            if (wasFailed) {
+                if (!deleted || !INITIAL_TERMINAL_PROVIDER_FAILURE_CODES.has(state.lastErrorCode ?? "")) return false;
+            } else if (state.status === "manual_review") {
+                const indexes = new Set(chunks.map(chunk => chunk.chunkIndex));
+                const allLinked = chunks.length > 0 && indexes.size === chunks.length
+                    && chunks.every(chunk => chunk.documentId !== null && chunk.chunkCount === chunks.length
+                        && chunk.chunkIndex >= 1 && chunk.chunkIndex <= chunks.length);
+                if (state.lastErrorCode !== "JOB_CANCELLED_AFTER_DISPATCH" || !allLinked) return false;
+            } else if (state.status !== "processing" || state.step !== "documents_created") {
+                // 발송 중 삭제된 chunk는 documents_created 전환 트랜잭션에서 다시 평가한다.
+                return false;
+            }
+        } else if (!["processing", "manual_review", "failed"].includes(state.status)) return false;
+        // Sweep ordering must not turn an unknown deleted sibling into a ready provider-failure code.
+        const errorCode = completedDeletion ? SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED
+            : (wasFailed ? unknownDeletion(document) : tombstones.some(unknownDeletion))
+                ? SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN
+            : wasFailed ? state.lastErrorCode
+            : !deleted && document.voidedAt !== null ? "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED"
+            : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";
+        const recordEvaluatedTombstones = async (): Promise<number> => {
+            const newlyEvaluated = safelyCaptured.filter(doc => !doc.tombstoneEvaluated);
+            if (newlyEvaluated.length === 0) return 0;
+            return tx.$executeRaw(Prisma.sql`
+                UPDATE service_record_snapshot_chunk AS chunk
+                SET last_error = ${initialTombstoneEvaluationRecordSql}, updated_at = now()
+                FROM eformsign_doc AS doc
+                WHERE chunk.branch_id = ${params.branchId}::uuid AND chunk.service_record_case_id = ${owner.id}::uuid
+                  AND chunk.revision_id = ${scope.revisionId}::uuid AND chunk.snapshot_version = ${scope.snapshotVersion}
+                  AND doc.branch_id = chunk.branch_id AND doc.document_id = chunk.document_id
+                  AND doc.document_id IN (${Prisma.join(newlyEvaluated.map(doc => doc.documentId))})
+            `);
+        };
+        if (wasFailed && errorCode === state.lastErrorCode) return (await recordEvaluatedTombstones()) > 0;
+        const changed = await tx.$executeRaw(Prisma.sql`
+            UPDATE service_record_revision_document_state
+            SET status = 'failed', step = 'failed', last_error_code = ${errorCode}, next_attempt_at = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = ${state.id}::uuid AND generation = ${state.generation} AND version = ${state.version}
+        `);
+        if (changed !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        const caseChanged = await tx.$executeRaw(Prisma.sql`
+            UPDATE service_record_case
+            SET status = 'FINALIZATION_FAILED', last_error = ${errorCode}, documents_completed_at = NULL,
+                current_usable_revision_id = NULL, current_usable_document_version = NULL, next_attempt_at = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = ${owner.id}::uuid AND branch_id = ${params.branchId}::uuid
+              AND current_revision_id = ${scope.revisionId}::uuid AND version = ${owner.version}
+              AND status IN ('READY_TO_FINALIZE', 'FINALIZING', 'DOCUMENTS_CREATED', 'FINALIZATION_FAILED', 'COMPLETED')
+        `);
+        if (caseChanged !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        if (INITIAL_TERMINAL_PROVIDER_FAILURE_CODES.has(errorCode ?? "")) await recordEvaluatedTombstones();
+        return true;
+    }
+
+    async healInitialSnapshotTerminalOutcomes(options: { branchId?: string; shouldContinue?: () => boolean } = {}): Promise<number> {
+        const tombstoneSql = eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_TOMBSTONE_STATUSES);
+        const candidates = await this.prisma.$queryRaw<Array<{ branchId: string; documentId: string }>>(Prisma.sql`
+            SELECT DISTINCT chunk.branch_id AS "branchId", chunk.document_id AS "documentId"
+            FROM service_record_snapshot_chunk AS chunk
+            JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id AND doc.branch_id = chunk.branch_id
+            JOIN service_record_revision_document_state AS state
+              ON state.service_record_case_id = chunk.service_record_case_id AND state.branch_id = chunk.branch_id
+              AND state.revision_id = chunk.revision_id AND state.document_version = chunk.snapshot_version
+            JOIN service_record_case AS owner ON owner.id = chunk.service_record_case_id
+              AND owner.current_revision_id = chunk.revision_id
+            WHERE state.operation = 'record_snapshot'
+              AND state.workflow_scope->>'generationKind' = 'INITIAL_FINALIZATION'
+              AND ${newestInitialFinalizationStateSql("state")}
+              AND (NOT ${tombstoneSql} OR ${initialTombstoneSettledSql})
+              AND (
+                (state.status IN ('processing', 'manual_review') AND
+                  (${eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_REJECTED_STATUS_CODES)} OR doc.voided_at IS NOT NULL))
+                OR (state.status = 'failed' AND state.last_error_code IN (${Prisma.join([...INITIAL_TERMINAL_PROVIDER_FAILURE_CODES])})
+                  AND ${tombstoneSql}
+                  AND NOT ${initialTombstoneEvaluatedSql})
+              )
+              ${options.branchId ? Prisma.sql`AND chunk.branch_id = ${options.branchId}::uuid` : Prisma.empty}
+            ORDER BY "branchId", "documentId"
+        `);
+        let healed = 0;
+        for (const candidate of candidates) {
+            if (options.shouldContinue && !options.shouldContinue()) break;
+            if (await this.evaluateInitialSnapshotTerminalOutcome({ ...candidate, fromSweep: true })) healed += 1;
+        }
+        return healed;
     }
 
     async failInitialServiceRecordSnapshotInTransaction(
@@ -1070,16 +1399,17 @@ export class ServiceRecordLifecycleService {
             status: string; step: string;
         }>>(Prisma.sql`
             SELECT id, generation, version, workflow_scope AS "workflowScope", status, step
-            FROM service_record_revision_document_state
+            FROM service_record_revision_document_state AS state
             WHERE branch_id = ${params.branchId}::uuid AND client_id = ${owner.clientId}
               AND service_record_case_id = ${owner.id}::uuid AND revision_id = ${trigger.revisionId}::uuid
               AND document_version = ${trigger.snapshotVersion} AND operation = 'record_snapshot'
+              AND ${newestInitialFinalizationStateSql("state")}
             FOR UPDATE
         `);
         const eligible = states.filter((state) =>
             ((state.status === "processing" && state.step === "documents_created")
                 || (state.status === "completed" && state.step === "completed"))
-            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(revisionId)));
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, revisionId));
         if (eligible.length !== 1) return false;
         const state = eligible[0];
         if (!state) return false;
@@ -1201,18 +1531,19 @@ export class ServiceRecordLifecycleService {
                     status: string; step: string;
                 }>>(Prisma.sql`
                     SELECT id, generation, version, workflow_scope AS "workflowScope", status, step
-                    FROM service_record_revision_document_state
+                    FROM service_record_revision_document_state AS state
                     WHERE branch_id = ${params.branchId}::uuid
                       AND client_id = ${lockedCase.clientId}
                       AND service_record_case_id = ${trigger.serviceRecordCaseId}::uuid
                       AND revision_id = ${triggerRevisionId}::uuid
                       AND document_version = ${triggerSnapshotVersion}
                       AND operation = 'record_snapshot'
+                      AND ${newestInitialFinalizationStateSql("state")}
                     FOR UPDATE
                 `);
                 const matching = states.filter((state) => state.status === "processing"
                     && state.step === "documents_created"
-                    && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(triggerRevisionId)));
+                    && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, triggerRevisionId));
                 if (matching.length !== 1) return false;
                 initialState = matching[0]!;
             }
@@ -1252,6 +1583,15 @@ export class ServiceRecordLifecycleService {
             WHERE branch_id = ${params.branchId}::uuid
               AND service_record_case_id = ${trigger.serviceRecordCaseId}::uuid
               AND document_kind = ${EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT}
+              ${trigger.revisionId ? Prisma.sql`AND NOT EXISTS (
+                  SELECT 1 FROM service_record_revision_document_state AS newest_state
+                  WHERE newest_state.branch_id = ${params.branchId}::uuid
+                    AND newest_state.service_record_case_id = ${trigger.serviceRecordCaseId}::uuid
+                    AND newest_state.revision_id = ${trigger.revisionId ?? null}::uuid
+                    AND ${initialFinalizationStateSql("newest_state")}
+                    AND ${newestInitialFinalizationStateSql("newest_state")}
+                    AND newest_state.document_version IS DISTINCT FROM ${trigger.snapshotVersion ?? null}::int
+              )` : Prisma.empty}
             ORDER BY id ASC
             FOR UPDATE
         `);
@@ -1338,6 +1678,7 @@ export class ServiceRecordLifecycleService {
             }
         }
         await this.validatePeriodChange({
+            branchId: params.branchId,
             clientId: params.clientId,
             endDate: params.endDate,
         }, tx);
@@ -1360,12 +1701,11 @@ export class ServiceRecordLifecycleService {
                     allowHolidayService: true,
                 },
             });
-            const existingCase = typeof tx.service_record_case?.findUnique === "function"
-                ? await tx.service_record_case.findUnique({
-                    where: { clientId: params.clientId },
-                    select: { id: true, requiredSessionCount: true },
-                })
-                : undefined;
+            const cases = await tx.service_record_case.findMany({
+                where: { branchId: params.branchId, clientId: params.clientId },
+                select: { id: true },
+                take: 1,
+            });
             clientCalendar = withClientServiceDays(calendar, currentClient);
             // A null client duration on a case that already has persisted
             // service-record state is legacy evidence, not permission to
@@ -1373,7 +1713,7 @@ export class ServiceRecordLifecycleService {
             // visible for preview/repair instead of changing billing facts.
             // The no-case path retains the historical initialization needed
             // when a contract completes a client period for the first time.
-            if (currentClient && currentClient.duration === null && (existingCase === null || existingCase === undefined)) {
+            if (currentClient && currentClient.duration === null && cases.length === 0) {
                 if (!currentClient.startDate) {
                     duration = null;
                 } else {
@@ -1407,7 +1747,7 @@ export class ServiceRecordLifecycleService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
-        await this.ensureForClient(params.clientId, tx, clientCalendar);
+        await this.ensureAllForClient(params.clientId, tx, clientCalendar);
     }
 
     private hasCompleteServiceRecordWriteLockSurface(
@@ -1430,7 +1770,7 @@ export class ServiceRecordLifecycleService {
     ): Promise<{
         scheduleIds: number[];
         employeeIds: number[];
-        caseId: string | null;
+        caseIds: string[];
     } | null> {
         const client = await tx.client.findUnique({
             where: { id: params.clientId },
@@ -1448,17 +1788,9 @@ export class ServiceRecordLifecycleService {
             },
             orderBy: { id: "asc" },
         });
-        const existing = await tx.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            select: { id: true, branchId: true, clientId: true },
-        });
-        const caseId = existing?.branchId === params.branchId && existing.clientId === params.clientId
-            ? existing.id
-            : undefined;
         const result = await lockServiceRecordWriteSet(tx, {
             branchId: params.branchId,
             clientId: params.clientId,
-            caseId,
             expectedScheduleIds: schedules.map((schedule) => schedule.id),
             scheduleIds: schedules.map((schedule) => schedule.id),
             employeeIds: schedules.flatMap((schedule) => [
@@ -1474,20 +1806,11 @@ export class ServiceRecordLifecycleService {
         if (!rereadClient || (rereadClient.branchId !== null && rereadClient.branchId !== params.branchId)) {
             throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
         }
-        const rereadCase = await tx.service_record_case.findUnique({
-            where: { clientId: params.clientId },
-            select: { id: true, branchId: true, clientId: true },
+        const cases = await tx.service_record_case.findMany({
+            where: { branchId: params.branchId, clientId: params.clientId },
+            select: { id: true },
         });
-        if (
-            rereadCase
-            && (rereadCase.branchId !== params.branchId || rereadCase.clientId !== params.clientId)
-        ) {
-            throw new ConflictException({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
-        }
-        return {
-            ...result,
-            caseId: rereadCase?.id ?? null,
-        };
+        return { ...result, caseIds: cases.map(({ id }) => id) };
     }
 
     async recompute(
@@ -1645,7 +1968,8 @@ export class ServiceRecordLifecycleService {
         const effectiveFinalizationDueAt = record.endDate
             ? getServiceRecordFinalizationDueAt(record.endDate)
             : null;
-        const hasActiveAssignment = record.assignments.some((assignment) => assignment.schedule && !assignment.schedule.replaced);
+        const hasActiveAssignment = record.assignments.some((assignment) =>
+            assignment.schedule && !assignment.schedule.replaced && assignment.employeeId !== null);
         let status: ServiceRecordCaseStatus;
 
         if (!record.startDate || !record.endDate || usableRequired <= 0) {
@@ -1679,10 +2003,15 @@ export class ServiceRecordLifecycleService {
         });
     }
 
-    async markTerminated(clientId: number, tx?: Prisma.TransactionClient): Promise<void> {
+    async markTerminated(clientId: number, tx?: Prisma.TransactionClient, branchId?: string): Promise<void> {
         const db = tx ?? this.prisma;
         await db.service_record_case.updateMany({
-            where: { clientId, status: { notIn: [...IMMUTABLE_FINALIZATION_STATUSES] } },
+            where: {
+                branchId,
+                clientId,
+                OR: [{ babyId: null }, { baby: { is: { active: true } } }],
+                status: { notIn: [...IMMUTABLE_FINALIZATION_STATUSES] },
+            },
             data: {
                 status: SERVICE_RECORD_CASE_STATUS.TERMINATED_REVIEW_REQUIRED,
                 version: { increment: 1 },
@@ -1722,7 +2051,9 @@ export class ServiceRecordLifecycleService {
         const scheduleIds = schedules.map((schedule) => schedule.id);
         const rows = await db.service_record_day.findMany({
             where: {
+                branchId,
                 scheduleId: { in: scheduleIds },
+                AND: [{ OR: [{ serviceRecordCaseId }, { serviceRecordCaseId: null }] }],
                 OR: [
                     { serviceRecordCaseId: null },
                     { caseSessionIndex: null },

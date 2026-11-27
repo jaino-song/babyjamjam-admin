@@ -48,4 +48,15 @@ describe("useIssueContract payment date", () => {
     act(() => result.current(client));
     expect(useFormStore.getState().paymentDate).toBe(todayIsoDate());
   });
+
+  it("uses the saved date for a new contract or unknown reissue and prefers an explicit historical date", () => {
+    const { result } = renderHook(() => useIssueContract());
+    const withSavedDate = { ...client, copaymentReceivedDate: "2026-11-20" };
+    act(() => result.current(withSavedDate));
+    expect(useFormStore.getState().paymentDate).toBe("2026-11-20");
+    act(() => result.current(withSavedDate, {}));
+    expect(useFormStore.getState().paymentDate).toBe("2026-11-20");
+    act(() => result.current(withSavedDate, { paymentDate: "2026-11-21" }));
+    expect(useFormStore.getState().paymentDate).toBe("2026-11-21");
+  });
 });

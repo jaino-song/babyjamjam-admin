@@ -3,6 +3,7 @@ import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
 import { createHash } from "node:crypto";
 import { ContractDataDto } from "application/dto/contract.dto";
+import { parseContractCopaymentReceivedDate } from "application/utils/contract-copayment-date";
 import { EformsignService } from "application/services/eformsign.service";
 import {
     EformsignTemplateWorkflowError,
@@ -37,7 +38,7 @@ import { ContractClientAssignmentGuardService } from "application/services/contr
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
 import { eformsignExpiryDateFromRemainingDays } from "domain/utils/eformsign-expiry-date";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
-import type { ContractWorkerContext } from "domain/repositories/eformsign-contract-recovery.repository.interface";
+import { ContractRecoveryError, type ContractWorkerContext } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { assertRequiredPhone, InvalidPhoneError } from "application/utils/normalize-phone";
 import {
@@ -147,6 +148,8 @@ export interface DispatchHeadlessParams {
     clientId: number;
     progressId?: string;
     force?: boolean;
+    /** Set only by the synchronous creation controller. */
+    saveCopaymentReceivedDate?: boolean;
     onProgress?: (step: EformsignHeadlessProgressStep) => void | Promise<void>;
 }
 
@@ -222,6 +225,9 @@ export class DispatchDocumentHeadlessUsecase {
         principal: EformsignProviderPrincipal,
         worker?: ContractWorkerContext,
     ): Promise<DispatchHeadlessResult> {
+        const explicitDate = parseContractCopaymentReceivedDate(params.contractData);
+        const dateToSave = params.saveCopaymentReceivedDate && !worker ? explicitDate : undefined;
+        if (dateToSave && !this.dispatchBoundary) throw new ContractRecoveryError("RECOVERY_UNAVAILABLE", 503);
         const invalidPhoneField = invalidContractPhoneField(params.contractData);
         if (invalidPhoneField) {
             const invalidPhoneReason = invalidPhoneField === "customerContact"
@@ -236,13 +242,13 @@ export class DispatchDocumentHeadlessUsecase {
             };
         }
         if (!this.operationLock) {
-            return this.executeUnlocked(branchId, params, principal, undefined, worker);
+            return this.executeUnlocked(branchId, params, principal, undefined, worker, dateToSave);
         }
         const start = Date.now();
         try {
             return await this.operationLock.runExclusive(
                 `create:${branchId}:${params.clientId}`,
-                (lease) => this.executeUnlocked(branchId, params, principal, lease, worker),
+                (lease) => this.executeUnlocked(branchId, params, principal, lease, worker, dateToSave),
             );
         } catch (error) {
             if (error instanceof EformsignOperationAlreadyRunningError) {
@@ -274,6 +280,7 @@ export class DispatchDocumentHeadlessUsecase {
         principal: EformsignProviderPrincipal,
         lease?: EformsignOperationLease,
         worker?: ContractWorkerContext,
+        dateToSave?: Date,
     ): Promise<DispatchHeadlessResult> {
         const start = Date.now();
         let latestProgressStep: EformsignHeadlessProgressStep | undefined;
@@ -352,7 +359,10 @@ export class DispatchDocumentHeadlessUsecase {
                         action: "create",
                         generation,
                         fingerprint,
-                    }, worker, { contractData: params.contractData, force: params.force, workflow });
+                    }, worker, {
+                        contractData: params.contractData, force: params.force, workflow,
+                        ...(dateToSave ? { copaymentReceivedDateToSave: dateToSave } : {}),
+                    });
                 } catch (error) {
                     if (error instanceof ConflictException) {
                         this.progressService.emit(

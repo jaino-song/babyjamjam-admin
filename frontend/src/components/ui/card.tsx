@@ -7,7 +7,7 @@ type DataComponentProps = {
   "data-component"?: string
 }
 
-type CardSourceComponent = "Card" | "SurfaceCard"
+type CardSourceComponent = "Card" | "SurfaceCard" | "InitialDocumentJobDetail"
 
 const CARD_SOURCE_COMPONENT = "Card"
 const CARD_HEADER_SOURCE_COMPONENT = "CardHeader"

@@ -15,8 +15,14 @@ import {
     hasRoomForCaregiverDate,
 } from "application/policies/service-record-caregiver-date.policy";
 import {
+    lockClientForScheduleWrite,
+    lockEmployeesForScheduleWrite,
+} from "application/policies/employee-schedule-invariants.policy";
+import {
+    lockEmployeeSchedulesForWrite,
+    lockServiceRecordAssignmentsForWrite,
     lockServiceRecordCaseForWrite,
-    lockServiceRecordWriteSet,
+    lockServiceRecordDaysForWrite,
 } from "application/policies/service-record-write-lock.policy";
 import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
@@ -42,6 +48,7 @@ import {
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -261,7 +268,10 @@ export class ServiceRecordEntryService {
             schedule.client,
         );
         return {
-            employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
+            employee: { id: ctx.employeeId, name: ctx.employeeName ?? schedule.primaryEmployee.name },
+            babyId: ctx.babyId ?? null,
+            babyRank: ctx.babyRank ?? null,
+            babyCount: ctx.babyCount ?? null,
             client: { id: schedule.client.id, name: schedule.client.name },
             serviceDays: {
                 saturday: schedule.client.allowSaturdayService ?? false,
@@ -320,12 +330,12 @@ export class ServiceRecordEntryService {
                 })
                 : null;
             if (schedule && typeof schedule.clientId === "number") {
-                await lockServiceRecordWriteSet(tx, {
+                await this.lockCaseWriteSet(tx, {
                     branchId: ctx.branchId,
                     clientId: schedule.clientId,
                     caseId: record.id,
                     scheduleIds: [schedule.id],
-                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId, ctx.employeeId],
                 });
                 const rereadSchedule = await tx.employee_schedule.findUnique({
                     where: { id: ctx.scheduleId },
@@ -355,7 +365,7 @@ export class ServiceRecordEntryService {
                     throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
                 }
             }
-            await this.assertTokenStillValid(tx, ctx);
+            await this.assertTokenStillValid(tx, ctx, record.id);
             // The pre-transaction checks above are only an early rejection.
             // The client/case lock can wait behind a submit or finalization,
             // so reread both the case status and locked-day set before the
@@ -398,16 +408,7 @@ export class ServiceRecordEntryService {
                 where: { id: record.id, branchId: ctx.branchId },
                 data: { ...dto, version: { increment: 1 } },
             });
-            await tx.service_record.upsert({
-                where: { scheduleId: ctx.scheduleId, branchId: ctx.branchId },
-                create: {
-                    branchId: ctx.branchId,
-                    scheduleId: ctx.scheduleId,
-                    serviceRecordCaseId: record.id,
-                    ...dto,
-                },
-                update: { serviceRecordCaseId: record.id, ...dto },
-            });
+            await this.saveLegacyHeader(tx, ctx, record, dto);
             await this.lifecycleService.recompute(record.id, tx, calendar);
             return aggregate;
         });
@@ -438,80 +439,11 @@ export class ServiceRecordEntryService {
         const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         let lockedEditOutcome: "edited" | "unchanged" | null = null;
         const saved = await this.prisma.$transaction(async (tx) => {
-            // Discover the assignment before locking. Production rows carry a
-            // client id, so the common policy then locks client -> employees ->
-            // case -> schedule/assignment/day and rereads both owner rows. The
-            // fallback preserves narrow unit-test doubles that expose only the
-            // historical case lock seam.
-            let schedule = await tx.employee_schedule.findUnique({
-                where: { id: ctx.scheduleId },
-                include: { primaryEmployee: true },
-            });
-            if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-            let record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
-            // The client's service-day flags, read with the locked reread so a
-            // concurrent flag change cannot be missed. Absent (branch calendar)
-            // only for legacy test doubles that carry no client ownership.
-            let clientServiceDays: {
-                allowSaturdayService?: boolean | null;
-                allowSundayService?: boolean | null;
-                allowHolidayService?: boolean | null;
-            } | null | undefined;
-            if (typeof schedule.clientId === "number") {
-                await lockServiceRecordWriteSet(tx, {
-                    branchId: ctx.branchId,
-                    clientId: schedule.clientId,
-                    caseId: aggregate.id,
-                    scheduleIds: [schedule.id],
-                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
-                    sessionIndexes: [sessionIndex, sessionIndex - 1],
-                });
-                const rereadSchedule = await tx.employee_schedule.findUnique({
-                    where: { id: ctx.scheduleId },
-                    include: {
-                        primaryEmployee: true,
-                        client: {
-                            select: {
-                                allowSaturdayService: true,
-                                allowSundayService: true,
-                                allowHolidayService: true,
-                            },
-                        },
-                    },
-                });
-                // A replacement commits `replaced=true` under these same locks
-                // while this request may still hold a context resolved before
-                // it. The token proves who was the provider at request start,
-                // so refuse once the schedule is replaced or no longer owned
-                // by the context's employee.
-                if (
-                    !rereadSchedule
-                    || rereadSchedule.clientId !== schedule.clientId
-                    || (
-                        rereadSchedule.branchId !== undefined
-                        && rereadSchedule.branchId !== ctx.branchId
-                    )
-                    || rereadSchedule.replaced === true
-                    || rereadSchedule.primaryEmployeeId !== ctx.employeeId
-                ) {
-                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
-                }
-                schedule = rereadSchedule;
-                clientServiceDays = rereadSchedule.client;
-                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
-            } else {
-                // Serialize all entry writes for this case before reading a
-                // session snapshot when a legacy test adapter omits ownership
-                // fields. Real Prisma transactions never take this branch.
-                const locked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, aggregate.id);
-                if (typeof tx.$queryRaw === "function" && !locked) {
-                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-                }
-                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
-            }
-            // Token lock goes after the write-set lock (documented lock order)
-            // and before any write below.
-            await this.assertTokenStillValid(tx, ctx);
+            const schedule = await this.lockEntrySchedule(tx, ctx, aggregate.id, [sessionIndex, sessionIndex - 1]);
+            const record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            const employeeName = await this.assertTokenStillValid(tx, ctx, aggregate.id)
+                ?? schedule.primaryEmployee.name;
+            const clientServiceDays = schedule.client;
             if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (record.branchId !== ctx.branchId) {
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -754,7 +686,7 @@ export class ServiceRecordEntryService {
                         caseSessionIndex: sessionIndex,
                         serviceRecordDayId: existing.id,
                         employeeId: ctx.employeeId,
-                        employeeNameSnapshot: schedule.primaryEmployee.name,
+                        employeeNameSnapshot: employeeName,
                         before: before as unknown as Prisma.InputJsonValue,
                         after: after as unknown as Prisma.InputJsonValue,
                     },
@@ -772,7 +704,7 @@ export class ServiceRecordEntryService {
                 serviceRecordCaseId: record.id,
                 caseSessionIndex: sessionIndex,
                 employeeId: ctx.employeeId,
-                employeeNameSnapshot: schedule.primaryEmployee.name,
+                employeeNameSnapshot: employeeName,
                 formVersion: record.formVersion,
                 sessionIndex,
                 serviceDate,
@@ -834,71 +766,9 @@ export class ServiceRecordEntryService {
         const aggregate = await this.resolveCase(ctx);
         const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         await this.prisma.$transaction(async (tx) => {
-            // Discover the assignment before locking. Production rows carry a
-            // client id, so the common policy then locks client -> employees ->
-            // case -> schedule/assignment/day and rereads both owner rows. The
-            // fallback preserves narrow unit-test doubles that expose only the
-            // historical case lock seam.
-            let schedule = await tx.employee_schedule.findUnique({
-                where: { id: ctx.scheduleId },
-                include: { primaryEmployee: true },
-            });
-            if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-            let record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
-            if (typeof schedule.clientId === "number") {
-                await lockServiceRecordWriteSet(tx, {
-                    branchId: ctx.branchId,
-                    clientId: schedule.clientId,
-                    caseId: aggregate.id,
-                    scheduleIds: [schedule.id],
-                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
-                    sessionIndexes: [sessionIndex],
-                });
-                const rereadSchedule = await tx.employee_schedule.findUnique({
-                    where: { id: ctx.scheduleId },
-                    include: {
-                        primaryEmployee: true,
-                        client: {
-                            select: {
-                                allowSaturdayService: true,
-                                allowSundayService: true,
-                                allowHolidayService: true,
-                            },
-                        },
-                    },
-                });
-                // A replacement commits `replaced=true` under these same locks
-                // while this request may still hold a context resolved before
-                // it. The token proves who was the provider at request start,
-                // so refuse once the schedule is replaced or no longer owned
-                // by the context's employee.
-                if (
-                    !rereadSchedule
-                    || rereadSchedule.clientId !== schedule.clientId
-                    || (
-                        rereadSchedule.branchId !== undefined
-                        && rereadSchedule.branchId !== ctx.branchId
-                    )
-                    || rereadSchedule.replaced === true
-                    || rereadSchedule.primaryEmployeeId !== ctx.employeeId
-                ) {
-                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
-                }
-                schedule = rereadSchedule;
-                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
-            } else {
-                // Serialize all entry writes for this case before reading a
-                // session snapshot when a legacy test adapter omits ownership
-                // fields. Real Prisma transactions never take this branch.
-                const locked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, aggregate.id);
-                if (typeof tx.$queryRaw === "function" && !locked) {
-                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-                }
-                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
-            }
-            // Token lock goes after the write-set lock (documented lock order)
-            // and before any write below.
-            await this.assertTokenStillValid(tx, ctx);
+            const schedule = await this.lockEntrySchedule(tx, ctx, aggregate.id, [sessionIndex]);
+            const record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            await this.assertTokenStillValid(tx, ctx, aggregate.id);
             if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             if (record.branchId !== ctx.branchId) {
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -947,16 +817,19 @@ export class ServiceRecordEntryService {
     /** Backward-compatible completion acknowledgement. Snapshot creation is scheduler-owned. */
     async finalize(ctx: ServiceRecordTokenContext) {
         const record = await this.resolveCase(ctx);
-        // `recompute` opens its own transaction with its own lock order, so the
-        // token is checked in a separate short transaction right before it. This
-        // narrows, but does not serialise, the window between the check and the
-        // recompute's writes.
-        await this.prisma.$transaction(async (tx) => {
-            await this.assertTokenStillValid(tx, ctx);
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
+        const updated = await this.prisma.$transaction(async (tx) => {
+            if (typeof record.clientId === "number") {
+                await this.lockCaseWriteSet(tx, {
+                    branchId: ctx.branchId, clientId: record.clientId, caseId: record.id,
+                    scheduleIds: [ctx.scheduleId], employeeIds: [ctx.employeeId],
+                });
+            }
+            await this.assertTokenStillValid(tx, ctx, record.id);
+            return this.lifecycleService.recompute(record.id, tx, calendar);
         });
-        const updated = await this.lifecycleService.recompute(record.id);
         const documentIds = await this.prisma.eformsign_doc.findMany({
-            where: { serviceRecordCaseId: record.id, documentKind: "service_record_snapshot" },
+            where: { branchId: ctx.branchId, serviceRecordCaseId: record.id, documentKind: "service_record_snapshot" },
             select: { documentId: true },
             orderBy: { snapshotChunkIndex: "asc" },
         });
@@ -970,52 +843,125 @@ export class ServiceRecordEntryService {
         };
     }
 
-    /**
-     * Re-check the caregiver access token inside a write transaction. The guard
-     * resolves it once per request, so an admin revoke/replace or an expiry that
-     * lands between that check and the write would otherwise still commit.
-     *
-     * The token row is locked (`FOR UPDATE`) so a concurrent revoke/replace
-     * serialises with this write. Call it AFTER the service-record write-set /
-     * case lock: `service-record-write-lock.policy` fixes client -> employees ->
-     * case -> schedules/assignments/days, and other schedule writers take
-     * those locks before updating token rows, so locking the token earlier here
-     * would invert that order.
-     *
-     * Refuses exactly as the guard does for an unusable token. The current-provider
-     * / phone check stays in `resolveAccess`; only row state and ownership are
-     * re-checked here.
-     */
-    private async assertTokenStillValid(
+    private async lockCaseWriteSet(
+        tx: Prisma.TransactionClient,
+        { branchId, clientId, caseId, scheduleIds, employeeIds, sessionIndexes }: {
+            branchId: string;
+            clientId: number;
+            caseId: string;
+            scheduleIds: number[];
+            employeeIds: (number | null)[];
+            sessionIndexes?: number[];
+        },
+    ): Promise<void> {
+        // Entry already has an exact case ID from the guard. Use the shared
+        // row locks in their normal order without discovering a case by client.
+        const clientLocked = await lockClientForScheduleWrite(tx, branchId, clientId);
+        await lockEmployeesForScheduleWrite(tx, branchId, employeeIds);
+        const caseLocked = await lockServiceRecordCaseForWrite(tx, branchId, caseId, clientId);
+        if (typeof tx.$queryRaw === "function" && (!clientLocked || !caseLocked)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        await lockEmployeeSchedulesForWrite(tx, branchId, scheduleIds);
+        await lockServiceRecordAssignmentsForWrite(tx, branchId, caseId, scheduleIds);
+        await lockServiceRecordDaysForWrite(tx, branchId, caseId, sessionIndexes);
+    }
+
+    private async lockEntrySchedule(
         tx: Prisma.TransactionClient,
         ctx: ServiceRecordTokenContext,
+        caseId: string,
+        sessionIndexes: number[],
+    ) {
+        const schedule = await tx.employee_schedule.findUnique({
+            where: { id: ctx.scheduleId },
+            include: { primaryEmployee: true },
+        });
+        if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (typeof schedule.clientId !== "number") {
+            const locked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, caseId);
+            if (typeof tx.$queryRaw === "function" && !locked) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+            return { ...schedule, client: undefined };
+        }
+        await this.lockCaseWriteSet(tx, {
+            branchId: ctx.branchId,
+            clientId: schedule.clientId,
+            caseId,
+            scheduleIds: [schedule.id],
+            employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId, ctx.employeeId],
+            sessionIndexes,
+        });
+        const current = await tx.employee_schedule.findUnique({
+            where: { id: ctx.scheduleId },
+            include: {
+                primaryEmployee: true,
+                client: { select: { allowSaturdayService: true, allowSundayService: true, allowHolidayService: true } },
+            },
+        });
+        if (!current || current.clientId !== schedule.clientId
+            || (current.branchId !== undefined && current.branchId !== ctx.branchId)
+            || current.replaced || (!ctx.babyId && current.primaryEmployeeId !== ctx.employeeId)) {
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        }
+        return current;
+    }
+
+    private async saveLegacyHeader(
+        tx: Prisma.TransactionClient,
+        ctx: ServiceRecordTokenContext,
+        record: { id: string; clientId: number | null },
+        dto: SaveServiceHeaderDto,
     ): Promise<void> {
-        // Narrow unit doubles that expose no token lock keep the old behaviour;
-        // the real token service always has it.
-        if (typeof this.tokenService.lockAccessTokenForWrite !== "function") return;
-        const token = await this.tokenService.lockAccessTokenForWrite(tx, ctx.tokenId);
-        if (
-            !token
-            || !isServiceRecordAccessTokenUsable(token)
-            || token.scheduleId !== ctx.scheduleId
-            || token.employeeId !== ctx.employeeId
-        ) {
-            this.logger.warn("Service record write refused: access token no longer valid inside transaction");
-            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        const scope = { branchId: ctx.branchId, scheduleId: ctx.scheduleId };
+        const target = { ...scope, serviceRecordCaseId: record.id };
+        const select = { id: true, serviceRecordCaseId: true };
+        let existing = await tx.service_record.findFirst({ where: target, select });
+        if (!existing && record.clientId != null) {
+            const legacy = await tx.service_record.findFirst({
+                where: { ...scope, serviceRecordCaseId: null }, select,
+            });
+            if (legacy) {
+                const singleton = await resolveServiceRecordCaseTarget(tx, { branchId: ctx.branchId, clientId: record.clientId });
+                if (singleton.kind === "resolved" && singleton.caseId === record.id) existing = legacy;
+            }
+        }
+        if (existing) {
+            await tx.service_record.update({
+                where: { id: existing.id, ...scope, serviceRecordCaseId: existing.serviceRecordCaseId },
+                data: { ...dto, serviceRecordCaseId: record.id },
+            });
+        } else {
+            await tx.service_record.create({ data: { ...target, ...dto } });
         }
     }
 
+    /** Validate the exact verified session after acquiring client, employee and case locks. */
+    private async assertTokenStillValid(
+        tx: Prisma.TransactionClient,
+        ctx: ServiceRecordTokenContext,
+        caseId: string,
+    ): Promise<string | undefined> {
+        if (typeof this.tokenService.currentEmployeeForWrite === "function") {
+            const employee = await this.tokenService.currentEmployeeForWrite(tx, ctx, caseId);
+            if (employee) return employee.name;
+        } else {
+            // Compatibility for narrow unit doubles that expose only token row state.
+            if (typeof this.tokenService.lockAccessTokenForWrite !== "function") return undefined;
+            const token = await this.tokenService.lockAccessTokenForWrite(tx, ctx.tokenId);
+            if (token && isServiceRecordAccessTokenUsable(token)
+                && token.scheduleId === ctx.scheduleId && token.employeeId === ctx.employeeId) return undefined;
+        }
+        this.logger.warn("Service record write refused: access token no longer valid inside transaction");
+        throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+    }
+
     private async resolveCase(ctx: ServiceRecordTokenContext) {
-        if (ctx.serviceRecordCaseId) {
-            const record = await this.prisma.service_record_case.findFirst({
-                where: { id: ctx.serviceRecordCaseId, branchId: ctx.branchId },
-            });
-            if (record) return record;
-        }
-        const record = await this.lifecycleService.ensureForSchedule(ctx.scheduleId);
-        if (!record || record.branchId !== ctx.branchId) {
-            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-        }
+        const record = ctx.serviceRecordCaseId && await this.prisma.service_record_case.findFirst({
+            where: { id: ctx.serviceRecordCaseId, branchId: ctx.branchId },
+        });
+        if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         return record;
     }
 

@@ -1,3 +1,4 @@
+import { isRecordLinkGroup } from "./service-record-link-group-source";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { MESSAGE_AUTOMATION_DATABASE, type MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
@@ -16,6 +17,9 @@ import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-
 
 /** The fields of a message_trigger_job the safeguard reads. */
 export interface SmsSafeguardJob {
+    id?: string;
+    recipientEmployeeId?: number | null;
+    payload?: unknown;
     branchId: string | null;
     ruleId: string;
     templateKey: string;
@@ -141,7 +145,7 @@ export class SmsAutomationSafeguardService {
         const row = await db.message_trigger_job.findFirst({
             where: { id: jobId, branchId },
             select: {
-                branchId: true, ruleId: true, templateKey: true, dedupeKey: true, clientId: true,
+                id: true, recipientEmployeeId: true, payload: true, branchId: true, ruleId: true, templateKey: true, dedupeKey: true, clientId: true,
                 employeeScheduleId: true, recipientType: true, recipientPhone: true,
             },
         });
@@ -197,6 +201,19 @@ export class SmsAutomationSafeguardService {
                 return recipientBlock("client SMS automation is off", { kind: "client", id: job.clientId });
             }
             return null;
+        }
+
+        if (isRecordLinkGroup(job)) {
+            const jobRecipient = job.recipientEmployeeId ?? (job.id ? (await db.message_trigger_job.findFirst({
+                where: { id: job.id, ...branchScope, ruleId: job.ruleId, dedupeKey: job.dedupeKey },
+                select: { recipientEmployeeId: true },
+            }))?.recipientEmployeeId : null);
+            const employee = jobRecipient ? await db.employee.findFirst({
+                where: { id: jobRecipient, ...branchScope, deletedAt: null },
+                select: { id: true, smsAutomationEnabled: true },
+            }) : null;
+            if (!employee) return { allowed: false, level: "recipient", reason: "recipient employee is missing" };
+            return employee.smsAutomationEnabled ? null : recipientBlock("employee SMS automation is off", { kind: "employee", id: employee.id });
         }
 
         const employeeRecipient = job.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE

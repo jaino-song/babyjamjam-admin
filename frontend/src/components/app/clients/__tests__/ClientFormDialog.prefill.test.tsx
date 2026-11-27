@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 
+import { api } from "@/lib/api/client";
 import type { Client } from "@/lib/client/types";
 
 import { ClientFormDialog } from "../ClientFormDialog";
+import { render } from "@/test-utils/render-client-form";
 
 let mockVoucherPriceInfos = [
     {
@@ -142,6 +144,11 @@ describe("ClientFormDialog prefill", () => {
         ];
     });
 
+    afterEach(() => {
+        document.cookie = "selected_branch_id=; max-age=0; path=/";
+        jest.mocked(api.get).mockReset();
+    });
+
     it("can update a consultation customer's profile before service prices are set", async () => {
         const client = createClient({ duration: null, fullPrice: null, actualPrice: null, startDate: null, endDate: null });
         render(<ClientFormDialog open client={client} onClose={jest.fn()} />);
@@ -231,7 +238,7 @@ describe("ClientFormDialog prefill", () => {
         await waitFor(() => expect(screen.getByLabelText("연락처*")).toHaveValue("010-9876-5432"));
     });
 
-    it("keeps employee and voucher selections supplied as create-mode prefill", async () => {
+    it("keeps the voucher and eligible employee supplied as create-mode prefill", async () => {
         render(
             <ClientFormDialog
                 open
@@ -251,8 +258,9 @@ describe("ClientFormDialog prefill", () => {
         );
 
         await waitFor(() => {
-            expect(screen.getByLabelText("주 담당 인력 값")).toHaveValue("17");
-            expect(screen.getByLabelText("보조 담당 인력 값")).toHaveValue("23");
+            expect(screen.getByLabelText("주 제공인력 값")).toHaveValue("17");
+            expect(screen.getByRole("textbox", { name: "보조 제공인력 1" })).toBeDisabled();
+            expect(screen.getByRole("textbox", { name: "보조 제공인력 1" })).toHaveValue("");
             expect(screen.getAllByLabelText(/바우처 유형/)[0]).toHaveValue("A가1형");
             expect(screen.getByLabelText("서비스 기간")).toHaveValue("10");
         });

@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
+import { IMMUTABLE_FINALIZATION_STATUSES } from "application/services/service-record-lifecycle.service";
 import {
     ApplyReviewEventInput,
     ApplyReviewEventResult,
@@ -31,10 +32,12 @@ const toDbDate = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
 const fromDbDate = (date: Date): string => date.toISOString().slice(0, 10);
 
 const caseFacts = (
-    serviceRecordCase: { status: string; days: Array<{ serviceDate: Date; locked: boolean }> } | null,
+    cases: Array<{ status: string; days: Array<{ serviceDate: Date; locked: boolean }> }>,
 ): ReviewClientFacts => ({
-    caseStatus: serviceRecordCase?.status ?? null,
-    days: (serviceRecordCase?.days ?? []).map((d) => ({ date: fromDbDate(d.serviceDate), locked: d.locked })),
+    // The classifier's finalized rule takes precedence across the household.
+    caseStatus: cases.find(({ status }) => IMMUTABLE_FINALIZATION_STATUSES.has(status))?.status
+        ?? cases[0]?.status ?? null,
+    days: cases.flatMap(({ days }) => days.map((d) => ({ date: fromDbDate(d.serviceDate), locked: d.locked }))),
 });
 
 const toEventRecord = (row: {
@@ -146,10 +149,11 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 allowSaturdayService: true,
                 allowSundayService: true,
                 allowHolidayService: true,
-                serviceRecordCase: {
+                serviceRecordCases: {
+                    where: { branchId },
                     select: {
                         status: true,
-                        days: { select: { serviceDate: true, locked: true } },
+                        days: { where: { branchId }, select: { serviceDate: true, locked: true } },
                     },
                 },
             },
@@ -170,7 +174,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 allowSaturdayService: row.allowSaturdayService,
                 allowSundayService: row.allowSundayService,
                 allowHolidayService: row.allowHolidayService,
-                facts: caseFacts(row.serviceRecordCase),
+                facts: caseFacts(row.serviceRecordCases),
             });
         }
         return candidates;
@@ -327,8 +331,9 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 allowSaturdayService: true,
                 allowSundayService: true,
                 allowHolidayService: true,
-                serviceRecordCase: {
-                    select: { status: true, days: { select: { serviceDate: true, locked: true } } },
+                serviceRecordCases: {
+                    where: { branchId },
+                    select: { status: true, days: { where: { branchId }, select: { serviceDate: true, locked: true } } },
                 },
             },
         });
@@ -342,7 +347,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             allowSaturdayService: row.allowSaturdayService,
             allowSundayService: row.allowSundayService,
             allowHolidayService: row.allowHolidayService,
-            facts: caseFacts(row.serviceRecordCase),
+            facts: caseFacts(row.serviceRecordCases),
         };
     }
 

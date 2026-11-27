@@ -11,6 +11,14 @@ import {
 } from "domain/errors/retention-delete-blocked.error";
 import type { Prisma } from "@prisma/client";
 
+const scheduleTeam = (branchId: string) => ({
+    recordTeamSlots: {
+        where: { branchId, active: true },
+        orderBy: { slot: "asc" as const },
+        select: { slot: true, employeeId: true },
+    },
+});
+
 @Injectable()
 export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository {
     constructor(private readonly prismaService: PrismaService) {}
@@ -22,6 +30,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
     ): Promise<EmployeeScheduleEntity | null> {
         const schedule = await (transaction ?? this.prismaService).employee_schedule.findFirst({
             where: { id, branchId: branchid },
+            include: scheduleTeam(branchid),
         });
         return schedule ? EmployeeScheduleMapper.toDomain(schedule) : null;
     }
@@ -30,6 +39,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         const schedules = await this.prismaService.employee_schedule.findMany({
             where: { clientId: clientId, branchId: branchid },
             orderBy: { id: 'desc' },
+            include: scheduleTeam(branchid),
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }
@@ -40,6 +50,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
     ): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
             where: { primaryEmployeeId: primaryEmployeeId, branchId: branchid },
+            include: scheduleTeam(branchid),
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }
@@ -49,7 +60,14 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         secondaryEmployeeId: number
     ): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
-            where: { secondaryEmployeeId: secondaryEmployeeId, branchId: branchid },
+            where: {
+                branchId: branchid,
+                OR: [
+                    { secondaryEmployeeId },
+                    { recordTeamSlots: { some: { branchId: branchid, active: true, slot: { gte: 2 }, employeeId: secondaryEmployeeId } } },
+                ],
+            },
+            include: scheduleTeam(branchid),
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }
@@ -57,6 +75,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
     async findAll(branchid: string): Promise<EmployeeScheduleEntity[]> {
         const schedules = await this.prismaService.employee_schedule.findMany({
             where: { branchId: branchid },
+            include: scheduleTeam(branchid),
         });
         return schedules.map(EmployeeScheduleMapper.toDomain);
     }
@@ -90,6 +109,7 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
         }
         const updated = await client.employee_schedule.findFirst({
             where: { id: schedule.id, branchId: branchid },
+            include: scheduleTeam(branchid),
         });
         if (!updated) {
             throw new Error("Employee schedule not found after update");
@@ -121,6 +141,12 @@ export class SbEmployeeScheduleRepository implements IEmployeeScheduleRepository
                     SELECT 1 FROM "employee_schedule"
                     WHERE "id" = ${id}
                       AND "start_date" <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::date
+                    UNION ALL
+                    SELECT 1 FROM "service_record_team_slot"
+                    WHERE "branch_id" = ${branchid}::uuid AND "schedule_id" = ${id}
+                    UNION ALL
+                    SELECT 1 FROM "service_record_baby_assignment"
+                    WHERE "branch_id" = ${branchid}::uuid AND "schedule_id" = ${id}
                     UNION ALL
                     SELECT 1 FROM "service_record"
                     WHERE "schedule_id" = ${id}

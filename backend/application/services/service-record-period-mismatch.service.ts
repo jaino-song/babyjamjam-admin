@@ -1,3 +1,5 @@
+import { resolveAdminServiceRecordTarget } from "./admin-service-record-target";
+import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -22,6 +24,7 @@ const offset = (date: Date, days: number): string => {
 interface PeriodParams {
     branchId: string;
     clientId: number;
+    caseId?: string;
     calendar: KrBusinessDayCalendar;
 }
 
@@ -78,8 +81,12 @@ export class ServiceRecordPeriodMismatchService {
 
     private async loadLocked(tx: Prisma.TransactionClient, params: PeriodParams) {
         const { branchId, clientId } = params;
+        const scope = { branchId, clientId, caseId: params.caseId };
+        const selected = await resolveAdminServiceRecordTarget(tx, scope, "write");
+        if (!selected) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         const where = { branchId, clientId };
-        const discovered = await tx.service_record_case.findFirst({ where });
+        const caseWhere = { ...where, id: selected.caseId, client: { branchId, deletedAt: null } };
+        const discovered = await tx.service_record_case.findFirst({ where: caseWhere });
         const discoveredClient = await tx.client.findFirst({ where: { id: clientId, branchId } });
         if (!discovered || !discoveredClient) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         const schedules = await tx.employee_schedule.findMany({ where, orderBy: { id: "asc" } });
@@ -91,9 +98,10 @@ export class ServiceRecordPeriodMismatchService {
             expectedScheduleIds: schedules.map((schedule) => schedule.id),
             employeeIds: schedules.flatMap((schedule) => [schedule.primaryEmployeeId, schedule.secondaryEmployeeId]),
         });
-        const record = await tx.service_record_case.findFirst({ where });
+        const current = await resolveServiceRecordCaseTarget(tx, scope);
+        const record = await tx.service_record_case.findFirst({ where: caseWhere });
         const client = await tx.client.findFirst({ where: { id: clientId, branchId } });
-        if (!record || record.id !== discovered.id || !client) {
+        if (!record || record.id !== discovered.id || current.kind !== "resolved" || current.caseId !== discovered.id || !client) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status)) {
@@ -150,6 +158,18 @@ export class ServiceRecordPeriodMismatchService {
         const endDate = [unchanged.endDate!, ...dates].sort().at(-1)!;
         const newStart = new Date(`${startDate}T00:00:00.000Z`);
         const newEnd = new Date(`${endDate}T00:00:00.000Z`);
+        const singleton = await resolveAdminServiceRecordTarget(tx, { branchId, clientId }, "overview");
+        if (singleton?.caseId !== record.id) {
+            // Shared client and schedule dates are household data. Adjust just this
+            // record's bounds and its own tokens when a household has siblings.
+            await tx.service_record_case.update({
+                where: { id: record.id, branchId },
+                data: { startDate: newStart, endDate: newEnd, requiredSessionCount: total, version: { increment: 1 } },
+            });
+            await this.lifecycleService.recompute(record.id, tx, calendar, { preserveVersion: true });
+            await refreshTokenExpiry(tx, branchId, record.id, newEnd, { raiseOnly: true });
+            return { startDate, endDate, changed: false, scheduleIds: [] };
+        }
         const writes = schedules.map((schedule) => ({
             schedule,
             data: {

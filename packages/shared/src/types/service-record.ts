@@ -352,6 +352,15 @@ export interface ServiceRecordRevisionDocumentSummary {
     documentVersion: number | null;
     canRetry: boolean;
     reasonCode: string | null;
+    /** Current INITIAL readiness guidance, when regeneration is blocked. */
+    regenerationBlockedReason?: string;
+    noProviderDocumentConfirmable?: {
+        stateId: string;
+        revisionId: string;
+        generation: string;
+        suffix: string;
+        unlinkedChunkOrdinals: string[];
+    };
 }
 
 export interface ServiceRecordRevisionHistoryEntry {
@@ -508,7 +517,29 @@ export interface ServiceRecordAssignment {
     signatureDoc: SignatureDocStatus | null;
 }
 
+export interface ServiceRecordLinkAssignment {
+    scheduleId: number;
+    employeeId: number;
+    assignmentVersion: number;
+}
+
+export interface AdminServiceRecordCaseSummary {
+    caseId: string;
+    babyId: string | null;
+    rank: number | null;
+    babyCount: number | null;
+    legacyName: string | null;
+    retired: boolean;
+    status: string;
+    assignees: { id: number; name: string }[];
+    linkAssignments?: ServiceRecordLinkAssignment[];
+    totalSessions: number;
+    submittedSessions: number;
+}
+
 export interface ServiceRecordOverview {
+    legacyLinkAssignment?: { scheduleId: number; employeeId: number } | null;
+    cases?: AdminServiceRecordCaseSummary[];
     record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
     /** Editor-only latest confirmation for each session reported by the revision changes policy. */
@@ -524,22 +555,58 @@ export interface SendServiceRecordLinkResponse {
     scheduledFor: string;
 }
 
-export interface PrepareServiceRecordLinkResponse {
+export interface LegacyResetServiceRecordLinkResponse {
+    kind?: "legacy";
     serviceRecordUrl: string;
+    expiresAt: string;
+}
+
+export interface LegacyPrepareServiceRecordLinkResponse extends LegacyResetServiceRecordLinkResponse {
     preparedLinkToken: string;
-    expiresAt: string;
+    previewContent?: string;
 }
 
-export interface ResetServiceRecordLinkResponse {
+export interface ResetServiceRecordLinkMember extends ServiceRecordLinkTarget {
+    babyId: string;
+    activeRank: number;
     serviceRecordUrl: string;
     expiresAt: string;
 }
 
-export interface PrepareServiceRecordLinkRequest {
-    recipientPhone?: string;
+export interface PreparedServiceRecordLinkMember extends ResetServiceRecordLinkMember {
+    preparedLinkToken: string;
 }
 
-export interface SendServiceRecordLinkRequest {
-    preparedLinkToken?: string;
-    recipientPhone?: string;
+interface GroupServiceRecordLinkResponse<Member> {
+    kind: "group";
+    employeeId: number;
+    members: Member[];
 }
+
+export type PrepareServiceRecordLinkResponse = LegacyPrepareServiceRecordLinkResponse | (
+    GroupServiceRecordLinkResponse<PreparedServiceRecordLinkMember> & {
+        householdBabyCount: number;
+        previewContent: string;
+        buttonUrl: string | null;
+    }
+);
+
+export type ResetServiceRecordLinkResponse = LegacyResetServiceRecordLinkResponse
+    | GroupServiceRecordLinkResponse<ResetServiceRecordLinkMember>;
+
+export type PrepareServiceRecordLinkRequest =
+    | { caseId?: string; recipientPhone?: string }
+    | { employeeId: number; caseIds: string[]; recipientPhone?: string };
+
+export interface ServiceRecordLinkTarget {
+    caseId: string;
+    assignmentVersion: number;
+}
+
+export type SendServiceRecordLinkRequest =
+    | { caseId?: string; preparedLinkToken?: string; recipientPhone?: string }
+    | { employeeId: number; members: (ServiceRecordLinkTarget & { preparedLinkToken: string })[]; recipientPhone?: string };
+
+export type ResetServiceRecordLinkRequest =
+    | { caseId?: string }
+    | { employeeId: number; members: ServiceRecordLinkTarget[] };

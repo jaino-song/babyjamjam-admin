@@ -1056,3 +1056,53 @@ test("mobile date editing uses a bottom sheet and cancellation leaves data uncha
     expect(evidence.requests.filter((request) => request.method !== "GET")).toHaveLength(0);
     evidence.assertSafe();
 });
+
+test("second case direct deep link retains the selected record after browser refresh", async ({ page }) => {
+    const evidence = await installMocks(page);
+    const firstId = "b5817ff5-219d-434a-93d1-6d735b856f44";
+    const secondId = "c5817ff5-219d-434a-93d1-6d735b856f44";
+    const cases = [firstId, secondId].map((caseId, index) => ({
+        caseId, babyId: caseId, rank: index + 1, babyCount: 2, legacyName: null,
+        retired: false, status: "IN_PROGRESS", assignees: [{ id: 501, name: "QA-제공인력" }],
+        totalSessions: plannedDates.length, submittedSessions: 1,
+    }));
+    const reads: string[] = [];
+    await page.route(
+        (url) => url.pathname.startsWith(`/api/admin/service-records/client/${CLIENT_ID}/`),
+        async (route) => {
+            const url = new URL(route.request().url());
+            expect(route.request().method()).toBe("GET");
+            expect(url.searchParams.getAll("caseId")).toEqual([secondId]);
+            reads.push(url.pathname);
+            if (url.pathname.endsWith("/draft")) {
+                await json(route, 200, makeEmptyDraftState());
+                return;
+            }
+            expect(url.pathname).toMatch(/\/editor$/);
+            const overview = makeOverview();
+            const record = overview.record as { sessions: ReturnType<typeof makeSession>[] };
+            await json(route, 200, {
+                ...overview, cases,
+                record: { ...record, id: secondId, sessions: record.sessions.map((day) => ({
+                    ...day, ...(day.sessionIndex === 1 ? { clientSignature: "data:image/png;base64,synthetic-second-signature" } : {}),
+                })) },
+            });
+        },
+    );
+    const draftReadCount = () => reads.filter((path) => path.endsWith("/draft")).length;
+    const url = `/service-record-admin/${CLIENT_ID}?caseId=${secondId}`;
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("둘째", { exact: true })).toBeVisible();
+    await openDay(page, 1);
+    await expect(page.getByRole("img", { name: "산모 서명" })).toHaveAttribute("src", /synthetic-second-signature/);
+    const beforeRefreshDraftReads = draftReadCount();
+    expect(beforeRefreshDraftReads).toBeGreaterThanOrEqual(2);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`caseId=${secondId}$`));
+    await expect(page.getByText("둘째", { exact: true })).toBeVisible();
+    await openDay(page, 1);
+    await expect(page.getByRole("img", { name: "산모 서명" })).toHaveAttribute("src", /synthetic-second-signature/);
+    expect(reads.filter((path) => path.endsWith("/editor"))).toHaveLength(2);
+    expect(draftReadCount() - beforeRefreshDraftReads).toBeGreaterThanOrEqual(2);
+    evidence.assertSafe();
+});

@@ -1,23 +1,57 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import {
     clientFormPanel,
-    E2E_EMPLOYEES,
+    E2E_B_VOUCHER_TYPE,
     E2E_VOUCHER_PRICE,
     E2E_VOUCHER_TYPE,
     fillRequiredClientFields,
     goToNextStep,
     openClientForm,
+    submitClientForm,
 } from './helpers/client-form';
 
 /**
  * Client creation form E2E tests.
  *
  * "고객 추가" opens a four-step panel on /clients:
- *   1. 이용자 정보  2. 제공인력 정보  3. 바우처 정보  4. 계약 정보
+ *   1. 이용자 정보  2. 바우처 정보  3. 제공인력 정보  4. 계약 정보
  * Field problems are shown in each field's label-row slot (`data-slot="field-error-message"`),
  * not in a top alert. All lookups (prices, areas, employees, holidays) are mocked in
  * ./helpers/client-form so the specs do not depend on seeded data.
  */
+
+const FORM_STEPS = ['이용자 정보', '바우처 정보', '제공인력 정보', '계약 정보'];
+
+async function selectProvider(page: Page, panel: Locator, role: string, name: string) {
+    const picker = panel.getByRole('combobox', { name: role, exact: true });
+    await picker.click();
+    await page.getByRole('combobox', { name: `${role} 검색`, exact: true }).fill(name);
+    await page.getByRole('option', { name }).click();
+    await expect(picker).toContainText(name);
+}
+
+async function chooseVoucher(panel: Locator, type: string) {
+    await panel.getByRole('tab', { name: '바우처 고객' }).click();
+    await expect(panel.getByRole('combobox', { name: '바우처 연도' })).toHaveValue('2026');
+    await panel.getByRole('combobox', { name: '바우처 유형' }).selectOption({ label: type });
+}
+
+function expectVoucherAllocation(body: Record<string, unknown>, expected: {
+    fetalType: string;
+    babyCount: number;
+    providers: { slot: number; employeeId: number }[];
+    babyAssignments: { ordinal: number; providerSlot: number }[];
+}) {
+    expect(body).toMatchObject({
+        voucherIssuanceYear: 2026,
+        fetalType: expected.fetalType,
+        babyCount: expected.babyCount,
+    });
+    expect(body.providers).toStrictEqual(expected.providers);
+    expect(body.babyAssignments).toStrictEqual(expected.babyAssignments);
+    expect(body).not.toHaveProperty('primaryEmployeeId');
+    expect(body).not.toHaveProperty('secondaryEmployeeId');
+}
 
 test.describe('Client Creation Flow', () => {
     // ============================================
@@ -28,7 +62,9 @@ test.describe('Client Creation Flow', () => {
             const panel = await openClientForm(page);
 
             await expect(panel.getByText('고객의 기본 정보와 서비스 조건을 단계별로 입력합니다.')).toBeVisible();
-            for (const step of ['이용자 정보', '제공인력 정보', '바우처 정보', '계약 정보']) {
+            await expect(panel.locator('[data-component="desktop_v3_stepped-wizard_stepper-desktop_item_label"]'))
+                .toHaveText(FORM_STEPS);
+            for (const step of FORM_STEPS) {
                 await expect(panel.getByText(step, { exact: true })).toBeVisible();
             }
 
@@ -63,7 +99,7 @@ test.describe('Client Creation Flow', () => {
 
             // Still on step 1: the identity inputs are on screen, the employee step is not.
             await expect(panel.getByLabel('이름*')).toBeVisible();
-            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toHaveCount(0);
+            await expect(panel.getByRole('combobox', { name: '주 제공인력', exact: true })).toHaveCount(0);
         });
 
         test('keeps the remaining required fields flagged after filling only the name', async ({ page }) => {
@@ -75,7 +111,7 @@ test.describe('Client Creation Flow', () => {
             const fieldErrors = panel.locator('[data-slot="field-error-message"]');
             await expect(fieldErrors).toHaveCount(3);
             await expect(panel.getByLabel('이름*')).toHaveValue('테스트 산모');
-            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toHaveCount(0);
+            await expect(panel.getByRole('combobox', { name: '주 제공인력', exact: true })).toHaveCount(0);
         });
 
         test('shows the phone format hint when the number is incomplete', async ({ page }) => {
@@ -141,14 +177,18 @@ test.describe('Client Creation Flow', () => {
             await expect(area).toHaveValue('area-incheon');
         });
 
-        test('advances to the employee step once the required fields are filled and goes back', async ({ page }) => {
+        test('advances through voucher and employee steps once the required fields are filled and goes back', async ({ page }) => {
             const panel = await openClientForm(page);
 
             await fillRequiredClientFields(panel);
             await goToNextStep(panel);
+            await expect(panel.getByRole('tablist', { name: '고객 유형' })).toBeVisible();
+            await goToNextStep(panel);
 
-            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toBeVisible();
+            await expect(panel.getByRole('combobox', { name: '주 제공인력', exact: true })).toBeVisible();
 
+            await panel.getByRole('button', { name: '이전' }).click();
+            await expect(panel.getByRole('tablist', { name: '고객 유형' })).toBeVisible();
             await panel.getByRole('button', { name: '이전' }).click();
             // Earlier answers are kept.
             await expect(panel.getByLabel('이름*')).toHaveValue('테스트 산모');
@@ -157,34 +197,35 @@ test.describe('Client Creation Flow', () => {
     });
 
     // ============================================
-    // Step 2: Employee Selection
+    // Step 3: Employee Selection
     // ============================================
     test.describe('Employee Selection', () => {
         test.beforeEach(async ({ page }) => {
             const panel = await openClientForm(page);
             await fillRequiredClientFields(panel);
             await goToNextStep(panel);
-            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toBeVisible();
+            await goToNextStep(panel);
+            await expect(panel.getByRole('combobox', { name: '주 제공인력', exact: true })).toBeVisible();
         });
 
         test('has primary and secondary employee pickers', async ({ page }) => {
             const panel = clientFormPanel(page);
 
-            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toBeVisible();
-            await expect(panel.getByRole('combobox', { name: '보조 담당 인력', exact: true })).toBeVisible();
+            await expect(panel.getByRole('combobox', { name: '주 제공인력', exact: true })).toBeVisible();
+            await expect(panel.getByRole('combobox', { name: '보조 제공인력 1', exact: true })).toBeVisible();
             await expect(panel.locator('[data-testid="employee-autocomplete"]')).toHaveCount(2);
         });
 
         test('excludes the selected primary employee from the secondary options', async ({ page }) => {
-            const primary = page.getByRole('combobox', { name: '주 담당 인력', exact: true });
+            const primary = page.getByRole('combobox', { name: '주 제공인력', exact: true });
             await primary.click();
-            await page.getByRole('combobox', { name: '주 담당 인력 검색' }).fill('김');
+            await page.getByRole('combobox', { name: '주 제공인력 검색' }).fill('김');
             await page.getByRole('option', { name: /김제공/ }).click();
             await expect(primary).toContainText('김제공');
 
-            const secondary = page.getByRole('combobox', { name: '보조 담당 인력', exact: true });
+            const secondary = page.getByRole('combobox', { name: '보조 제공인력 1', exact: true });
             await secondary.click();
-            await page.getByRole('combobox', { name: '보조 담당 인력 검색' }).fill('김');
+            await page.getByRole('combobox', { name: '보조 제공인력 1 검색' }).fill('김');
 
             // 김보조 still matches, 김제공 (already the primary) does not.
             await expect(page.getByRole('option', { name: /김보조/ })).toBeVisible();
@@ -193,13 +234,12 @@ test.describe('Client Creation Flow', () => {
     });
 
     // ============================================
-    // Step 3: Voucher / Pricing
+    // Step 2: Voucher / Pricing
     // ============================================
     test.describe('Voucher Step', () => {
         test.beforeEach(async ({ page }) => {
             const panel = await openClientForm(page);
             await fillRequiredClientFields(panel);
-            await goToNextStep(panel);
             await goToNextStep(panel);
             await expect(panel.getByRole('tablist', { name: '고객 유형' })).toBeVisible();
         });
@@ -239,14 +279,18 @@ test.describe('Client Creation Flow', () => {
         });
 
         test('lets the user override an auto-filled price', async ({ page }) => {
-            await page.getByRole('tab', { name: '바우처 고객' }).click();
-            await page.getByRole('combobox', { name: '바우처 유형' }).selectOption({ label: E2E_VOUCHER_TYPE });
-            await page.getByRole('combobox', { name: '서비스 기간' }).selectOption({ label: '10일' });
+            const panel = clientFormPanel(page);
+            await chooseVoucher(panel, E2E_VOUCHER_TYPE);
+            await panel.getByRole('combobox', { name: '서비스 기간' }).selectOption({ label: '10일' });
 
-            const fullPrice = page.getByLabel('총 서비스 금액');
+            const fullPrice = panel.getByLabel('총 서비스 금액');
             await expect(fullPrice).toHaveValue('1,000,000');
             await fullPrice.fill('1200000');
 
+            await expect(fullPrice).toHaveValue('1,200,000');
+            await goToNextStep(panel);
+            await expect(panel.getByRole('combobox', { name: '주 제공인력', exact: true })).toBeVisible();
+            await panel.getByRole('button', { name: '이전' }).click();
             await expect(fullPrice).toHaveValue('1,200,000');
         });
     });
@@ -274,14 +318,26 @@ test.describe('Client Creation Flow', () => {
             await expect(endDate).toHaveValue('2026-12-19');
         });
 
-        test('keeps new clients in pre-booking until confirmation', async ({ page }) => {
-            const status = page.getByRole('combobox', { name: '계약 상태' });
+        test('offers all six create statuses in order and saves the selected status', async ({ page }) => {
+            const panel = clientFormPanel(page);
+            const status = panel.getByRole('combobox', { name: '계약 상태' });
 
-            await expect(status.getByRole('option')).toHaveText([
-                '예약 전',
-            ]);
-            await expect(status).toBeDisabled();
+            await expect(status).toBeEnabled();
             await expect(status).toHaveValue('pre_booking');
+            const options = await status.getByRole('option').evaluateAll((options) =>
+                options.map((option) => [option.getAttribute('value'), option.textContent]));
+            expect(options).toEqual([
+                ['pre_booking', '예약 전'],
+                ['waiting', '대기'],
+                ['replacement_requested', '교체 요청'],
+                ['active', '진행중'],
+                ['completed', '완료'],
+                ['terminated', '중단'],
+            ]);
+            await status.selectOption('terminated');
+            await expect(status).toHaveValue('terminated');
+            const body = await submitClientForm(page, panel);
+            expect(body.serviceStatus).toBe('terminated');
         });
 
         test('toggles the optional service flags', async ({ page }) => {
@@ -301,6 +357,13 @@ test.describe('Client Creation Flow', () => {
             await expect(careCenter).toBeChecked();
             await expect(breastPump).toBeChecked();
             await expect(automation).not.toBeChecked();
+            const body = await submitClientForm(page, clientFormPanel(page));
+            expect(body).toMatchObject({
+                careCenter: true,
+                breastPump: true,
+                applyMessageAutomation: false,
+                smsAutomationEnabled: false,
+            });
         });
     });
 });
@@ -310,48 +373,29 @@ test.describe('Client Creation Flow', () => {
 // ============================================
 test.describe('Complete Client Creation Flow', () => {
     test('creates a client with the filled-in values', async ({ page }) => {
-        let createdBody: Record<string, unknown> | null = null;
-        await page.route('**/api/clients', async (route) => {
-            if (route.request().method() !== 'POST') {
-                await route.fallback();
-                return;
-            }
-            createdBody = route.request().postDataJSON() as Record<string, unknown>;
-            await route.fulfill({
-                status: 201,
-                contentType: 'application/json',
-                body: JSON.stringify({ id: 901, ...createdBody }),
-            });
-        });
-
         const panel = await openClientForm(page);
         await fillRequiredClientFields(panel);
         await goToNextStep(panel);
 
-        // Step 2: primary employee
-        await panel.getByRole('combobox', { name: '주 담당 인력', exact: true }).click();
-        await page.getByRole('combobox', { name: '주 담당 인력 검색' }).fill('김제공');
-        await page.getByRole('option', { name: /김제공/ }).click();
+        await chooseVoucher(panel, E2E_VOUCHER_TYPE);
+        await expect(panel.getByRole('combobox', { name: '태아 유형' })).toHaveValue('SINGLETON');
+        await panel.getByRole('combobox', { name: '서비스 기간' }).selectOption({ label: '10일' });
         await goToNextStep(panel);
 
-        // Step 3: voucher client with type + duration
-        await panel.getByRole('tab', { name: '바우처 고객' }).click();
-        await panel.getByRole('combobox', { name: '바우처 유형' }).selectOption({ label: E2E_VOUCHER_TYPE });
-        await panel.getByRole('combobox', { name: '서비스 기간' }).selectOption({ label: '10일' });
+        await selectProvider(page, panel, '주 제공인력', '김제공');
         await goToNextStep(panel);
 
         // Step 4: service dates (10 business days, Mon 2026-12-07 .. Fri 2026-12-18)
         await panel.getByLabel('시작일').fill('20261207');
         await panel.getByLabel('종료일').fill('20261218');
-        await panel.getByRole('button', { name: '생성' }).click();
+        await expect(panel.getByRole('switch', { name: '메시지 자동 전송' })).toBeChecked();
 
-        await expect.poll(() => createdBody).not.toBeNull();
+        const createdBody = await submitClientForm(page, panel);
         expect(createdBody).toMatchObject({
             name: '테스트 산모',
             birthday: '1990-05-15',
             phone: '010-1234-5678',
             address: '인천광역시 연수구 테스트동 123',
-            primaryEmployeeId: E2E_EMPLOYEES[0].id,
             type: E2E_VOUCHER_TYPE,
             duration: 10,
             fullPrice: E2E_VOUCHER_PRICE.fullPrice,
@@ -360,9 +404,94 @@ test.describe('Complete Client Creation Flow', () => {
             voucherClient: true,
             startDate: '2026-12-07',
             endDate: '2026-12-18',
+            applyMessageAutomation: true,
+            smsAutomationEnabled: true,
         });
-
-        // The panel closes after a successful save.
+        expectVoucherAllocation(createdBody, {
+            fetalType: 'SINGLETON',
+            babyCount: 1,
+            providers: [{ slot: 0, employeeId: 11 }],
+            babyAssignments: [{ ordinal: 1, providerSlot: 0 }],
+        });
         await expect(panel.getByRole('heading', { name: '새 고객 등록' })).toHaveCount(0);
+    });
+
+    test('keeps the severe singleton record assigned to the selected secondary provider across steps', async ({ page }) => {
+        const panel = await openClientForm(page);
+        await fillRequiredClientFields(panel);
+        await goToNextStep(panel);
+
+        await chooseVoucher(panel, E2E_B_VOUCHER_TYPE);
+        const fetalType = panel.getByRole('combobox', { name: '태아 유형' });
+        await fetalType.selectOption({ label: '중증 단태아' });
+        await goToNextStep(panel);
+
+        for (const label of ['보조 제공인력 2', '보조 제공인력 3']) {
+            const field = panel.getByRole('textbox', { name: label, exact: true });
+            await expect(field).toBeVisible();
+            await expect(field).toBeDisabled();
+            await expect(field).toHaveValue('');
+            expect(await field.getAttribute('placeholder')).toBeNull();
+        }
+        await selectProvider(page, panel, '주 제공인력', '김제공');
+        await selectProvider(page, panel, '보조 제공인력 1', '김보조');
+
+        const records = panel.locator('[data-slot="baby-record-owners"]');
+        await expect(records.getByRole('heading', { name: '서비스 제공기록지 담당' })).toBeVisible();
+        await expect(records.getByText('아기 기록지', { exact: true })).toBeVisible();
+        await expect(records.getByText('둘째 기록지', { exact: true })).toHaveCount(0);
+        await expect(panel.getByRole('switch', { name: '메시지 자동 전송' })).toHaveCount(0);
+        await records.getByRole('button', { name: '담당 변경' }).click();
+        const owner = records.getByRole('combobox', { name: '아기 기록지 담당자' });
+        await expect(owner).toHaveValue('0');
+        await owner.selectOption({ label: '보조 제공인력 1 · 김보조' });
+        await expect(owner).toHaveValue('1');
+
+        await panel.getByRole('button', { name: '이전' }).click();
+        await expect(fetalType).toHaveValue('SEVERE_SINGLETON');
+        await goToNextStep(panel);
+        await expect(records.getByText('보조 제공인력 1 · 김보조', { exact: true })).toBeVisible();
+        await records.getByRole('button', { name: '담당 변경' }).click();
+        await expect(owner).toHaveValue('1');
+
+        await goToNextStep(panel);
+        const body = await submitClientForm(page, panel);
+        expect(body.type).toBe(E2E_B_VOUCHER_TYPE);
+        expectVoucherAllocation(body, {
+            fetalType: 'SEVERE_SINGLETON',
+            babyCount: 1,
+            providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
+            babyAssignments: [{ ordinal: 1, providerSlot: 1 }],
+        });
+    });
+
+    test('creates separately labelled twin records in birth order with one provider', async ({ page }) => {
+        const panel = await openClientForm(page);
+        await fillRequiredClientFields(panel);
+        await goToNextStep(panel);
+
+        await chooseVoucher(panel, E2E_B_VOUCHER_TYPE);
+        await panel.getByRole('combobox', { name: '태아 유형' }).selectOption({ label: '쌍생아' });
+        await goToNextStep(panel);
+        await selectProvider(page, panel, '주 제공인력', '김제공');
+
+        const records = panel.locator('[data-slot="baby-record-owners"]');
+        const rows = records.locator('[data-source-component="FormField"]');
+        await expect(rows).toHaveText([
+            /첫째 기록지\s*주 제공인력 · 김제공/,
+            /둘째 기록지\s*주 제공인력 · 김제공/,
+        ]);
+        await expect(rows.nth(0)).toBeVisible();
+        await expect(rows.nth(1)).toBeVisible();
+
+        await goToNextStep(panel);
+        const body = await submitClientForm(page, panel);
+        expect(body.type).toBe(E2E_B_VOUCHER_TYPE);
+        expectVoucherAllocation(body, {
+            fetalType: 'TWINS',
+            babyCount: 2,
+            providers: [{ slot: 0, employeeId: 11 }],
+            babyAssignments: [{ ordinal: 1, providerSlot: 0 }, { ordinal: 2, providerSlot: 0 }],
+        });
     });
 });

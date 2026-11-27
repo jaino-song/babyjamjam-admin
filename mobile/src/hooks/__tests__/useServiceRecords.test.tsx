@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { api } from "@/lib/api/client";
 import { clientQueryKeys } from "@/hooks/useClients";
-import { serviceRecordQueryKeys, useFitPeriodMismatch, useKeepPeriodMismatch } from "../useServiceRecords";
+import { resetServiceRecordLink, serviceRecordQueryKeys, useFitPeriodMismatch, useKeepPeriodMismatch, useSendServiceRecordLink } from "../useServiceRecords";
 
 jest.mock("@/lib/api/client", () => ({ api: { post: jest.fn() } }));
 
@@ -60,4 +60,44 @@ it.each([useKeepPeriodMismatch, useFitPeriodMismatch])("propagates errors withou
     });
     expect(invalidate).not.toHaveBeenCalled();
     queryClient.clear();
+});
+
+const secondCase = "10000000-0000-4000-8000-000000000002";
+const member = { caseId: secondCase, assignmentVersion: 7 };
+const target = { employeeId: 32, members: [member] };
+
+it("prepares and sends only the selected second case and keeps its persisted version", async () => {
+    const { wrapper } = setup();
+    const url = "https://mobile.test/service-record/second";
+    jest.mocked(api.post).mockResolvedValueOnce({
+        data: {
+            kind: "group", employeeId: 32, previewContent: `둘째 아기 제공기록지\n${url}`,
+            members: [{ ...member, serviceRecordUrl: url, preparedLinkToken: "efl_second" }],
+        },
+    }).mockResolvedValueOnce({ data: { status: "sent" } });
+    const { result } = renderHook(() => useSendServiceRecordLink(), { wrapper });
+    await act(async () => {
+        await result.current.mutateAsync({ clientId: 13, scheduleId: 11, target });
+    });
+    expect(jest.mocked(api.post).mock.calls).toEqual([
+        ["/admin/service-records/schedules/11/prepare-link", { employeeId: 32, caseIds: [secondCase] }],
+        ["/admin/service-records/schedules/11/send-link", { employeeId: 32, members: [{ ...member, preparedLinkToken: "efl_second" }] }],
+    ]);
+});
+
+it("rejects a mismatched prepared case version and forwards the exact reset target", async () => {
+    const { wrapper } = setup();
+    jest.mocked(api.post).mockResolvedValueOnce({
+        data: {
+            kind: "group", employeeId: 32, previewContent: "https://mobile.test/service-record/second",
+            members: [{ ...member, assignmentVersion: 6, serviceRecordUrl: "https://mobile.test/service-record/second", preparedLinkToken: "efl_old" }],
+        },
+    }).mockResolvedValueOnce({ data: { kind: "group", ...target } });
+    const { result } = renderHook(() => useSendServiceRecordLink(), { wrapper });
+    await act(async () => {
+        await expect(result.current.mutateAsync({ clientId: 13, scheduleId: 11, target })).rejects.toThrow("배정이 변경");
+    });
+    expect(api.post).toHaveBeenCalledTimes(1);
+    await resetServiceRecordLink(11, target);
+    expect(api.post).toHaveBeenLastCalledWith("/admin/service-records/schedules/11/reset-link", target);
 });

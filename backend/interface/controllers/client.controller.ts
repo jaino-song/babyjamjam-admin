@@ -1,4 +1,5 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
+import { hasAllocationInput } from "application/services/client-allocation.service";
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Header, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import {
     CLIENT_LIST_TAB_VALUES,
@@ -10,9 +11,9 @@ import {
 } from "interface/dto/client.dto";
 import type { ClientListTab } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard, type VerifiedTenantPrincipal } from "infrastructure/tenant";
 import { parseInteger } from "interface/parse-integer";
-import { problemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 function parseClientListTab(value: string | undefined): ClientListTab {
     if (value === undefined || value === "") return "all";
@@ -53,7 +54,7 @@ export class ClientController {
         return this.clientService.create(branchId, {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
-            secondaryEmployeeId: dto.secondaryEmployeeId ?? null,
+            secondaryEmployeeId: dto.providers === undefined ? dto.secondaryEmployeeId ?? null : dto.secondaryEmployeeId,
             address: dto.address ?? null,
             phone: dto.phone ?? null,
             type: dto.type ?? null,
@@ -81,6 +82,13 @@ export class ClientController {
             smsAutomationEnabled: dto.smsAutomationEnabled,
             reuseExistingClient: dto.reuseExistingClient,
             source: dto.source,
+            ...(hasAllocationInput(dto) ? {
+                fetalType: dto.fetalType,
+                babyCount: dto.babyCount,
+                providers: dto.providers,
+                babyAssignments: dto.babyAssignments,
+                voucherIssuanceYear: dto.voucherIssuanceYear,
+            } : {}),
         });
     }
 
@@ -160,6 +168,12 @@ export class ClientController {
         return { exists: await this.clientService.checkPhoneExists(tenant.branchId ?? "", phone) };
     }
 
+    @Get("baby-record-capability")
+    @Header("Cache-Control", "private, no-store")
+    getBabyRecordCapability(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.clientService.getBabyRecordCapability(tenant.branchId ?? "");
+    }
+
     @Get(":id")
     findById(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
         return this.clientService.findById(tenant.branchId ?? "", id);
@@ -167,11 +181,12 @@ export class ClientController {
 
     @Patch(":id")
     update(
-        @CurrentTenant() tenant: { branchId?: string; userId?: string },
+        @CurrentTenant() tenant: Partial<VerifiedTenantPrincipal>,
         @Param("id", ParseIntPipe) id: number,
-        @Body() dto: UpdateClientDto
+        @Body() dto: UpdateClientDto,
     ) {
-        return this.clientService.update(tenant.branchId ?? "", id, {
+        const binding = dto.legacyRecordBinding;
+        const params = {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
             secondaryEmployeeId: dto.secondaryEmployeeId,
@@ -199,7 +214,26 @@ export class ClientController {
             allowHolidayService: dto.allowHolidayService,
             areaId: dto.areaId,
             expectedEndDate: dto.expectedEndDate,
+            ...(hasAllocationInput(dto) ? {
+                fetalType: dto.fetalType,
+                babyCount: dto.babyCount,
+                providers: dto.providers,
+                babyAssignments: dto.babyAssignments,
+                voucherIssuanceYear: dto.voucherIssuanceYear,
+                expectedAllocationVersion: dto.expectedAllocationVersion,
+            } : {}),
             smsAutomationEnabled: dto.smsAutomationEnabled,
+        };
+        if (!binding) return this.clientService.update(tenant.branchId ?? "", id, params);
+
+        const { branchId, userId, globalRole, branchRole } = tenant;
+        if (!branchId || !userId || !globalRole || !branchRole
+            || !(globalRole === "owner" || branchRole === "admin" || branchRole === "manager")) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        return this.clientService.update(branchId, id, params, undefined, {
+            selection: binding,
+            actor: { userId, globalRole, branchRole },
         });
     }
 

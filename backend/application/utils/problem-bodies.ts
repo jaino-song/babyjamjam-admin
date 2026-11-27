@@ -1,9 +1,21 @@
+import { ConflictException, HttpException } from "@nestjs/common";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 
 import type { ProblemCode, ProblemDetails, ProblemError } from "@babyjamjam/shared/errors/problem-details";
 
+type CodeOnlyProblemFields = Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery">;
+
+function codeOnlyProblemFields(code: ProblemCode): CodeOnlyProblemFields {
+    return {
+        code,
+        params: {},
+        outcome: "NOT_APPLIED",
+        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+    };
+}
+
 /**
- * Shape an employee rejection as a public problem contract body.
+ * Shape a field-level rejection as a public problem contract body.
  * The HTTP boundary replaces the texts with locale catalog copies, so the
  * codes and pointers here only have to identify the cause.
  *
@@ -25,6 +37,11 @@ export function problemBody(
     };
 }
 
+/** Attach a field problem to the HTTP status defined by its catalog code. */
+export function fieldProblemException(code: ProblemCode, error: ProblemError): HttpException {
+    return new HttpException(problemBody(code, error), PROBLEM_CATALOG[code].status);
+}
+
 /**
  * Shape an employee rejection that carries only its public code — no field
  * errors (resource-not-found, active-assignment conflict). Same contract
@@ -33,14 +50,20 @@ export function problemBody(
  */
 export function codeOnlyProblemBody(
     code: ProblemCode,
-): Pick<ProblemDetails, "code" | "params" | "outcome" | "recovery"> & { message: string } {
+): CodeOnlyProblemFields & { message: string } {
     return {
-        code,
-        params: {},
-        outcome: "NOT_APPLIED",
-        recovery: { action: "NONE", retry: { mode: "NEVER" } },
+        ...codeOnlyProblemFields(code),
         message: PROBLEM_CATALOG[code].detail["ko-KR"],
     };
+}
+
+/** The HTTP problem boundary localizes the response. Producers supply machine fields. */
+export function codeOnlyProblemException(code: ProblemCode, extension?: { reason: string }): HttpException {
+    return new HttpException({ ...codeOnlyProblemFields(code), ...extension }, PROBLEM_CATALOG[code].status);
+}
+
+export function isConflictException(error: unknown): error is ConflictException {
+    return error instanceof ConflictException;
 }
 
 /**

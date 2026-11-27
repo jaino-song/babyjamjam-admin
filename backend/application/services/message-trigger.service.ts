@@ -1,4 +1,15 @@
-import { publicMessageVariables } from "domain/message-policy-evaluator";
+import { isAutomaticRecordLinkGroup, isRecordLinkGroup, resolveRecordLinkGroup, RECORD_LINK_GROUP_CHANGED } from "./service-record-link-group-source";
+import type { ServiceRecordLinkGroupService } from "./service-record-link-group.service";
+import type { message_trigger_job } from "@prisma/client";
+import { lockClientForScheduleWrite } from "application/policies/employee-schedule-invariants.policy";
+import {
+    RECEIPT_RECOVERY_PREFIX, RECEIPT_RECOVERY_REASONS, RECEIPT_RECOVERY_RECHECK_MS, RECEIPT_RECOVERY_REFUSED,
+    isReceiptRecoveryReason, readReceiptObservation, receiptRuleSlot, type ReceiptObservation,
+    type ReceiptRecoveryProof, type ReceiptRecoveryReason,
+} from "domain/constants/receipt-job-recovery";
+import { CanceledAutomationRetrySettingsService } from "./canceled-automation-retry-settings.service";
+import { isStandaloneReceiptJob } from "domain/entities/standalone-receipt-request";
+import { parseMessageQuietHold, publicMessageVariables } from "domain/message-policy-evaluator";
 import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX } from "domain/constants/message-trigger-catalog";
 import { agentAutomationCoverageScope } from "application/agent/agent-automation-coverage";
 import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
@@ -67,6 +78,9 @@ import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, type ClientDateAutomationScope, EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
     getClientAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey } from "domain/constants/message-automation-intent";
 import {
+    isSenderApprovalCancellation,
+    expiredPendingJobCancelReason,
+    MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON,
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     PAST_OCCURRENCE_GRACE_MS,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
@@ -91,7 +105,6 @@ import {
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
-import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordServiceEndedAt } from "domain/constants/service-record-link-message";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
@@ -116,13 +129,13 @@ import {
     type SmsTriggerDeliveryPreparation,
 } from "./sms-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
-import { MessageSenderApprovalService } from "./message-sender-approval.service";
+import { hasApprovedReceiptSender, MessageSenderApprovalService } from "./message-sender-approval.service";
 import {
     buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe,
     isMessageRecipeWithinMaterializationWindow,
     isSelectedMessageJobExpired,
     shouldSkipClientPreStartCatchUp,
-    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
+    buildMessageRecipeDedupeKey, clientMessageOriginalSlot, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
 } from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -135,7 +148,6 @@ import {
     MESSAGE_AUTOMATION_PARENT_DISABLED_REASON,
 } from "./message-automation-activation.service";
 import { AdminAuditActor } from "./admin-audit-event.service";
-import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import {
     MessageAutomationPastTriggerConfig,
 } from "domain/entities/system-setting.entity";
@@ -198,9 +210,9 @@ export interface ResendNeedsSetupJobResult {
     reason: string | null;
 }
 
+type ObservedReceiptRule = Pick<ReceiptObservation, "event" | "slot"> & { epoch: Date | null };
+
 const ORPHANED_TRIGGER_JOB_CANCEL_REASON = "Related client or schedule deleted";
-const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과";
-const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 job 없음";
 const USER_REQUESTED_CANCEL_REASON = "사용자가 발송을 취소함";
 const CANCEL_JOB_CONFLICT_MESSAGE = "이미 발송되었거나 취소할 수 없는 상태입니다";
 // A reschedule needs more than this much lead both before (current send time)
@@ -573,6 +585,8 @@ type ClientRuleJobCandidate = {
     job: MessageTriggerJobEntity;
 };
 
+type PendingJobPersistence = "handled" | "conflict" | "suppressed";
+
 type PreProviderSendFenceResult =
     | { kind: "allow" }
     // returnedToNeedsSetup: a resend refused at the final gate went back to
@@ -661,6 +675,7 @@ function revisionDocumentJobFacts(
 export class MessageTriggerService {
     private readonly logger = new Logger(MessageTriggerService.name);
     private readonly automationSources: ClientAutomationSourceReader;
+    private recordLinkGroups?: Pick<ServiceRecordLinkGroupService, "refreshForEmployee" | "schedule">;
 
     constructor(
         private readonly prisma: PrismaService,
@@ -695,11 +710,16 @@ export class MessageTriggerService {
         private readonly caregiverTemplates?: CaregiverTemplateResolverService,
         // Date refresh also owns the prepared SMS draft, under the same transaction.
         private readonly smsDelivery?: SmsTriggerDeliveryService,
+        @Optional() private readonly receiptRetrySettings?: CanceledAutomationRetrySettingsService,
     ) {
         // Preserve constructor-based callers while sharing exactly the same read
         // implementation; the production module injects its registered reader.
         this.automationSources = automationSources ?? new ClientAutomationSourceReader(prisma, ruleRepository,
             overrideRepository, messageSenderApprovalService, systemSettingService, messageAutomationActivationService);
+    }
+
+    registerRecordLinkGroups(groups: Pick<ServiceRecordLinkGroupService, "refreshForEmployee" | "schedule">): void {
+        this.recordLinkGroups = groups;
     }
 
     async listRules(branchId: string): Promise<MessageTriggerRuleEntity[]> {
@@ -2111,6 +2131,9 @@ export class MessageTriggerService {
                 location: "body",
             }));
         }
+        await this.refreshReceiptChildren(branchId, { ruleId: id }).catch(() => {
+            this.logger.warn(`Receipt recovery refresh will be retried for rule ${id}`);
+        });
         return updated;
     }
 
@@ -2213,6 +2236,294 @@ export class MessageTriggerService {
         return (await this.systemSettingService.getMessageAutomationPolicyConfig(branchId, transaction)).configuration;
     }
 
+    /** Both committed-data callbacks and the scheduler use the same parent transition. */
+    async wakeReceiptRecovery(branchId: string, clientId: number): Promise<void> {
+        if (!this.receiptRetrySettings || !this.smsDelivery || !(await this.hasTriggerSchema())) return;
+        await this.sweepReceiptRecovery(new Date(), { branchId, clientId });
+    }
+
+    async wakeReceiptRecoveryForDocument(branchId: string | null, documentId: string): Promise<void> {
+        if (!this.receiptRetrySettings || !this.smsDelivery) return;
+        const doc = await this.prisma.eformsign_doc.findUnique({
+            where: { documentId },
+            select: { branchId: true, client: { select: { id: true, branchId: true, deletedAt: true, voucherClient: true } } },
+        });
+        if (!doc) return;
+        const client = doc.client;
+        if (!client?.branchId || client.deletedAt || !client.voucherClient
+            || (branchId !== null && branchId !== client.branchId)
+            || (doc.branchId !== null && doc.branchId !== client.branchId)) return;
+        await this.wakeReceiptRecovery(client.branchId, client.id);
+    }
+
+    async sweepReceiptRecovery(now = new Date(), client?: { branchId: string; clientId: number }): Promise<void> {
+        if (!this.receiptRetrySettings || !this.smsDelivery || !this.messageAutomationBranchLockService) return;
+        const candidates = await this.jobRepository.findReceiptRecoveryCandidates?.(now, client) ?? [];
+        for (const { id, branchId } of candidates) {
+            if (!branchId) continue;
+            try {
+                await this.messageAutomationBranchLockService.runExclusive(branchId, tx => this.admitReceiptRecovery(tx, id, branchId, now, !!client));
+            } catch {
+                this.logger.warn(`Receipt recovery recheck failed for job ${id}`);
+                // Keep a transiently unreadable original in the same bounded
+                // sweep, behind any peers that have not yet been examined.
+                await this.prisma.message_trigger_job.updateMany({ where: { id, branchId, recoveryState: "eligible",
+                    nextCheckAt: { lte: now } }, data: { nextCheckAt: new Date(now.getTime() + RECEIPT_RECOVERY_RECHECK_MS) } })
+                    .catch(() => undefined);
+            }
+        }
+    }
+
+    private async admitReceiptRecovery(
+        tx: Prisma.TransactionClient, id: string, branchId: string, now: Date, eager: boolean,
+    ): Promise<void> {
+        const parent = await tx.message_trigger_job.findFirst({ where: { id, branchId, status: "canceled",
+            originalJobId: null, recoveryState: "eligible", nextCheckAt: { not: null } } });
+        if (!parent || (!eager && parent.nextCheckAt! > now) || !isReceiptRecoveryReason(parent.recoveryReason)) return;
+        const proof = readReceiptObservation(parent.payload);
+        const senderApproved = await hasApprovedReceiptSender(tx, branchId);
+        const recipe = senderApproved && proof && !parent.canceledByUser
+            ? await this.readReceiptRecipe(tx, parent, proof, parent.recoveryReason) : null;
+        const transition = async (state: "eligible" | "ineligible_terminal" | "admitted", documentId?: number) => {
+            const updated = await tx.message_trigger_job.updateMany({
+                where: { id, branchId, status: "canceled", recoveryState: "eligible",
+                    recoveryEpoch: parent.recoveryEpoch, nextCheckAt: parent.nextCheckAt },
+                data: { recoveryState: state,
+                    nextCheckAt: state === "eligible" ? new Date(now.getTime() + RECEIPT_RECOVERY_RECHECK_MS) : null,
+                    ...(documentId === undefined ? {} : { payload: { ...(parent.payload as Prisma.JsonObject),
+                        receiptRecovery: { ...proof, admittedDocumentId: documentId } } }) },
+            });
+            return updated.count === 1;
+        };
+        if (!recipe || !proof || parent.clientId === null) {
+            await transition("ineligible_terminal");
+            return;
+        }
+        const readiness = await this.smsDelivery!.checkReceiptRecovery(branchId, parent.clientId, proof.documentId, tx);
+        if (readiness.kind === "terminal") {
+            await transition("ineligible_terminal");
+            return;
+        }
+        if (readiness.kind !== "ready" || !recipe.targetMatches || parent.scheduledFor > now) {
+            await transition("eligible");
+            return;
+        }
+        if (await this.jobRepository.hasAcceptedOccurrence(recipe.job, tx)) {
+            await transition("ineligible_terminal");
+            return;
+        }
+        if (!await transition("admitted", readiness.documentId)) return;
+        const admittedAt = new Date(Math.max(now.getTime(), Date.now()));
+        const child = await tx.message_trigger_job.create({
+            data: {
+                branchId, ruleId: parent.ruleId, clientId: parent.clientId, recipientType: parent.recipientType,
+                recipientPhone: recipe.job.recipientPhone, templateKey: parent.templateKey,
+                scheduledFor: new Date(Math.max(parent.scheduledFor.getTime(), recipe.job.scheduledFor.getTime(), admittedAt.getTime())),
+                createdAt: admittedAt,
+                dedupeKey: RECEIPT_RECOVERY_PREFIX + id, originalJobId: id,
+                recoveryEpoch: parent.recoveryEpoch, recoveryReason: parent.recoveryReason,
+                payload: recipe.job.payload as unknown as Prisma.InputJsonObject,
+            },
+        });
+        await this.bindReceiptChild(tx, branchId, child.id);
+    }
+
+    private async bindReceiptChild(tx: Prisma.TransactionClient, branchId: string, id: string): Promise<void> {
+        const job = await this.jobRepository.findByIdInBranch(branchId, id, tx);
+        if (!job || !this.automationDeliveryGate) throw new Error("Receipt recovery materialization is unavailable");
+        await this.automationDeliveryGate.bindMaterialization(tx, job,
+            (candidate, transaction) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, transaction));
+    }
+
+    private async readReceiptRecipe(
+        tx: Prisma.TransactionClient, parent: message_trigger_job, proof: ReceiptObservation, reason: ReceiptRecoveryReason,
+    ): Promise<{ job: MessageTriggerJobEntity; targetMatches: boolean } | null> {
+        const { branchId, clientId, ruleId } = parent;
+        if (!branchId || clientId === null || parent.employeeScheduleId !== null || !parent.recoveryEpoch
+            || !await lockClientForScheduleWrite(tx, branchId, clientId)) return null;
+        const rule = await this.lockReceiptRule(tx, branchId, ruleId);
+        if (!rule || proof.event !== rule.eventType || proof.slot !== receiptRuleSlot(rule)) return null;
+        const epoch = await this.receiptRetrySettings!.readMemberEpoch(branchId, ruleId, reason, tx);
+        if (epoch?.getTime() !== parent.recoveryEpoch.getTime()) return null;
+        const client = await this.readClientAutomationSource(branchId, clientId, tx);
+        if (!client) return null;
+        const recipe = buildClientMessageRecipe(rule, client, parent.scheduledFor);
+        if (!recipe) return null;
+        const statusFacts = rule.targetClientStatus === "all" ? null : await tx.client.findFirst({
+            where: { id: clientId, branchId, deletedAt: null },
+            select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+        });
+        return { job: MessageTriggerJobEntity.create({ ...recipe, branchId }),
+            targetMatches: targetClientStatusAllowsSend(rule.targetClientStatus, statusFacts) };
+    }
+
+    private async lockReceiptRule(tx: Prisma.TransactionClient, branchId: string, ruleId: string) {
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM message_trigger_rule
+            WHERE id = ${ruleId} AND (branch_id = ${branchId}::uuid OR branch_id IS NULL) FOR UPDATE`);
+        return this.ruleRepository.findByIdIncludingGlobal(branchId, ruleId, tx);
+    }
+
+    private async captureReceiptCancellation(job: MessageTriggerJobEntity, proof: ReceiptRecoveryProof | null,
+        observation: ObservedReceiptRule | null): Promise<void> {
+        const { branchId, clientId } = job;
+        await this.messageAutomationBranchLockService!.runExclusive(branchId!, async tx => {
+            const senderApproved = await hasApprovedReceiptSender(tx, branchId!);
+            await lockClientForScheduleWrite(tx, branchId!, clientId!);
+            const rule = await this.lockReceiptRule(tx, branchId!, job.ruleId);
+            const epoch = proof && rule ? await this.receiptRetrySettings!.readMemberEpoch(branchId!, job.ruleId, proof.reason, tx) : null;
+            const current = await tx.message_trigger_job.findFirst({ where: { branchId, id: job.id, status: "processing",
+                claimToken: job.claimToken, canceledByUser: false, originalJobId: null, firstBlockedAt: null, recoveryReason: null } });
+            if (!current) return;
+            const providerStarted = await tx.message_log.findFirst({ where: { branchId, triggerJobId: job.id,
+                OR: [{ providerCallStartedAt: { not: null } }, { providerAcceptanceState: { not: "prepared" } }] }, select: { id: true } });
+            const eligible = !!(senderApproved && proof && epoch && rule && !providerStarted && current.attempts === 0
+                && observation?.epoch?.getTime() === epoch.getTime()
+                && observation.event === rule.eventType && observation.slot === receiptRuleSlot(rule));
+            const blockedAt = job.canceledAt ?? new Date();
+            await tx.message_trigger_job.updateMany({
+                where: { id: job.id, branchId, status: "processing", claimToken: job.claimToken, recoveryReason: null },
+                data: { status: "canceled", canceledAt: blockedAt, firstBlockedAt: blockedAt,
+                    cancelReason: senderApproved ? job.cancelReason : MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+                    claimToken: null, processingDeadlineAt: null, nextAttemptAt: null,
+                    recoveryReason: proof?.reason ?? RECEIPT_RECOVERY_REFUSED, recoveryEpoch: eligible ? epoch : null,
+                    recoveryState: eligible ? "eligible" : "ineligible_terminal",
+                    nextCheckAt: eligible ? new Date(blockedAt.getTime() + RECEIPT_RECOVERY_RECHECK_MS) : null,
+                    ...(observation ? { payload: { ...(current.payload as Prisma.JsonObject), receiptRecovery: {
+                        event: observation.event, slot: observation.slot, documentId: proof?.documentId ?? null,
+                    } } } : {}) },
+            });
+        });
+    }
+
+    /** The existing transport retry owns its branch, source, rule and job locks. */
+    async permitsReceiptTransportRetry(tx: Prisma.TransactionClient, child: message_trigger_job, job: MessageTriggerJobEntity): Promise<boolean> {
+        const { branchId, clientId, originalJobId } = child;
+        if (!branchId || clientId === null || !originalJobId || child.dedupeKey !== RECEIPT_RECOVERY_PREFIX + originalJobId
+            || child.canceledByUser || child.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            || child.recipientType !== MessageTriggerRecipientType.CLIENT || !isReceiptRecoveryReason(child.recoveryReason)
+            || !this.receiptRetrySettings || !this.smsDelivery || !await hasApprovedReceiptSender(tx, branchId)) return false;
+        const parent = await tx.message_trigger_job.findFirst({ where: { id: originalJobId, branchId, clientId, ruleId: child.ruleId,
+            status: "canceled", canceledByUser: false, recoveryState: "admitted", recoveryReason: child.recoveryReason,
+            recoveryEpoch: child.recoveryEpoch, originalJobId: null } });
+        const proof = parent && readReceiptObservation(parent.payload);
+        if (!parent || !proof || proof.admittedDocumentId == null) return false;
+        const current = await this.readReceiptRecipe(tx, parent, proof, child.recoveryReason);
+        if (!current?.targetMatches || child.recipientPhone !== current.job.recipientPhone
+            || child.scheduledFor.getTime() !== Math.max(parent.scheduledFor.getTime(), child.createdAt.getTime(), current.job.scheduledFor.getTime())) return false;
+        return (await this.smsDelivery.checkReceiptRecovery(branchId, clientId, proof.admittedDocumentId, tx, job)).kind === "ready";
+    }
+
+    private async fenceOrdinaryReceiptProvider(tx: Prisma.TransactionClient, job: MessageTriggerJobEntity) {
+        const branchId = job.branchId!;
+        const clientId = job.clientId!;
+        const senderApproved = await hasApprovedReceiptSender(tx, branchId);
+        const clientLocked = await lockClientForScheduleWrite(tx, branchId, clientId);
+        const readiness = senderApproved && clientLocked
+            ? await this.smsDelivery!.checkReceiptRecovery(branchId, clientId, null, tx, job) : null;
+        if (readiness?.kind === "ready") return "allow" as const;
+        const updated = await tx.message_trigger_job.updateMany({
+            where: { id: job.id, branchId, clientId, status: "dispatching", claimToken: job.claimToken },
+            data: { status: "canceled", canceledAt: new Date(), claimToken: null, processingDeadlineAt: null, nextAttemptAt: null,
+                cancelReason: senderApproved ? RECEIPT_RECOVERY_REFUSED : MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON },
+        });
+        return updated.count === 1 ? "canceled" as const : "lost" as const;
+    }
+
+    private async refreshReceiptChildren(branchId: string, query: { clientId: number } | { ruleId: string }): Promise<void> {
+        if (!this.receiptRetrySettings || !this.messageAutomationBranchLockService) return;
+        const children = await this.prisma.message_trigger_job.findMany({ where: { branchId, ...query,
+            status: { in: ["pending", "processing"] }, originalJobId: { not: null },
+            recoveryReason: { in: [...RECEIPT_RECOVERY_REASONS] } }, select: { id: true } });
+        for (const { id } of children) {
+            await this.messageAutomationBranchLockService.runExclusive(branchId, async tx => {
+                const child = await tx.message_trigger_job.findFirst({ where: { id, branchId, status: { in: ["pending", "processing"] } } });
+                if (child) await this.fenceReceiptChild(tx, child, child.status as "pending" | "processing");
+            });
+        }
+    }
+
+    private async fenceReceiptChild(
+        tx: Prisma.TransactionClient, selected: Pick<message_trigger_job, "id" | "branchId" | "claimToken">,
+        stage: "pending" | "processing" | "dispatching", prepared?: MessageTriggerJobEntity,
+        expire = false,
+    ): Promise<"allow" | "canceled" | "released" | "lost"> {
+        const child = await tx.message_trigger_job.findFirst({ where: { id: selected.id, branchId: selected.branchId, status: stage,
+            ...(stage === "pending" ? {} : { claimToken: selected.claimToken }) } });
+        if (!child || !child.branchId || !child.originalJobId || child.canceledByUser || !isReceiptRecoveryReason(child.recoveryReason)
+            || child.dedupeKey !== RECEIPT_RECOVERY_PREFIX + child.originalJobId
+            || child.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            || child.recipientType !== MessageTriggerRecipientType.CLIENT) return "lost";
+        const branchId = child.branchId;
+        const where = { id: child.id, branchId, status: stage, claimToken: child.claimToken, updatedAt: child.updatedAt, canceledByUser: false };
+        const cancel = async (reason: string) => {
+            const updated = await tx.message_trigger_job.updateMany({ where, data: { status: "canceled", canceledAt: new Date(),
+                cancelReason: reason, nextAttemptAt: null, claimToken: null, processingDeadlineAt: null } });
+            return updated.count === 1 ? "canceled" as const : "lost" as const;
+        };
+        if (!await hasApprovedReceiptSender(tx, branchId)) return cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+        const parent = await tx.message_trigger_job.findFirst({ where: { id: child.originalJobId, branchId,
+            ruleId: child.ruleId, clientId: child.clientId, recipientType: child.recipientType, templateKey: child.templateKey,
+            status: "canceled", canceledByUser: false, recoveryState: "admitted", recoveryReason: child.recoveryReason,
+            recoveryEpoch: child.recoveryEpoch, originalJobId: null } });
+        const proof = parent && readReceiptObservation(parent.payload);
+        if (!parent || !proof || proof.admittedDocumentId == null || child.clientId === null
+            || !this.receiptRetrySettings || !this.smsDelivery) return cancel(RECEIPT_RECOVERY_REFUSED);
+        const recipe = await this.readReceiptRecipe(tx, parent, proof, child.recoveryReason);
+        if (!recipe || !recipe.targetMatches) return cancel(RECEIPT_RECOVERY_REFUSED);
+        const due = new Date(Math.max(child.createdAt.getTime(), parent.scheduledFor.getTime(), recipe.job.scheduledFor.getTime()));
+        const changed = child.scheduledFor.getTime() !== due.getTime() || child.recipientPhone !== recipe.job.recipientPhone
+            || agentBindingHash(agentAutomationSourcePayload(child.payload, child.templateKey))
+                !== agentBindingHash(agentAutomationSourcePayload(recipe.job.payload, child.templateKey));
+
+        // A previously prepared draft may exist for a quiet/occurrence hold. Only
+        // an unstarted draft can be retired when a refreshed snapshot is needed.
+        if (changed) {
+            const started = await tx.message_log.findFirst({ where: { branchId, triggerJobId: child.id,
+                OR: [{ providerCallStartedAt: { not: null } }, { providerAcceptanceState: { not: "prepared" } }] },
+                select: { id: true } });
+            if (started) return cancel(RECEIPT_RECOVERY_REFUSED);
+            const updated = await tx.message_trigger_job.updateMany({ where, data: { status: "pending",
+                scheduledFor: due, recipientPhone: recipe.job.recipientPhone, payload: recipe.job.payload as unknown as Prisma.InputJsonObject,
+                claimToken: null, processingDeadlineAt: null, cancelReason: null } });
+            if (updated.count !== 1) return "lost";
+            await tx.$executeRaw(Prisma.sql`
+                UPDATE message_log SET trigger_job_id = NULL, provider_acceptance_key = NULL,
+                    provider_acceptance_fingerprint = NULL, status = 'failed', next_retry_at = NULL,
+                    error_message = ${CLIENT_DATE_AUTOMATION_CHANGED_REASON}, updated_at = clock_timestamp(),
+                    variables = variables || jsonb_build_object('supersededTriggerJobId', ${child.id}::text)
+                WHERE branch_id = ${branchId}::uuid AND trigger_job_id = ${child.id} AND provider = 'aligo_sms'
+                  AND provider_acceptance_state = 'prepared' AND provider_call_started_at IS NULL
+            `);
+            await this.bindReceiptChild(tx, branchId, child.id);
+            return "released";
+        }
+        if (expire) {
+            const current = await this.jobRepository.findByIdInBranch(branchId, child.id, tx);
+            if (!current) return "lost";
+            const hold = await this.jobRepository.readQuietHold(current, tx);
+            const policy = await this.getDispatchTimingPolicy(branchId, tx);
+            const now = new Date();
+            if (isSelectedMessageJobExpired(current, policy.pastExpiryHours, now, hold?.releaseAt)) {
+                // An edit retired the old snapshot, but its quiet-hours release
+                // fence still belongs to this child and must count for expiry.
+                const retired = !hold && child.nextAttemptAt && await tx.message_log.findFirst({ where: {
+                    branchId, triggerJobId: null, provider: "aligo_sms", providerAcceptanceState: "prepared",
+                    providerCallStartedAt: null, providerAcceptanceKey: null, errorMessage: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
+                    AND: [{ variables: { path: ["supersededTriggerJobId"], equals: child.id } },
+                        { variables: { path: ["quietHoursDisposition"], equals: "DEFER" } }],
+                }, select: { variables: true }, orderBy: { updatedAt: "desc" } });
+                const retiredHold = retired ? parseMessageQuietHold(retired.variables) : null;
+                if (!retiredHold || child.nextAttemptAt! < retiredHold.releaseAt
+                    || isSelectedMessageJobExpired(current, policy.pastExpiryHours, now, retiredHold.releaseAt)) {
+                    return cancel(hold || retiredHold ? "expired_after_quiet" : expiredPendingJobCancelReason(policy.pastExpiryHours));
+                }
+            }
+        }
+        if (due > new Date()) return "lost";
+        const readiness = await this.smsDelivery.checkReceiptRecovery(branchId, child.clientId, proof.admittedDocumentId, tx, prepared);
+        return readiness.kind === "ready" ? "allow" : cancel(RECEIPT_RECOVERY_REFUSED);
+    }
+
     async dispatchDueJobs(): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
             return;
@@ -2225,8 +2536,26 @@ export class MessageTriggerService {
         // this tick can dispatch on this tick instead of waiting another minute.
         await this.processStaleRuleRebuilds();
         const now = new Date();
+        await this.sweepReceiptRecovery(now);
         const branchIds = await this.jobRepository.findDueDispatchBranchIds(now);
         const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(branchIds);
+        const denied = await this.jobRepository.findDueRecordLinkJobsForSenderCheck?.(
+            branchIds.filter(branchId => !approvedBranchIds.has(branchId)), now,
+        ) ?? [];
+        for (const job of denied) {
+            await this.messageAutomationBranchLockService?.runExclusive(job.branchId!, async tx => {
+                await this.jobRepository.fenceServiceRecordLinkAttempt!(tx, job, now, "pending", true);
+            });
+        }
+        if (this.receiptRetrySettings && this.jobRepository.cancelDueReceiptJobsForDeniedSender) {
+            for (const branchId of branchIds.filter(id => !approvedBranchIds.has(id))) {
+                await this.messageAutomationBranchLockService!.runExclusive(branchId, async tx => {
+                    if (!await hasApprovedReceiptSender(tx, branchId)) {
+                        await this.jobRepository.cancelDueReceiptJobsForDeniedSender!(branchId, now, tx);
+                    }
+                });
+            }
+        }
         const eligibility = [];
         for (const branchId of branchIds) {
             if (!approvedBranchIds.has(branchId)) continue;
@@ -2530,6 +2859,10 @@ export class MessageTriggerService {
             return;
         }
 
+        if (this.receiptRetrySettings) {
+            await this.refreshReceiptChildren(branchId, { clientId });
+            await this.wakeReceiptRecovery(branchId, clientId);
+        }
         if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
             return;
         }
@@ -2612,8 +2945,8 @@ export class MessageTriggerService {
             await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, intentOptions.stableBatchAt);
         }
 
-        for (const { rule, job } of jobsToPersist) {
-            await this.persistPendingJob(
+        await this.persistClientRuleBatch(jobsToPersist, ({ rule, job }) =>
+            this.persistPendingJob(
                 job,
                 rule,
                 includePast,
@@ -2621,12 +2954,14 @@ export class MessageTriggerService {
                 intentOptions?.preserveExisting === true,
                 undefined,
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
-            );
-        }
+            ),
+        );
     }
 
     /** Date edits reconcile current sources without invoking the generic client's broad cancellation path. */
     async reconcileServiceRecordDateRules(branchId: string, clientId: number, scope: ClientDateAutomationScope): Promise<void> {
+        await this.refreshReceiptChildren(branchId, { clientId });
+        await this.wakeReceiptRecovery(branchId, clientId);
         if (!this.messageAutomationBranchLockService) throw new ServiceUnavailableException("Message automation lock is not configured");
         await this.messageAutomationBranchLockService.runExclusive(branchId, async (tx) => {
             await lockServiceRecordWriteSet(tx, { branchId, clientId });
@@ -2644,7 +2979,8 @@ export class MessageTriggerService {
             await tx.$queryRaw(Prisma.sql`SELECT id FROM "message_trigger_job"
                 WHERE branch_id = ${branchId}::uuid AND client_id = ${clientId}
                   AND rule_id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
-            const previous = await this.jobRepository.findForClientAutomationReview(branchId, clientId, ids, tx);
+            const previous = (await this.jobRepository.findForClientAutomationReview(branchId, clientId, ids, tx))
+                .filter(job => !job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX));
             if (previous.length > 500) throw new ServiceUnavailableException("Message date reconciliation exceeds bounded scope");
             const ordinary = (job: MessageTriggerJobReviewSnapshot) => job.branchId === branchId && job.clientId === clientId
                 && !isManualMessageTriggerJob(job) && !isReservedAutomationJob(job) && !job.payload.taskAutomationReference;
@@ -2656,6 +2992,12 @@ export class MessageTriggerService {
                 && agentBindingHash(agentAutomationSourcePayload(a.payload, a.templateKey)) === agentBindingHash(agentAutomationSourcePayload(b.payload, b.templateKey));
             const reconcile = async (rule: MessageTriggerRuleEntity, job: MessageTriggerJobEntity | null,
                 family: MessageTriggerJobReviewSnapshot[], anchorChanged: boolean) => {
+                const originalSlot = job && clientMessageOriginalSlot(job);
+                const terminalOccurrence = job && family.some((row) => isSenderApprovalCancellation(row)
+                    && (row.dedupeKey === job.dedupeKey
+                        || (originalSlot && clientMessageOriginalSlot(row)?.key === originalSlot.key)
+                        || (rule.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED && job.employeeScheduleId !== null
+                            && job.payload.employeeId != null && row.payload.employeeId === job.payload.employeeId)));
                 // Repeated intents retain the accepted catch-up slot for this source occurrence.
                 const catchUp = job && family.find((row) => ["pending", "processing"].includes(row.status)
                     && row.payload.catchUp?.originalScheduledFor === job.scheduledFor.toISOString());
@@ -2674,7 +3016,7 @@ export class MessageTriggerService {
                 const affected = anchorChanged || family.some((row) => job && !sameSource(row, job));
                 if (!affected) return;
                 // Logical recipient scope spans historical date keys. Delivery uncertainty is never replayed.
-                const replacementBlocked = family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
+                const replacementBlocked = terminalOccurrence || family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
                     || row.payload.taskAutomationReference || isReservedAutomationJob(row)
                     || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED");
                 const reversible = (row: MessageTriggerJobReviewSnapshot) => ordinary(row) && !row.canceledByUser
@@ -2687,8 +3029,7 @@ export class MessageTriggerService {
                     ? previous.find((row) => row.id !== operatorReservation.id && row.dedupeKey === job.dedupeKey) : undefined;
                 const reclaimableOperatorDestination = operatorDestination && family.includes(operatorDestination)
                     && reversible(operatorDestination) && operatorDestination.status === "canceled"
-                    && (operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON
-                        || operatorDestination.cancelReason === MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+                    && operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON;
                 if (family.some((row) => reversible(row) && row.status === "processing"
                     && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
@@ -2710,7 +3051,7 @@ export class MessageTriggerService {
                 reconciliations.push({ job, apply: async () => {
                     // Protected history blocks replacement, but cannot keep obsolete reversible siblings dispatchable.
                     const stale = family.filter((row) => reversible(row) && row.status === "pending"
-                        && (!eligible || row.dedupeKey !== job!.dedupeKey
+                        && (!eligible || terminalOccurrence || row.dedupeKey !== job!.dedupeKey
                             || ((replacementBlocked || operatorMoveBlocked)
                                 && (!sameSource(row, job!) || row.scheduledFor.getTime() !== job!.scheduledFor.getTime()))));
                     if (stale.length) {
@@ -2721,7 +3062,7 @@ export class MessageTriggerService {
                         });
                     }
                     if (operatorReservation) {
-                        if (!job || operatorMoveBlocked) return;
+                        if (!job || operatorMoveBlocked || terminalOccurrence) return;
                         if (operatorReservation.dedupeKey === job.dedupeKey && sameSource(operatorReservation, job)
                             && operatorReservation.scheduledFor.getTime() === job.scheduledFor.getTime()) return;
                         if (operatorDestination && reclaimableOperatorDestination) {
@@ -2754,12 +3095,12 @@ export class MessageTriggerService {
                     }
                     if (replacementBlocked || !eligible || currentEquivalent) return;
                     // A protected task-owned slot is kept separate even if its reviewed source has drifted.
-                    const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey && !ordinary(row));
+                    const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey
+                        && (!ordinary(row) || isSenderApprovalCancellation(row)));
                     if (protectedSlot) return;
-                    if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON
-                        && current.cancelReason !== MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON) return;
-                    if (!(await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx,
-                        undefined, existingOccurrence && current.status === "pending" ? current : undefined))) {
+                    if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON) return;
+                    if (await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx,
+                        undefined, existingOccurrence && current.status === "pending" ? current : undefined) === "conflict") {
                         throw new ConflictException("Message rule changed while reconciling dates");
                     }
                 } });
@@ -2913,17 +3254,17 @@ export class MessageTriggerService {
             if (includePast && options?.preserveExisting && options.stableBatchAt) {
                 await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, options.stableBatchAt, tx);
             }
-            for (const { rule, job } of jobsToPersist) {
-                if (completedSlots.has(job.dedupeKey)) continue;
+            await this.persistClientRuleBatch(jobsToPersist, async ({ rule, job }) => {
+                if (completedSlots.has(job.dedupeKey)) return "handled";
                 if (conflicts.has(job.dedupeKey)) {
                     const persisted = await this.jobRepository.upsertPendingForRuleGeneration(job, rule.updatedAt, rule.jobsStale, options?.preserveExisting === true, tx);
                     if (persisted?.status === "pending") { persisted.markNeedsSetup("recipient_phone_conflict"); await tx.message_trigger_job.updateMany({ where: { id: persisted.id, branchId, status: "pending", canceledByUser: false },
                         data: { status: "needs_setup", cancelReason: "recipient_phone_conflict", claimToken: null, updatedAt: new Date() } }); }
-                } else {
-                    await this.persistPendingJob(job, rule, includePast, isCaregiverTriggerTemplate(rule.templateKey) ? rule.jobsStale : false,
-                        options?.preserveExisting === true, tx, options?.taskOrigin ? options.taskAutomationReference : undefined);
+                    return "handled";
                 }
-            }
+                return this.persistPendingJob(job, rule, includePast, isCaregiverTriggerTemplate(rule.templateKey) ? rule.jobsStale : false,
+                    options?.preserveExisting === true, tx, options?.taskOrigin ? options.taskAutomationReference : undefined);
+            }, tx);
         }, transaction);
     }
 
@@ -3055,7 +3396,7 @@ export class MessageTriggerService {
                 undefined,
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
-            if (!persisted) retryable = true;
+            if (persisted === "conflict") retryable = true;
         }
         return !retryable;
     }
@@ -3113,6 +3454,8 @@ export class MessageTriggerService {
         if (!(await this.messageSenderApprovalService.isApproved(branchId))) {
             return false;
         }
+
+        await this.recordLinkGroups?.refreshForEmployee(branchId, employeeId);
 
         const schedules = await this.prisma.employee_schedule.findMany({
             where: {
@@ -3295,8 +3638,8 @@ export class MessageTriggerService {
         transaction?: Prisma.TransactionClient,
         taskAutomationReference?: AgentAutomationTaskCommitReference,
         pendingOccurrence?: MessageTriggerJobReviewSnapshot,
-    ): Promise<boolean> {
-        if (!job) return true;
+    ): Promise<PendingJobPersistence> {
+        if (!job) return "handled";
         // The reference is carried only in the materialized job payload. It is
         // digest-only and does not alter the source recipe, so callers without
         // a task-origin intent retain the exact legacy object and expectations.
@@ -3316,7 +3659,7 @@ export class MessageTriggerService {
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return true;
+        if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return "handled";
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
             if (automaticJob && materializedJob.branchId) {
                 const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(materializedJob.branchId, transaction);
@@ -3361,7 +3704,49 @@ export class MessageTriggerService {
                 transaction,
             )
             : await persist(transaction);
-        return persisted !== null;
+        if (!persisted) return "conflict";
+        if (persisted.dedupeKey !== materializedJob.dedupeKey && (isSenderApprovalCancellation(persisted)
+            || (persisted.status === "canceled" && materializedJob.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE))) {
+            return "suppressed";
+        }
+        return "handled";
+    }
+
+    private async persistClientRuleBatch(
+        candidates: ClientRuleJobCandidate[],
+        persist: (candidate: ClientRuleJobCandidate) => Promise<PendingJobPersistence>,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        let suppressed = false;
+        let nextSequence = 1;
+        let predecessorDedupeKey: string | null = null;
+        for (const candidate of candidates) {
+            const { job } = candidate;
+            let slot = job.payload.catchUp;
+            if (slot && suppressed && (slot.sequence !== nextSequence || slot.predecessorDedupeKey !== predecessorDedupeKey)) {
+                // A replay can already have a reservation at the original key. Keep that
+                // identity instead of creating a second job at a compacted key.
+                const existing = await (transaction ?? this.prisma).message_trigger_job.findUnique({
+                    where: { dedupeKey: job.dedupeKey, branchId: job.branchId, clientId: job.clientId, ruleId: job.ruleId },
+                    select: { id: true },
+                });
+                if (!existing) {
+                    const scheduledFor = new Date(job.scheduledFor.getTime()
+                        + (nextSequence - slot.sequence) * slot.intervalMinutes * MS_PER_MINUTE);
+                    slot = { ...slot, sequence: nextSequence, predecessorDedupeKey };
+                    this.setCatchUpSlot(candidate, scheduledFor, slot);
+                }
+            }
+            const result = await persist(candidate);
+            if (!slot) continue;
+            if (result === "suppressed") {
+                // The historical cancellation has a different key from this batch slot.
+                suppressed = true;
+                continue;
+            }
+            nextSequence = slot.sequence + 1;
+            predecessorDedupeKey = job.dedupeKey;
+        }
     }
 
     private async applyRetroactiveSendConfig(
@@ -3392,21 +3777,13 @@ export class MessageTriggerService {
             config.ruleOrder,
         );
 
-        orderedDueCandidates.forEach(({ rule, job }, index) => {
+        orderedDueCandidates.forEach((candidate, index) => {
+            const { job } = candidate;
             const originalScheduledFor = job.scheduledFor.toISOString();
             const scheduledFor = new Date(
                 baseScheduledFor.getTime() + (index * config.sendIntervalMinutes * MS_PER_MINUTE),
             );
-            job.scheduledFor = scheduledFor;
-            if (job.clientId !== null && !isCaregiverTriggerTemplate(job.templateKey)) {
-                job.dedupeKey = buildMessageRecipeDedupeKey(
-                    rule.id,
-                    `client:${job.clientId}`,
-                    scheduledFor,
-                    rule.recipientType,
-                );
-            }
-            job.payload.catchUp = {
+            this.setCatchUpSlot(candidate, scheduledFor, {
                 batchId: `client:${job.clientId ?? "unknown"}:${baseScheduledFor.toISOString()}`,
                 sequence: index + 1,
                 intervalMinutes: config.sendIntervalMinutes,
@@ -3414,10 +3791,22 @@ export class MessageTriggerService {
                 predecessorDedupeKey: index > 0
                     ? orderedDueCandidates[index - 1]?.job.dedupeKey ?? null
                     : null,
-            };
+            });
         });
 
         return [...orderedDueCandidates, ...futureCandidates];
+    }
+
+    private setCatchUpSlot(
+        { rule, job }: ClientRuleJobCandidate,
+        scheduledFor: Date,
+        catchUp: NonNullable<MessageTriggerJobEntity["payload"]["catchUp"]>,
+    ): void {
+        job.scheduledFor = scheduledFor;
+        if (job.clientId !== null && job.employeeScheduleId === null && !isCaregiverTriggerTemplate(job.templateKey)) {
+            job.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${job.clientId}`, scheduledFor, rule.recipientType);
+        }
+        job.payload.catchUp = catchUp;
     }
 
     private async getRetroactiveSendConfig(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageAutomationPastTriggerConfig> {
@@ -3474,6 +3863,7 @@ export class MessageTriggerService {
         );
 
         for (const job of jobs) {
+            if (job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)) continue;
             const rule = rulesById.get(job.ruleId);
             if (!rule) continue;
 
@@ -3811,7 +4201,9 @@ export class MessageTriggerService {
             rule.updatedAt,
             expectedJobsStale,
             reason,
-            { needsSetup: reason === "Rule deleted" || !rule.isActive ? "all" : undefined },
+            { ...(rule.isActive && reason === "Rule updated" && rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
+                ? { preserveReceiptRecoveryChild: true } : {}),
+                needsSetup: reason === "Rule deleted" || !rule.isActive ? "all" : undefined },
         );
         return canceled !== null;
     }
@@ -3927,7 +4319,8 @@ export class MessageTriggerService {
                 rule.updatedAt,
                 false,
                 reason,
-                { clientId, needsSetup: rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE
+                { clientId, ...(rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
+                    ? { preserveReceiptRecoveryChild: true } : {}), needsSetup: rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE
                     && rule.eventType !== MessageTriggerEventType.EMPLOYEE_ASSIGNED ? "within_window" : undefined },
             );
         }
@@ -3960,8 +4353,40 @@ export class MessageTriggerService {
         approvedBranchIds: ReadonlySet<string>,
         options: DispatchClaimedJobOptions = {},
     ): Promise<boolean> {
+        const processed = await this.attemptDispatchClaimedJob(job, sentIds, approvedBranchIds, options);
+        const sourceHash = job.payload.recordLinkGroup?.sourceHash;
+        if (this.recordLinkGroups && job.branchId && job.employeeScheduleId !== null && sourceHash
+            && job.status === "canceled" && job.cancelReason === RECORD_LINK_GROUP_CHANGED && isAutomaticRecordLinkGroup(job)) {
+            try {
+                // Recompute under fresh household locks after the cancellation transaction commits.
+                await this.recordLinkGroups.schedule(job.branchId, job.employeeScheduleId, { supersededSourceHash: sourceHash });
+            } catch (error) {
+                if (!(error instanceof NotFoundException)) this.logger.warn(`Could not refresh the record link group for job ${job.id}`);
+            }
+        }
+        return processed;
+    }
+
+    private async attemptDispatchClaimedJob(
+        job: MessageDispatchSelectedJob,
+        sentIds: ReadonlySet<string>,
+        approvedBranchIds: ReadonlySet<string>,
+        options: DispatchClaimedJobOptions = {},
+    ): Promise<boolean> {
         const resend = options.resendFromNeedsSetup === true;
         const automaticJob = this.isAutomaticMessageJob(job);
+        const automaticReceipt = automaticJob && this.receiptRetrySettings && this.smsDelivery && !!job.branchId
+            && job.clientId !== null && job.employeeScheduleId === null && !isReservedAutomationJob(job)
+            && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            && job.recipientType === MessageTriggerRecipientType.CLIENT
+            && typeof job.payload.receiptEformsignDocId !== "number"
+            && !isManualMessageTriggerRule({ id: job.ruleId, templateKey: job.templateKey });
+        const receiptChild = job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX);
+        if (receiptChild && (!automaticReceipt || resend)) return false;
+        let observedReceiptRule: ObservedReceiptRule | null = null;
+        const automaticRecordLink = automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID;
+        const usesRecordLinkFence = automaticRecordLink && !!this.jobRepository.fenceServiceRecordLinkAttempt;
+        let recordLinkCanceled: string | null = null;
         if (
             automaticJob
             && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService || !job.branchId)
@@ -3978,6 +4403,21 @@ export class MessageTriggerService {
         let processingDeadlineAt!: Date;
         let pastExpiryHours!: number;
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
+            if (isRecordLinkGroup(job) && !sentIds.has(job.id)
+                && (!job.branchId || !transaction)) return null;
+            if (automaticReceipt && transaction && !resend && !sentIds.has(job.id)) {
+                if (receiptChild) {
+                    const fence = await this.fenceReceiptChild(transaction, job, "pending", undefined, true);
+                    if (fence !== "allow") return null;
+                    const current = await this.jobRepository.findByIdInBranch(job.branchId!, job.id, transaction);
+                    if (!current || agentAutomationConcreteJobDigest(current) !== agentAutomationConcreteJobDigest(job)) return null;
+                } else if (!await hasApprovedReceiptSender(transaction, job.branchId!)) {
+                    await this.jobRepository.cancelDueReceiptJobsForDeniedSender?.(job.branchId!, new Date(), transaction, job.id);
+                    return null;
+                } else if (!await this.jobRepository.fenceOrdinaryReceiptPending?.(transaction, job, new Date())) {
+                    return null;
+                }
+            }
             if (typeof this.jobRepository.readQuietHold === "function" && job.branchId) {
                 const current = transaction
                     ? await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId, status: "pending" } })
@@ -3987,6 +4427,11 @@ export class MessageTriggerService {
                     if (!current || Math.max(current.scheduledFor.getTime(), current.nextAttemptAt?.getTime() ?? 0) > Date.now()) return null;
                     job.quietHold = hold ?? undefined;
                 }
+            }
+            if (usesRecordLinkFence && transaction && !resend && !sentIds.has(job.id)) {
+                const fence = await this.jobRepository.fenceServiceRecordLinkAttempt!(transaction, job, new Date(), "pending");
+                if (fence.kind === "stale") recordLinkCanceled = fence.reason;
+                if (fence.kind !== "allow") return null;
             }
             if (!skipSafeguard) {
                 const decision = await this.smsAutomationSafeguard!.check(job, transaction);
@@ -4030,11 +4475,15 @@ export class MessageTriggerService {
         // their current due time and claim under the same branch transaction
         // as automatic jobs and policy reconciliation. Existing manual
         // needs_setup resends keep their separate, non-pending claim path.
-        const claimed = (automaticJob || job.templateKey === MANUAL_SMS_TEMPLATE_KEY || !resend)
+        const claimed = (automaticJob || isRecordLinkGroup(job) || job.templateKey === MANUAL_SMS_TEMPLATE_KEY || !resend)
             && job.branchId && this.messageAutomationBranchLockService
             ? await this.messageAutomationBranchLockService.runExclusive(job.branchId, (transaction) => claim(transaction))
             : await claim();
         if (!claimed) {
+            if (recordLinkCanceled) {
+                job.cancel(recordLinkCanceled);
+                return true;
+            }
             if (safeguardBlock) {
                 const block: Extract<SmsAutomationSafeguardDecision, { allowed: false }> = safeguardBlock;
                 job.cancel(smsAutomationSafeguardReason(block.level));
@@ -4067,7 +4516,7 @@ export class MessageTriggerService {
         }
 
         let linkClient: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null; bookingConfirmedAt: Date | null } | null = null;
-        if (automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) {
+        if (automaticRecordLink && !usesRecordLinkFence) {
             // 늦게 등록한 링크 문자는 명목 예약 시각을 유지하고 종료일까지 발송한다.
             const schedule = job.employeeScheduleId && job.branchId
                 ? await this.prisma.employee_schedule.findFirst({
@@ -4089,9 +4538,8 @@ export class MessageTriggerService {
                 return true;
             }
             linkClient = schedule.client;
-        } else if (!resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date(Date.now()), job.quietHold?.releaseAt)) {
-            const reason = job.quietHold ? "expired_after_quiet" : pastExpiryHours === 24
-                ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`;
+        } else if (!automaticRecordLink && !receiptChild && !resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date(Date.now()), job.quietHold?.releaseAt)) {
+            const reason = job.quietHold ? "expired_after_quiet" : expiredPendingJobCancelReason(pastExpiryHours);
             if (!job.quietHold && job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
                 await this.cancelExpiredManualJob(job, reason);
                 return true;
@@ -4116,8 +4564,8 @@ export class MessageTriggerService {
             return true;
         }
 
-        if (job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
-            if (!(automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) && job.employeeScheduleId) {
+        if (!usesRecordLinkFence && job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
+            if (!automaticRecordLink && job.employeeScheduleId) {
                 const schedule = await this.prisma.employee_schedule.findFirst({
                     where: { id: job.employeeScheduleId, branchId: job.branchId },
                     select: { client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
@@ -4134,7 +4582,7 @@ export class MessageTriggerService {
             }
         }
 
-        if (!job.branchId || !approvedBranchIds.has(job.branchId)) {
+        if (!usesRecordLinkFence && (!job.branchId || !approvedBranchIds.has(job.branchId))) {
             job.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
             await this.persistTriggerJobStatus(job, "persist sender approval canceled trigger job");
             return true;
@@ -4194,7 +4642,20 @@ export class MessageTriggerService {
         // reversible, then release the common locks before opening that
         // preparation boundary. The post-preparation authorization below is
         // still required because a confirm may win while preparation runs.
-        const preparationFence = await this.authorizeClaimedJobBeforePreparation(job);
+        const preparationFence = await this.authorizeClaimedJobBeforePreparation(job, automaticReceipt ? async tx => {
+            if (receiptChild) {
+                const checked = await this.fenceReceiptChild(tx, job, "processing", undefined, true);
+                if (checked !== "allow") return { kind: "lost" };
+            } else {
+                if (!await hasApprovedReceiptSender(tx, job.branchId!)) return { kind: "stale", reason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON };
+                const rule = await this.lockReceiptRule(tx, job.branchId!, job.ruleId);
+                if (rule) {
+                    observedReceiptRule = { event: rule.eventType, slot: receiptRuleSlot(rule),
+                        epoch: await this.receiptRetrySettings!.readMemberEpoch(job.branchId!, job.ruleId, "live_unsigned_contract", tx) };
+                }
+            }
+            return { kind: "allow" };
+        } : undefined);
         if (preparationFence.kind === "lost") {
             return true;
         }
@@ -4224,7 +4685,9 @@ export class MessageTriggerService {
                 // Delivery policy skips can cancel in memory without writing
                 // the job. Persist through the claim-token fence so the row
                 // cannot remain processing or overwrite a newer claim.
-                await this.persistTriggerJobStatus(job, "persist canceled trigger preparation");
+                const proof = automaticReceipt && !receiptChild && !resend ? this.smsDelivery!.receiptRefusal(job) : undefined;
+                if (proof !== undefined) await this.captureReceiptCancellation(job, proof, observedReceiptRule);
+                else await this.persistTriggerJobStatus(job, "persist canceled trigger preparation");
             }
             return true;
         }
@@ -4254,7 +4717,13 @@ export class MessageTriggerService {
         // Provider delivery and its message_log writes must happen outside the
         // claim transaction so the FK insert cannot wait on a held row lock.
         job.markDispatchAuthorized();
-        if (await this.deliverClaimedJob(job, preparation, resend) === "preserve-stored") return true;
+        if (automaticReceipt) {
+            this.smsDelivery!.setReceiptProviderFence(job, tx => receiptChild
+                ? this.fenceReceiptChild(tx, job, "dispatching", job)
+                : this.fenceOrdinaryReceiptProvider(tx, job));
+        }
+        if (await this.deliverClaimedJob(job, preparation, resend) === "preserve-stored"
+            || ((automaticReceipt || isRecordLinkGroup(job)) && !job.claimToken)) return true;
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
         return true;
     }
@@ -4381,6 +4850,7 @@ export class MessageTriggerService {
      */
     private async authorizeClaimedJobBeforePreparation(
         job: MessageTriggerJobEntity,
+        receiptFence?: (tx: Prisma.TransactionClient) => Promise<PreProviderSendFenceResult>,
     ): Promise<PreProviderSendFenceResult> {
         const automaticJob = this.isAutomaticMessageJob(job);
         if (
@@ -4390,16 +4860,25 @@ export class MessageTriggerService {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
         const authorize = async (transaction: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> => {
+            if (automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID && this.jobRepository.fenceServiceRecordLinkAttempt) {
+                const attempt = await this.jobRepository.fenceServiceRecordLinkAttempt(transaction, job, new Date(), "processing");
+                if (attempt.kind !== "allow") return attempt;
+            }
+            if (receiptFence) {
+                if (job.branchId && job.clientId !== null && !await lockClientForScheduleWrite(transaction, job.branchId, job.clientId)) return { kind: "lost" };
+                const receipt = await receiptFence(transaction);
+                if (receipt.kind !== "allow") return receipt;
+            }
             const parentFence = await this.fenceMessageAutomationParent(job, transaction);
             if (parentFence.kind !== "allow") return parentFence;
-            const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
-                job,
-                transaction,
-            );
-            if (serviceEndNoticeFence.kind !== "allow") {
-                return serviceEndNoticeFence;
+            if (isRecordLinkGroup(job) && !await resolveRecordLinkGroup(transaction, job, true)) {
+                const canceled = await transaction.message_trigger_job.updateMany({
+                    where: { id: job.id, branchId: job.branchId, status: "processing", claimToken: job.claimToken },
+                    data: { status: "canceled", canceledAt: new Date(), cancelReason: RECORD_LINK_GROUP_CHANGED,
+                        claimToken: null, nextAttemptAt: null, processingDeadlineAt: null },
+                });
+                return canceled.count === 1 ? { kind: "stale", reason: RECORD_LINK_GROUP_CHANGED } : { kind: "lost" };
             }
-
             const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
                 job,
                 transaction,
@@ -4424,6 +4903,9 @@ export class MessageTriggerService {
             return this.automationDeliveryGate.authorizePreparation(job,
                 (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize);
         }
+        if (isRecordLinkGroup(job) && job.branchId && this.messageAutomationBranchLockService) {
+            return this.messageAutomationBranchLockService.runExclusive(job.branchId, authorize);
+        }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
             timeout: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
@@ -4445,9 +4927,10 @@ export class MessageTriggerService {
             if (error instanceof TriggerJobDeferredError) {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
-                job.markFailed(error instanceof Error ? error.message : String(error));
+                const failure = isStandaloneReceiptJob(job) ? new Error("Standalone receipt preparation failed") : error;
+                job.markFailed(failure instanceof Error ? failure.message : String(failure));
                 try {
-                    captureBackendError(error instanceof Error ? error : new Error("Message delivery prepare failed"), {
+                    captureBackendError(failure instanceof Error ? failure : new Error("Message delivery prepare failed"), {
                         handled: true,
                         operation: "message-delivery:prepare",
                     });
@@ -4470,9 +4953,10 @@ export class MessageTriggerService {
             await this.jobRepository.update(job);
             return true;
         } catch (error) {
-            job.markFailed(error instanceof Error ? error.message : String(error));
+            const failure = isStandaloneReceiptJob(job) ? new Error("Standalone receipt preparation could not be persisted") : error;
+            job.markFailed(failure instanceof Error ? failure.message : String(failure));
             try {
-                captureBackendError(error instanceof Error ? error : new Error("Message delivery persist prepared failed"), {
+                captureBackendError(failure instanceof Error ? failure : new Error("Message delivery persist prepared failed"), {
                     handled: true,
                     operation: "message-delivery:persist-prepared",
                 });
@@ -4510,12 +4994,10 @@ export class MessageTriggerService {
             ) {
                 await this.messageAutomationActivationService.assertTriggerDispatchEnabled(job.branchId, transaction);
             }
-            const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
-                job,
-                transaction,
-            );
-            if (serviceEndNoticeFence.kind === "lost") return serviceEndNoticeFence;
-
+            if (this.isAutomaticMessageJob(job) && job.ruleId === SERVICE_RECORD_LINK_RULE_ID && this.jobRepository.fenceServiceRecordLinkAttempt) {
+                const attempt = await this.jobRepository.fenceServiceRecordLinkAttempt(transaction, job, new Date(), "processing");
+                if (attempt.kind !== "allow") return attempt;
+            }
             // Revised service-record messages carry a server-derived context.
             // Acquire the same client-owned lock set before the job row and
             // compare that context after the lock. This keeps a confirm that
@@ -4566,11 +5048,9 @@ export class MessageTriggerService {
                 ? sourceFence
                 : revisionFence.kind === "stale"
                     ? revisionFence
-                    : serviceEndNoticeFence.kind === "stale"
-                        ? serviceEndNoticeFence
-                        : linkTokenFence.kind === "stale"
-                            ? linkTokenFence
-                            : null;
+                    : linkTokenFence.kind === "stale"
+                        ? linkTokenFence
+                        : null;
             if (resend && safeguardFence.kind === "stale") {
                 // A resend refused by the safeguard after its claim goes back to
                 // '추가 정보 필요' with its setup reason kept, exactly like a
@@ -4630,6 +5110,9 @@ export class MessageTriggerService {
                 (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize, {
                     lockClaim: async (tx) => {
                         if (!job.branchId || job.clientId === null || !hasDateRefreshSource(tx)) return { kind: "allow" };
+                        if (this.receiptRetrySettings && job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)) {
+                            if (await this.fenceReceiptChild(tx, job, "processing", job, true) !== "allow") return { kind: "lost" };
+                        }
                         await lockServiceRecordWriteSet(tx, { branchId: job.branchId, clientId: job.clientId });
                         return this.fenceClaimTokenBeforeProviderSend(job, tx, preparation.serializedSnapshot);
                     },
@@ -4637,6 +5120,9 @@ export class MessageTriggerService {
                         ? this.fenceOutstandingDateRefresh(job, tx)
                         : { kind: "allow" },
                 });
+        }
+        if (isRecordLinkGroup(job) && job.branchId && this.messageAutomationBranchLockService) {
+            return this.messageAutomationBranchLockService.runExclusive(job.branchId, authorize);
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,
@@ -4733,6 +5219,10 @@ export class MessageTriggerService {
     ): Promise<PreProviderSendFenceResult> {
         if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_RECORD_LINK) return { kind: "allow" };
         const stale = { kind: "stale" as const, reason: job.quietHold ? "stale_link" : SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON };
+        if (isRecordLinkGroup(job)) {
+            return await resolveRecordLinkGroup(transaction, job)
+                ? { kind: "allow" } : { kind: "stale", reason: RECORD_LINK_GROUP_CHANGED };
+        }
         const linkToken = this.readServiceRecordLinkToken(job);
         if (!linkToken || !job.branchId || job.employeeScheduleId === null) return stale;
 
@@ -4769,36 +5259,6 @@ export class MessageTriggerService {
             }
         }
         return null;
-    }
-
-    private async fenceServiceEndNoticeBeforeProviderSend(
-        job: MessageTriggerJobEntity,
-        transaction: Prisma.TransactionClient,
-    ): Promise<PreProviderSendFenceResult> {
-        if (
-            job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
-            || job.dedupeKey.includes(MANUAL_DEDUPE_MARKER)
-        ) {
-            return { kind: "allow" };
-        }
-        if (!job.branchId || job.clientId === null) {
-            return { kind: "lost" };
-        }
-
-        const rows = await transaction.$queryRaw<Array<{
-            service_end_notice_sent_at: Date | null;
-        }>>(Prisma.sql`
-            SELECT service_end_notice_sent_at
-            FROM "client"
-            WHERE id = ${job.clientId}
-              AND branch_id = ${job.branchId}::uuid
-            FOR UPDATE
-        `);
-        const client = rows[0];
-        if (!client) return { kind: "lost" };
-        return client.service_end_notice_sent_at === null
-            ? { kind: "allow" }
-            : { kind: "stale", reason: SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON };
     }
 
     /**
@@ -4978,7 +5438,7 @@ export class MessageTriggerService {
     /** Called with the same client-source locks as confirmation, before locking/authorizing the claim. */
     private async fenceOutstandingDateRefresh(job: MessageTriggerJobEntity, tx: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> {
         if (!job.branchId || job.clientId === null || !this.isAutomaticMessageJob(job)
-            || isReservedAutomationJob(job) || job.payload.taskAutomationReference) return { kind: "allow" };
+            || isReservedAutomationJob(job) || job.payload.taskAutomationReference || job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)) return { kind: "allow" };
         const intents = await this.jobRepository.findOutstandingDateIntents(job.branchId, job.clientId, tx);
         const scopes: ClientDateAutomationScope[] = [];
         let scheduleRefresh = false;
@@ -5031,8 +5491,6 @@ export class MessageTriggerService {
                 if (!clientDates || job.employeeScheduleId !== null || job.recipientType !== MessageTriggerRecipientType.CLIENT) return { kind: "allow" };
                 const client = await this.readClientAutomationSource(job.branchId, job.clientId, tx);
                 if (!client) return { kind: "lost" };
-                // The existing already-sent notice fence owns this cancellation.
-                if (job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE && client.serviceEndNoticeSentAt) return { kind: "allow" };
                 current = this.buildClientJob(rule, client);
             }
             const originalScheduledFor = job.payload.catchUp?.originalScheduledFor ?? job.scheduledFor.toISOString();
@@ -5117,9 +5575,10 @@ export class MessageTriggerService {
             if (error instanceof TriggerJobDeferredError) {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
-                job.markFailed(error instanceof Error ? error.message : String(error));
+                const failure = isStandaloneReceiptJob(job) ? new Error("Standalone receipt delivery failed") : error;
+                job.markFailed(failure instanceof Error ? failure.message : String(failure));
                 try {
-                    captureBackendError(error instanceof Error ? error : new Error("Message delivery send failed"), {
+                    captureBackendError(failure instanceof Error ? failure : new Error("Message delivery send failed"), {
                         handled: true,
                         operation: "message-delivery:send",
                     });
@@ -5503,6 +5962,7 @@ export class MessageTriggerService {
 
     private async processStaleRule(rule: MessageTriggerRuleEntity): Promise<void> {
         if (!rule.branchId) return;
+        await this.refreshReceiptChildren(rule.branchId, { ruleId: rule.id });
         const automaticRule = !isManualMessageTriggerRule(rule);
         if (automaticRule && (!this.messageAutomationActivationService || !this.messageAutomationBranchLockService)) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
@@ -5519,7 +5979,8 @@ export class MessageTriggerService {
                 readUpdatedAt,
                 true,
                 !parentEnabled ? MESSAGE_AUTOMATION_PARENT_DISABLED_REASON : rule.isActive ? "규칙 재생성" : "Rule deactivated",
-                { needsSetup: !parentEnabled || !rule.isActive ? "all"
+                { ...(parentEnabled && rule.isActive && rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
+                    ? { preserveReceiptRecoveryChild: true } : {}), needsSetup: !parentEnabled || !rule.isActive ? "all"
                     : rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE
                         && rule.eventType !== MessageTriggerEventType.EMPLOYEE_ASSIGNED ? "within_window" : undefined },
                 transaction,

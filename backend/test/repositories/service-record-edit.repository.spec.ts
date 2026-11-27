@@ -346,9 +346,10 @@ describe("ServiceRecordEditRepository", () => {
                 }),
         };
         const service_record_case = {
+            findMany: jest.fn().mockResolvedValue([{ id: caseId, babyId: null }]),
             findFirst: jest.fn().mockResolvedValue({
                 id: caseId,
-                clientId: 101,
+                clientId: 101, babyId: null,
                 version: 4,
                 formVersion: 3,
                 status: "IN_PROGRESS",
@@ -381,10 +382,9 @@ describe("ServiceRecordEditRepository", () => {
                 primaryEmployeeId: 9,
                 secondaryEmployeeId: null,
                 primaryEmployee: { name: "제공자" },
-                serviceRecordAssignment: null,
             }]),
         };
-        const tx = { client, service_record_case, employee_schedule };
+        const tx = { client, service_record_case, employee_schedule, client_baby: { findMany: jest.fn().mockResolvedValue([]) }, service_record_assignment: { findMany: jest.fn().mockResolvedValue([]) } };
         const prisma = transactionalPrisma(tx);
         const repository = new ServiceRecordEditRepository(prisma as never);
 
@@ -426,9 +426,10 @@ describe("ServiceRecordEditRepository", () => {
             findFirst: jest.fn().mockResolvedValue(draftRow()),
         };
         const service_record_case = {
+            findMany: jest.fn().mockResolvedValue([{ id: caseId, babyId: null }]),
             findFirst: jest.fn().mockResolvedValue({
                 id: caseId,
-                clientId: 101,
+                clientId: 101, babyId: null,
                 version: 8,
                 formVersion: 4,
                 status: "COMPLETED",
@@ -518,6 +519,7 @@ describe("ServiceRecordEditRepository", () => {
             employee_schedule,
             eformsign_doc,
             service_record_revision,
+            client_baby: { findMany: jest.fn().mockResolvedValue([]) }, service_record_assignment: { findMany: jest.fn().mockResolvedValue([]) },
         };
         const prisma = transactionalPrisma(tx);
         const repository = new ServiceRecordEditRepository(prisma as never);
@@ -659,6 +661,13 @@ describe("ServiceRecordEditRepository", () => {
                 serviceRecordCaseId: caseId,
                 status: "ACTIVE",
                 draftVersion: 1,
+                serviceRecordCase: {
+                    branchId,
+                    AND: [
+                        { OR: [{ clientId: null }, { client: { branchId, deletedAt: null } }] },
+                        { OR: [{ babyId: null }, { baby: { active: true } }] },
+                    ],
+                },
             },
             data: {
                 changes: { sessions: [{ sessionIndex: 1, notes: "After" }] },
@@ -896,7 +905,7 @@ describe("ServiceRecordEditRepository", () => {
                 update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
             },
             client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-            service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+            service_record_day: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() },
             service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
             service_record_assignment,
             employee_schedule,
@@ -993,7 +1002,7 @@ describe("ServiceRecordEditRepository", () => {
                         return { count: 1 };
                     }),
                 },
-                service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+                service_record_day: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() },
                 service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
                 service_record_assignment: { updateMany: jest.fn() },
                 employee_schedule: { updateMany: jest.fn() },
@@ -1149,7 +1158,7 @@ describe("ServiceRecordEditRepository", () => {
                     update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
                 },
                 client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-                service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+                service_record_day: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() },
                 service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
                 service_record_assignment: { updateMany: jest.fn() },
                 employee_schedule: { updateMany: jest.fn() },
@@ -1557,9 +1566,10 @@ describe("ServiceRecordEditRepository", () => {
                     }),
             };
             const service_record_case = {
+                findMany: jest.fn().mockResolvedValue([{ id: caseId, babyId: null }]),
                 findFirst: jest.fn().mockResolvedValue({
                     id: caseId,
-                    clientId: 101,
+                    clientId: 101, babyId: null,
                     version: 4,
                     formVersion: 3,
                     status: "IN_PROGRESS",
@@ -1583,7 +1593,7 @@ describe("ServiceRecordEditRepository", () => {
             };
             const employee_schedule = { findMany: jest.fn().mockResolvedValue([]) };
             const repository = new ServiceRecordEditRepository(
-                transactionalPrisma({ client, service_record_case, employee_schedule }) as never,
+                transactionalPrisma({ client, service_record_case, employee_schedule, client_baby: { findMany: jest.fn().mockResolvedValue([]) }, service_record_assignment: { findMany: jest.fn().mockResolvedValue([]) } }) as never,
             );
             const snapshot = await repository.loadSource(branchId, { clientId: 101 });
             sources.push(snapshot!);
@@ -2164,7 +2174,7 @@ describe("ServiceRecordEditRepository.loadConfirmSnapshot", () => {
 
         expect(snapshot).toMatchObject({ draft: { id: draftId }, source: { caseId: source.caseId }, revisionFactsSource: { document: null } });
         expect(draftTable.findFirst).toHaveBeenCalledWith({ where: { id: draftId, branchId } });
-        expect(internals.loadSourceWithClient).toHaveBeenCalledWith(tx, branchId, { caseId: caseId });
+        expect(internals.loadSourceWithClient).toHaveBeenCalledWith(tx, branchId, { caseId, writable: true });
         for (const write of Object.values(writes)) expect(write).not.toHaveBeenCalled();
         expect(tx.$executeRaw).not.toHaveBeenCalled();
         expect(tx.$executeRawUnsafe).not.toHaveBeenCalled();
@@ -2247,7 +2257,8 @@ describe("assertNoBlockingRevisionDocumentStates", () => {
 
         const statement = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
         const normalized = statement.replace(/\s+/g, " ");
-        expect(normalized).toContain("state.status IN ('not_required', 'completed')");
+        expect(normalized).toContain("state.status = 'completed'");
+        expect(normalized).toContain("state.status = 'not_required'");
         expect(normalized).toContain("state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion'");
         expect(normalized).toMatch(
             /state\.status = 'manual_review' AND COALESCE\(state\.last_error_code IN \(.*SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE.*SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE.*\), FALSE\) AND state\.target_document_id IS NULL/,
@@ -2256,6 +2267,27 @@ describe("assertNoBlockingRevisionDocumentStates", () => {
         expect(normalized).not.toContain("'processing'");
         expect(normalized).not.toContain("'failed'");
         expect(normalized).not.toContain("PROVIDER_STATE_CHANGED");
+    });
+
+    it.each([true, false])("uses INITIAL readiness to unblock confirm or expose the sibling reason (ready: %s)", async ready => {
+        const initial = { id: "initial", operation: "record_snapshot", status: "failed", step: "failed", revisionId: "revision-1",
+            workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey: "service-record-initial-finalization:revision-1" },
+            lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" };
+        const tx = { $queryRaw: jest.fn().mockResolvedValueOnce([initial])
+            .mockResolvedValueOnce([{ id: caseId, branchId, clientId: 126 }])
+            .mockResolvedValueOnce([{ ...initial, branchId, clientId: 126, generation: "gen2", documentVersion: 2 }])
+            .mockResolvedValueOnce([{ documentId: "doc", chunkIndex: 1, chunkCount: 1 }])
+            .mockResolvedValueOnce([{ documentId: "doc", statusType: ready ? "049" : "070",
+                voided: false, purgePending: false, tombstoneEvaluated: ready }])
+            .mockResolvedValueOnce([]), $executeRaw: jest.fn().mockResolvedValue(1) };
+        if (ready) {
+            await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).resolves.toBeUndefined();
+            expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+        } else {
+            await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).rejects.toMatchObject({ lastErrorCode: "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS" });
+            expect(tx.$executeRaw).not.toHaveBeenCalled();
+        }
+        expect(sqlTextWithValues(tx.$queryRaw.mock.calls[0]![0])).toContain("newer_initial.created_at");
     });
 
     it("still refuses a selected in-flight operation and reports it on the error", async () => {

@@ -88,9 +88,17 @@ export function assertEmployeeAssignmentEligibility(
     assertEmployeeAssignmentShape(primaryEmployeeId, secondaryEmployeeId);
     if (primaryEmployeeId === null) return;
 
+    assertStaffEligibility(branchId, [primaryEmployeeId, secondaryEmployeeId]
+        .filter((employeeId): employeeId is number => employeeId !== null), employees, retainedEmployeeIds);
+}
+
+export function assertStaffEligibility(
+    branchId: string,
+    employeeIds: readonly number[],
+    employees: readonly EmployeeAssignmentCandidate[],
+    retainedEmployeeIds: ReadonlySet<number> = EMPTY_RETAINED_EMPLOYEE_IDS,
+): void {
     const byId = new Map(employees.map((employee) => [employee.id, employee]));
-    const employeeIds = [primaryEmployeeId, secondaryEmployeeId]
-        .filter((employeeId): employeeId is number => employeeId !== null);
     if (employeeIds.some((employeeId) => {
         const employee = byId.get(employeeId);
         return employee === undefined || employee.branchId !== branchId || employee.deletedAt !== null;
