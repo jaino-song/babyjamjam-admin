@@ -62,6 +62,17 @@ function stepsWithoutAuthorityPgGates(steps,label) {
   assert.ok(approvedIndexes[0]<approvedIndexes[1],`${label}: harness self-tests precede real PostgreSQL`);
   return steps.filter((_,index)=>!approvedIndexes.includes(index));
 }
+const replayPgStep = {
+  name:'Service-record patch replay on disposable PostgreSQL',
+  run:'PG_BIN=/usr/lib/postgresql/16/bin backend/scripts/replay-service-record-patch.test.sh',
+};
+function stepsWithoutReplayPgGate(steps,label) {
+  const anchor=steps.findIndex(step=>step.name==='Migration idempotency gate');
+  assert.ok(anchor>=0,`${label}: migration idempotency gate exists`);
+  assert.deepEqual(steps[anchor+1],replayPgStep,`${label}: the required replay test runs on PG16 immediately after migration idempotency`);
+  assert.equal(steps.filter(step=>step.name===replayPgStep.name || step.run===replayPgStep.run).length,1,`${label}: exactly one replay test step`);
+  return steps.filter((_,index)=>index!==anchor+1);
+}
 // The backend tsc peaks near Node's default ~2 GB heap (OOM in run 41173922396), so the
 // backend 'Type check' step raises it. Asserts that exact env and returns the steps without
 // it, so the caller can still compare every step exactly against the pinned base.
@@ -202,7 +213,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     return step;
   });
   const previousSteps = parse(old(file)).jobs.verify.steps;
-  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(stepsWithoutAuthorityPgGates(appSteps,file),file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(stepsWithoutAuthorityPgGates(stepsWithoutReplayPgGate(appSteps,file),file),file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
   if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
@@ -295,7 +306,8 @@ test('backend installs declared compiler before executing CI impact contracts; o
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
   assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
-  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(steps,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
+  const previousChecks = stepsWithoutReplayPgGate(steps,'backend-ci.yml');
+  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(previousChecks,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }

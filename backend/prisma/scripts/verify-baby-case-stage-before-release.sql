@@ -43,10 +43,23 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- Use the same replacement definitions and catalog checks as the canonical
-    -- migration, which independently checks retained indexes and drift on replay.
+    -- Match the retained and replacement definitions in the canonical migration.
     FOR expected IN
         SELECT * FROM (VALUES
+            ('service_record_case', 'uniq_service_record_case_branch_client_id', true,
+                ARRAY['branch_id', 'client_id', 'id'], NULL, NULL),
+            ('service_record_case', 'uniq_service_record_case_branch_id', true,
+                ARRAY['branch_id', 'id'], NULL, NULL),
+            ('service_record_case', 'uq_record_case_baby_scope', true,
+                ARRAY['branch_id', 'client_id', 'baby_id'], NULL, NULL),
+            ('service_record_case', 'uq_record_case_member_scope', true,
+                ARRAY['branch_id', 'client_id', 'baby_id', 'id'], NULL, NULL),
+            ('service_record_case', 'uq_service_record_case_baby', true,
+                ARRAY['baby_id'], NULL, NULL),
+            ('client_baby', 'uq_client_baby_ordinal', true,
+                ARRAY['branch_id', 'client_id', 'ordinal'], NULL, NULL),
+            ('service_record_day', 'uniq_service_record_day_case_session', true,
+                ARRAY['service_record_case_id', 'case_session_index'], NULL, NULL),
             ('service_record', 'uq_record_hdr_sched_case', true,
                 ARRAY['schedule_id', 'service_record_case_id'], NULL, NULL),
             ('service_record_assignment', 'uq_record_asn_sched_case', true,
@@ -65,7 +78,7 @@ BEGIN
                 '((client_id IS NOT NULL) AND (baby_id IS NULL))'),
             ('service_record_case', 'idx_record_case_client', false,
                 ARRAY['client_id'], NULL, NULL)
-        ) AS replacement(table_name, index_name, is_unique, key_columns, predicate, reversed_predicate)
+        ) AS scoped(table_name, index_name, is_unique, key_columns, predicate, reversed_predicate)
     LOOP
         IF NOT EXISTS (
             SELECT 1
