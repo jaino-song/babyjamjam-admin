@@ -934,8 +934,8 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         const automaticDedupeKey = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${family.schedule.id}:primary`;
         const job = await db.message_trigger_job.create({ data: {
             branchId, clientId: family.clientId, employeeScheduleId: family.schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID,
-            scheduledFor: getServiceRecordLinkScheduledFor(family.schedule.startDate), recipientType: "PRIMARY_EMPLOYEE",
-            recipientPhone: phone(0), templateKey: key,
+            scheduledFor: ownership === "manual" ? new Date() : getServiceRecordLinkScheduledFor(family.schedule.startDate),
+            recipientType: "PRIMARY_EMPLOYEE", recipientPhone: phone(0), templateKey: key,
             dedupeKey: ownership === "manual" ? `${automaticDedupeKey}:manual:${randomUUID()}` : automaticDedupeKey,
             payload: { employeeId: staff[0]!, recipientName: "QA-Caregiver 1", recipientPhone: phone(0),
                 memberId: `employee:${staff[0]}`, buttonUrl: url, templateVariables: {
