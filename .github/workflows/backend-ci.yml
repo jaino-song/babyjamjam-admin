@@ -105,6 +105,9 @@ jobs:
       - name: Migration idempotency gate
         run: node --test scripts/ci/migration-idempotency.test.mjs
 
+      - name: Service-record patch replay on disposable PostgreSQL
+        run: PG_BIN=/usr/lib/postgresql/16/bin backend/scripts/replay-service-record-patch.test.sh
+
       - name: Verify vendored shared runtime
         run: |
           pnpm --filter @babyjamjam/shared run build:backend-runtime
