@@ -1,9 +1,8 @@
-import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { ClientAllocationPlan, ClientAllocationSnapshot } from "./client-allocation.service";
 import { GROUP_RECORD_LINK_PREFIX } from "application/policies/baby-record-provenance.policy";
 import { lockEformsignDocumentsForWrite } from "application/policies/service-record-write-lock.policy";
-import { problemBody } from "application/utils/problem-bodies";
+import { fieldProblemException } from "application/utils/problem-bodies";
 import { lockRecordLinkSchedule } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { readLegacyLinkOccurrence } from "./service-record-legacy-link-occurrence";
 import { recordLinkHash, recordLinkPhone } from "./service-record-link-group-source";
@@ -26,9 +25,9 @@ const conflictDetails = {
 };
 
 export function legacyRecordBindingConflict(reason: keyof typeof conflictDetails): never {
-    throw new ConflictException(problemBody("REQUEST_CONFLICT", {
+    throw fieldProblemException("REQUEST_CONFLICT", {
         pointer: "/legacyRecordBinding", code: "INVALID_VALUE", detail: conflictDetails[reason], location: "body",
-    }));
+    });
 }
 
 type Scope = { branchId: string; clientId: number };
