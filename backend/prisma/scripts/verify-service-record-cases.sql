@@ -1,6 +1,7 @@
 DO $$
 DECLARE
     _dup boolean;
+    _legacy boolean := current_setting('bjj.service_record_replay_layout', true) IS DISTINCT FROM 'case';
 BEGIN
     IF to_regclass('public.service_record_case') IS NULL THEN
         RAISE EXCEPTION 'service_record_case table is missing';
@@ -33,7 +34,7 @@ BEGIN
     -- Deleted clients intentionally leave branch-owned records with NULL client_id.
     -- PostgreSQL unique constraints permit multiple NULLs, so only live client
     -- ownership participates in the one-case-per-client invariant.
-    IF EXISTS (
+    IF _legacy AND EXISTS (
         SELECT "client_id"
         FROM "service_record_case"
         WHERE "client_id" IS NOT NULL
@@ -50,14 +51,17 @@ BEGIN
     IF _dup THEN
         RAISE EXCEPTION 'multiple active service-record tokens exist for a service record case';
     END IF;
+    -- The staged layout also supports schedule-scoped days without case linkage.
     IF EXISTS (
         SELECT 1
         FROM "service_record_day" d
-        WHERE d."service_record_case_id" IS NULL OR d."case_session_index" IS NULL
+        WHERE (_legacy AND (d."service_record_case_id" IS NULL OR d."case_session_index" IS NULL))
+           OR (d."service_record_case_id" IS NULL AND d."case_session_index" IS NOT NULL)
     ) THEN
         RAISE EXCEPTION 'service_record_day rows are missing aggregate linkage';
     END IF;
-    IF EXISTS (
+    -- This enrollment heuristic belongs to the legacy backfill.
+    IF _legacy AND EXISTS (
         SELECT 1
         FROM "client" c
         WHERE (

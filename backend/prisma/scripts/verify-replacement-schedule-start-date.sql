@@ -12,6 +12,7 @@ DECLARE
     _inverted bigint;
     _unflagged bigint;
     _unmirrored bigint;
+    _legacy boolean := current_setting('bjj.service_record_replay_layout', true) IS DISTINCT FROM 'case';
 BEGIN
     IF to_regclass('public.employee_schedule') IS NULL THEN
         RAISE EXCEPTION 'employee_schedule table is missing';
@@ -28,6 +29,30 @@ BEGIN
           AND column_name = 'terminated_at'
     ) THEN
         RAISE EXCEPTION 'employee_schedule.terminated_at is missing';
+    END IF;
+
+    SELECT count(*) INTO _inverted
+    FROM "employee_schedule"
+    WHERE "start_date" > "end_date";
+    IF _inverted > 0 THEN
+        RAISE EXCEPTION '% employee_schedule row(s) have an inverted date range', _inverted;
+    END IF;
+
+    SELECT count(*) INTO _unflagged
+    FROM "employee_schedule" s
+    JOIN "client" c ON c."id" = s."client_id"
+    WHERE c."service_status" = 'terminated'
+      AND c."end_date" IS NOT NULL
+      AND s."replaced" = false
+      AND s."terminated_at" IS NULL;
+    IF _unflagged > 0 THEN
+        RAISE EXCEPTION
+            '% schedule(s) of terminated clients are missing terminated_at', _unflagged;
+    END IF;
+
+    -- The handover chain and date mirroring describe the singleton writer.
+    IF NOT _legacy THEN
+        RETURN;
     END IF;
 
     WITH chain AS (
@@ -59,25 +84,6 @@ BEGIN
     IF _damaged > 0 THEN
         RAISE EXCEPTION
             '% replacement schedule(s) still start before their handover day', _damaged;
-    END IF;
-
-    SELECT count(*) INTO _inverted
-    FROM "employee_schedule"
-    WHERE "start_date" > "end_date";
-    IF _inverted > 0 THEN
-        RAISE EXCEPTION '% employee_schedule row(s) have an inverted date range', _inverted;
-    END IF;
-
-    SELECT count(*) INTO _unflagged
-    FROM "employee_schedule" s
-    JOIN "client" c ON c."id" = s."client_id"
-    WHERE c."service_status" = 'terminated'
-      AND c."end_date" IS NOT NULL
-      AND s."replaced" = false
-      AND s."terminated_at" IS NULL;
-    IF _unflagged > 0 THEN
-        RAISE EXCEPTION
-            '% schedule(s) of terminated clients are missing terminated_at', _unflagged;
     END IF;
 
     SELECT count(*) INTO _unmirrored

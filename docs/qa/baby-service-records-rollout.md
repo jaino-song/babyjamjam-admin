@@ -7,6 +7,7 @@
 preview와 production이 DB를 공유하는 동안에는 additive 스키마와 기존 단일 고객·일정 unique 키가 공존할 수 있다. 이 상태에서도 전 지점의 예약 전 등록에 아기와 담당 배정을 저장할 수 있다. 여러 케이스를 생성하는 예약 확정은 케이스별 키 전환이 필요하다. 기존 키와 충돌하면 HTTP 409 `REQUEST_CONFLICT`와 사유 `SERVICE_RECORD_CASE_KEYS_NOT_STAGED`를 반환한다. 확정 상태, 케이스, 발송 작업은 같은 트랜잭션에서 롤백되며 기존 등록 초안과 배정은 남는다. 예약 확정 상태를 포함한 신규 등록에서 같은 충돌이 나면 그 등록 요청 전체가 롤백된다.
 
 - 스키마 승격 전 DB 대상과 migration ledger를 확인한다. 기존 scalar writer와 queue consumer가 같은 DB에 연결하는 경우 별도 승인된 전환 구간에서 먼저 drain한다. `backend/prisma/scripts/verify-baby-case-stage-before-release.sql`로 기존 키와 전환 대상 상태를 확인한다. 키 전환과 다태아 예약 확정 검증은 격리 복제본에서 수행한다.
+- 키 전환 전에는 해당 DB에 쓰는 `Database Patches`의 대기·실행 중인 구버전 run을 모두 종료하고, 이후 push와 수동 dispatch가 replay 보호가 포함된 리비전을 사용하도록 한다. preview push, main push, production dispatch는 같은 운영 DB를 대상으로 한다. 전환 중에는 다른 DB 패치나 배포를 시작하지 않는다. 명시적 staging을 마친 뒤 검증을 통과하면 case 키에 대응하는 writer를 재개한다. 키 상태 검증에 실패하면 패치를 중단하고 해당 DB의 인덱스와 migration ledger를 확인한다.
 - 화면 확인용 preview는 배포 워크플로에서 `SCHEDULERS_ENABLED=false`를 확인한다. 등록 화면은 읽기 전용으로 확인한다. 등록·예약 확정 저장과 발송·재시도 요청은 실제 쓰기 또는 즉시 발송을 일으킬 수 있다. DB 쓰기와 통신사 동작은 격리 PostgreSQL과 vendor stub으로 검증한다.
 
 ## 기존 큐와 발송
