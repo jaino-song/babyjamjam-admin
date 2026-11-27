@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   canonicalDnsHash,
@@ -120,4 +125,54 @@ test("main rejects missing, duplicate, or malformed target hashes", () => {
     lightsailDnsSha256: approvedHash,
   }), /must be distinct/);
   assert.throws(() => canonicalDnsHash(["not-an-ip"]), /valid IPv4/);
+});
+
+test("the CLI resolves main only from the exact pushed commit", (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), "resolve-deploy-target-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+
+  const env = { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
+  const git = (...args) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
+  git("init", "--quiet", "--template=");
+  git("config", "user.name", "Release Fixture");
+  git("config", "user.email", "release@example.test");
+  git("commit", "--quiet", "--allow-empty", "-m", "Previous release");
+  const previous = git("rev-parse", "HEAD");
+  git("commit", "--quiet", "--allow-empty", "-m", "Release", "-m", lightnodeTrailer);
+  const head = git("rev-parse", "HEAD");
+  git("checkout", "--quiet", "--detach", head);
+
+  const resolver = fileURLToPath(new URL("./resolve-deploy-target.mjs", import.meta.url));
+  const run = (overrides) => spawnSync(process.execPath, [resolver], {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...env,
+      DEPLOY_REF_NAME: "main",
+      DEPLOY_DNS_RECORDS: "192.0.2.10",
+      FALLBACK_DNS_SHA256: requestedRelease.fallbackDnsSha256,
+      LIGHTSAIL_DNS_SHA256: requestedRelease.lightsailDnsSha256,
+      ...overrides,
+    },
+  });
+
+  const exact = run({ GITHUB_SHA: head });
+  assert.equal(exact.status, 0, exact.stderr);
+  assert.equal(exact.stdout, "target=lightnode\n");
+
+  const wrongRoute = run({ GITHUB_SHA: head, DEPLOY_DNS_RECORDS: "192.0.2.20" });
+  assert.equal(wrongRoute.status, 1);
+  assert.equal(wrongRoute.stdout, "");
+  assert.match(wrongRoute.stderr, /requires LightNode.*Lightsail/);
+
+  for (const overrides of [{ GITHUB_SHA: previous }, { GITHUB_SHA: head.slice(0, 12) }, {}]) {
+    const refused = run(overrides);
+    assert.equal(refused.status, 1);
+    assert.equal(refused.stdout, "");
+    assert.match(refused.stderr, /checked-out HEAD must match GITHUB_SHA/);
+  }
+
+  const preview = run({ DEPLOY_REF_NAME: "preview" });
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(preview.stdout, "target=cloudrun\n");
 });

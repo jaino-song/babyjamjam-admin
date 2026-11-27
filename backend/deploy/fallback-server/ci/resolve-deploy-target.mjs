@@ -65,11 +65,17 @@ export function resolveDeployTarget({
   throw new Error("The current production route does not match an approved production target.");
 }
 
+function readPushedCommitMessage() {
+  const head = execFileSync("git", ["rev-parse", "--verify", "HEAD"], { encoding: "utf8" }).trim();
+  if (head !== process.env.GITHUB_SHA) {
+    throw new Error("The checked-out HEAD must match GITHUB_SHA.");
+  }
+  return execFileSync("git", ["log", "-1", "--format=%B", head, "--"], { encoding: "utf8" });
+}
+
 async function main() {
   const refName = process.env.DEPLOY_REF_NAME ?? "";
-  const commitMessage = refName === "main"
-    ? execFileSync("git", ["log", "-1", "--format=%B", "HEAD", "--"], { encoding: "utf8" })
-    : "";
+  const commitMessage = refName === "main" ? readPushedCommitMessage() : "";
   const apiHost = process.env.PUBLIC_API_HOST ?? "api.babyjamjam.com";
   const dnsRecords = refName === "preview"
     ? []
