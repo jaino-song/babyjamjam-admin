@@ -20,6 +20,7 @@ interface MobileTwoButtonModalProps {
   loading?: boolean;
   loadingLabel?: string;
   confirmDisabled?: boolean;
+  cancelDisabled?: boolean;
   children?: ReactNode;
   onOpenChange: (open: boolean) => void;
   onCancel: () => void;
@@ -39,6 +40,7 @@ export function MobileTwoButtonModal({
   loading = false,
   loadingLabel = "처리 중",
   confirmDisabled = false,
+  cancelDisabled = false,
   children,
   onOpenChange,
   onCancel,
@@ -63,7 +65,7 @@ export function MobileTwoButtonModal({
       data-component={sub("cancel-button")}
       variant="outline"
       onClick={onCancel}
-      disabled={loading}
+      disabled={loading || cancelDisabled}
       className="min-w-0 flex-1"
     >
       {cancelLabel}

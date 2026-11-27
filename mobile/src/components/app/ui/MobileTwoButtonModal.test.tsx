@@ -87,4 +87,28 @@ describe("MobileTwoButtonModal", () => {
       "mobile_contracts-new_confirmation_modal_confirm-button",
     );
   });
+
+  it("disables only the cancel button when cancelDisabled is set", () => {
+    const onCancel = jest.fn();
+    render(
+      <MobileTwoButtonModal
+        data-component="mobile_tests_two-button-modal_cancel-disabled"
+        open
+        title="제공기록지 회차 처리"
+        description="회차를 옮길까요?"
+        cancelLabel="처음부터 시작"
+        confirmLabel="모두 옮기기"
+        cancelDisabled
+        onOpenChange={jest.fn()}
+        onCancel={onCancel}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    const cancel = screen.getByRole("button", { name: "처음부터 시작" });
+    expect(cancel).toBeDisabled();
+    cancel.click();
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "모두 옮기기" })).toBeEnabled();
+  });
 });

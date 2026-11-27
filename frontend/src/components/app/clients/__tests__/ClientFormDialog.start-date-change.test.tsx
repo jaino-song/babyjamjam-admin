@@ -253,17 +253,22 @@ describe("client start-date change confirmation", () => {
     expectNoInlineError();
   });
 
-  it("asks a finalized household only whether to move its sessions, and 진행 moves them", async () => {
+  it("asks a finalized household the records question with 처음부터 시작 disabled, and 모두 옮기기 moves them", async () => {
     mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
     const { onSuccess, onClose } = await submitChangedStartDate("dialog");
     const modal = await screen.findByRole("dialog", { name: recordsTitle });
-    expect(modal).toHaveAttribute("data-component", "desktop_clients_form-dialog_start-date-shift-confirmation");
-    expect(within(modal).getByText("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?", { selector: "p:not(.sr-only)" })).toBeVisible();
+    expect(modal).toHaveAttribute("data-component", "desktop_clients_form-dialog_start-date-records-confirmation");
+    expect(within(modal).getByText(
+      "이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?",
+      { selector: "p:not(.sr-only)" },
+    )).toBeVisible();
     expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
-    expect(within(modal).queryByRole("button", { name: "처음부터 시작" })).not.toBeInTheDocument();
+    const restart = within(modal).getByRole("button", { name: "처음부터 시작" });
+    expect(restart).toBeDisabled();
+    fireEvent.click(restart);
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
     expectNoInlineError();
-    fireEvent.click(within(modal).getByRole("button", { name: "진행" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "모두 옮기기" }));
     await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(client));
     expectRetry("MOVE");
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -272,16 +277,23 @@ describe("client start-date change confirmation", () => {
   it("skips the silent retry for a finalized household even before service starts", async () => {
     mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: false, recordedSessionCount: 0, finalized: true }));
     await submitChangedStartDate();
-    expect(await screen.findByRole("dialog", { name: recordsTitle })).toHaveTextContent("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?");
+    const modal = await screen.findByRole("dialog", { name: recordsTitle });
+    expect(modal).toHaveAttribute("data-component", "desktop_clients_form-dialog_start-date-records-confirmation");
+    expect(within(modal).getByRole("button", { name: "처음부터 시작" })).toBeDisabled();
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["취소", "Escape"])("%s leaves a finalized household's start date unsaved and the form as typed", async (action) => {
+  it.each(["Escape", "overlay"])("%s leaves a finalized household's start date unsaved and the form as typed", async (action) => {
     mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
     const { onClose, onSuccess } = await submitChangedStartDate();
     const modal = await screen.findByRole("dialog", { name: recordsTitle });
     if (action === "Escape") fireEvent.keyDown(modal, { key: "Escape" });
-    else fireEvent.click(within(modal).getByRole("button", { name: action }));
+    else {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+      expect(overlay).toBeInTheDocument();
+      fireEvent.pointerDown(overlay as HTMLElement);
+    }
     await waitFor(() => expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument());
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();

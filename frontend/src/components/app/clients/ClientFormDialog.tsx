@@ -147,16 +147,15 @@ const START_DATE_STARTED_DESCRIPTION = "서비스가 이미 시작되었어요. 
 const START_DATE_RECORDS_TITLE = "제공기록지 회차 처리";
 const START_DATE_RECORDS_DESCRIPTION =
     "이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?";
-const START_DATE_SHIFT_DESCRIPTION = "새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?";
 // Mirrors DATE_EDITABLE_FINALIZED_STATUSES in service-record-lifecycle.service.ts: such a case only
 // moves its sessions with the new start, since starting over would delete the signed ones.
 const FINALIZED_SERVICE_RECORD_STATUSES = new Set<string>(["FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"]);
 
-type StartDateChangeStep = "started" | "records" | "shift";
+type StartDateChangeStep = "started" | "records";
 
-/** A finalized household only moves its sessions, so it skips the started and records questions. */
+/** A finalized household always has written sessions, so it goes straight to the records question. */
 function startDateChangeStep(lock: StartDateLock): StartDateChangeStep {
-    if (lock.finalized) return "shift";
+    if (lock.finalized) return "records";
     return lock.serviceStarted ? "started" : "records";
 }
 const OUT_OF_POCKET_PRICE_ERROR = "자부담 요금을 불러오지 못했어요";
@@ -3388,31 +3387,12 @@ function ClientFormContent({
             description={START_DATE_RECORDS_DESCRIPTION}
             cancelLabel="처음부터 시작"
             onCancel={() => void retryStartDateChange("RESTART")}
-            cancelDisabled={isSubmitting}
+            // Starting over would delete a finalized household's signed sessions, so it only moves them.
+            cancelDisabled={isSubmitting || pendingStartDateChange?.lock.finalized === true}
             cancelButtonDataComponent={`${base}_start-date-records-confirmation_restart`}
             approvalLabel="모두 옮기기"
             approvalDisabled={isSubmitting}
             approvalButtonDataComponent={`${base}_start-date-records-confirmation_move`}
-            onApprove={() => void retryStartDateChange("MOVE")}
-        />
-    );
-
-    // A finalized household only moves its submitted and signed sessions with the new start.
-    const startDateShiftConfirmationDialog = (
-        <TwoButtonModal
-            data-component={`${base}_start-date-shift-confirmation`}
-            open={open && !isBranchBlockingSubmit && pendingStartDateChange?.step === "shift"}
-            onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
-            size="review"
-            layout="question"
-            title={START_DATE_RECORDS_TITLE}
-            description={START_DATE_SHIFT_DESCRIPTION}
-            cancelLabel="취소"
-            cancelDisabled={isSubmitting}
-            cancelButtonDataComponent={`${base}_start-date-shift-confirmation_cancel`}
-            approvalLabel="진행"
-            approvalDisabled={isSubmitting}
-            approvalButtonDataComponent={`${base}_start-date-shift-confirmation_proceed`}
             onApprove={() => void retryStartDateChange("MOVE")}
         />
     );
@@ -3450,7 +3430,6 @@ function ClientFormContent({
                 {recordDocumentChangeConfirmationDialog}
                 {startDateStartedConfirmationDialog}
                 {startDateRecordsConfirmationDialog}
-                {startDateShiftConfirmationDialog}
             </>
         );
     }
@@ -3479,7 +3458,6 @@ function ClientFormContent({
             {recordDocumentChangeConfirmationDialog}
             {startDateStartedConfirmationDialog}
             {startDateRecordsConfirmationDialog}
-            {startDateShiftConfirmationDialog}
         </>
     );
 }

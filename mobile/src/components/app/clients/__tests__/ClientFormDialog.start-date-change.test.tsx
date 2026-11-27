@@ -211,17 +211,18 @@ describe("ClientFormDialog start-date confirmation", () => {
         expectKeptForm(props);
     });
 
-    it("asks a finalized household only whether to move its sessions, and 진행 sends MOVE once", async () => {
+    it("asks a finalized household the records question with 처음부터 시작 disabled, and 모두 옮기기 sends MOVE once", async () => {
         updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
         const { props } = await renderDialog();
         await submitChangedDate();
         const confirmation = await screen.findByRole("dialog", { name: recordsTitle });
-        expect(confirmation).toHaveAttribute("data-component", `${base}_start-date-shift-confirmation`);
-        expect(confirmation).toHaveTextContent("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?");
-        expect(within(confirmation).getAllByRole("button").map((item) => item.textContent)).toEqual(["취소", "진행"]);
+        expect(confirmation).toHaveAttribute("data-component", `${base}_start-date-records-confirmation`);
+        expect(confirmation).toHaveTextContent("이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?");
+        expect(within(confirmation).getAllByRole("button").map((item) => item.textContent)).toEqual(["처음부터 시작", "모두 옮기기"]);
+        expect(button("처음부터 시작")).toBeDisabled();
         expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
         expectKeptForm(props);
-        await userEvent.setup().click(button("진행"));
+        await userEvent.setup().click(button("모두 옮기기"));
         await waitFor(() => expect(props.onClose).toHaveBeenCalledTimes(1));
         expect(updateMutateAsync).toHaveBeenCalledTimes(2);
         expect(updateMutateAsync.mock.calls[1][0]).toEqual({
@@ -235,17 +236,18 @@ describe("ClientFormDialog start-date confirmation", () => {
         const { props } = await renderDialog();
         await submitChangedDate();
         await screen.findByRole("dialog", { name: recordsTitle });
+        expect(button("처음부터 시작")).toBeDisabled();
         expectKeptForm(props);
     });
 
-    it.each(["cancel", "escape"])("%s on the finalized move question sends nothing more and keeps edits", async (action) => {
+    it.each(["escape", "backdrop"])("%s on the finalized records question sends nothing more and keeps edits", async (action) => {
         updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 3, finalized: true }));
         const { props } = await renderDialog();
         await submitChangedDate();
         await screen.findByRole("dialog", { name: recordsTitle });
         const user = userEvent.setup();
-        if (action === "cancel") await user.click(button("취소"));
-        else await user.keyboard("{Escape}");
+        if (action === "escape") await user.keyboard("{Escape}");
+        else await user.click(document.querySelector(`[data-component="${base}_start-date-records-confirmation_overlay"]`)!);
         await waitFor(() => expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument());
         expectKeptForm(props);
     });

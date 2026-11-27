@@ -430,7 +430,7 @@ describe("desktop client service-record allocation", () => {
     await waitFor(() => expect(screen.getByRole("combobox", { name: roles[0] })).toHaveTextContent("한겨울"));
   });
 
-  it("asks only the move question for a finalized case before the one PATCH", async () => {
+  it("asks the records question with only 모두 옮기기 for a finalized case before the one PATCH", async () => {
     const before = (await api.get<Client>("/clients/523")).data;
     const onSuccess = jest.fn();
     await open({ client: { ...before, serviceRecordFinalized: true }, initialStep: 2, onSuccess });
@@ -440,12 +440,15 @@ describe("desktop client service-record allocation", () => {
     fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2026-08-04" } });
     await waitFor(() => expect(screen.getByLabelText("종료일")).toHaveValue("2026-08-18"));
     click("저장");
-    const shift = await screen.findByRole("dialog", { name: "제공기록지 회차 처리" });
-    expect(within(shift).getByText("새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?", { selector: "p:not(.sr-only)" })).toBeVisible();
+    const records = await screen.findByRole("dialog", { name: "제공기록지 회차 처리" });
+    expect(within(records).getByText(
+      "이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?",
+      { selector: "p:not(.sr-only)" },
+    )).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "서비스 시작 후 변경" })).not.toBeInTheDocument();
-    expect(within(shift).queryByRole("button", { name: "처음부터 시작" })).not.toBeInTheDocument();
+    expect(within(records).getByRole("button", { name: "처음부터 시작" })).toBeDisabled();
     expect(patch).not.toHaveBeenCalled();
-    fireEvent.click(within(shift).getByRole("button", { name: "진행" }));
+    fireEvent.click(within(records).getByRole("button", { name: "모두 옮기기" }));
     await waitFor(() => expect(onSuccess).toHaveBeenCalled());
     expect(patch).toHaveBeenCalledTimes(1);
     expect(patch.mock.calls[0][1]).toMatchObject({ startDate: "2026-08-04", startDateChangeMode: "MOVE" });

@@ -174,8 +174,8 @@ interface StartDateConfirmation {
   id: number;
   dto: UpdateClientDto;
   lock: NonNullable<NonNullable<NormalizedApiError["problem"]>["startDateLock"]>;
-  /** A finalized household only moves its sessions, so it gets the "shift" question alone. */
-  step: "started" | "records" | "shift";
+  /** A finalized household always has written sessions, so it goes straight to "records". */
+  step: "started" | "records";
 }
 
 const formatPrice = (price: number | string): string => {
@@ -1125,7 +1125,7 @@ export default function NewClientPage() {
           id: editingClientId,
           dto: updateDto,
           lock,
-          step: lock.finalized ? "shift" : lock.serviceStarted ? "started" : "records",
+          step: lock.finalized || !lock.serviceStarted ? "records" : "started",
         });
       }
       return;
@@ -2058,26 +2058,14 @@ export default function NewClientPage() {
         title="제공기록지 회차 처리"
         description="이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?"
         cancelLabel="처음부터 시작"
+        // Starting over would delete a finalized household's signed sessions, so it only moves them.
+        cancelDisabled={startDateConfirmation?.lock.finalized === true}
         confirmLabel="모두 옮기기"
         confirmVariant="default"
         actionOrder="cancel-confirm"
         loading={isSaving}
         onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
         onCancel={() => { void retryStartDateChange("RESTART"); }}
-        onConfirm={() => retryStartDateChange("MOVE")}
-      />
-      <MobileTwoButtonModal
-        data-component="mobile_clients-new_screen_root_start-date-shift-confirmation"
-        open={startDateConfirmation?.step === "shift"}
-        title="제공기록지 회차 처리"
-        description="새로운 시작일을 기준으로 서비스 제공기록을 모두 옮길까요?"
-        cancelLabel="취소"
-        confirmLabel="진행"
-        confirmVariant="default"
-        actionOrder="cancel-confirm"
-        loading={isSaving}
-        onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
-        onCancel={dismissStartDateConfirmation}
         onConfirm={() => retryStartDateChange("MOVE")}
       />
       <MobileTwoButtonModal
