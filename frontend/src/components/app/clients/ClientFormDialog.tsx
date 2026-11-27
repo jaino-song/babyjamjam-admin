@@ -2,7 +2,7 @@
 
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQueryClient, type QueryState } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryState } from "@tanstack/react-query";
 import {
     FETAL_TYPE_LABELS,
     findOutOfPocketPriceInfo,
@@ -32,16 +32,19 @@ import {
     useVoucherPriceInfos,
     useVoucherYears,
 } from "@/hooks/useVoucherData";
-import type { ClientAllocationWrite, ClientFormData, UpdateClientDto } from "@/features/clients/types";
+import type { ClientAllocationWrite, ClientFormData, LegacyRecordBinding, UpdateClientDto } from "@/features/clients/types";
 import type { ClientRegistrationScope } from "@/features/clients/api/registration-scope";
 import { getActiveBranchId, useActiveBranchId } from "@/features/system-templates/branch-context";
 import type { AuthUser } from "@/hooks/useGetAuthUser";
 import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
+import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
 import { buildClientUpdatePayload, hasServicePeriodChange, splitEmployeeChangeFromStartDateChange } from "./client-update-payload";
+import { readFirstAllocationRecord } from "./first-allocation-record";
 import {
-    babyField, CLIENT_PROVIDER_FIELDS, CLIENT_PROVIDER_SLOTS, MAX_CLIENT_BABY_COUNT, clientProviderLabel,
+    babyField, CLIENT_PROVIDER_FIELDS, CLIENT_PROVIDER_SLOTS, MAX_CLIENT_BABY_COUNT, clientProviderLabel, clientRecordRankLabel,
     getSavedClientBabyRows, openClientBabyDraft, resolveClientBabyDraft,
     type ClientBabyField, type ClientProviderField, type ClientProviderIds,
 } from "./client-baby-allocation";
@@ -173,7 +176,7 @@ type ClientInputField =
     | "endDate";
 
 /** Fields the form can move focus to (server-error targets and inline-validated inputs). */
-type ClientFocusField = ClientFormField | ClientInputField;
+type ClientFocusField = ClientFormField | ClientInputField | "legacy-record-baby";
 
 /** Listed in form order: the first one with a problem receives focus on submit. */
 const CLIENT_INPUT_FIELDS: readonly ClientInputField[] = [
@@ -337,6 +340,7 @@ const PANEL_STEP_OF_FIELD: Record<Exclude<ClientFocusField, ClientBabyField>, nu
     secondaryEmployeeId: PROVIDER_STEP,
     "provider-2": PROVIDER_STEP,
     "provider-3": PROVIDER_STEP,
+    "legacy-record-baby": PROVIDER_STEP,
     startDate: 3,
     endDate: 3,
     serviceStatus: 3,
@@ -605,6 +609,8 @@ function ClientFormContent({
     const [pendingBabyRetirement, setPendingBabyRetirement] = useState<string | null>(null);
     const confirmedBabyRetirementRef = useRef<string | null>(null);
     const [isCheckingStartDate, setIsCheckingStartDate] = useState(false);
+    const [isSavingFirstAllocation, setIsSavingFirstAllocation] = useState(false);
+    const [legacyRecordChoice, setLegacyRecordChoice] = useState<{ key: string; ordinal: number } | null>(null);
     const formId = `clients-form-${surface}`;
 
     const {
@@ -649,6 +655,7 @@ function ClientFormContent({
     const [pendingStartDateChange, setPendingStartDateChange] = useState<{
         id: number;
         dto: UpdateClientDto;
+        firstAllocationKey: string | null;
         lock: { serviceStarted: boolean; recordedSessionCount: number };
         step: "started" | "records";
     } | null>(null);
@@ -1186,6 +1193,8 @@ function ClientFormContent({
                 setPendingBabyRetirement(null);
                 confirmedBabyRetirementRef.current = null;
                 setIsCheckingStartDate(false);
+                setIsSavingFirstAllocation(false);
+                setLegacyRecordChoice(null);
                 setEditedServerErrorFields([]);
                 setError(null);
                 resetFieldStates();
@@ -1342,6 +1351,60 @@ function ClientFormContent({
     const areVoucherControlsLocked = Boolean(readOnlyAllocation) || branchChanged;
 
     const babyCopy = (key: string) => t(locale, `clients.form.baby-record.${key}`);
+
+    const firstAllocationClientId = open && client && initializedEditClientId === client.id
+        && allocationSnapshot?.bookingConfirmedAt && allocationSnapshot.serviceStatus === "active"
+        && !hasSavedAllocation && shouldWriteAllocation && (allocationDraft.payload?.babyCount ?? 0) > 1
+        ? client.id : null;
+    const firstAllocationRecord = useQuery({
+        queryKey: [...serviceRecordKeys.clientOverview(firstAllocationClientId, undefined, activeBranchId),
+            "first-allocation", session.userId],
+        enabled: firstAllocationClientId !== null && authReady && Boolean(session.userId),
+        staleTime: 0,
+        retry: false,
+        queryFn: ({ signal }) => readFirstAllocationRecord(firstAllocationClientId!, () => {
+            if (signal.aborted || !canWriteInSession(session)) throw new Error("Client edit scope changed");
+        }, signal),
+    });
+    const legacyRecord = firstAllocationClientId === null ? null : firstAllocationRecord.data;
+    const openingForm = formDataBaselineRef.current;
+    const legacySecondaryChanged = Boolean(legacyRecord && providerIds[1] !== openingForm.secondaryEmployeeId);
+    const legacyPeriodChanged = Boolean(legacyRecord && (
+        hasServicePeriodChange(openingForm, formData) || formData.serviceStatus !== openingForm.serviceStatus ||
+        formData.allowSaturdayService !== openingForm.allowSaturdayService ||
+        formData.allowSundayService !== openingForm.allowSundayService ||
+        formData.allowHolidayService !== openingForm.allowHolidayService
+    ));
+    const legacyRecordOptions = legacyRecord?.currentPrimary?.employeeId === providerIds[0]
+        && !legacySecondaryChanged
+        ? allocationDraft.rows.flatMap((row, index) => row.providerSlot === 0 && row.employeeId === providerIds[0]
+            ? [{ value: String(row.ordinal), label: `${clientRecordRankLabel(index + 1, locale)} · ${clientProviderLabel(0, locale)}` }]
+            : [])
+        : [];
+    const firstAllocationDraftKey = firstAllocationClientId === null ? null : JSON.stringify([
+        firstAllocationClientId, activeBranchId, session.userId, allocationSnapshot?.allocationVersion,
+        formData.type, legacyPeriodChanged, legacyRecord ?? null, allocationDraft.payload,
+    ]);
+    // Discard consent as soon as its record or allocation changes, even if the
+    // operator subsequently restores the previous values.
+    if (legacyRecordChoice && legacyRecordChoice.key !== firstAllocationDraftKey) setLegacyRecordChoice(null);
+    const legacyRecordBinding: LegacyRecordBinding | undefined = legacyRecord && legacyRecordChoice
+        && legacyRecordChoice.key === firstAllocationDraftKey
+        && legacyRecordOptions.some(({ value }) => value === String(legacyRecordChoice.ordinal))
+        ? { caseId: legacyRecord.caseId, babyOrdinal: legacyRecordChoice.ordinal }
+        : undefined;
+    const firstAllocationSaveKey = firstAllocationDraftKey === null
+        ? null : `${firstAllocationDraftKey}:${legacyRecordBinding?.babyOrdinal ?? ""}`;
+    const firstAllocationSaveKeyRef = useRef(firstAllocationSaveKey);
+    useLayoutEffect(() => {
+        firstAllocationSaveKeyRef.current = firstAllocationSaveKey;
+    }, [firstAllocationSaveKey]);
+
+    const isFirstAllocationRecordLoading = firstAllocationRecord.isPending || firstAllocationRecord.isFetching;
+    const isFirstAllocationRecordUnavailable = firstAllocationRecord.isError || firstAllocationRecord.isPaused ||
+        firstAllocationRecord.isPlaceholderData;
+    const firstAllocationNeedsAttention = firstAllocationClientId !== null &&
+        (isFirstAllocationRecordLoading || isFirstAllocationRecordUnavailable || (legacyRecord && !legacyRecordBinding));
 
     const getAllocationProblem = (): { field: ClientFormField; text: string } | undefined => {
         if (!shouldWriteAllocation) return;
@@ -1640,6 +1703,46 @@ function ClientFormContent({
                         onChange={readOnlyAllocation ? undefined : changeRecordOwner}
                     />
                 ) : null}
+            {firstAllocationClientId !== null && (isFirstAllocationRecordLoading || isFirstAllocationRecordUnavailable || legacyRecord) && (
+                <div className="col-span-full" data-component={`${sectionBase}_legacy-record`} data-slot="legacy-record">
+                    {isFirstAllocationRecordUnavailable ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                            <FormHelperText role="status" data-component={`${sectionBase}_legacy-record_read-error`}>
+                                {babyCopy("legacy-read-failed")}
+                            </FormHelperText>
+                            <Button type="button" size="sm" variant="outline" disabled={isSubmitting}
+                                id={`${formId}-legacy-record-baby`} loading={firstAllocationRecord.isFetching}
+                                data-component={`${sectionBase}_legacy-record_retry`}
+                                onClick={() => void firstAllocationRecord.refetch()}>
+                                {babyCopy("legacy-retry")}
+                            </Button>
+                        </div>
+                    ) : isFirstAllocationRecordLoading && !legacyRecord ? (
+                        <LoadingState inline size="sm" label={babyCopy("legacy-loading")}
+                            data-component={`${sectionBase}_legacy-record_loading`} />
+                    ) : legacyRecordOptions.length === 0 ? (
+                        <FormHelperText role="status" tone="error" data-component={`${sectionBase}_legacy-record_owner-required`}>
+                            {babyCopy(legacySecondaryChanged ? "legacy-secondary-unchanged" : "legacy-primary-required")}
+                        </FormHelperText>
+                    ) : (
+                        <FormField data-component={`${sectionBase}_legacy-record_baby`}
+                            htmlFor={`${formId}-legacy-record-baby`} label={babyCopy("legacy-baby-label")}>
+                            <FormNativeSelect data-component={`${sectionBase}_legacy-record_baby_control`}
+                                id={`${formId}-legacy-record-baby`}
+                                aria-required="true"
+                                disabled={isSubmitting || isFirstAllocationRecordLoading}
+                                value={legacyRecordBinding ? String(legacyRecordBinding.babyOrdinal) : ""}
+                                options={legacyRecordOptions}
+                                placeholder={babyCopy("legacy-select-baby")}
+                                onValueChange={(value) => {
+                                    if (!firstAllocationDraftKey || !legacyRecordOptions.some((option) => option.value === value) ||
+                                        submissionInFlightRef.current) return;
+                                    setLegacyRecordChoice({ key: firstAllocationDraftKey, ordinal: Number(value) });
+                                }} />
+                        </FormField>
+                    )}
+                </div>
+            )}
         </>
     );
 
@@ -1800,7 +1903,7 @@ function ClientFormContent({
     // 종료일을 계산하지 못한 채(지원하지 않는 연도)로도 저장하지 않아요. 직접 입력하거나 기간을 바꾸면 풀려요.
     const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
-    const isCurrentSession = (session: ClientFormSession): session is ClientFormSession & ClientRegistrationScope => {
+    function isCurrentSession(session: ClientFormSession): session is ClientFormSession & ClientRegistrationScope {
         if (!session.open || session !== formSessionRef.current || !session.branchId || session.branchChanged) return false;
         if (session.selectedBranchId !== normalizedBranchId(getActiveBranchId())) {
             session.branchChanged = true;
@@ -1814,10 +1917,24 @@ function ClientFormContent({
         }
         return !session.branchChanged && Boolean(session.userId) && user?.id === session.userId
             && normalizedBranchId(user?.branchId) === session.branchId;
-    };
+    }
 
-    const canWriteInSession = (session: ClientFormSession): session is ClientFormSession & ClientRegistrationScope => {
+    function canWriteInSession(session: ClientFormSession): session is ClientFormSession & ClientRegistrationScope {
         return isCurrentSession(session) && isSettledAuth(readAuth());
+    }
+
+    const recheckFirstAllocation = async (expectedKey: string, session: ClientFormSession) => {
+        if (expectedKey === firstAllocationSaveKey && expectedKey === firstAllocationSaveKeyRef.current) {
+            const result = await firstAllocationRecord.refetch();
+            if (!canWriteInSession(session)) return false;
+            if (legacyRecordBinding && !canManageBranch(readAuth()?.data)) return false;
+            if (result.isSuccess && !result.isPaused && expectedKey === firstAllocationSaveKeyRef.current &&
+                JSON.stringify(result.data) === JSON.stringify(legacyRecord ?? null)) return true;
+        }
+        setLegacyRecordChoice(null);
+        setErrorAndScroll(babyCopy("legacy-changed"));
+        focusField("legacy-record-baby");
+        return false;
     };
 
     const handleSubmit = async (confirmedPeriod?: string) => {
@@ -1866,6 +1983,14 @@ function ClientFormContent({
             setErrorAndScroll(babyCopy("stale"));
             return;
         }
+        if (legacyPeriodChanged) {
+            setErrorAndScroll(babyCopy("legacy-period-unchanged"));
+            return;
+        }
+        if (firstAllocationNeedsAttention) {
+            focusField("legacy-record-baby");
+            return;
+        }
         if (allocation && allocationDraft.retiringBabies.length > 0) {
             const retirementKey = JSON.stringify([formData.type, allocation.fetalType, allocation.babyCount]);
             if (confirmedBabyRetirementRef.current !== retirementKey) {
@@ -1894,6 +2019,7 @@ function ClientFormContent({
         let endDateGuardSent = false;
         try {
             submissionInFlightRef.current = true;
+            if (firstAllocationSaveKey !== null) setIsSavingFirstAllocation(true);
             const fresh = await refreshForSave();
             if (!canWriteInSession(session)) return;
             setCalendarRefreshFailed(!fresh.ok);
@@ -1955,7 +2081,11 @@ function ClientFormContent({
                     baseline: getEffectiveBaseline(),
                     current: formData,
                     allowBusinessDayMismatch: hasDurationMismatch && confirmedPeriod === periodKey,
-                    allocation: allocation && allocationVersion ? { ...allocation, expectedAllocationVersion: allocationVersion } : undefined,
+                    allocation: allocation && allocationVersion ? {
+                        ...allocation,
+                        expectedAllocationVersion: allocationVersion,
+                        ...(legacyRecordBinding ? { legacyRecordBinding } : {}),
+                    } : undefined,
                 });
                 endDateGuardSent = updateDto.expectedEndDate !== undefined;
                 if (updateDto.providers !== undefined && client.bookingConfirmedAt &&
@@ -1982,6 +2112,7 @@ function ClientFormContent({
                             setPendingStartDateChange({
                                 id: client.id,
                                 dto: updateDto,
+                                firstAllocationKey: firstAllocationSaveKey,
                                 lock,
                                 step: lock.serviceStarted ? "started" : "records",
                             });
@@ -1989,6 +2120,8 @@ function ClientFormContent({
                         }
                     }
                 }
+                if (firstAllocationSaveKey !== null &&
+                    (!(await recheckFirstAllocation(firstAllocationSaveKey, session)) || !canWriteInSession(session))) return;
                 let updatedClient: Client;
                 try {
                     updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
@@ -1997,12 +2130,13 @@ function ClientFormContent({
                     const lock = getStartDateLock(cause);
                     if (!lock) throw cause;
                     if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
-                        await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED", session);
+                        await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED", session, firstAllocationSaveKey);
                         return;
                     }
                     setPendingStartDateChange({
                         id: client.id,
                         dto: updateDto,
+                        firstAllocationKey: firstAllocationSaveKey,
                         lock,
                         step: lock.serviceStarted ? "started" : "records",
                     });
@@ -2053,6 +2187,7 @@ function ClientFormContent({
         } catch (error: unknown) {
             if (isCurrentSession(session)) setMutationError(error, { endDateGuardSent, allocation });
         } finally {
+            if (session === formSessionRef.current && firstAllocationSaveKey !== null) setIsSavingFirstAllocation(false);
             submissionInFlightRef.current = false;
         }
     };
@@ -2062,8 +2197,14 @@ function ClientFormContent({
         rememberedDto: UpdateClientDto,
         startDateChangeMode: StartDateChangeMode,
         session: typeof formSessionRef.current,
+        firstAllocationKey: string | null,
     ) => {
         if (!canWriteInSession(session)) return;
+        if (firstAllocationKey !== null &&
+            (!(await recheckFirstAllocation(firstAllocationKey, session)) || !canWriteInSession(session))) {
+            if (isCurrentSession(session)) setPendingStartDateChange(null);
+            return;
+        }
         const { startDateDto, employeeDto } = splitEmployeeChangeFromStartDateChange(rememberedDto);
         try {
             let updatedClient = await updateClient.mutateAsync({
@@ -2114,14 +2255,19 @@ function ClientFormContent({
         const session = formSessionRef.current;
         if (!session.open || !pendingStartDateChange || submissionInFlightRef.current) return;
         submissionInFlightRef.current = true;
+        if (pendingStartDateChange.firstAllocationKey !== null) setIsSavingFirstAllocation(true);
         try {
-            await retryStartDateChangeCore(pendingStartDateChange.id, pendingStartDateChange.dto, startDateChangeMode, session);
+            await retryStartDateChangeCore(
+                pendingStartDateChange.id, pendingStartDateChange.dto, startDateChangeMode, session,
+                pendingStartDateChange.firstAllocationKey,
+            );
         } finally {
+            if (session === formSessionRef.current && pendingStartDateChange.firstAllocationKey !== null) setIsSavingFirstAllocation(false);
             submissionInFlightRef.current = false;
         }
     };
 
-    const isSubmitting = createClient.isPending || updateClient.isPending || isCheckingStartDate;
+    const isSubmitting = createClient.isPending || updateClient.isPending || isCheckingStartDate || isSavingFirstAllocation;
 
     const requiredFieldProgressText = `필수 항목 4개 중 ${
         [
@@ -2166,6 +2312,10 @@ function ClientFormContent({
             if (allocationProblem && clientFieldStep(allocationProblem.field) === activeStep) {
                 setAllocationValidated(true);
                 focusField(allocationProblem.field);
+                return;
+            }
+            if (activeStep === PROVIDER_STEP && firstAllocationNeedsAttention) {
+                focusField("legacy-record-baby");
                 return;
             }
         }

@@ -63,7 +63,7 @@ export interface BuildClientUpdatePayloadInput {
     current: ClientFormData;
     /** Set after the user confirmed a service period whose length differs from its business days. */
     allowBusinessDayMismatch?: boolean;
-    allocation?: ClientAllocationWrite & { expectedAllocationVersion: string };
+    allocation?: ClientAllocationWrite & Pick<UpdateClientDto, "legacyRecordBinding"> & { expectedAllocationVersion: string };
 }
 
 export function buildClientUpdatePayload({

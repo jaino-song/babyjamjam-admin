@@ -86,6 +86,26 @@ const savedTwins: Client = {
   allocationVersion: "fixture-version-1",
   voucherIssuanceYear: year,
 };
+const unconfirmedTwins: Client = {
+  ...savedTwins, fetalConfirmation: "UNCONFIRMED", fetalType: null, babyCount: null,
+  babies: [], babyAssignments: [], providers: undefined, historicalMaxOrdinal: 0,
+};
+const firstCaseId = "18c2f310-a2db-4b42-a681-3f6f26969880";
+const secondCaseId = "d3f9d426-bb7f-423b-a957-325d141cd727";
+const legacyBabyLabel = "기존 제공기록지를 이어 쓸 아기";
+
+function legacyOverview(caseId: string, signed = true) {
+  return {
+    cases: [{ caseId, babyId: null, retired: false, status: "IN_PROGRESS", submittedSessions: 1 }],
+    record: {
+      id: caseId, status: "IN_PROGRESS", completedAt: null, finalizedAt: null,
+      sessions: [{ locked: true, hasMomApproval: true, employeeId: providers[0].id,
+        clientSignedAt: signed ? "2026-08-04T00:00:00.000Z" : null, clientSignature: signed ? "qa-signature" : null }],
+    },
+    legacyLinkAssignment: { scheduleId: 31, employeeId: providers[0].id },
+    assignments: [],
+  };
+}
 
 type Surface = "panel" | "dialog";
 function FormFixture({
@@ -165,6 +185,8 @@ describe("desktop client service-record allocation", () => {
   let queries: QueryClient;
   let currentClient: Client;
   let retiredSetting: boolean | undefined;
+  let legacyCaseId: string | undefined;
+  let isLegacySigned: boolean;
   const calendarHook = jest.mocked(useBusinessDayCalendar);
   const defaultCalendar = calendarHook.getMockImplementation()!;
   const get = jest.mocked(api.get);
@@ -184,6 +206,8 @@ describe("desktop client service-record allocation", () => {
   beforeEach(() => {
     selectBranch(firstBranch);
     retiredSetting = undefined;
+    legacyCaseId = undefined;
+    isLegacySigned = true;
     queries = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     queries.setQueryDefaults(AUTH_USER_QUERY_KEY, { gcTime: Infinity });
     alignAuth(firstBranch);
@@ -206,6 +230,12 @@ describe("desktop client service-record allocation", () => {
         }] : [] };
       }
       if (url === "/clients/523") return { data: currentClient };
+      if (url === "/admin/service-records/client/523" && legacyCaseId) return {
+        data: { ...legacyOverview(legacyCaseId), record: { ...legacyOverview(legacyCaseId).record, sessions: [] } },
+      };
+      if (legacyCaseId && url === `/admin/service-records/client/523/editor?caseId=${legacyCaseId}`) {
+        return { data: legacyOverview(legacyCaseId, isLegacySigned) };
+      }
       if (url === "/admin/service-records/client/523") return {
         data: { record: { id: "existing-case", startDate: savedTwins.startDate, sessions: [{ sessionIndex: 1 }] }, assignments: [] },
       };
@@ -297,6 +327,7 @@ describe("desktop client service-record allocation", () => {
       providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
       babyAssignments: [{ ordinal: 1, providerSlot: 1 }],
     });
+    expect(body).not.toHaveProperty("legacyRecordBinding");
     expect(body).not.toHaveProperty("primaryEmployeeId");
     expect(body).not.toHaveProperty("secondaryEmployeeId");
   });
@@ -660,6 +691,136 @@ describe("desktop client service-record allocation", () => {
     next();
     click("저장");
     await waitFor(() => expect(patch).toHaveBeenCalledWith("/clients/523", { address: "인천광역시 동구" }));
+    expect(get).not.toHaveBeenCalledWith("/admin/service-records/client/523");
+  });
+
+  it("requires explicit confirmation of the only primary-owned baby on the normal edit panel", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ client: unconfirmedTwins, initialStep: 1 });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    next();
+
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    expect(choice).toHaveValue("");
+    expect(within(choice).getByRole("option", { name: "첫째 기록지 · 주 제공인력" })).toHaveValue("1");
+    expect(within(choice).queryByRole("option", { name: /둘째/ })).not.toBeInTheDocument();
+    next();
+    expect(choice).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+
+    select(legacyBabyLabel, "1");
+    next();
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/clients/523", {
+      fetalType: "TWINS", babyCount: 2, voucherIssuanceYear: year,
+      expectedAllocationVersion: unconfirmedTwins.allocationVersion,
+      providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
+      babyAssignments: [{ ordinal: 1, providerSlot: 0 }, { ordinal: 2, providerSlot: 1 }],
+      legacyRecordBinding: { caseId: firstCaseId, babyOrdinal: 1 },
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("offers the second baby when owned by the continuing primary and clears an invalidated choice", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ surface: "dialog", client: { ...unconfirmedTwins, historicalMaxOrdinal: 4 } });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+
+    select("둘째 기록지 담당자", "0");
+    expect(within(choice).getByRole("option", { name: "둘째 기록지 · 주 제공인력" })).toHaveValue("6");
+    select(legacyBabyLabel, "6");
+    select("둘째 기록지 담당자", "1");
+    expect(choice).toHaveValue("");
+    select("둘째 기록지 담당자", "0");
+    expect(choice).toHaveValue("");
+    click("저장");
+    expect(patch).not.toHaveBeenCalled();
+
+    select(legacyBabyLabel, "6");
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({
+      babyAssignments: [{ ordinal: 5, providerSlot: 0 }, { ordinal: 6, providerSlot: 0 }],
+      legacyRecordBinding: { caseId: firstCaseId, babyOrdinal: 6 },
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("blocks the allocation when the primary caregiver no longer continues", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    await selectProvider(0, providers[2]);
+    expect(screen.queryByRole("combobox", { name: legacyBabyLabel })).not.toBeInTheDocument();
+    expect(screen.getByText(/지금의 주 제공인력을 아기 한 명 이상에게 배정/)).toBeInTheDocument();
+    click("저장");
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("reads the case again before saving and requires a new choice after the record changes", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+    legacyCaseId = secondCaseId;
+    click("저장");
+    await screen.findByText(/기존 제공기록지나 배정이 바뀌었어요/);
+    expect(choice).toHaveValue("");
+    expect(patch).not.toHaveBeenCalled();
+
+    select(legacyBabyLabel, "1");
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({
+      legacyRecordBinding: { caseId: secondCaseId, babyOrdinal: 1 },
+    });
+  });
+
+  it("does not submit a pending binding after switching customers during the final read", async () => {
+    legacyCaseId = firstCaseId;
+    const view = await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+
+    let finishRead!: (value: { data: ReturnType<typeof legacyOverview> }) => void;
+    get.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    click("저장");
+    await waitFor(() => expect(finishRead).toBeDefined());
+    expect(screen.getByRole("combobox", { name: legacyBabyLabel })).toBeDisabled();
+
+    view.rerender(<QueryClientProvider client={queries}>
+      <FormFixture surface="dialog" client={{ ...savedTwins, id: 524 }} />
+    </QueryClientProvider>);
+    await act(async () => finishRead({ data: legacyOverview(firstCaseId) }));
+    expect(screen.queryByRole("combobox", { name: legacyBabyLabel })).not.toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("confirms an ordinary first allocation without binding a locked day that lacks a signature", async () => {
+    legacyCaseId = firstCaseId;
+    isLegacySigned = false;
+    await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    await waitFor(() => expect(get).toHaveBeenCalledWith(
+      `/admin/service-records/client/523/editor?caseId=${firstCaseId}`, expect.anything(),
+    ));
+    expect(screen.queryByRole("combobox", { name: legacyBabyLabel })).not.toBeInTheDocument();
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({ fetalType: "TWINS", babyCount: 2 });
+    expect(patch.mock.calls[0][1]).not.toHaveProperty("legacyRecordBinding");
   });
 
   it("keeps an unconnected regional registration on the existing no-voucher payload", async () => {
