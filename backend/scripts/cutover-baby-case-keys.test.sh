@@ -162,18 +162,27 @@ SQL
 refuse 'Outstanding service-record link claim' cutover apply
 sql <<'SQL'
 INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, trigger_job_id,
-    provider_acceptance_state, provider_acceptance_key, provider_reconciled_at, updated_at)
+    provider_acceptance_state, provider_acceptance_key, provider_acceptance_fingerprint,
+    provider_call_started_at, provider_reconciled_at, updated_at)
 SELECT branch_id, 'aligo_sms', 'service_record_link_sms', 'synthetic', 'QA-Reclaimed', id,
     'reconciled_not_delivered', 'sms:' || encode(sha256(convert_to(
         format('{"identity":"%s:%s","scope":"automation"}', branch_id, id), 'UTF8')), 'hex'),
-    updated_at - interval '1 second', now()
+    repeat('a', 64), updated_at - interval '1 hour', updated_at - interval '1 second', now()
 FROM message_trigger_job WHERE id = 'qa-pending';
 SQL
+# A matching-looking result on either side of the reclaim write is not
+# attributable to the removed claim, even if a prior attempt settled late.
 refuse 'Outstanding service-record link claim' cutover apply
-sql -c "UPDATE message_log SET provider_reconciled_at = now() WHERE trigger_job_id = 'qa-pending'"
-cutover rehearse
+sql -c "UPDATE message_log SET provider_reconciled_at = clock_timestamp() WHERE trigger_job_id = 'qa-pending'"
+refuse 'Outstanding service-record link claim' cutover apply
+sql <<'SQL'
+UPDATE message_log SET provider_acceptance_state = 'accepted', provider_reconciled_at = NULL,
+    provider_accepted_at = clock_timestamp() WHERE trigger_job_id = 'qa-pending';
+SQL
+refuse 'Outstanding service-record link claim' cutover apply
 sql -c "DELETE FROM message_log WHERE trigger_job_id = 'qa-pending'"
 sql -c "UPDATE message_trigger_job SET status = 'pending', cancel_reason = NULL WHERE id = 'qa-pending'"
+cutover rehearse
 legacy_unchanged
 
 for state in prepared started uncertain; do
@@ -204,7 +213,40 @@ cutover rehearse
 sql -c "UPDATE message_log SET provider_call_started_at = now() WHERE trigger_job_id = 'qa-pending'"
 refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
 sql -c "DELETE FROM message_log WHERE receiver = 'synthetic'"
-sql -c "UPDATE message_trigger_job SET status = 'pending', canceled_at = NULL, cancel_reason = NULL WHERE id = 'qa-pending'"
+
+sql -v branch="$branch" <<'SQL'
+UPDATE message_trigger_job SET status = 'canceled', canceled_at = now(), payload = '{"recordLinkGroup":{"version":1}}',
+    cancel_reason = '제공기록지 링크의 담당자 또는 발송 대상이 변경되었습니다' WHERE id = 'qa-pending';
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, trigger_job_id,
+    variables, status, error_message, provider_acceptance_state, provider_acceptance_key,
+    provider_acceptance_fingerprint, updated_at)
+VALUES (:'branch', 'aligo_sms', 'service_record_link_sms', 'synthetic', 'QA-Canceled group', 'qa-pending',
+    '{"recordLinkGroupVersion":"1"}', 'failed', '제공기록지 링크의 담당자 또는 발송 대상이 변경되었습니다',
+    'prepared', 'sms:' || repeat('a', 64), repeat('b', 64), now());
+SQL
+cutover rehearse
+sql -c "UPDATE message_log SET provider_call_started_at = now() WHERE trigger_job_id = 'qa-pending'"
+refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
+sql -c "DELETE FROM message_log WHERE receiver = 'synthetic'"
+sql -c "UPDATE message_trigger_job SET status = 'pending', canceled_at = NULL, cancel_reason = NULL, payload = '{}' WHERE id = 'qa-pending'"
+
+sql -v branch="$branch" <<'SQL'
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, variables,
+    status, error_message, provider_acceptance_state, updated_at)
+VALUES (:'branch', 'aligo_sms', 'service_record_link_sms', 'synthetic', 'QA-Retired quiet hold',
+    jsonb_build_object('quietHoursDisposition', 'DEFER', 'quietHoursReason', 'message_quiet_hours:DEFER',
+        'quietHoursReleaseAt', '2026-11-27T23:00:00.000Z', 'quietHoursOriginalScheduledFor', '2026-11-27T18:00:00.000Z',
+        'quietHoursPolicyRevision', 'qa', 'supersededTriggerJobId', 'qa-pending',
+        'supersededProviderAcceptanceKey', 'sms:' || repeat('a', 64),
+        'supersededProviderAcceptanceFingerprint', repeat('b', 64)),
+    'failed', 'Service record link rescheduled', 'prepared', now());
+SQL
+cutover rehearse
+sql -c "UPDATE message_log SET provider_acceptance_key = variables->>'supersededProviderAcceptanceKey' WHERE receiver = 'synthetic'"
+refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
+sql -c "UPDATE message_log SET provider_acceptance_key = NULL, provider_call_started_at = now() WHERE receiver = 'synthetic'"
+refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
+sql -c "DELETE FROM message_log WHERE receiver = 'synthetic'"
 
 sql -v branch="$branch" <<'SQL'
 INSERT INTO message_occurrence_claim (branch_id, occurrence_key, template_key, lifecycle_id,
@@ -272,7 +314,34 @@ sql -c "UPDATE eformsign_doc SET permanent_purge_requested_at = now() WHERE docu
 refuse 'Outstanding or uncertain service-record document attempt' cutover apply
 sql -c "UPDATE eformsign_doc SET permanent_purge_requested_at = NULL, step_type = '05' WHERE document_id = 'qa-snapshot'"
 refuse 'Service-record document allows an unfenced outsider re-request' cutover apply
-sql -c "UPDATE eformsign_doc SET step_type = '06' WHERE document_id = 'qa-snapshot'"
+sql -c "UPDATE eformsign_doc SET step_type = '5', status_type = '30' WHERE document_id = 'qa-snapshot'"
+refuse 'Service-record document allows an unfenced outsider re-request' cutover apply
+sql <<'SQL'
+UPDATE eformsign_doc SET step_type = U&'\00A005\FEFF', status_type = E'\tDOC_REQUEST_OUTSIDER\n'
+WHERE document_id = 'qa-snapshot';
+SQL
+refuse 'Service-record document allows an unfenced outsider re-request' cutover apply
+sql -c "UPDATE eformsign_doc SET step_type = '005', status_type = '030' WHERE document_id = 'qa-snapshot'"
+cutover rehearse
+sql -c "UPDATE eformsign_doc SET step_type = '05', status_type = '0300' WHERE document_id = 'qa-snapshot'"
+cutover rehearse
+sql <<'SQL'
+UPDATE eformsign_doc SET step_type = '06', status_type = '070',
+    detail_payload = '{"current_status":{"step_type":5,"status_type":"doc_request_outsider"}}'
+WHERE document_id = 'qa-snapshot';
+SQL
+refuse 'Service-record document allows an unfenced outsider re-request' cutover apply
+sql <<'SQL'
+UPDATE eformsign_doc SET detail_payload = NULL WHERE document_id = 'qa-snapshot';
+INSERT INTO eformsign_doc (document_id, branch_id, created_date, updated_date,
+    status_type, status_detail, step_type, step_index, step_name,
+    step_recipient_type, step_recipient_name, step_recipient_sms, expired_date)
+SELECT 'qa-unrelated-contract', branch_id, now(), now(), 'doc_request_outsider', '', '5', '1',
+    '', '', '', '', now() + interval '1 day'
+FROM eformsign_doc WHERE document_id = 'qa-snapshot';
+SQL
+cutover rehearse
+sql -c "DELETE FROM eformsign_doc WHERE document_id = 'qa-unrelated-contract'"
 legacy_unchanged
 
 sql <<'SQL'
@@ -485,6 +554,7 @@ await_pause
 PGOPTIONS='-c lock_timeout=70ms' refuse 'lock timeout' sql -f "$scratch/old-writer.sql"
 PGOPTIONS='-c lock_timeout=70ms' refuse 'lock timeout' sql -f "$legacy_patch"
 PGOPTIONS='-c lock_timeout=70ms' refuse 'lock timeout' sql -f "$scratch/claim.sql"
+PGOPTIONS='-c lock_timeout=70ms' refuse 'lock timeout' sql -c "UPDATE eformsign_doc SET step_type = '5', status_type = '30' WHERE document_id = 'qa-snapshot'"
 refuse 'could not obtain lock' cutover apply
 printf '%s\n' 'EXECUTE qa_second_case(2)' '\gset' 'COMMIT;' \
   "\\! touch $scratch/record-after-commit" 'SELECT 1 /* record-after-commit */;' >&4

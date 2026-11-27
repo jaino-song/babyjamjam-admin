@@ -119,21 +119,12 @@ BEGIN
                OR j.processing_deadline_at IS NOT NULL
                OR (j.cancel_reason = '제공기록지 링크 발송 작업 생성 재시도 대기'
                    AND j.next_attempt_at > clock_timestamp())
-               -- Reclaim clears the live claim even when it cannot prove
-               -- whether dispatch happened. Require evidence for this attempt.
+               -- Reclaim drops the claim token and persists no log id or
+               -- attempt generation. A job-scoped key and either timestamp
+               -- can also describe an earlier attempt. This cutover requires
+               -- zero such ambiguous record-link jobs, even after log reconciliation.
                OR (j.status = 'failed'
-                   AND j.cancel_reason = '문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.'
-                   AND NOT EXISTS (
-                       SELECT 1 FROM public.message_log l
-                       WHERE l.trigger_job_id = j.id AND l.branch_id IS NOT DISTINCT FROM j.branch_id
-                         AND l.provider = 'aligo_sms'
-                         AND ((l.provider_acceptance_state IN ('reconciled_delivered', 'reconciled_not_delivered')
-                               AND l.provider_reconciled_at >= j.updated_at)
-                              OR (l.provider_acceptance_state = 'accepted' AND l.provider_accepted_at >= j.updated_at))
-                         AND l.provider_acceptance_key = 'sms:' || encode(sha256(convert_to(
-                             '{"identity":' || to_json(j.branch_id::text || ':' || j.id)::text
-                             || ',"scope":"automation"}', 'UTF8')), 'hex')
-                   )))
+                   AND j.cancel_reason = '문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.'))
     ) THEN
         RAISE EXCEPTION 'Outstanding service-record link claim';
     END IF;
@@ -147,12 +138,34 @@ BEGIN
                OR EXISTS (SELECT 1 FROM public.service_record_job_member m WHERE m.job_id = j.id))
           AND (l.provider_acceptance_state IN ('started', 'uncertain')
                OR (l.provider_acceptance_state = 'prepared' AND (
-                   l.provider_call_started_at IS NULL AND l.status = 'failed' AND l.next_retry_at IS NULL
-                   AND l.error_message = 'message_quiet_hours:CANCEL'
-                   AND l.variables->>'quietHoursDisposition' = 'CANCEL'
-                   AND j.branch_id IS NOT DISTINCT FROM l.branch_id
-                   AND j.status = 'canceled' AND j.cancel_reason = 'message_quiet_hours:CANCEL'
-                   AND j.claim_token IS NULL AND j.processing_deadline_at IS NULL
+                   l.provider = 'aligo_sms' AND l.status = 'failed' AND l.next_retry_at IS NULL
+                   AND l.provider_call_started_at IS NULL AND l.provider_accepted_at IS NULL
+                   AND l.provider_reconciled_at IS NULL AND l.aligo_mid IS NULL
+                   AND (
+                       -- The provider gate canceled the current job and failed
+                       -- its draft in the same transaction, before starting.
+                       (j.branch_id = l.branch_id AND j.status = 'canceled' AND j.canceled_at IS NOT NULL
+                        AND j.claim_token IS NULL AND j.processing_deadline_at IS NULL
+                        AND j.cancel_reason = l.error_message AND (
+                            (l.error_message = 'message_quiet_hours:CANCEL'
+                             AND l.variables->>'quietHoursDisposition' = 'CANCEL')
+                            OR ((j.recipient_employee_id IS NOT NULL OR j.payload ? 'recordLinkGroup'
+                                 OR j.dedupe_key LIKE 'system:service_record_link:group:%')
+                                AND l.error_message IN ('제공기록지 링크의 담당자 또는 발송 대상이 변경되었습니다',
+                                    '메시지 발송 승인 필요', 'sms_automation_safeguard:branch',
+                                    'sms_automation_safeguard:rule'))
+                        ))
+                       -- Rescheduling keeps the job id but retires the old
+                       -- draft by removing its live job and acceptance identity.
+                       OR (l.error_message = 'Service record link rescheduled' AND l.attempts = 0
+                           AND l.trigger_job_id IS NULL AND l.provider_acceptance_key IS NULL
+                           AND l.provider_acceptance_fingerprint IS NULL
+                           AND l.variables->>'quietHoursDisposition' = 'DEFER'
+                           AND l.variables->>'quietHoursReason' = 'message_quiet_hours:DEFER'
+                           AND nullif(l.variables->>'supersededTriggerJobId', '') IS NOT NULL
+                           AND l.variables->>'supersededProviderAcceptanceKey' ~ '^sms:[0-9a-f]{64}$'
+                           AND l.variables->>'supersededProviderAcceptanceFingerprint' ~ '^[0-9a-f]{64}$')
+                   )
                ) IS NOT TRUE)
                OR (l.provider_acceptance_state = 'legacy' AND
                    (l.status = 'pending' OR l.provider_call_started_at IS NOT NULL)))
@@ -202,17 +215,35 @@ BEGIN
         RAISE EXCEPTION 'Outstanding or uncertain service-record document attempt';
     END IF;
 
-    -- Production snapshots go to reviewer step 06. The generic UI's step
-    -- 05 re-request can contact the provider after reads alone. Refuse if
-    -- a record document is in an outsider workflow that exposes that action.
+    -- Re-request uses an existing provider id. Check both stored views for
+    -- any eligible record snapshot while writes to these rows are fenced.
+    -- Mirror normalizeEformsignStepType / normalizeEformsignStatusCode:
+    -- JS trims Unicode whitespace and pads short codes without truncation.
     IF EXISTS (
         SELECT 1 FROM public.eformsign_doc d
-        WHERE d.step_type = '05' AND d.voided_at IS NULL
-          AND d.status_type IN ('001', '002', '010', '020', '030', '041', '043',
-                                '060', '063', '064', '070', '071')
+        WHERE d.voided_at IS NULL
           AND (d.document_kind = 'service_record_snapshot' OR d.service_record_case_id IS NOT NULL
                OR EXISTS (SELECT 1 FROM public.service_record_snapshot_chunk c
                           WHERE c.document_id = d.document_id))
+          AND EXISTS (
+              SELECT 1
+              FROM (VALUES (d.step_type, d.status_type),
+                  (d.detail_payload#>>'{current_status,step_type}',
+                   d.detail_payload#>>'{current_status,status_type}')) AS stored(step_type, status_type)
+              CROSS JOIN (VALUES (
+                  U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+              )) AS js(whitespace)
+              CROSS JOIN LATERAL (VALUES (
+                  lower(btrim(stored.status_type, js.whitespace) COLLATE "C")
+              )) AS normalized(status_type)
+              WHERE btrim(stored.step_type, js.whitespace) IN ('5', '05')
+                AND (lpad(normalized.status_type, greatest(3, length(normalized.status_type)), '0')
+                         IN ('001', '002', '010', '020', '030', '041', '043', '060', '063', '064', '070', '071')
+                     OR normalized.status_type IN ('doc_tempsave', 'doc_create', 'doc_request_approval',
+                         'doc_request_reception', 'doc_request_outsider', 'doc_refuse_revoke', 'doc_update',
+                         'doc_request_participant', 'doc_rerequest_participant', 'doc_open_participant',
+                         'doc_request_reviewer', 'doc_reject_reviewer'))
+          )
     ) THEN
         RAISE EXCEPTION 'Service-record document allows an unfenced outsider re-request';
     END IF;
