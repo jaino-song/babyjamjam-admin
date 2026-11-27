@@ -1388,10 +1388,11 @@ export class SmsTriggerDeliveryService {
         try {
             const template = transaction ? await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey, transaction)
                 : await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
-            const content = template.content;
+            const { id, content, updatedAt } = template;
             const hash = this.hash(content);
-            const updatedAt = template.updatedAt instanceof Date && !Number.isNaN(template.updatedAt.getTime())
-                ? template.updatedAt.toISOString()
+            // Registry defaults get fresh timestamps on each read.
+            const versionSuffix = id && updatedAt instanceof Date && !Number.isNaN(updatedAt.getTime())
+                ? updatedAt.toISOString()
                 : `content:${hash}`;
             const requiredVariableKeys = new Set<string>([
                 ...SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].requiredVariables
@@ -1406,7 +1407,7 @@ export class SmsTriggerDeliveryService {
             ]);
             return {
                 content,
-                version: `${template.id || systemTemplateKey}:${updatedAt}`,
+                version: `${id || systemTemplateKey}:${versionSuffix}`,
                 hash,
                 requiredVariableKeys: [...requiredVariableKeys],
             };
