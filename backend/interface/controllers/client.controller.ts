@@ -1,5 +1,5 @@
 import { hasAllocationInput } from "application/services/client-allocation.service";
-import { BadRequestException, Body, Controller, Delete, Get, Header, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Header, Headers, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
 import {
     CLIENT_LIST_TAB_VALUES,
@@ -11,9 +11,9 @@ import {
 } from "interface/dto/client.dto";
 import type { ClientListTab } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { CurrentTenant, TenantGuard, type VerifiedTenantPrincipal } from "infrastructure/tenant";
 import { parseInteger } from "interface/parse-integer";
-import { problemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
 function parseClientListTab(value: string | undefined): ClientListTab {
     if (value === undefined || value === "") return "all";
@@ -181,11 +181,19 @@ export class ClientController {
 
     @Patch(":id")
     update(
-        @CurrentTenant() tenant: { branchId?: string; userId?: string },
+        @CurrentTenant() tenant: Partial<VerifiedTenantPrincipal>,
         @Param("id", ParseIntPipe) id: number,
-        @Body() dto: UpdateClientDto
+        @Body() dto: UpdateClientDto,
+        @Headers("x-bjj-client") surface?: string,
     ) {
-        return this.clientService.update(tenant.branchId ?? "", id, {
+        const binding = dto.legacyRecordBinding;
+        // Surface restrictions do not determine the operator's authority.
+        // The existing tenant guard supplies the verified branch roles below.
+        if (binding && (surface === "mobile" || !tenant.userId || !tenant.branchId
+            || !(tenant.globalRole === "owner" || tenant.branchRole === "admin" || tenant.branchRole === "manager"))) {
+            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        }
+        const params = {
             name: dto.name,
             primaryEmployeeId: dto.primaryEmployeeId,
             secondaryEmployeeId: dto.secondaryEmployeeId,
@@ -222,7 +230,10 @@ export class ClientController {
                 expectedAllocationVersion: dto.expectedAllocationVersion,
             } : {}),
             smsAutomationEnabled: dto.smsAutomationEnabled,
-        });
+        };
+        return binding
+            ? this.clientService.update(tenant.branchId ?? "", id, params, undefined, binding)
+            : this.clientService.update(tenant.branchId ?? "", id, params);
     }
 
     @Delete(":id")

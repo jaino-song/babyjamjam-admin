@@ -16,6 +16,7 @@ import { resolveServiceRecordCaseTarget, type ServiceRecordCaseTarget } from "./
 import { RECORD_LINK_GROUP_CHANGED, recordLinkGroupCarrierEvidence } from "./service-record-link-group-source";
 import { IMMUTABLE_FINALIZATION_STATUSES } from "./service-record-lifecycle.service";
 import { hasConflictingUnboundCaseHistory } from "./service-record-token.service";
+import { legacyRecordBindingConflict, type LockedLegacyRecordBinding } from "./client-legacy-record-binding";
 
 export interface ClientAllocationInput {
     fetalType?: FetalType;
@@ -67,8 +68,11 @@ const snapshotSelect = {
         take: 1,
         select: {
             id: true,
+            incarnationId: true,
             primaryEmployeeId: true,
             secondaryEmployeeId: true,
+            startDate: true,
+            endDate: true,
             recordTeamSlots: {
                 where: { active: true },
                 select: { id: true, slot: true, employeeId: true, legacyBackfilled: true },
@@ -120,6 +124,15 @@ export function allocationProjection(snapshot: ClientAllocationSnapshot): Client
             providers.splice(1, 0, { slot: 1, employeeId: schedule.secondaryEmployeeId });
         }
     }
+    // First allocation (including a signed legacy binding) must reject a
+    // stale period or schedule incarnation. Keep existing configured versions.
+    const versionSource = snapshot.fetalConfirmation !== "CONFIRMED"
+        ? snapshot
+        : {
+            ...snapshot,
+            employeeSchedules: snapshot.employeeSchedules.map(({ id, primaryEmployeeId, secondaryEmployeeId, recordTeamSlots, recordBabyAssignments }) =>
+                ({ id, primaryEmployeeId, secondaryEmployeeId, recordTeamSlots, recordBabyAssignments })),
+        };
     return {
         fetalType: snapshot.fetalType,
         fetalConfirmation: snapshot.fetalConfirmation ?? "UNCONFIRMED",
@@ -131,7 +144,7 @@ export function allocationProjection(snapshot: ClientAllocationSnapshot): Client
             ...baby,
             providerSlot: slotNumbers.get(owners.get(baby.babyId) ?? "") ?? null,
         })),
-        allocationVersion: createHash("sha256").update(JSON.stringify(snapshot)).digest("base64url"),
+        allocationVersion: createHash("sha256").update(JSON.stringify(versionSource)).digest("base64url"),
     };
 }
 
@@ -453,7 +466,11 @@ export async function persistClientAllocation(
     plan: ClientAllocationPlan,
     scheduleId: number | null,
     previousScheduleId: number | null = scheduleId,
+    legacyBinding?: LockedLegacyRecordBinding,
 ): Promise<void> {
+    if (legacyBinding && (plan.unchanged || scheduleId === null || scheduleId !== previousScheduleId)) {
+        legacyRecordBindingConflict("schedule");
+    }
     if (plan.unchanged && previousScheduleId === scheduleId) return;
     const newRows = plan.assignments.filter(({ babyId }) => babyId === null);
     if (previousScheduleId !== null || plan.retired.length) await lockCredentialCases(tx, scope);
@@ -535,6 +552,28 @@ export async function persistClientAllocation(
     });
     if (newOwners.length) {
         await tx.service_record_baby_assignment.createMany({ data: newOwners });
+    }
+
+    if (legacyBinding) {
+        const babyId = insertedByOrdinal.get(legacyBinding.babyOrdinal);
+        if (!babyId) legacyRecordBindingConflict("allocation");
+        const now = new Date();
+        const tokenScope = { branchId: scope.branchId, scheduleId, schedule: scope };
+        const stillActive = await tx.service_record_token.findFirst({
+            where: { ...tokenScope, id: legacyBinding.tokenId, serviceRecordCaseId: legacyBinding.caseId,
+                active: true, revokedAt: null, expiresAt: { gt: now } },
+            select: { id: true },
+        });
+        if (!stillActive) legacyRecordBindingConflict("link");
+        const bound = await tx.service_record_case.updateMany({
+            where: { ...scope, id: legacyBinding.caseId, babyId: null },
+            data: { babyId, version: { increment: 1 } },
+        });
+        if (bound.count !== 1) legacyRecordBindingConflict("case");
+        // The proven row is already scoped to the original case and remains
+        // byte-for-byte intact, including its verified session and lockout.
+        await revokeCredentials(tx, { ...tokenScope, id: { not: legacyBinding.tokenId } }, now);
+        return;
     }
 
     if (previousScheduleId !== null) {

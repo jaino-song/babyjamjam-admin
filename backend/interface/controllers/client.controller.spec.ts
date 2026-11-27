@@ -88,7 +88,7 @@ describe("ClientController PATCH /clients/:id expectedEndDate", () => {
                 branchId: BRANCH_ID,
                 userId: "admin-1",
                 globalRole: "admin",
-                branchRole: "admin",
+                branchRole: requestContext.headers["x-test-role"] ?? "admin",
             };
             return true;
         },
@@ -184,6 +184,33 @@ describe("ClientController PATCH /clients/:id expectedEndDate", () => {
             .send({ address: "인천시 남동구", notAField: 1 })
             .expect(400);
 
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    const binding = { caseId: "00000000-0000-4000-8000-000000000001", babyOrdinal: 1 };
+
+    it("passes an explicit binding only through the manager-authorized UPDATE", async () => {
+        await request(app.getHttpServer()).patch("/clients/42")
+            .set("x-test-role", "manager").send({ legacyRecordBinding: binding }).expect(200);
+        expect(clientService.update).toHaveBeenCalledWith(BRANCH_ID, 42, expect.any(Object), undefined, binding);
+        await request(app.getHttpServer()).post("/clients")
+            .send({ name: "QA", legacyRecordBinding: binding }).expect(400);
+        expect(clientService.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects bindings from non-managers and marked mobile requests", async () => {
+        for (const [name, value] of [["x-test-role", "user"], ["x-bjj-client", "mobile"]] as const) {
+            await request(app.getHttpServer()).patch("/clients/42")
+                .set(name, value).send({ legacyRecordBinding: binding }).expect(403);
+        }
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        null, [], {}, { ...binding, caseId: "bad" }, { ...binding, babyOrdinal: "1" },
+        { ...binding, babyOrdinal: 0 }, { ...binding, babyOrdinal: 1.5 }, { ...binding, employeeId: 1 },
+    ])("rejects an invalid binding payload %p", async value => {
+        await request(app.getHttpServer()).patch("/clients/42").send({ legacyRecordBinding: value }).expect(400);
         expect(clientService.update).not.toHaveBeenCalled();
     });
 });

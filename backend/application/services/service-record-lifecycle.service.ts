@@ -2,6 +2,7 @@ import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-ch
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
+import { GROUP_RECORD_LINK_PREFIX } from "application/policies/baby-record-provenance.policy";
 import {
     EFORMSIGN_TOMBSTONE_STATUS,
     EFORMSIGN_TOMBSTONE_STATUSES,
@@ -353,8 +354,9 @@ export class ServiceRecordLifecycleService {
         clientId: number,
         tx?: Prisma.TransactionClient,
         calendar?: KrBusinessDayCalendar,
+        alreadyBoundCaseId?: string,
     ): Promise<ServiceRecordCaseRecord[]> {
-        return this.ensureCases(clientId, tx, calendar, false);
+        return this.ensureCases(clientId, tx, calendar, false, undefined, alreadyBoundCaseId);
     }
 
     private async ensureCases(
@@ -363,13 +365,15 @@ export class ServiceRecordLifecycleService {
         calendar: KrBusinessDayCalendar | undefined,
         single: boolean,
         scheduleTarget?: { id: number; clientId: number; branchId: string | null },
+        alreadyBoundCaseId?: string,
     ): Promise<ServiceRecordCaseRecord[]> {
         if (!tx && typeof this.prisma.$transaction === "function") {
             const resolved = calendar ?? await this.resolveCalendarBeforeTransaction(clientId);
             return this.prisma.$transaction((transaction) =>
-                this.ensureForClientInTransaction(clientId, transaction, resolved, single, scheduleTarget));
+                this.ensureForClientInTransaction(clientId, transaction, resolved, single, scheduleTarget, undefined, alreadyBoundCaseId));
         }
-        return this.ensureForClientInTransaction(clientId, tx, calendar, single, scheduleTarget, tx && !calendar ? callPath() : undefined);
+        return this.ensureForClientInTransaction(clientId, tx, calendar, single, scheduleTarget,
+            tx && !calendar ? callPath() : undefined, alreadyBoundCaseId);
     }
 
     /**
@@ -433,6 +437,7 @@ export class ServiceRecordLifecycleService {
         single: boolean,
         scheduleTarget?: { id: number; clientId: number; branchId: string | null },
         caller?: string,
+        alreadyBoundCaseId?: string,
     ): Promise<ServiceRecordCaseRecord[]> {
         const db = tx ?? this.prisma;
         const loadClient = () => db.client.findUnique({ where: { id: clientId }, select: lifecycleClientSelect });
@@ -458,7 +463,8 @@ export class ServiceRecordLifecycleService {
         if (!client.startDate) return [];
         const existing = await db.service_record_case.findMany({ where: scope, orderBy: { id: "asc" } });
         const babies = client.fetalConfirmation === "CONFIRMED"
-            ? await db.client_baby.findMany({ where: { ...scope, active: true }, select: { id: true }, orderBy: { ordinal: "asc" } })
+            ? await db.client_baby.findMany({ where: { ...scope, active: true },
+                select: { id: true, createdAt: true, legacyBackfilled: true }, orderBy: { ordinal: "asc" } })
             : [];
         const unbound = existing.find(({ babyId }) => babyId === null);
         // Legacy consumers may only act on an unambiguous household.
@@ -476,8 +482,11 @@ export class ServiceRecordLifecycleService {
         if (babies.length === 0 && existing.some(({ babyId }) => babyId !== null)) return [];
 
         const targets = unbound || babies.length === 0
-            ? [{ babyId: null, existing: unbound }]
-            : babies.map(({ id }) => ({ babyId: id, existing: existing.find(({ babyId }) => babyId === id) }));
+            ? [{ babyId: null, existing: unbound, firstAllocationAt: undefined }]
+            : babies.map(baby => ({
+                babyId: baby.id, existing: existing.find(({ babyId }) => babyId === baby.id),
+                firstAllocationAt: babies.length > 1 && !baby.legacyBackfilled ? baby.createdAt : undefined,
+            }));
         let calendar = passedCalendar;
         const resolveCalendar = async () => {
             if (!calendar) {
@@ -505,6 +514,12 @@ export class ServiceRecordLifecycleService {
         const canCreateBabyArtifacts = !!tx && !isPreBooking && !unbound;
         const records: ServiceRecordCaseRecord[] = [];
         for (const target of targets) {
+            if (alreadyBoundCaseId && target.existing?.id === alreadyBoundCaseId) {
+                // First allocation has proved the original owner and period.
+                // Its signed record and credential expiry are preserved as-is.
+                records.push(target.existing);
+                continue;
+            }
             if (!target.existing && (isPreBooking || (target.babyId !== null && !canCreateBabyArtifacts))) continue;
             const ownedSchedules = schedules.flatMap((schedule) => {
                 if (target.babyId === null) return [{ schedule, employee: schedule.primaryEmployee }];
@@ -541,6 +556,7 @@ export class ServiceRecordLifecycleService {
         resolveCalendar: () => Promise<KrBusinessDayCalendar>;
         legacyArtifacts: boolean;
         canCreateBabyArtifacts: boolean;
+        firstAllocationAt?: Date;
     }): Promise<ServiceRecordCaseRecord> {
         const { branchId, clientId, babyId, existing, client, ownedSchedules, resolveCalendar, legacyArtifacts } = params;
         if (existing && (IMMUTABLE_FINALIZATION_STATUSES.has(existing.status)
@@ -647,7 +663,16 @@ export class ServiceRecordLifecycleService {
         if (client.endDate) {
             const tokenExpiresAt = getServiceRecordTokenExpiresAt(client.endDate);
             await db.service_record_token.updateMany({
-                where: { ...caseScope, active: true, revokedAt: null, expiresAt: { lt: tokenExpiresAt } },
+                where: {
+                    ...caseScope, active: true, revokedAt: null, expiresAt: { lt: tokenExpiresAt },
+                    // A case-specific scalar credential carried into a first
+                    // multi-baby allocation keeps its original expiry on later
+                    // routine syncs, including contract linking after the save.
+                    ...(params.firstAllocationAt ? { OR: [
+                        { createdAt: { gte: params.firstAllocationAt } },
+                        { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } },
+                    ] } : {}),
+                },
                 data: { expiresAt: tokenExpiresAt },
             });
         }
