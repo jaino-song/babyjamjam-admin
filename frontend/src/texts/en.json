@@ -390,6 +390,8 @@
         "legacy-read-failed": "The existing service record could not be verified.",
         "legacy-retry": "Check again",
         "legacy-unlinked": "This update leaves the existing service record link unconnected to the new baby records.",
+        "legacy-opt-out": "Assign without linking the existing record",
+        "legacy-opt-out-guidance": "If you save without linking, the old link may stop working. The existing signed record will remain separate.",
         "legacy-primary-required": "To continue the existing service record, assign the current primary provider to at least one baby.",
         "legacy-secondary-unchanged": "Keep the current secondary provider while linking the existing record.",
         "legacy-period-unchanged": "Keep the current service period, status and service days while linking the existing record.",
