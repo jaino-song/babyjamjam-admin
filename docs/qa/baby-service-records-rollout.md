@@ -6,8 +6,8 @@
 
 preview와 production이 DB를 공유하는 동안에는 additive 스키마와 기존 단일 고객·일정 unique 키가 공존할 수 있다. 이 상태에서도 전 지점의 예약 전 등록에 아기와 담당 배정을 저장할 수 있다. 여러 케이스를 생성하는 예약 확정은 케이스별 키 전환이 필요하다. 기존 키와 충돌하면 HTTP 409 `REQUEST_CONFLICT`와 사유 `SERVICE_RECORD_CASE_KEYS_NOT_STAGED`를 반환한다. 확정 상태, 케이스, 발송 작업은 같은 트랜잭션에서 롤백되며 기존 등록 초안과 배정은 남는다. 예약 확정 상태를 포함한 신규 등록에서 같은 충돌이 나면 그 등록 요청 전체가 롤백된다.
 
-- 스키마 승격 전 DB 대상과 migration ledger를 확인한다. 기존 scalar writer와 queue consumer가 같은 DB에 연결하는 경우 별도 승인된 전환 구간에서 먼저 drain한다. 키 전환 뒤 `backend/prisma/scripts/verify-baby-case-stage-before-release.sql`로 인덱스 정의를 확인한다. 키 전환과 다태아 예약 확정 검증은 격리 복제본에서 수행한다.
-- 키 전환 전에는 해당 DB에 쓰는 `Database Patches`의 대기·실행 중인 구버전 run을 모두 종료하고, 이후 push와 수동 dispatch가 replay 보호가 포함된 리비전을 사용하도록 한다. preview push, main push, production dispatch는 같은 운영 DB를 대상으로 한다. 전환 중에는 다른 DB 패치나 배포를 시작하지 않는다. 명시적 staging을 마친 뒤 검증을 통과하면 case 키에 대응하는 writer를 재개한다. 키 상태 검증에 실패하면 패치를 중단하고 해당 DB의 인덱스와 migration ledger를 확인한다.
+- 스키마 승격 전 DB 대상, migration ledger, 모든 활성 및 복구 리비전의 키 호환성을 확인한다. 키 전환과 다태아 예약 확정 검증은 격리 복제본에서 수행한다.
+- 키 전환 전에는 해당 DB에 쓰는 `Database Patches`의 대기·실행 중인 구버전 run을 모두 종료하고, 이후 push와 수동 dispatch가 replay 보호가 포함된 리비전을 사용하도록 한다. preview push, main push, production dispatch는 같은 운영 DB를 대상으로 한다. 전환 중에는 다른 DB 패치나 배포를 시작하지 않는다. 키 상태 검증에 실패하면 패치를 중단하고 해당 DB의 인덱스와 migration ledger를 확인한다.
 - 화면 확인용 preview는 배포 워크플로에서 `SCHEDULERS_ENABLED=false`를 확인한다. 등록 화면은 읽기 전용으로 확인한다. 등록·예약 확정 저장과 발송·재시도 요청은 실제 쓰기 또는 즉시 발송을 일으킬 수 있다. DB 쓰기와 통신사 동작은 격리 PostgreSQL과 vendor stub으로 검증한다.
 
 ## 운영 DB 키 전환
@@ -15,14 +15,25 @@ preview와 production이 DB를 공유하는 동안에는 additive 스키마와 �
 `backend/scripts/cutover-baby-case-keys.sh`는 승인된 점검 시간에 운영자가 수동 실행한다. `Database Patches`는 기존처럼 현재 키에 맞는 SQL을 재실행한다.
 
 1. 독립적으로 확인한 운영 DB 직접 연결을 사용한다. 기존 자격 증명과 libpq 설정으로 `PGHOST`, `PGDATABASE`, `PGUSER`를 지정하고 TCP 연결은 `PGSSLMODE=verify-full`로 검증한다. 비밀번호와 접속 URI를 인자나 작업 기록에 넣지 않는다.
-2. 실제 ingress와 인증·콜백 경로가 LightNode 및 같은 DB를 쓰는 preview로 한정되어 있는지 확인한다. 양쪽의 실행 중인 버전과 복구 리비전이 전환 전후 키를 처리할 수 있어야 한다. 양쪽에서 제공기록·발송 관련 신규 요청을 일시 중단하고 이미 들어간 요청을 비운다. 구형 scalar writer를 재개하면 안 된다. LightNode의 scheduler lease 갱신은 유지하고 수동 failover는 해제 상태로 둔다.
-3. 해당 DB를 대상으로 실행 중이거나 대기 중인 DB patch·배포가 없는 상태를 확인하고 전환 종료까지 신규 실행을 막는다. 실패한 patch가 남긴 부분 적용 상태도 먼저 확인하고 해결한다. 공급사 시도가 남아 있으면 기존 조회·대조 절차로 상태를 확정한다. 운영 DB에서 시험용 데이터나 lease 행을 만들지 않는다.
+2. 기존 런타임 확인 결과에서 ingress와 인증·콜백 경로가 LightNode 및 같은 DB를 쓰는 Cloud Run preview로 한정되고, 양쪽의 현재·복구 리비전이 두 키 레이아웃을 처리하는지 확인한다. LightNode의 scheduler lease 갱신을 유지하고 수동 failover는 해제 상태로 둔다. 두 서비스는 실행 상태를 유지하며 키 전환 명령 자체에서 DB 쓰기를 일시 정지한다.
+3. 해당 DB를 대상으로 실행 중이거나 대기 중인 DB patch·배포가 없는 상태를 확인하고 전환 종료까지 신규 실행을 막는다. 실패한 patch가 남긴 부분 적용 상태도 먼저 확인하고 해결한다. 운영 DB에서 시험용 데이터나 lease 행을 만들지 않는다.
 4. `backend/scripts/cutover-baby-case-keys.test.sh`로 폐기 가능한 PostgreSQL 회귀를 실행한다. 테스트는 `rehearse`로 정본 SQL과 검증을 실행한 뒤 롤백한다. 운영 창에서는 검토된 커밋에서 `backend/scripts/cutover-baby-case-keys.sh apply`를 한 번 실행한다.
-5. `Baby case keys verified (COMMIT).`을 확인한 후 호환 writer를 재개한다. 종료 결과가 불명확하면 양쪽 진입 중단을 유지하고 읽기 전용 검증 SQL과 ledger로 커밋 여부를 확인한다. 실패한 명령을 자동 재시도하지 않는다.
+5. `Baby case keys verified (COMMIT).`을 성공 기준으로 삼는다. 성공과 롤백 모두 DB 세션이 끝나면 대기하던 호환 writer가 자동으로 진행한다. 종료 결과가 불명확하면 아래 읽기 전용 SQL로 키 레이아웃을 확인한다. 잠금 충돌로 거절되면 진행 중인 트랜잭션이나 유지보수 작업의 종료를 확인한다. 공급사 시도가 남아 있으면 기존 조회·대조 절차로 상태를 확정한다. 실패한 명령을 자동 재시도하지 않는다.
+6. 커밋을 확인했으면 같은 운영 DB 직접 연결의 승인된 URI를 Prisma의 `DIRECT_URL`과 `DATABASE_URL`에 안전하게 주입한 상태에서 `pnpm --dir backend exec prisma migrate resolve --schema prisma/schema.prisma --applied 20261126010000_baby_case_keys`로 ledger에 기록한다. ledger 기록에 실패하면 케이스별 키를 보존하고, 키 검증과 기존 ledger 상태를 확인한 뒤 기록 단계만 복구한다.
 
-명령은 한 트랜잭션에서 `NOWAIT` 잠금을 잡는다. 기존 쓰기가 잠금 범위에 남아 있으면 전환이 즉시 중단된다. 잠금이 유지되는 동안 preview를 포함한 모든 연결에서 해당 테이블의 쓰기와 발송 선점은 대기하거나 연결의 타임아웃으로 실패한다. 인덱스 전환 대상 네 테이블은 조회도 대기한다. 공유 발송·문서 테이블의 다른 쓰기 역시 잠금 해제까지 기다릴 수 있다. 발송 선점과 SMS·문서 공급사 상태를 검사한 뒤 정본 SQL을 적용하고, 같은 잠금 안에서 전체 인덱스 정의를 검증한다. 신선한 LightNode lease와 동일한 인스턴스를 시작과 커밋 직전에 확인한다. 이 전환의 서버 제한은 SQL 문 8초, 개별 잠금 대기 750ms, 트랜잭션 유휴 2초다.
+명령은 한 트랜잭션에서 `NOWAIT` 잠금을 잡는다. 기존 쓰기가 남아 있으면 전환이 즉시 중단된다. 모든 잠금을 잡은 뒤 이미 커밋된 발송 선점, SMS 접수 상태, 문서 작업·직접 완료 인텐트와 삭제 인텐트를 조회한다. 처리 중이거나 결과가 불명확한 시도가 있으면 전환을 중단한다. 제공기록지 스냅샷은 검토자 단계(06)를 사용한다. 공급사에 바로 재요청할 수 있는 외부 참여자 단계(05)의 진행 중 제공기록지 문서가 있으면 명령은 전환을 중단한다.
 
-커밋 전에 오류, 타임아웃, 클라이언트 종료가 발생하면 PostgreSQL이 인덱스 변경을 롤백하고 잠금을 해제한다. PostgreSQL은 실행 중에도 연결 종료를 확인한다. 커밋 요청 이후 연결이 끊어지면 아래 검증으로 결과를 판정한다.
+잠금이 유지되는 동안 기존 연결과 새 연결 모두에서 제공기록 쓰기와 새 발송 선점은 대기하거나 연결의 제한 시간에 걸려 실패한다. 인덱스 전환 대상 네 테이블의 조회도 대기한다. 공유 발송·문서 큐의 조회는 계속되며 다른 종류의 쓰기도 잠금 해제까지 짧게 대기할 수 있다. 같은 트랜잭션 안에서 정본 SQL을 적용하고 전체 인덱스 정의를 검증한다. 같은 LightNode 인스턴스의 최신 lease를 시작과 커밋 직전에 확인한다. 서버 제한은 SQL 문 8초, 개별 잠금 대기 750ms, 트랜잭션 유휴 2초다.
+
+커밋 전에 오류, 타임아웃, 클라이언트 종료가 발생하면 PostgreSQL이 인덱스 변경을 롤백하고 잠금을 해제한다. PostgreSQL은 실행 중에도 연결 종료를 확인한다. 커밋 요청 이후 연결이 끊어지면 같은 직접 연결에서 키 레이아웃을 조회한다.
+
+```sh
+psql -Xw -1 -v ON_ERROR_STOP=1 -c 'SET TRANSACTION READ ONLY' \
+  -f backend/prisma/scripts/select-service-record-replay-layout.sql \
+  -c "SELECT current_setting('bjj.service_record_replay_layout')"
+```
+
+`legacy`이면 기존 키가 유지된 상태로 호환 writer가 진행한다. `case`이면 전체 키 검증을 실행하고 성공한 경우에만 ledger를 확인해 적용 기록을 완료한다. 레이아웃 조회 또는 전체 키 검증이 실패하면 두 결과와 ledger를 확인한다.
 
 ```sh
 psql -Xw -v ON_ERROR_STOP=1 -f backend/prisma/scripts/verify-baby-case-stage-before-release.sql

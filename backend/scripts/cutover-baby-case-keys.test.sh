@@ -135,18 +135,47 @@ refuse() {
 }
 cutover() { ./scripts/cutover-baby-case-keys.sh "$@"; }
 check() { apply prisma/scripts/verify-baby-case-stage-before-release.sql; }
+replay_layout() {
+  sql -1 -c 'SET TRANSACTION READ ONLY' -f prisma/scripts/select-service-record-replay-layout.sql \
+    -c "SELECT current_setting('bjj.service_record_replay_layout')"
+}
 
 refuse 'freshly renewed LightNode' cutover apply
 legacy_unchanged
 renew
 cutover rehearse
 legacy_unchanged
+[[ $(replay_layout) == legacy ]]
 apply "$scratch/old-writer.sql"
 
 apply "$scratch/claim.sql"
 refuse 'Outstanding service-record link claim' cutover apply
+sql -c "UPDATE message_trigger_job SET status = 'dispatching' WHERE id = 'qa-pending'"
+refuse 'Outstanding service-record link claim' cutover apply
 release_claim
 legacy_unchanged
+sql <<'SQL'
+UPDATE message_trigger_job SET status = 'failed', updated_at = now(),
+    cancel_reason = '문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.'
+WHERE id = 'qa-pending';
+SQL
+refuse 'Outstanding service-record link claim' cutover apply
+sql <<'SQL'
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, trigger_job_id,
+    provider_acceptance_state, provider_acceptance_key, provider_reconciled_at, updated_at)
+SELECT branch_id, 'aligo_sms', 'service_record_link_sms', 'synthetic', 'QA-Reclaimed', id,
+    'reconciled_not_delivered', 'sms:' || encode(sha256(convert_to(
+        format('{"identity":"%s:%s","scope":"automation"}', branch_id, id), 'UTF8')), 'hex'),
+    updated_at - interval '1 second', now()
+FROM message_trigger_job WHERE id = 'qa-pending';
+SQL
+refuse 'Outstanding service-record link claim' cutover apply
+sql -c "UPDATE message_log SET provider_reconciled_at = now() WHERE trigger_job_id = 'qa-pending'"
+cutover rehearse
+sql -c "DELETE FROM message_log WHERE trigger_job_id = 'qa-pending'"
+sql -c "UPDATE message_trigger_job SET status = 'pending', cancel_reason = NULL WHERE id = 'qa-pending'"
+legacy_unchanged
+
 for state in prepared started uncertain; do
   sql -v state="$state" -v branch="$branch" <<'SQL'
 INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, provider_acceptance_state, updated_at)
@@ -156,9 +185,94 @@ SQL
   sql -c "DELETE FROM message_log WHERE receiver = 'synthetic'"
   legacy_unchanged
 done
+sql -v branch="$branch" <<'SQL'
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, status, updated_at)
+VALUES (:'branch', 'aligo_sms', 'service_record_link_sms', 'synthetic', 'QA-Legacy', 'pending', now());
+SQL
+refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
+sql -c "DELETE FROM message_log WHERE receiver = 'synthetic'"
+
+sql -v branch="$branch" <<'SQL'
+UPDATE message_trigger_job SET status = 'canceled', canceled_at = now(),
+    cancel_reason = 'message_quiet_hours:CANCEL' WHERE id = 'qa-pending';
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, trigger_job_id,
+    variables, status, error_message, provider_acceptance_state, updated_at)
+VALUES (:'branch', 'aligo_sms', 'service_record_link_sms', 'synthetic', 'QA-Quiet cancellation', 'qa-pending',
+    '{"quietHoursDisposition":"CANCEL"}', 'failed', 'message_quiet_hours:CANCEL', 'prepared', now());
+SQL
+cutover rehearse
+sql -c "UPDATE message_log SET provider_call_started_at = now() WHERE trigger_job_id = 'qa-pending'"
+refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
+sql -c "DELETE FROM message_log WHERE receiver = 'synthetic'"
+sql -c "UPDATE message_trigger_job SET status = 'pending', canceled_at = NULL, cancel_reason = NULL WHERE id = 'qa-pending'"
+
+sql -v branch="$branch" <<'SQL'
+INSERT INTO message_occurrence_claim (branch_id, occurrence_key, template_key, lifecycle_id,
+    recipient_kind, recipient_id, state)
+VALUES (:'branch', repeat('c', 64), 'service_feedback_link_sms', 1, 'employee', 1, 'in_flight');
+SQL
+refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
+sql -v branch="$branch" <<'SQL'
+UPDATE message_occurrence_claim SET state = 'released';
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body, status, updated_at)
+VALUES (:'branch', 'aligo_sms', 'unrelated', 'synthetic', 'QA-Occurrence', 'failed', now());
+INSERT INTO message_occurrence_manual_attempt (branch_id, occurrence_key, log_id, state)
+SELECT c.branch_id, c.occurrence_key, l.id, 'uncertain'
+FROM message_occurrence_claim c JOIN message_log l USING (branch_id);
+SQL
+refuse 'Outstanding or uncertain service-record SMS attempt' cutover apply
+sql -c "UPDATE message_occurrence_manual_attempt SET state = 'released'"
+cutover rehearse
+sql -c "DELETE FROM message_occurrence_manual_attempt; DELETE FROM message_occurrence_claim; DELETE FROM message_log"
+
 sql -c "UPDATE service_record_case SET status = 'FINALIZING'"
 refuse 'Outstanding or uncertain service-record document attempt' cutover apply
 sql -c "UPDATE service_record_case SET status = 'COMPLETED'"
+legacy_unchanged
+
+sql <<'SQL'
+INSERT INTO service_record_snapshot_chunk (branch_id, service_record_case_id, chunk_index, chunk_count,
+    first_session_index, last_session_index, employee_name_snapshot, source_hash, status, updated_at)
+SELECT branch_id, id, 1, 1, 1, 1, 'QA-Cutover provider', 'qa', 'CREATE_REQUESTED', now()
+FROM service_record_case;
+SQL
+refuse 'Outstanding or uncertain service-record document attempt' cutover apply
+sql -c "UPDATE service_record_snapshot_chunk SET status = 'PENDING'"
+cutover rehearse
+sql -c "DELETE FROM service_record_snapshot_chunk"
+
+sql -v branch="$branch" <<'SQL'
+INSERT INTO eformsign_document_job (branch_id, job_type, source, status, request_key, payload)
+VALUES (:'branch', 'create_document', 'auto_finalize', 'processing', 'qa-revision',
+    '{"kind":"service_record_revision_operations"}');
+SQL
+refuse 'Outstanding or uncertain service-record document attempt' cutover apply
+sql -c "UPDATE eformsign_document_job SET status = 'queued' WHERE request_key = 'qa-revision'"
+cutover rehearse
+sql -c "DELETE FROM eformsign_document_job WHERE request_key = 'qa-revision'"
+
+sql <<'SQL'
+-- A direct staff finalize and a snapshot deletion have no document job.
+INSERT INTO eformsign_doc (document_id, document_kind, branch_id, service_record_case_id,
+    created_date, updated_date, status_type, status_detail, step_type, step_index, step_name,
+    step_recipient_type, step_recipient_name, step_recipient_sms, expired_date)
+SELECT 'qa-snapshot', 'service_record_snapshot', branch_id, id, now(), now(), '070', '', '06', '1',
+       '', '', '', '', now() + interval '1 day'
+FROM service_record_case;
+INSERT INTO eformsign_dispatch_intent (branch_id, local_document_id, provider_document_id,
+    action, generation, business_key, fingerprint, status, started_at)
+SELECT branch_id, id, document_id, 'finalize', 'qa', repeat('a', 64), repeat('b', 64), 'started', now()
+FROM eformsign_doc WHERE document_id = 'qa-snapshot';
+SQL
+refuse 'Outstanding or uncertain service-record document attempt' cutover apply
+sql -c "UPDATE eformsign_dispatch_intent SET status = 'uncertain' WHERE provider_document_id = 'qa-snapshot'"
+refuse 'Outstanding or uncertain service-record document attempt' cutover apply
+sql -c "UPDATE eformsign_dispatch_intent SET status = 'reconciled_not_delivered' WHERE provider_document_id = 'qa-snapshot'"
+sql -c "UPDATE eformsign_doc SET permanent_purge_requested_at = now() WHERE document_id = 'qa-snapshot'"
+refuse 'Outstanding or uncertain service-record document attempt' cutover apply
+sql -c "UPDATE eformsign_doc SET permanent_purge_requested_at = NULL, step_type = '05' WHERE document_id = 'qa-snapshot'"
+refuse 'Service-record document allows an unfenced outsider re-request' cutover apply
+sql -c "UPDATE eformsign_doc SET step_type = '06' WHERE document_id = 'qa-snapshot'"
 legacy_unchanged
 
 sql <<'SQL'
@@ -191,7 +305,7 @@ wait_for() {
     [[ $(sql -c "SELECT EXISTS ($condition)") == t ]] && return
     sleep 0.025
   done
-  echo "Timed out waiting for fixture lock: $condition" >&2
+    echo "Timed out waiting for fixture state: $condition" >&2
   return 1
 }
 
@@ -200,6 +314,37 @@ PGAPPNAME=qa-blocker sql <"$scratch/session" >"$scratch/blocker.log" 2>&1 &
 blocker=$!
 exec 3>"$scratch/session"
 send() { printf '%s\n' "$1" >&3; }
+
+# Keep separate app connections open before the cutover, including a cached
+# statement using a layout-independent case write, as the live client does.
+mkfifo "$scratch/lightnode.in" "$scratch/preview.in"
+PGAPPNAME=qa-lightnode psql -XqAtv ON_ERROR_STOP=1 <"$scratch/lightnode.in" >"$scratch/lightnode.log" 2>&1 &
+lightnode=$!
+exec 4>"$scratch/lightnode.in"
+PGAPPNAME=qa-preview psql -XqAtv ON_ERROR_STOP=1 <"$scratch/preview.in" >"$scratch/preview.log" 2>&1 &
+preview=$!
+exec 5>"$scratch/preview.in"
+printf '%s\n' 'PREPARE qa_record_write AS UPDATE service_record SET baby_name = baby_name WHERE service_record_case_id IS NOT NULL RETURNING id;' >&4
+printf '%s\n' 'PREPARE qa_second_case(integer) AS
+INSERT INTO service_record_case (branch_id, client_id, baby_id, updated_at)
+SELECT branch_id, client_id, id, now() FROM client_baby WHERE ordinal = $1
+ON CONFLICT (baby_id) DO NOTHING RETURNING id;' 'EXECUTE qa_second_case(0);' >&4
+printf '%s\n' 'SELECT 1 FROM message_trigger_job WHERE id = '\''qa-pending'\'';' >&5
+wait_idle() {
+  wait_for "SELECT 1 FROM pg_stat_activity WHERE application_name = '$1' AND state = 'idle'"
+}
+wait_for_marker() {
+  wait_for "SELECT 1 FROM pg_stat_activity WHERE application_name = '$1'
+            AND state = 'idle' AND query = 'SELECT 1 /* $2 */;'"
+}
+wait_on_cutover() {
+  wait_for "SELECT 1 FROM pg_stat_activity writer JOIN pg_stat_activity cutter
+              ON cutter.pid = ANY(pg_blocking_pids(writer.pid))
+            WHERE writer.application_name = '$1' AND writer.wait_event_type = 'Lock'
+              AND cutter.application_name = 'bjj-baby-case-key-cutover'"
+}
+wait_idle qa-lightnode
+wait_idle qa-preview
 
 send 'BEGIN;'
 send 'UPDATE service_record SET baby_name = baby_name;'
@@ -257,9 +402,15 @@ hold_stage
 PGOPTIONS='-c qa.cutover_pause=long' ./scripts/cutover-baby-case-keys.sh apply >"$scratch/disconnect.log" 2>&1 &
 attempt=$!
 await_pause
+printf '%s\n' 'EXECUTE qa_record_write' '\gset' \
+  "\\! touch $scratch/record-after-crash" 'SELECT 1 /* record-after-crash */;' >&4
+wait_on_cutover qa-lightnode
+[[ ! -e "$scratch/record-after-crash" ]]
 kill -KILL "$attempt"
 wait "$attempt" 2>/dev/null || true
 wait_for "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'bjj-baby-case-key-cutover')"
+wait_for_marker qa-lightnode record-after-crash
+[[ -e "$scratch/record-after-crash" ]]
 release_stage
 legacy_unchanged
 
@@ -294,10 +445,39 @@ legacy_unchanged
 [[ $(sql -c "SELECT to_regclass('public.uniq_service_record_day_case_session') IS NOT NULL") == t ]]
 sql -c 'DROP EVENT TRIGGER qa_damage_stage'
 
-# Pause again, test actual singleton writer/replay and dispatch admission
-# using short client lock deadlines, then commit with a genuine concurrent
-# renewal of the disposable lease row.
+# Both existing clients queue during the barrier. A new connection also
+# queues on a direct document intent. Local files stand in for provider
+# calls, which run only after the corresponding durable write commits.
+cat >"$scratch/vendor-sms.sql" <<SQL
+UPDATE message_trigger_job SET status = 'dispatching', claim_token = 'qa-claim',
+    processing_deadline_at = now() + interval '1 minute'
+WHERE id = 'qa-pending' AND status = 'pending' RETURNING id
+\gset
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body,
+    trigger_job_id, provider_acceptance_state, provider_call_started_at, updated_at)
+VALUES ('$branch', 'aligo_sms', 'service_record_link_sms', 'synthetic', 'QA-SMS',
+    'qa-pending', 'started', now(), now());
+\! touch "$scratch/sms-called"
+SELECT 1 /* sms-called */;
+SQL
+cat >"$scratch/vendor-document.sql" <<SQL
+UPDATE eformsign_dispatch_intent SET status = 'started', started_at = now()
+WHERE provider_document_id = 'qa-snapshot' AND status = 'reconciled_not_delivered' RETURNING id
+\gset
+\! touch "$scratch/document-called"
+SQL
+
+# An unrelated send in the shared queue does not prevent the cutover.
+sql -v branch="$branch" <<'SQL'
+INSERT INTO message_log (branch_id, provider, template_key, receiver, message_body,
+    provider_acceptance_state, provider_call_started_at, updated_at)
+VALUES (:'branch', 'aligo_sms', 'unrelated', 'synthetic', 'QA-Unrelated',
+    'started', now(), now());
+SQL
 renew
+printf '%s\n' 'BEGIN ISOLATION LEVEL REPEATABLE READ;' 'SELECT count(*) FROM client_baby;' >&4
+wait_for "SELECT 1 FROM pg_stat_activity WHERE application_name = 'qa-lightnode'
+            AND state = 'idle in transaction' AND query = 'SELECT count(*) FROM client_baby;'"
 hold_stage
 PGOPTIONS='-c qa.cutover_pause=long' cutover apply >"$scratch/success.log" 2>&1 &
 attempt=$!
@@ -306,7 +486,18 @@ PGOPTIONS='-c lock_timeout=70ms' refuse 'lock timeout' sql -f "$scratch/old-writ
 PGOPTIONS='-c lock_timeout=70ms' refuse 'lock timeout' sql -f "$legacy_patch"
 PGOPTIONS='-c lock_timeout=70ms' refuse 'lock timeout' sql -f "$scratch/claim.sql"
 refuse 'could not obtain lock' cutover apply
+printf '%s\n' 'EXECUTE qa_second_case(2)' '\gset' 'COMMIT;' \
+  "\\! touch $scratch/record-after-commit" 'SELECT 1 /* record-after-commit */;' >&4
+printf '\\i %s\n' "$scratch/vendor-sms.sql" >&5
+PGAPPNAME=qa-new-document psql -XqAtv ON_ERROR_STOP=1 -f "$scratch/vendor-document.sql" >"$scratch/document.log" 2>&1 &
+document=$!
+wait_on_cutover qa-lightnode
+wait_on_cutover qa-preview
+wait_on_cutover qa-new-document
+[[ ! -e "$scratch/record-after-commit" && ! -e "$scratch/sms-called" && ! -e "$scratch/document-called" ]]
 [[ $(sql -c "SELECT status FROM message_trigger_job WHERE id = 'qa-pending'") == pending ]]
+[[ $(sql -c "SELECT status FROM eformsign_dispatch_intent WHERE provider_document_id = 'qa-snapshot'") == reconciled_not_delivered ]]
+[[ $(sql -c "SELECT provider_acceptance_state FROM message_log WHERE template_key = 'unrelated'") == started ]]
 sql -c "UPDATE branch SET name = name WHERE slug = 'qa-cutover'"
 renew
 release_stage
@@ -315,10 +506,25 @@ if ! wait "$attempt"; then
   exit 1
 fi
 cat "$scratch/success.log"
+wait_for_marker qa-lightnode record-after-commit
+wait_for_marker qa-preview sms-called
+wait "$document"
+[[ -e "$scratch/record-after-commit" && -e "$scratch/sms-called" && -e "$scratch/document-called" ]]
+[[ $(sql -c "SELECT count(*) FROM service_record_case WHERE client_id = 1") == 2 ]]
+[[ $(sql -c "SELECT provider_acceptance_state FROM message_log WHERE trigger_job_id = 'qa-pending'") == started ]]
+[[ $(sql -c "SELECT status FROM eformsign_dispatch_intent WHERE provider_document_id = 'qa-snapshot'") == started ]]
+sql -c "DELETE FROM message_log WHERE trigger_job_id = 'qa-pending' OR template_key = 'unrelated'"
+release_claim
+printf '%s\n' '\q' >&4
+printf '%s\n' '\q' >&5
+exec 4>&- 5>&-
+wait "$lightnode"
+wait "$preview"
 exec 3>&-
 wait "$blocker"
 check
 [[ $(layout) == '0|7' ]]
+[[ $(replay_layout) == case ]]
 refuse 'Expected the complete singleton case-key layout' cutover apply
 refuse 'no unique or exclusion constraint' sql -f "$scratch/old-writer.sql"
 
@@ -374,4 +580,4 @@ SQL
 [[ $(record_fingerprint) == "$fixture_before" ]]
 refuse 'could not create unique index' sql -c 'CREATE UNIQUE INDEX service_record_schedule_id_key ON service_record (schedule_id)'
 check
-echo 'Disposable PostgreSQL cutover passed: drain, refusals, timeout, disconnect, rollback, live renewal and sibling records.'
+echo 'Disposable PostgreSQL cutover passed: drain, refusals, timeout, disconnect, rollback, queued writers, provider admission, live renewal and sibling records.'

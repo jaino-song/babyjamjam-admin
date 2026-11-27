@@ -50,13 +50,16 @@ DECLARE
     owner_instance text;
     owner_acquired_at timestamptz;
 BEGIN
-    -- The replay also takes a lock on service_record_case before deciding
-    -- which layout to use. Keep that lock first and refuse active traffic.
+    -- These relation locks are the admission barrier for both routes, even
+    -- on already-open connections. An existing writer makes NOWAIT fail.
+    -- New writers queue behind us until COMMIT or ROLLBACK. Keep the replay's
+    -- first lock first so an already-running replay also makes us fail.
     LOCK TABLE public.service_record_case, public.service_record, public.service_record_assignment,
         public.service_record_day IN ACCESS EXCLUSIVE MODE NOWAIT;
 
-    -- Includes both HTTP writers and durable claims made before a vendor
-    -- call. SELECTs can continue on these shared tables.
+    -- READ COMMITTED checks below see durable admissions that committed
+    -- before the last lock. No new admission can commit past this point.
+    -- The shared queues can still serve reads, including unrelated jobs.
     LOCK TABLE public.client_baby, public.service_record_team_slot,
         public.service_record_baby_assignment, public.service_record_token,
         public.service_record_edit_draft, public.service_record_revision,
@@ -64,7 +67,8 @@ BEGIN
         public.service_record_revision_document_state, public.service_record_snapshot_chunk,
         public.service_record_job_member, public.message_trigger_job, public.message_log,
         public.message_occurrence_claim, public.message_occurrence_manual_attempt,
-        public.eformsign_doc, public.eformsign_document_job IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+        public.eformsign_doc, public.eformsign_document_job,
+        public.eformsign_dispatch_intent IN SHARE ROW EXCLUSIVE MODE NOWAIT;
 
     -- Production patch replay uses db execute. If a Prisma migration ledger
     -- exists, serialize with writers and reject failed or conflicting rows.
@@ -114,7 +118,22 @@ BEGIN
           AND (j.status IN ('processing', 'dispatching') OR j.claim_token IS NOT NULL
                OR j.processing_deadline_at IS NOT NULL
                OR (j.cancel_reason = '제공기록지 링크 발송 작업 생성 재시도 대기'
-                   AND j.next_attempt_at > clock_timestamp()))
+                   AND j.next_attempt_at > clock_timestamp())
+               -- Reclaim clears the live claim even when it cannot prove
+               -- whether dispatch happened. Require evidence for this attempt.
+               OR (j.status = 'failed'
+                   AND j.cancel_reason = '문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM public.message_log l
+                       WHERE l.trigger_job_id = j.id AND l.branch_id IS NOT DISTINCT FROM j.branch_id
+                         AND l.provider = 'aligo_sms'
+                         AND ((l.provider_acceptance_state IN ('reconciled_delivered', 'reconciled_not_delivered')
+                               AND l.provider_reconciled_at >= j.updated_at)
+                              OR (l.provider_acceptance_state = 'accepted' AND l.provider_accepted_at >= j.updated_at))
+                         AND l.provider_acceptance_key = 'sms:' || encode(sha256(convert_to(
+                             '{"identity":' || to_json(j.branch_id::text || ':' || j.id)::text
+                             || ',"scope":"automation"}', 'UTF8')), 'hex')
+                   )))
     ) THEN
         RAISE EXCEPTION 'Outstanding service-record link claim';
     END IF;
@@ -126,12 +145,20 @@ BEGIN
                OR j.rule_id = 'system:service_record_link' OR j.template_key = 'SERVICE_RECORD_LINK'
                OR j.recipient_employee_id IS NOT NULL
                OR EXISTS (SELECT 1 FROM public.service_record_job_member m WHERE m.job_id = j.id))
-          AND (l.provider_acceptance_state IN ('prepared', 'started', 'uncertain')
+          AND (l.provider_acceptance_state IN ('started', 'uncertain')
+               OR (l.provider_acceptance_state = 'prepared' AND (
+                   l.provider_call_started_at IS NULL AND l.status = 'failed' AND l.next_retry_at IS NULL
+                   AND l.error_message = 'message_quiet_hours:CANCEL'
+                   AND l.variables->>'quietHoursDisposition' = 'CANCEL'
+                   AND j.branch_id IS NOT DISTINCT FROM l.branch_id
+                   AND j.status = 'canceled' AND j.cancel_reason = 'message_quiet_hours:CANCEL'
+                   AND j.claim_token IS NULL AND j.processing_deadline_at IS NULL
+               ) IS NOT TRUE)
                OR (l.provider_acceptance_state = 'legacy' AND
                    (l.status = 'pending' OR l.provider_call_started_at IS NOT NULL)))
     ) OR EXISTS (
         SELECT 1 FROM public.message_occurrence_claim c
-        WHERE lower(c.template_key) IN ('service_record_link_sms', 'service_record_link')
+        WHERE lower(c.template_key) IN ('service_record_link_sms', 'service_record_link', 'service_feedback_link_sms')
           AND (c.state IN ('in_flight', 'uncertain') OR EXISTS (
               SELECT 1 FROM public.message_occurrence_manual_attempt a
               WHERE a.branch_id = c.branch_id AND a.occurrence_key = c.occurrence_key
@@ -150,11 +177,44 @@ BEGIN
             SELECT 1 FROM public.eformsign_document_job j
             WHERE (j.payload->>'kind' IN ('service_record_revision', 'service_record_revision_operations')
                    OR EXISTS (SELECT 1 FROM public.eformsign_doc d WHERE d.document_id = j.document_id
-                              AND d.document_kind = 'service_record_snapshot'))
+                              AND (d.document_kind = 'service_record_snapshot' OR d.service_record_case_id IS NOT NULL
+                                   OR EXISTS (SELECT 1 FROM public.service_record_snapshot_chunk c
+                                              WHERE c.document_id = d.document_id))))
               AND (j.status IN ('processing', 'reconciling', 'requires_attention') OR j.lease_token IS NOT NULL)
         )
     THEN
         RAISE EXCEPTION 'Outstanding or uncertain service-record document attempt';
+    END IF;
+
+    -- Staff finalization can run directly (without a document job), and
+    -- deleting a snapshot records its cancellation intent on the document.
+    IF EXISTS (
+        SELECT 1 FROM public.eformsign_doc d
+        WHERE (d.document_kind = 'service_record_snapshot' OR d.service_record_case_id IS NOT NULL
+               OR EXISTS (SELECT 1 FROM public.service_record_snapshot_chunk c
+                          WHERE c.document_id = d.document_id))
+          AND (d.permanent_purge_requested_at IS NOT NULL OR EXISTS (
+              SELECT 1 FROM public.eformsign_dispatch_intent i
+              WHERE i.branch_id = d.branch_id AND i.status IN ('started', 'uncertain')
+                AND (i.local_document_id = d.id OR i.provider_document_id = d.document_id)
+          ))
+    ) THEN
+        RAISE EXCEPTION 'Outstanding or uncertain service-record document attempt';
+    END IF;
+
+    -- Production snapshots go to reviewer step 06. The generic UI's step
+    -- 05 re-request can contact the provider after reads alone. Refuse if
+    -- a record document is in an outsider workflow that exposes that action.
+    IF EXISTS (
+        SELECT 1 FROM public.eformsign_doc d
+        WHERE d.step_type = '05' AND d.voided_at IS NULL
+          AND d.status_type IN ('001', '002', '010', '020', '030', '041', '043',
+                                '060', '063', '064', '070', '071')
+          AND (d.document_kind = 'service_record_snapshot' OR d.service_record_case_id IS NOT NULL
+               OR EXISTS (SELECT 1 FROM public.service_record_snapshot_chunk c
+                          WHERE c.document_id = d.document_id))
+    ) THEN
+        RAISE EXCEPTION 'Service-record document allows an unfenced outsider re-request';
     END IF;
 
 SQL
