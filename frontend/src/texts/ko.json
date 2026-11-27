@@ -417,6 +417,7 @@
         "legacy-loading": "기존 제공기록지 확인 중",
         "legacy-read-failed": "기존 제공기록지를 확인하지 못했어요.",
         "legacy-retry": "다시 확인",
+        "legacy-unlinked": "이 변경에서는 기존 제공기록지 링크가 새 아기 기록지에 연결되지 않아요.",
         "legacy-primary-required": "기존 제공기록지를 이어 쓰려면 지금의 주 제공인력을 아기 한 명 이상에게 배정해 주세요.",
         "legacy-secondary-unchanged": "기존 기록지를 연결하는 동안 보조 제공인력을 유지해 주세요.",
         "legacy-period-unchanged": "기존 기록지는 서비스 기간, 상태, 서비스 요일을 유지한 상태에서 연결할 수 있어요.",

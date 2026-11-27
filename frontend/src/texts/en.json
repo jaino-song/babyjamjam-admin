@@ -389,6 +389,7 @@
         "legacy-loading": "Checking the existing service record",
         "legacy-read-failed": "The existing service record could not be verified.",
         "legacy-retry": "Check again",
+        "legacy-unlinked": "This update leaves the existing service record link unconnected to the new baby records.",
         "legacy-primary-required": "To continue the existing service record, assign the current primary provider to at least one baby.",
         "legacy-secondary-unchanged": "Keep the current secondary provider while linking the existing record.",
         "legacy-period-unchanged": "Keep the current service period, status and service days while linking the existing record.",
