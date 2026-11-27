@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 const WORKSPACE_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 const BABY_CASE_KEYS_MIGRATION_NAME = "20261126010000_baby_case_keys";
 const MANUAL_BABY_CASE_KEYS_MIGRATION = `prisma/migrations/${BABY_CASE_KEYS_MIGRATION_NAME}/migration.sql`;
+const SERVICE_RECORD_REPLAY = "./scripts/replay-service-record-patch.sh";
+const LEGACY_SCHEDULE_REPAIRS = new Set([
+    "prisma/migrations/20260902000000_repair_replacement_schedule_start_date/migration.sql",
+    "prisma/migrations/20260903000000_add_employee_schedule_terminated_at/migration.sql",
+]);
 
 async function readWorkflow(fileName) {
     return readFile(resolve(WORKSPACE_ROOT, ".github/workflows", fileName), "utf8");
@@ -393,7 +398,7 @@ test("database patch credentials are step-scoped and never reach setup or instal
     for (const jobDefinition of jobs) {
         assertNoJobLevelEnvWithSecrets(workflow, jobDefinition.id, fileName);
         const steps = stepBlocks(jobBlock(workflow, jobDefinition.id, fileName), jobDefinition.id, fileName);
-        const databaseSteps = steps.filter((step) => /(?:prisma db execute|run-prisma-db-execute\.sh)/.test(step.join("\n")));
+        const databaseSteps = steps.filter((step) => /(?:prisma db execute|run-prisma-db-execute\.sh|replay-service-record-patch\.sh)/.test(step.join("\n")));
         assert.ok(databaseSteps.length > 0, `${fileName} ${jobDefinition.id} must contain database operation steps`);
 
         const expectedSecrets = new Set([
@@ -470,6 +475,20 @@ test("manual baby case keys stay outside automatic database patches", async () =
     }
 });
 
+test("all database patch jobs guard service-record replay and verification", async () => {
+    const fileName = "database-patches.yml";
+    const workflow = await readWorkflow(fileName);
+
+    for (const jobId of ["apply-dev", "apply-preview", "apply-production"]) {
+        const job = jobBlock(workflow, jobId, fileName).join("\n");
+        assert.doesNotMatch(job, /20260629000000|20260713000000|verify-service-record-cases\.sql|verify-replacement-schedule-start-date\.sql/);
+        for (const operation of ["cases", "verify-schedules"]) {
+            const command = `run: ${SERVICE_RECORD_REPLAY} ${operation}`;
+            assert.equal(job.split("\n").filter((line) => line.trim() === command).length, 1, `${jobId} ${operation}`);
+        }
+    }
+});
+
 test("database patch jobs apply every schema migration after the pre-applied baseline", async () => {
     const fileName = "database-patches.yml";
     const workflow = await readWorkflow(fileName);
@@ -508,7 +527,9 @@ test("database patch jobs apply every schema migration after the pre-applied bas
             previousMigrationOffset = migrationOffset;
             const migrationStep = migrationSteps[0];
             const migrationText = migrationStep.join("\n");
-            const command = `./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file ${migrationPath}`;
+            const command = LEGACY_SCHEDULE_REPAIRS.has(migrationPath)
+                ? `${SERVICE_RECORD_REPLAY} ${migrationPath}`
+                : `./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file ${migrationPath}`;
             assert.match(migrationText, /working-directory: backend/);
             assert.match(migrationText, /run:\s*(?:\||\.\/scripts\/run-prisma-db-execute\.sh)/);
             assert.ok(
