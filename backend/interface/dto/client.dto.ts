@@ -1,6 +1,6 @@
 import type { FetalType, ProviderSlot } from "@babyjamjam/shared/client/baby-record-allocation";
 import { START_DATE_CHANGE_MODES, type StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
-import { Allow, ValidateNested, ArrayNotEmpty, ArrayUnique, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, ValidateIf } from "class-validator";
+import { Allow, ValidateNested, ArrayNotEmpty, ArrayUnique, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Matches, Max, Min, ValidateIf } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
@@ -210,7 +210,23 @@ export class CreateClientWithEmployeeActivationDto extends CreateClientDto {
     confirmedUnavailableEmployeeIds!: number[];
 }
 
+class LegacyRecordBindingDto {
+    @IsUUID()
+    caseId!: string;
+
+    @IsInt()
+    @Min(1)
+    @Max(2_147_483_647)
+    babyOrdinal!: number;
+}
+
 export class UpdateClientDto extends ClientAllocationDto {
+    @ValidateIf((_, value) => value !== undefined)
+    @IsObject()
+    @ValidateNested()
+    @Type(() => LegacyRecordBindingDto)
+    legacyRecordBinding?: LegacyRecordBindingDto;
+
     @Allow()
     expectedAllocationVersion?: string;
 

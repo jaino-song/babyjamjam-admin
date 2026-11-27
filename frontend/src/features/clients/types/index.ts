@@ -193,9 +193,14 @@ interface UpdateClientFields {
     expectedEndDate?: string | null;
 }
 
+export interface LegacyRecordBinding {
+    caseId: string;
+    babyOrdinal: number;
+}
+
 export type UpdateClientDto = UpdateClientFields & (
-    | LegacyClientProviders
-    | (AllocationProviders & { expectedAllocationVersion: string })
+    | (LegacyClientProviders & { legacyRecordBinding?: never })
+    | (AllocationProviders & { expectedAllocationVersion: string; legacyRecordBinding?: LegacyRecordBinding })
 );
 
 // DTO for terminating service

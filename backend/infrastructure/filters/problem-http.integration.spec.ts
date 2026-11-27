@@ -4,6 +4,7 @@ import { Test } from "@nestjs/testing";
 import { IsDefined, IsString } from "class-validator";
 import request from "supertest";
 
+import { legacyRecordBindingConflict } from "../../application/services/client-legacy-record-binding";
 import { codeOnlyProblemBody, problemBody } from "../../application/utils/problem-bodies";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import { ServiceRecordSentryExceptionFilter } from "../observability/service-record-sentry-exception.filter";
@@ -79,6 +80,11 @@ class ProbeController {
             ...codeOnlyProblemBody("REQUEST_CONFLICT"),
             blockingReasons: [{ code: "UNSUPPORTED_SESSION_COUNT", message: "회차 수를 확인할 수 없습니다." }],
         });
+    }
+
+    @Post("legacy-record-binding")
+    legacyRecordBinding() {
+        legacyRecordBindingConflict("link");
     }
 
     @Post("schedule-validation")
@@ -229,6 +235,25 @@ describe("problem contract over HTTP", () => {
         // 나가요(생산자 message 텍스트는 와이어로 나가지 않는 기존 불변식).
         expect(response.body.message).toBe(PROBLEM_CATALOG.VALIDATION_FAILED.detail["ko-KR"]);
         expect(response.body.message).not.toBe("2회차 날짜가 다른 회차와 겹칩니다.");
+    });
+
+    it.each([
+        ["ko-KR", "허용되지 않는 값이에요."],
+        ["en-US", "This value is not allowed."],
+    ] as const)("returns a sanitized legacy-record binding conflict in %s", async (locale, fieldDetail) => {
+        const response = await request(app.getHttpServer()).post("/problem-probe/legacy-record-binding")
+            .set("Accept-Language", locale).expect(409);
+        expect(response.headers["content-type"]).toContain("application/problem+json");
+        expect(response.headers["content-language"]).toBe(locale);
+        expect(response.body).toMatchObject({
+            code: "REQUEST_CONFLICT",
+            status: 409,
+            outcome: "NOT_APPLIED",
+            detail: PROBLEM_CATALOG.REQUEST_CONFLICT.detail[locale],
+            message: PROBLEM_CATALOG.REQUEST_CONFLICT.detail[locale],
+            errors: [{ pointer: "/legacyRecordBinding", code: "INVALID_VALUE", detail: fieldDetail, location: "body" }],
+        });
+        expect(JSON.stringify(response.body)).not.toContain("기존 담당자에게 발송된");
     });
 
     it("keeps the serviceDateReason extra while using catalogue validation details", async () => {

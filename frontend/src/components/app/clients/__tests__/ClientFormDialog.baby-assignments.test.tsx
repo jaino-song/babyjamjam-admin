@@ -86,6 +86,40 @@ const savedTwins: Client = {
   allocationVersion: "fixture-version-1",
   voucherIssuanceYear: year,
 };
+const unconfirmedTwins: Client = {
+  ...savedTwins, fetalConfirmation: "UNCONFIRMED", fetalType: null, babyCount: null,
+  babies: [], babyAssignments: [], providers: undefined, historicalMaxOrdinal: 0,
+};
+const firstCaseId = "18c2f310-a2db-4b42-a681-3f6f26969880";
+const secondCaseId = "d3f9d426-bb7f-423b-a957-325d141cd727";
+const legacyBabyLabel = "기존 제공기록지를 이어 쓸 아기";
+const legacyOptOutLabel = "기존 기록지를 연결하지 않고 배정";
+const legacyOptOutGuidance = "연결하지 않고 저장하면 기존 링크가 작동하지 않을 수 있어요. 서명된 기존 기록지는 별도로 남아요.";
+const legacyOverviewUrl = "/admin/service-records/client/523";
+const legacyEditorUrl = `${legacyOverviewUrl}/editor?caseId=${firstCaseId}`;
+const firstBabyBinding = { caseId: firstCaseId, babyOrdinal: 1 };
+
+function allocationConflict(pointers: string[], outcome?: "UNKNOWN" | "PARTIALLY_APPLIED") {
+  return { response: { status: 409, data: createProblemDetails({
+    code: "REQUEST_CONFLICT", requestId: "req-allocation-conflict", outcome,
+    errors: pointers.map((pointer) => ({ pointer, code: "INVALID_VALUE", detail: "Conflict", location: "body" })),
+  }) } };
+}
+
+function legacyOverview(caseId: string, signed = true, status = "IN_PROGRESS", signedBy = providers[0].id) {
+  return {
+    cases: [{ caseId, babyId: null, retired: false, status, submittedSessions: 1, assignees: [{ id: providers[0].id }] }],
+    record: {
+      id: caseId, status,
+      completedAt: status === "IN_PROGRESS" ? null : "2026-08-14T00:00:00.000Z",
+      finalizedAt: status === "FINALIZED" ? "2026-08-15T00:00:00.000Z" : null,
+      sessions: [{ locked: true, hasMomApproval: true, employeeId: signedBy,
+        clientSignedAt: signed ? "2026-08-04T00:00:00.000Z" : null, clientSignature: signed ? "qa-signature" : null }],
+    },
+    legacyLinkAssignment: status === "IN_PROGRESS" ? { scheduleId: 31, employeeId: providers[0].id } : null,
+    assignments: [{ scheduleId: 31, replaced: false, employee: { id: providers[0].id } }],
+  };
+}
 
 type Surface = "panel" | "dialog";
 function FormFixture({
@@ -165,6 +199,10 @@ describe("desktop client service-record allocation", () => {
   let queries: QueryClient;
   let currentClient: Client;
   let retiredSetting: boolean | undefined;
+  let legacyCaseId: string | undefined;
+  let isLegacySigned: boolean;
+  let legacyStatus: string;
+  let signedBy: number;
   const calendarHook = jest.mocked(useBusinessDayCalendar);
   const defaultCalendar = calendarHook.getMockImplementation()!;
   const get = jest.mocked(api.get);
@@ -184,6 +222,10 @@ describe("desktop client service-record allocation", () => {
   beforeEach(() => {
     selectBranch(firstBranch);
     retiredSetting = undefined;
+    legacyCaseId = undefined;
+    isLegacySigned = true;
+    legacyStatus = "IN_PROGRESS";
+    signedBy = providers[0].id;
     queries = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     queries.setQueryDefaults(AUTH_USER_QUERY_KEY, { gcTime: Infinity });
     alignAuth(firstBranch);
@@ -206,6 +248,13 @@ describe("desktop client service-record allocation", () => {
         }] : [] };
       }
       if (url === "/clients/523") return { data: currentClient };
+      if (url === legacyOverviewUrl && legacyCaseId) {
+        const overview = legacyOverview(legacyCaseId, isLegacySigned, legacyStatus, signedBy);
+        return { data: { ...overview, record: { ...overview.record, sessions: [] } } };
+      }
+      if (legacyCaseId && url === `/admin/service-records/client/523/editor?caseId=${legacyCaseId}`) {
+        return { data: legacyOverview(legacyCaseId, isLegacySigned, legacyStatus, signedBy) };
+      }
       if (url === "/admin/service-records/client/523") return {
         data: { record: { id: "existing-case", startDate: savedTwins.startDate, sessions: [{ sessionIndex: 1 }] }, assignments: [] },
       };
@@ -221,8 +270,8 @@ describe("desktop client service-record allocation", () => {
     clearBranchSelection();
   });
 
-  function alignAuth(branchId: string, userId = originalUserId) {
-    queries.setQueryData(AUTH_USER_QUERY_KEY, { id: userId, name: "QA", branchId, branchRole: "manager" });
+  function alignAuth(branchId: string, userId = originalUserId, branchRole = "manager") {
+    queries.setQueryData(AUTH_USER_QUERY_KEY, { id: userId, name: "QA", branchId, role: "manager", branchRole });
   }
 
   function selectScopedBranch(branchId: string) {
@@ -253,6 +302,28 @@ describe("desktop client service-record allocation", () => {
     next();
     next();
     return { view, submit: screen.getByRole("button", { name: "생성" }) };
+  }
+
+  async function draftFirstTwinAllocation() {
+    legacyCaseId = firstCaseId;
+    await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+  }
+
+  async function expectOrdinaryTwinSave() {
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({ fetalType: "TWINS", babyCount: 2 });
+    expect(patch.mock.calls[0][1]).not.toHaveProperty("legacyRecordBinding");
+  }
+
+  async function rejectFirstBabyBinding() {
+    patch.mockRejectedValueOnce(allocationConflict(["/legacyRecordBinding"]));
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+    click("저장");
+    return await screen.findByRole<HTMLOptionElement>("option", { name: legacyOptOutLabel });
   }
 
   it("renders dialog sections in the same order as the panel steps", async () => {
@@ -297,6 +368,7 @@ describe("desktop client service-record allocation", () => {
       providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
       babyAssignments: [{ ordinal: 1, providerSlot: 1 }],
     });
+    expect(body).not.toHaveProperty("legacyRecordBinding");
     expect(body).not.toHaveProperty("primaryEmployeeId");
     expect(body).not.toHaveProperty("secondaryEmployeeId");
   });
@@ -660,6 +732,498 @@ describe("desktop client service-record allocation", () => {
     next();
     click("저장");
     await waitFor(() => expect(patch).toHaveBeenCalledWith("/clients/523", { address: "인천광역시 동구" }));
+    expect(get).not.toHaveBeenCalledWith("/admin/service-records/client/523");
+  });
+
+  it("requires explicit confirmation of the only primary-owned baby on the normal edit panel", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ client: unconfirmedTwins, initialStep: 1 });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    next();
+
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    expect(choice).toHaveValue("");
+    expect(within(choice).getByRole("option", { name: "첫째 기록지 · 주 제공인력" })).toHaveValue("1");
+    expect(within(choice).queryByRole("option", { name: /둘째/ })).not.toBeInTheDocument();
+    expect(within(choice).queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument();
+    next();
+    expect(choice).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+
+    select(legacyBabyLabel, "1");
+    next();
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/clients/523", {
+      fetalType: "TWINS", babyCount: 2, voucherIssuanceYear: year,
+      expectedAllocationVersion: unconfirmedTwins.allocationVersion,
+      providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
+      babyAssignments: [{ ordinal: 1, providerSlot: 0 }, { ordinal: 2, providerSlot: 1 }],
+      legacyRecordBinding: { caseId: firstCaseId, babyOrdinal: 1 },
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("offers the second baby when owned by the continuing primary and clears an invalidated choice", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ surface: "dialog", client: { ...unconfirmedTwins, historicalMaxOrdinal: 4 } });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+
+    select("둘째 기록지 담당자", "0");
+    expect(within(choice).getByRole("option", { name: "둘째 기록지 · 주 제공인력" })).toHaveValue("6");
+    select(legacyBabyLabel, "6");
+    select("둘째 기록지 담당자", "1");
+    expect(choice).toHaveValue("");
+    select("둘째 기록지 담당자", "0");
+    expect(choice).toHaveValue("");
+    click("저장");
+    expect(patch).not.toHaveBeenCalled();
+
+    select(legacyBabyLabel, "6");
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({
+      babyAssignments: [{ ordinal: 5, providerSlot: 0 }, { ordinal: 6, providerSlot: 0 }],
+      legacyRecordBinding: { caseId: firstCaseId, babyOrdinal: 6 },
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("blocks the allocation when the primary caregiver no longer continues", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    const primary = screen.getByRole("combobox", { name: roles[0] });
+    fireEvent.click(within(primary).getByRole("button", { name: "제공인력 선택 해제" }));
+    expect(screen.getByText(/지금의 주 제공인력을 아기 한 명 이상에게 배정/)).toBeVisible();
+    click("저장");
+    expect(patch).not.toHaveBeenCalled();
+
+    await selectProvider(0, providers[2]);
+    expect(screen.queryByRole("combobox", { name: legacyBabyLabel })).not.toBeInTheDocument();
+    expect(screen.getByText(/지금의 주 제공인력을 아기 한 명 이상에게 배정/)).toBeInTheDocument();
+    click("저장");
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("lets branch staff save an allocation without reading or claiming the signed record", async () => {
+    alignAuth(firstBranch, originalUserId, "staff");
+    await draftFirstTwinAllocation();
+
+    await expectOrdinaryTwinSave();
+    expect(get.mock.calls.some(([url]) => url.startsWith(legacyOverviewUrl))).toBe(false);
+  });
+
+  it("lets a manager save when a former caregiver signed the record", async () => {
+    signedBy = providers[2].id;
+    await draftFirstTwinAllocation();
+
+    expect(await screen.findByText(/기존 제공기록지 링크가 새 아기 기록지에 연결되지 않아요/)).toBeVisible();
+    expect(screen.queryByText(/지금의 주 제공인력을 아기 한 명 이상에게 배정/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: legacyBabyLabel })).not.toBeInTheDocument();
+    await selectProvider(1, providers[3]);
+    await expectOrdinaryTwinSave();
+    expect(patch.mock.calls[0][1]).toMatchObject({ providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 14 }] });
+  });
+
+  it("requires binding a fully signed ready record even when the ordinary link action is unavailable", async () => {
+    legacyStatus = "READY_TO_FINALIZE";
+    await draftFirstTwinAllocation();
+
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    click("저장");
+    expect(choice).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+    select(legacyBabyLabel, "1");
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({ legacyRecordBinding: { caseId: firstCaseId, babyOrdinal: 1 } });
+  });
+
+  it.each(["FINALIZING", "FINALIZED"])("saves without binding a %s record", async (status) => {
+    legacyStatus = status;
+    await draftFirstTwinAllocation();
+    await waitFor(() => expect(get).toHaveBeenCalledWith(legacyOverviewUrl));
+    await waitFor(() => expect(screen.queryByRole("status", { name: "기존 제공기록지 확인 중" })).not.toBeInTheDocument());
+
+    await expectOrdinaryTwinSave();
+    expect(get).not.toHaveBeenCalledWith(legacyEditorUrl, expect.anything());
+  });
+
+  it("does not start the protected read after the branch role changes during the overview read", async () => {
+    const defaultGet = get.getMockImplementation()!;
+    let finishOverview!: (value: { data: ReturnType<typeof legacyOverview> }) => void;
+    get.mockImplementation((url, config) => url === legacyOverviewUrl
+      ? new Promise((resolve) => { finishOverview = resolve; })
+      : defaultGet(url, config));
+    await draftFirstTwinAllocation();
+    await waitFor(() => expect(finishOverview).toBeDefined());
+
+    await act(async () => {
+      alignAuth(firstBranch, originalUserId, "staff");
+      finishOverview({ data: legacyOverview(firstCaseId) });
+    });
+    await expectOrdinaryTwinSave();
+    expect(get).not.toHaveBeenCalledWith(legacyEditorUrl, expect.anything());
+  });
+
+  it("discards the choice and pending PATCH when management rights are lost during save", async () => {
+    await draftFirstTwinAllocation();
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+    const defaultGet = get.getMockImplementation()!;
+    let finishEditor!: (value: { data: ReturnType<typeof legacyOverview> }) => void;
+    get.mockImplementation((url, config) => url === legacyEditorUrl
+      ? new Promise((resolve) => { finishEditor = resolve; })
+      : defaultGet(url, config));
+    click("저장");
+    await waitFor(() => expect(finishEditor).toBeDefined());
+    await act(async () => {
+      // Both role changes can arrive before React commits another render.
+      alignAuth(firstBranch, originalUserId, "staff");
+      alignAuth(firstBranch);
+      get.mockImplementation(defaultGet);
+      finishEditor({ data: legacyOverview(firstCaseId) });
+    });
+    expect(patch).not.toHaveBeenCalled();
+
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    expect(choice).toHaveValue("");
+    click("저장");
+    expect(choice).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+
+    await act(async () => alignAuth(firstBranch, originalUserId, "staff"));
+    await expectOrdinaryTwinSave();
+  });
+
+  it("stops a pending ordinary save when the branch user gains management rights", async () => {
+    alignAuth(firstBranch, originalUserId, "staff");
+    const calendar = defaultCalendar().calendar;
+    let finishRefresh!: (result: RefreshForSaveResult) => void;
+    const refreshForSave = () => new Promise<RefreshForSaveResult>((resolve) => { finishRefresh = resolve; });
+    calendarHook.mockReturnValue({ ...defaultCalendar(), refreshForSave });
+    await draftFirstTwinAllocation();
+
+    click("저장");
+    await act(async () => {
+      alignAuth(firstBranch);
+      finishRefresh({ ok: true, changed: false, calendar });
+    });
+    expect(await screen.findByRole("combobox", { name: legacyBabyLabel })).toHaveValue("");
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("focuses the pending check, then offers retry when the protected read fails", async () => {
+    const defaultGet = get.getMockImplementation()!;
+    let failEditor!: (cause: Error) => void;
+    get.mockImplementation((url, config) => url === legacyEditorUrl
+      ? new Promise((_resolve, reject) => { failEditor = reject; })
+      : defaultGet(url, config));
+    await draftFirstTwinAllocation();
+    const loading = await screen.findByRole("status", { name: "기존 제공기록지 확인 중" });
+    await waitFor(() => expect(failEditor).toBeDefined());
+    click("저장");
+    expect(loading.closest("[data-slot=legacy-record]")).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+
+    await act(async () => failEditor(new Error("Temporary read failure")));
+    const retry = await screen.findByRole("button", { name: "다시 확인" });
+    click("저장");
+    expect(retry).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+
+    get.mockImplementation(defaultGet);
+    fireEvent.click(retry);
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    expect(choice).toHaveValue("");
+    select(legacyBabyLabel, "1");
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({ legacyRecordBinding: { caseId: firstCaseId, babyOrdinal: 1 } });
+  });
+
+  it.each(["overview record", "editor sessions", "editor owner"])("requires a retry when the candidate is missing its %s", async (missing) => {
+    const defaultGet = get.getMockImplementation()!;
+    get.mockImplementation(async (url, config) => {
+      const data = legacyOverview(firstCaseId);
+      if (missing === "overview record" && url === legacyOverviewUrl) {
+        return { data: { ...data, record: null } };
+      }
+      if (missing === "editor sessions" && url === legacyEditorUrl) {
+        return { data: { ...data, record: { ...data.record, sessions: [] } } };
+      }
+      if (missing === "editor owner" && url === legacyEditorUrl) {
+        return { data: { ...data, legacyLinkAssignment: undefined } };
+      }
+      return defaultGet(url, config);
+    });
+    await draftFirstTwinAllocation();
+
+    const retry = await screen.findByRole("button", { name: "다시 확인" });
+    click("저장");
+    expect(retry).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("blocks changes to the secondary provider or service days while linking", async () => {
+    await draftFirstTwinAllocation();
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    await selectProvider(1, providers[2]);
+    const warning = screen.getByText(/보조 제공인력을 유지/);
+    click("저장");
+    expect(warning).toHaveFocus();
+    expect(patch).not.toHaveBeenCalled();
+
+    await selectProvider(1, providers[1]);
+    select(legacyBabyLabel, "1");
+    fireEvent.click(screen.getByRole("switch", { name: "토요일" }));
+    click("저장");
+    expect(await screen.findByText(/서비스 기간, 상태, 서비스 요일을 유지/)).toBeVisible();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("returns to the provider step and focuses the baby selector after a binding conflict", async () => {
+    patch.mockRejectedValueOnce(allocationConflict(["/legacyRecordBinding"]));
+    legacyCaseId = firstCaseId;
+    await open({ client: unconfirmedTwins, initialStep: 1 });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    next();
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+    next();
+    click("저장");
+
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    await waitFor(() => expect(choice).toHaveFocus());
+    expect(choice).toHaveAccessibleDescription(`허용되지 않는 값이에요. ${legacyOptOutGuidance}`);
+    expect(choice).toHaveValue("1");
+    expect(patch).toHaveBeenCalledTimes(1);
+
+    next();
+    click("저장");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "저장" })).not.toBeInTheDocument());
+    expect(patch).toHaveBeenCalledTimes(2);
+    expect(patch.mock.calls[1][1]).toEqual(patch.mock.calls[0][1]);
+    expect(patch.mock.calls[1][1]).toMatchObject({ legacyRecordBinding: firstBabyBinding });
+  });
+
+  it("saves the ordinary allocation only after the manager chooses the warning-backed opt-out and saves separately", async () => {
+    await draftFirstTwinAllocation();
+    const option = await rejectFirstBabyBinding();
+    const choice = screen.getByRole("combobox", { name: legacyBabyLabel });
+    expect(option.selected).toBe(false);
+    expect(choice).toHaveValue("1");
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(legacyOptOutGuidance)).toBeVisible();
+    expect(patch.mock.calls[0][1]).toMatchObject({ legacyRecordBinding: firstBabyBinding });
+
+    select(legacyBabyLabel, option.value);
+    expect(choice).toHaveValue(option.value);
+    expect(choice).toHaveAccessibleDescription(legacyOptOutGuidance);
+    expect(patch).toHaveBeenCalledTimes(1);
+
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    const [failedPatch, ordinaryPatch] = patch.mock.invocationCallOrder;
+    expect(get.mock.calls.some(([url], index) => {
+      const read = get.mock.invocationCallOrder[index];
+      return url === legacyEditorUrl && read > failedPatch && read < ordinaryPatch;
+    })).toBe(true);
+    expect(patch).toHaveBeenLastCalledWith("/clients/523", {
+      fetalType: "TWINS", babyCount: 2, voucherIssuanceYear: year,
+      expectedAllocationVersion: unconfirmedTwins.allocationVersion,
+      providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
+      babyAssignments: [{ ordinal: 1, providerSlot: 0 }, { ordinal: 2, providerSlot: 1 }],
+    });
+  });
+
+  it.each([
+    ["a generic conflict", allocationConflict([])],
+    ["stale allocation", allocationConflict(["/legacyRecordBinding", "/expectedAllocationVersion"])],
+    ["an unverified conflict", { response: { status: 409, data: { errors: [{ pointer: "/legacyRecordBinding" }] } } }],
+    ["a timeout", { code: "ECONNABORTED" }],
+    ["an unknown binding outcome", allocationConflict(["/legacyRecordBinding"], "UNKNOWN")],
+    ["a partially applied binding", allocationConflict(["/legacyRecordBinding"], "PARTIALLY_APPLIED")],
+  ])("does not offer opt-out after %s", async (_scenario, failure) => {
+    patch.mockRejectedValueOnce(failure);
+    await draftFirstTwinAllocation();
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+    click("저장");
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+    expect(screen.queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument();
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch.mock.calls[0][1]).toMatchObject({ legacyRecordBinding: firstBabyBinding });
+  });
+
+  it("clears selected opt-out when the draft changes even if the original values are restored", async () => {
+    await draftFirstTwinAllocation();
+    select(legacyBabyLabel, (await rejectFirstBabyBinding()).value);
+    const address = screen.getByLabelText(/^주소/);
+    fireEvent.change(address, { target: { value: "인천광역시 동구" } });
+    fireEvent.change(address, { target: { value: unconfirmedTwins.address } });
+
+    expect(screen.queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument();
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    expect(patch.mock.calls[1][1]).toMatchObject({ legacyRecordBinding: firstBabyBinding });
+  });
+
+  it("requires a fresh rejection when the manager picks a different baby to link", async () => {
+    await draftFirstTwinAllocation();
+    select("둘째 기록지 담당자", "0");
+    await rejectFirstBabyBinding();
+    select(legacyBabyLabel, "2");
+    expect(screen.queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument();
+
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    expect(patch.mock.calls[1][1]).toMatchObject({ legacyRecordBinding: { caseId: firstCaseId, babyOrdinal: 2 } });
+  });
+
+  it("ignores a late binding rejection after management rights change", async () => {
+    let rejectPatch!: (cause: unknown) => void;
+    patch.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPatch = reject; }));
+    await draftFirstTwinAllocation();
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      alignAuth(firstBranch, originalUserId, "staff");
+      alignAuth(firstBranch);
+      rejectPatch(allocationConflict(["/legacyRecordBinding"]));
+    });
+    expect(await screen.findByRole("combobox", { name: legacyBabyLabel })).toHaveValue("");
+    await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
+    expect(screen.queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument();
+    expect(patch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["client", "branch", "role"])("clears selected opt-out after a %s change", async (change) => {
+    legacyCaseId = firstCaseId;
+    const view = await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    select(legacyBabyLabel, (await rejectFirstBabyBinding()).value);
+
+    if (change === "client") {
+      view.rerender(<QueryClientProvider client={queries}>
+        <FormFixture surface="dialog" client={{ ...savedTwins, id: 524 }} />
+      </QueryClientProvider>);
+    } else if (change === "branch") {
+      await act(async () => selectScopedBranch(secondBranch));
+    } else {
+      await act(async () => alignAuth(firstBranch, originalUserId, "staff"));
+      await act(async () => alignAuth(firstBranch));
+      expect(await screen.findByRole("combobox", { name: legacyBabyLabel })).toHaveValue("");
+    }
+    expect(screen.queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument();
+    if (change !== "client") click("저장");
+    expect(patch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["changed record", "failed read"])("does not send the opt-out when the final check finds a %s", async (change) => {
+    await draftFirstTwinAllocation();
+    select(legacyBabyLabel, (await rejectFirstBabyBinding()).value);
+    if (change === "changed record") legacyCaseId = secondCaseId;
+    else get.mockRejectedValueOnce(new Error("Temporary read failure"));
+
+    click("저장");
+    await screen.findByText(/기존 제공기록지나 배정이 바뀌었어요/);
+    expect(screen.queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument();
+    expect(patch).toHaveBeenCalledTimes(1);
+
+    if (change === "failed read") click("다시 확인");
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    expect(choice).toHaveValue("");
+    click("저장");
+    expect(patch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a stale allocation response", allocationConflict(["/expectedAllocationVersion"])],
+    ["a rejected ordinary PATCH", allocationConflict(["/legacyRecordBinding"])],
+    ["an uncertain ordinary PATCH", { code: "ECONNABORTED" }],
+  ])("revokes the opt-out after %s", async (_scenario, failure) => {
+    await draftFirstTwinAllocation();
+    select(legacyBabyLabel, (await rejectFirstBabyBinding()).value);
+    patch.mockRejectedValueOnce(failure);
+    click("저장");
+
+    await waitFor(() => expect(screen.queryByRole("option", { name: legacyOptOutLabel })).not.toBeInTheDocument());
+    expect(screen.getByRole("combobox", { name: legacyBabyLabel })).toHaveValue("1");
+    expect(patch).toHaveBeenCalledTimes(2);
+    expect(patch.mock.calls[1][1]).not.toHaveProperty("legacyRecordBinding");
+  });
+
+  it("reads the case again before saving and requires a new choice after the record changes", async () => {
+    legacyCaseId = firstCaseId;
+    await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    const choice = await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+    legacyCaseId = secondCaseId;
+    click("저장");
+    await screen.findByText(/기존 제공기록지나 배정이 바뀌었어요/);
+    expect(choice).toHaveValue("");
+    expect(patch).not.toHaveBeenCalled();
+
+    select(legacyBabyLabel, "1");
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({
+      legacyRecordBinding: { caseId: secondCaseId, babyOrdinal: 1 },
+    });
+  });
+
+  it("does not submit a pending binding after switching customers during the final read", async () => {
+    legacyCaseId = firstCaseId;
+    const view = await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    await screen.findByRole("combobox", { name: legacyBabyLabel });
+    select(legacyBabyLabel, "1");
+
+    let finishRead!: (value: { data: ReturnType<typeof legacyOverview> }) => void;
+    get.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    click("저장");
+    await waitFor(() => expect(finishRead).toBeDefined());
+    expect(screen.getByRole("combobox", { name: legacyBabyLabel })).toBeDisabled();
+
+    view.rerender(<QueryClientProvider client={queries}>
+      <FormFixture surface="dialog" client={{ ...savedTwins, id: 524 }} />
+    </QueryClientProvider>);
+    await act(async () => finishRead({ data: legacyOverview(firstCaseId) }));
+    expect(screen.queryByRole("combobox", { name: legacyBabyLabel })).not.toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("confirms an ordinary first allocation without binding a locked day that lacks a signature", async () => {
+    legacyCaseId = firstCaseId;
+    isLegacySigned = false;
+    await open({ surface: "dialog", client: unconfirmedTwins });
+    await within(fetusSelect()).findByRole("option", { name: "쌍생아" });
+    select("태아 유형", "TWINS");
+    await waitFor(() => expect(get).toHaveBeenCalledWith(
+      `/admin/service-records/client/523/editor?caseId=${firstCaseId}`, expect.anything(),
+    ));
+    expect(screen.queryByRole("combobox", { name: legacyBabyLabel })).not.toBeInTheDocument();
+    click("저장");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1]).toMatchObject({ fetalType: "TWINS", babyCount: 2 });
+    expect(patch.mock.calls[0][1]).not.toHaveProperty("legacyRecordBinding");
   });
 
   it("keeps an unconnected regional registration on the existing no-voucher payload", async () => {

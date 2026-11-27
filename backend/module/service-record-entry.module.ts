@@ -74,6 +74,7 @@ import { HolidayModule } from "./holiday.module";
         { provide: SERVICE_RECORD_EDIT_REPOSITORY, useClass: ServiceRecordEditRepository },
     ],
     exports: [
+        AdminAuditEventWriter,
         ServiceRecordTokenService,
         ServiceRecordLinkService,
         ServiceRecordLifecycleService,
