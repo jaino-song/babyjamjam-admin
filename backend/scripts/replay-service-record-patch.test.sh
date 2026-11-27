@@ -2,11 +2,11 @@
 # Requires installed PostgreSQL server binaries and the backend's Prisma CLI.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
-export PATH="$(pg_config --bindir):$PATH"
+pg_bin=${PG_BIN:-$(pg_config --bindir)}
 scratch=$(mktemp -d /tmp/bjj-record-replay.XXXXXX)
 cleanup() {
   if [[ -f "$scratch/data/postmaster.pid" ]]; then
-    pg_ctl -D "$scratch/data" -m fast -w stop >/dev/null
+    "$pg_bin/pg_ctl" -D "$scratch/data" -m fast -w stop >/dev/null
   fi
   find "$scratch" -depth -delete
 }
@@ -18,11 +18,11 @@ export CHECKPOINT_DISABLE=1 PRISMA_HIDE_UPDATE_MESSAGE=1
 export DATABASE_URL="postgresql://replay_test@localhost/replay?host=$scratch"
 export DIRECT_URL="$DATABASE_URL"
 
-initdb -D "$scratch/data" -U "$PGUSER" --auth-local=trust --auth-host=reject --no-locale --encoding=UTF8 >"$scratch/init.log"
-pg_ctl -D "$scratch/data" -o "-c listen_addresses='' -k $scratch" -l "$scratch/postgres.log" -w start >/dev/null
-createdb "$PGDATABASE"
+"$pg_bin/initdb" -D "$scratch/data" -U "$PGUSER" --auth-local=trust --auth-host=reject --no-locale --encoding=UTF8 >"$scratch/init.log"
+"$pg_bin/pg_ctl" -D "$scratch/data" -o "-c listen_addresses='' -k $scratch" -l "$scratch/postgres.log" -w start >/dev/null
+"$pg_bin/createdb" "$PGDATABASE"
 
-sql() { psql -XqAtv ON_ERROR_STOP=1 "$@"; }
+sql() { "$pg_bin/psql" -XqAtv ON_ERROR_STOP=1 "$@"; }
 replay() { ./scripts/replay-service-record-patch.sh "$@"; }
 apply() {
   if ! sql -f "$1" >"$scratch/patch.log" 2>&1; then
@@ -50,7 +50,7 @@ SQL
       ;;
     */20260713000000_*/migration.sql) replay cases ;;
     */20261126010000_*/migration.sql)
-      createdb --template="$PGDATABASE" fresh
+      "$pg_bin/createdb" --template="$PGDATABASE" fresh
       PGDATABASE=fresh apply "$migration"
       PGDATABASE=fresh apply "$stage_check"
       break
@@ -79,18 +79,18 @@ replay verify-schedules
 [[ $(sql -c 'SELECT start_date FROM service_record_assignment WHERE schedule_id = 2') == 2026-01-05 ]]
 
 refuse_replay() {
-  if replay cases >"$scratch/refusal.log" 2>&1 || ! rg -Fq "$1" "$scratch/refusal.log"; then
+  if replay "$1" >"$scratch/refusal.log" 2>&1 || ! grep -Fq "$2" "$scratch/refusal.log"; then
     cat "$scratch/refusal.log" >&2
     return 1
   fi
 }
 sql -c 'CREATE INDEX idx_record_case_client ON service_record_case (client_id)'
-refuse_replay 'Legacy baby case key still present'
+refuse_replay cases 'Legacy baby case key still present'
 sql -c 'DROP INDEX idx_record_case_client'
 
 apply prisma/scripts/stage-baby-case-keys.sql
 sql -c 'ALTER INDEX uq_record_day_sched_session_unbound RENAME TO qa_missing_key'
-refuse_replay 'Missing or incorrect staged baby case index'
+refuse_replay cases 'Missing or incorrect staged baby case index'
 sql -c 'ALTER INDEX qa_missing_key RENAME TO uq_record_day_sched_session_unbound'
 
 sql -v branch="$branch" <<'SQL'
@@ -122,25 +122,61 @@ SQL
 
 fingerprint() {
   local table
-  for table in employee_schedule service_record_case service_record service_record_assignment service_record_day service_record_token; do
+  for table in "$@"; do
     sql -c "SELECT count(*), md5(jsonb_agg(to_jsonb(row) ORDER BY id)::text) FROM $table row"
   done
 }
-before=$(fingerprint)
+record_tables=(service_record_case service_record service_record_assignment service_record_day service_record_token)
+before=$(fingerprint employee_schedule "${record_tables[@]}")
 legacy_case_patch=prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
 if sql -f "$legacy_case_patch" >"$scratch/refusal.log" 2>&1 ||
-  ! rg -Fq 'service_record_case_client_id_key' "$scratch/refusal.log"; then
+  ! grep -Fq 'service_record_case_client_id_key' "$scratch/refusal.log"; then
   cat "$scratch/refusal.log" >&2
   exit 1
 fi
 
-for attempt in 1 2; do
+replay_all() {
   replay cases
   replay "$schedule_repair"
   replay "$termination"
   replay verify-schedules
-done
-[[ $(fingerprint) == "$before" ]]
+}
+replay_all
+replay_all
+[[ $(fingerprint employee_schedule "${record_tables[@]}") == "$before" ]]
+
+# An ordinary client update leaves both live schedules unflagged.
+records_before=$(fingerprint "${record_tables[@]}")
+sql -c "UPDATE client SET service_status = 'terminated' WHERE id = 1"
+refuse_replay verify-schedules '2 schedule(s) of terminated clients are missing terminated_at'
+replay_all
+[[ $(sql <<'SQL'
+SELECT count(*) FROM employee_schedule
+WHERE client_id = 1 AND terminated_at = '2026-01-10'::date::timestamptz
+  AND (id, start_date, end_date) IN
+    ((1, DATE '2026-01-01', DATE '2026-01-05'), (2, DATE '2026-01-03', DATE '2026-01-10'));
+SQL
+) == 2 ]]
+[[ $(fingerprint "${record_tables[@]}") == "$records_before" ]]
+
+# The old early-termination writer could also leave an inverted schedule.
+# Preserve the original termination date, even though the client has a later end date.
+sql -c "UPDATE employee_schedule SET end_date = '2025-12-31', terminated_at = NULL WHERE id = 1"
+refuse_replay verify-schedules '1 employee_schedule row(s) have an inverted date range'
+replay_all
+[[ $(sql <<'SQL'
+SELECT count(*) FROM employee_schedule
+WHERE client_id = 1 AND (id, start_date, end_date, terminated_at) IN (
+  (1, DATE '2026-01-01', DATE '2026-01-01', DATE '2025-12-31'::timestamptz),
+  (2, DATE '2026-01-03', DATE '2026-01-10', DATE '2026-01-10'::timestamptz)
+);
+SQL
+) == 2 ]]
+[[ $(fingerprint "${record_tables[@]}") == "$records_before" ]]
+after_healing=$(fingerprint employee_schedule "${record_tables[@]}")
+replay_all
+[[ $(fingerprint employee_schedule "${record_tables[@]}") == "$after_healing" ]]
+
 [[ $(sql -c 'SELECT count(*) FROM service_record_day WHERE schedule_id = 1 AND session_index = 1') == 2 ]]
 [[ $(sql <<'SQL'
 SELECT count(*) FROM service_record_token t

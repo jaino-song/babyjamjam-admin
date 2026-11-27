@@ -11,15 +11,20 @@ execute_sql() {
   printf '\n$patch_sql$;\n'
 }
 
+staged=""
 case "${1:-}" in
   cases)
     legacy=prisma/migrations/20260713000000_add_client_service_record_case/migration.sql
     common=(prisma/migrations/20260713110000_align_service_record_case_schema/migration.sql
       prisma/scripts/verify-service-record-cases.sql)
     ;;
-  prisma/migrations/20260902000000_repair_replacement_schedule_start_date/migration.sql|\
+  prisma/migrations/20260902000000_repair_replacement_schedule_start_date/migration.sql)
+    legacy="$1"
+    common=()
+    ;;
   prisma/migrations/20260903000000_add_employee_schedule_terminated_at/migration.sql)
     legacy="$1"
+    staged=prisma/scripts/repair-employee-schedule-termination.sql
     common=()
     ;;
   verify-schedules)
@@ -44,6 +49,9 @@ BEGIN
 SQL
   execute_sql prisma/scripts/verify-baby-case-stage-before-release.sql
   printf 'SET LOCAL search_path = public, pg_temp;\n'
+  if [[ -n "$staged" ]]; then
+    execute_sql "$staged"
+  fi
   if [[ -n "$legacy" ]]; then
     printf 'ELSE\n'
     execute_sql "$legacy"
