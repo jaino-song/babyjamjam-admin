@@ -1,6 +1,7 @@
 "use client";
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import { getStartDateChangeStep, type StartDateChangeStep } from "@babyjamjam/shared/utils/start-date-change-step";
 import {
   getUserErrorMessage,
   normalizeApiError,
@@ -175,7 +176,7 @@ interface StartDateConfirmation {
   dto: UpdateClientDto;
   lock: NonNullable<NonNullable<NormalizedApiError["problem"]>["startDateLock"]>;
   /** A finalized household always has written sessions, so it goes straight to "records". */
-  step: "started" | "records";
+  step: StartDateChangeStep;
 }
 
 const formatPrice = (price: number | string): string => {
@@ -1118,15 +1119,12 @@ export default function NewClientPage() {
     ) {
       if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
       setErrorState(null);
-      if (!lock.finalized && !lock.serviceStarted && lock.recordedSessionCount === 0) {
+      // The "already started" question is only for a service that is running now.
+      const step = getStartDateChangeStep(lock, editingClient?.endDate);
+      if (step === null) {
         await retryStartDateChange("CONFIRM_STARTED", { id: editingClientId, dto: updateDto });
       } else {
-        setStartDateConfirmation({
-          id: editingClientId,
-          dto: updateDto,
-          lock,
-          step: lock.finalized || !lock.serviceStarted ? "records" : "started",
-        });
+        setStartDateConfirmation({ id: editingClientId, dto: updateDto, lock, step });
       }
       return;
     }

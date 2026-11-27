@@ -154,6 +154,14 @@ function editingClient(): Client {
 
 const startedTitle = "서비스 시작 후 변경";
 const recordsTitle = "제공기록지 회차 처리";
+// "서비스 시작 후 변경" is asked only while the saved service runs (2026-11-02 to 2026-11-13),
+// so the clock is pinned inside it. Only Date is faked; timers stay real.
+const DURING_SERVICE = new Date("2026-11-05T12:00:00+09:00");
+const FAKE_DATE_ONLY = [
+  "nextTick", "setImmediate", "clearImmediate", "setInterval", "clearInterval", "setTimeout", "clearTimeout",
+  "queueMicrotask", "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+  "hrtime", "performance",
+] as const;
 const lock = { serviceStarted: true, recordedSessionCount: 3 };
 const lockedError = (startDateLock: unknown = lock, status = 409) => ({
   response: {
@@ -206,7 +214,12 @@ function expectNoConfirmation() {
 }
 
 describe("mobile edit page split employee save after start-date confirmation", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   beforeEach(() => {
+    jest.useFakeTimers({ now: DURING_SERVICE, doNotFake: [...FAKE_DATE_ONLY] });
     mockedCalendarHook.mockReset();
     if (defaultCalendarHook) mockedCalendarHook.mockImplementation(defaultCalendarHook);
     mockCreateClient.mockReset().mockResolvedValue({ id: 1 });

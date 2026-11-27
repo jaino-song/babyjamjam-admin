@@ -93,6 +93,14 @@ const client: Client = {
 };
 const startedTitle = "서비스 시작 후 변경";
 const recordsTitle = "제공기록지 회차 처리";
+// "서비스 시작 후 변경" is asked only while the saved service runs (2026-08-26 to 2026-09-14),
+// so the clock is pinned inside it. Only Date is faked; timers stay real.
+const DURING_SERVICE = new Date("2026-09-01T12:00:00+09:00");
+const FAKE_DATE_ONLY = [
+  "nextTick", "setImmediate", "clearImmediate", "setInterval", "clearInterval", "setTimeout", "clearTimeout",
+  "queueMicrotask", "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+  "hrtime", "performance",
+] as const;
 
 function lockError(lock?: { serviceStarted: boolean; recordedSessionCount: number }) {
   return {
@@ -185,6 +193,11 @@ describe("client start-date confirmation with an employee change", () => {
       .mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3 }))
       .mockResolvedValueOnce(client)
       .mockResolvedValue(employeeClient);
+    jest.useFakeTimers({ now: DURING_SERVICE, doNotFake: [...FAKE_DATE_ONLY] });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it.each([

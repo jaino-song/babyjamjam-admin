@@ -16,6 +16,7 @@ import {
     type StartDateChangeMode,
 } from "@babyjamjam/shared";
 import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { getStartDateChangeStep, type StartDateChangeStep } from "@babyjamjam/shared/utils/start-date-change-step";
 import {
     isRealIsoDate,
     resolveFieldMessage,
@@ -154,13 +155,6 @@ const START_DATE_RECORDS_DESCRIPTION =
 // moves its sessions with the new start, since starting over would delete the signed ones.
 const FINALIZED_SERVICE_RECORD_STATUSES = new Set<string>(["FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"]);
 
-type StartDateChangeStep = "started" | "records";
-
-/** A finalized household always has written sessions, so it goes straight to the records question. */
-function startDateChangeStep(lock: StartDateLock): StartDateChangeStep {
-    if (lock.finalized) return "records";
-    return lock.serviceStarted ? "started" : "records";
-}
 const OUT_OF_POCKET_PRICE_ERROR = "자부담 요금을 불러오지 못했어요";
 const CLIENT_END_DATE_CHANGED_MESSAGE =
     "그동안 서비스 종료일이 바뀌어 저장하지 않았어요. 창을 닫고 다시 열어 최신 정보로 수정해 주세요.";
@@ -2048,13 +2042,15 @@ function ClientFormContent({
                             recordedSessionCount: record.sessions.length,
                             ...(finalized ? { finalized: true as const } : {}),
                         };
-                        if (lock.serviceStarted || lock.recordedSessionCount > 0) {
-                            setPendingStartDateChange({
-                                id: client.id,
-                                dto: updateDto,
-                                lock,
-                                step: startDateChangeStep(lock),
-                            });
+                        // 서비스 시작 후 변경 is asked only while the service runs (getStartDateChangeStep).
+                        const step = getStartDateChangeStep(lock, normalizeDateForDisplayState(client.endDate));
+                        if (step) {
+                            setPendingStartDateChange({ id: client.id, dto: updateDto, lock, step });
+                            return;
+                        }
+                        if (lock.serviceStarted) {
+                            // An ended service with nothing written still needs the started mode to save.
+                            await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED", session);
                             return;
                         }
                     }
@@ -2066,16 +2062,12 @@ function ClientFormContent({
                     if (!isCurrentSession(session)) return;
                     const lock = getStartDateLock(cause);
                     if (!lock) throw cause;
-                    if (!lock.finalized && !lock.serviceStarted && lock.recordedSessionCount === 0) {
+                    const step = getStartDateChangeStep(lock, normalizeDateForDisplayState(client.endDate));
+                    if (step === null) {
                         await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED", session);
                         return;
                     }
-                    setPendingStartDateChange({
-                        id: client.id,
-                        dto: updateDto,
-                        lock,
-                        step: startDateChangeStep(lock),
-                    });
+                    setPendingStartDateChange({ id: client.id, dto: updateDto, lock, step });
                     return;
                 }
                 if (!isCurrentSession(session)) return;

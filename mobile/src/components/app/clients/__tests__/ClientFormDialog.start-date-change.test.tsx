@@ -22,6 +22,15 @@ const clearPrefillName = jest.fn();
 const base = "mobile_clients_form-dialog";
 const startedTitle = "서비스 시작 후 변경";
 const recordsTitle = "제공기록지 회차 처리";
+// "서비스 시작 후 변경" is asked only while the saved service runs (2026-11-02 to 2026-11-13),
+// so the clock is pinned inside it. Only Date is faked; timers stay real.
+const DURING_SERVICE = new Date("2026-11-05T12:00:00+09:00");
+const AFTER_SERVICE = new Date("2026-11-14T12:00:00+09:00");
+const FAKE_DATE_ONLY = [
+    "nextTick", "setImmediate", "clearImmediate", "setInterval", "clearInterval", "setTimeout", "clearTimeout",
+    "queueMicrotask", "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+    "hrtime", "performance",
+] as const;
 const client = {
     id: 77,
     name: "홍길동",
@@ -82,7 +91,12 @@ const expectKeptForm = (props: Awaited<ReturnType<typeof renderDialog>>["props"]
 };
 
 describe("ClientFormDialog start-date confirmation", () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     beforeEach(() => {
+        jest.useFakeTimers({ now: DURING_SERVICE, doNotFake: [...FAKE_DATE_ONLY] });
         jest.resetAllMocks();
         (useLocale as jest.Mock).mockReturnValue("ko");
         (useClientDialogStore as unknown as jest.Mock).mockImplementation(
@@ -209,6 +223,46 @@ describe("ClientFormDialog start-date confirmation", () => {
         await screen.findByRole("dialog", { name: recordsTitle });
         expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
         expectKeptForm(props);
+    });
+
+    it("still asks the started question on the saved end date itself", async () => {
+        jest.setSystemTime(new Date("2026-11-13T23:30:00+09:00"));
+        updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 0 }));
+        const { props } = await renderDialog();
+        await submitChangedDate();
+        await screen.findByRole("dialog", { name: startedTitle });
+        expectKeptForm(props);
+    });
+
+    it("opens records directly once the service has ended", async () => {
+        jest.setSystemTime(AFTER_SERVICE);
+        updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 3 }));
+        const { props } = await renderDialog();
+        await submitChangedDate();
+        const confirmation = await screen.findByRole("dialog", { name: recordsTitle });
+        expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+        expect(within(confirmation).getByRole("button", { name: "처음부터 시작" })).toBeEnabled();
+        expectKeptForm(props);
+        await userEvent.setup().click(button("모두 옮기기"));
+        await waitFor(() => expect(props.onClose).toHaveBeenCalledTimes(1));
+        expect(updateMutateAsync.mock.calls[1][0]).toEqual({
+            id: client.id, dto: { ...updateMutateAsync.mock.calls[0][0].dto, startDateChangeMode: "MOVE" },
+        });
+    });
+
+    it("saves an ended service with no records without asking", async () => {
+        jest.setSystemTime(AFTER_SERVICE);
+        updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 0 }));
+        const { props } = await renderDialog();
+        await submitChangedDate();
+        await waitFor(() => expect(props.onClose).toHaveBeenCalledTimes(1));
+        expect(updateMutateAsync).toHaveBeenCalledTimes(2);
+        expect(updateMutateAsync.mock.calls[1][0]).toEqual({
+            id: client.id, dto: { ...updateMutateAsync.mock.calls[0][0].dto, startDateChangeMode: "CONFIRM_STARTED" },
+        });
+        expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+        expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument();
+        expect(props.onSuccess).toHaveBeenCalledWith(client);
     });
 
     it("asks a finalized household the records question with 처음부터 시작 disabled, and 모두 옮기기 sends MOVE once", async () => {

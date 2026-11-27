@@ -159,6 +159,15 @@ function editingClient(): Client {
 
 const startedTitle = "서비스 시작 후 변경";
 const recordsTitle = "제공기록지 회차 처리";
+// "서비스 시작 후 변경" is asked only while the saved service runs (2026-11-02 to 2026-11-13),
+// so the clock is pinned inside it. Only Date is faked; timers stay real.
+const DURING_SERVICE = new Date("2026-11-05T12:00:00+09:00");
+const AFTER_SERVICE = new Date("2026-11-14T12:00:00+09:00");
+const FAKE_DATE_ONLY = [
+  "nextTick", "setImmediate", "clearImmediate", "setInterval", "clearInterval", "setTimeout", "clearTimeout",
+  "queueMicrotask", "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+  "hrtime", "performance",
+] as const;
 const base = "mobile_clients-new_screen_root";
 const lock = { serviceStarted: true, recordedSessionCount: 3 };
 const lockedError = (startDateLock: unknown = lock, status = 409) => ({
@@ -213,7 +222,12 @@ function switchClient(view: ReturnType<typeof render>) {
 }
 
 describe("mobile edit page start-date confirmation", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   beforeEach(() => {
+    jest.useFakeTimers({ now: DURING_SERVICE, doNotFake: [...FAKE_DATE_ONLY] });
     mockedCalendarHook.mockReset();
     if (defaultCalendarHook) mockedCalendarHook.mockImplementation(defaultCalendarHook);
     mockCreateClient.mockReset().mockResolvedValue({ id: 1 });
@@ -275,6 +289,31 @@ describe("mobile edit page start-date confirmation", () => {
     await screen.findByRole("dialog", { name: recordsTitle });
     expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
     expectKeptForm();
+  });
+
+  it("opens records directly once the service has ended", async () => {
+    jest.setSystemTime(AFTER_SERVICE);
+    mockUpdateClient.mockRejectedValueOnce(lockedError());
+    await openEdit();
+    await saveChangedDate();
+    const records = await screen.findByRole("dialog", { name: recordsTitle });
+    expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+    expect(within(records).getByRole("button", { name: "처음부터 시작" })).toBeEnabled();
+    expectKeptForm();
+    fireEvent.click(button("모두 옮기기"));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/clients?id=7"));
+    expect(mockUpdateClient.mock.calls[1][0]).toEqual({ id: 7, dto: { ...mockUpdateClient.mock.calls[0][0].dto, startDateChangeMode: "MOVE" } });
+  });
+
+  it("saves an ended service with no records without asking", async () => {
+    jest.setSystemTime(AFTER_SERVICE);
+    mockUpdateClient.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 0 }));
+    await openEdit();
+    await saveChangedDate();
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/clients?id=7"));
+    expect(mockUpdateClient).toHaveBeenCalledTimes(2);
+    expect(mockUpdateClient.mock.calls[1][0]).toEqual({ id: 7, dto: { ...mockUpdateClient.mock.calls[0][0].dto, startDateChangeMode: "CONFIRM_STARTED" } });
+    expectNoConfirmation();
   });
 
   it("asks a finalized household the records question with 처음부터 시작 disabled, and 모두 옮기기 sends MOVE", async () => {

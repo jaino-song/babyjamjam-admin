@@ -25,6 +25,14 @@ const updateMutateAsync = jest.fn();
 const clearPrefillName = jest.fn();
 const startedTitle = "서비스 시작 후 변경";
 const recordsTitle = "제공기록지 회차 처리";
+// "서비스 시작 후 변경" is asked only while the saved service runs (2026-11-02 to 2026-11-13),
+// so the clock is pinned inside it. Only Date is faked; timers stay real.
+const DURING_SERVICE = new Date("2026-11-05T12:00:00+09:00");
+const FAKE_DATE_ONLY = [
+    "nextTick", "setImmediate", "clearImmediate", "setInterval", "clearInterval", "setTimeout", "clearTimeout",
+    "queueMicrotask", "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+    "hrtime", "performance",
+] as const;
 const client = {
     id: 77,
     name: "홍길동",
@@ -96,7 +104,12 @@ function expectNoConfirmation() {
 }
 
 describe("ClientFormDialog split employee save after start-date confirmation", () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     beforeEach(() => {
+        jest.useFakeTimers({ now: DURING_SERVICE, doNotFake: [...FAKE_DATE_ONLY] });
         jest.resetAllMocks();
         (useLocale as jest.Mock).mockReturnValue("ko");
         (useClientDialogStore as unknown as jest.Mock).mockImplementation(

@@ -2,6 +2,7 @@
 
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import { getStartDateChangeStep, type StartDateChangeStep } from "@babyjamjam/shared/utils/start-date-change-step";
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
     findOutOfPocketPriceInfo,
@@ -111,7 +112,7 @@ interface StartDateConfirmation {
     dto: UpdateClientDto;
     lock: NonNullable<NonNullable<NormalizedApiError["problem"]>["startDateLock"]>;
     /** A finalized household always has written sessions, so it goes straight to "records". */
-    step: "started" | "records";
+    step: StartDateChangeStep;
 }
 
 interface StructuredErrorPresentation {
@@ -560,16 +561,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             && normalized.problem?.code === "SERVICE_RECORD_START_DATE_LOCKED"
             && lock
         ) {
-            if (!lock.finalized && !lock.serviceStarted && lock.recordedSessionCount === 0) {
+            // The "already started" question is only for a service that is running now.
+            const step = getStartDateChangeStep(lock, client.endDate);
+            if (step === null) {
                 await retryStartDateChange("CONFIRM_STARTED", { id: client.id, dto: updateDto });
                 return;
             }
-            setStartDateConfirmation({
-                id: client.id,
-                dto: updateDto,
-                lock,
-                step: lock.finalized || !lock.serviceStarted ? "records" : "started",
-            });
+            setStartDateConfirmation({ id: client.id, dto: updateDto, lock, step });
             return;
         }
         // The save carried the end date this form was opened with and the backend found it moved.

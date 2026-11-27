@@ -85,6 +85,15 @@ const client: Client = {
 };
 const startedTitle = "서비스 시작 후 변경";
 const recordsTitle = "제공기록지 회차 처리";
+// "서비스 시작 후 변경" is asked only while the saved service runs (2026-08-26 to 2026-09-14),
+// so the clock is pinned inside it. Only Date is faked; timers stay real.
+const DURING_SERVICE = new Date("2026-09-01T12:00:00+09:00");
+const AFTER_SERVICE = new Date("2026-09-15T12:00:00+09:00");
+const FAKE_DATE_ONLY = [
+  "nextTick", "setImmediate", "clearImmediate", "setInterval", "clearInterval", "setTimeout", "clearTimeout",
+  "queueMicrotask", "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+  "hrtime", "performance",
+] as const;
 
 function lockError(lock?: { serviceStarted: boolean; recordedSessionCount: number; finalized?: true }) {
   return {
@@ -142,6 +151,11 @@ describe("client start-date change confirmation", () => {
     mockApiGet.mockReset().mockResolvedValue({ data: { exists: false } });
     mockCreateClient.mockReset();
     mockUpdateClient.mockReset().mockResolvedValue(client);
+    jest.useFakeTimers({ now: DURING_SERVICE, doNotFake: [...FAKE_DATE_ONLY] });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("silently retries an unstarted service with no records using the exact rejected dto", async () => {
@@ -211,6 +225,38 @@ describe("client start-date change confirmation", () => {
     await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(client));
     expectRetry(mode);
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("still asks the started question on the saved end date itself", async () => {
+    jest.setSystemTime(new Date("2026-09-14T23:30:00+09:00"));
+    mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 0 }));
+    await submitChangedStartDate();
+    expect(await screen.findByRole("dialog", { name: startedTitle })).toBeVisible();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes straight to the records question once the service has ended", async () => {
+    jest.setSystemTime(AFTER_SERVICE);
+    mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3 }));
+    const { onSuccess } = await submitChangedStartDate();
+    const records = await screen.findByRole("dialog", { name: recordsTitle });
+    expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+    expect(within(records).getByRole("button", { name: "처음부터 시작" })).toBeEnabled();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(records).getByRole("button", { name: "모두 옮기기" }));
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(client));
+    expectRetry("MOVE");
+  });
+
+  it("saves an ended service with no records without asking", async () => {
+    jest.setSystemTime(AFTER_SERVICE);
+    mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 0 }));
+    const { onSuccess } = await submitChangedStartDate();
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledWith(client));
+    expectRetry("CONFIRM_STARTED");
+    expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument();
+    expectNoInlineError();
   });
 
   it.each(["취소", "Escape", "overlay"])("%s cancels the started confirmation without losing form values", async (action) => {
