@@ -40,6 +40,7 @@ import {
 } from "application/policies/service-record-write-lock.policy";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { resolveServiceRecordCaseTarget } from "./service-record-case-target";
+import { recordLinkHash, recordLinkPhone } from "./service-record-link-group-source";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 export const SERVICE_RECORD_CASE_STATUS = {
@@ -662,16 +663,36 @@ export class ServiceRecordLifecycleService {
         }
         if (client.endDate) {
             const tokenExpiresAt = getServiceRecordTokenExpiresAt(client.endDate);
+            const { firstAllocationAt } = params;
+            const expiryCandidates: Prisma.service_record_tokenWhereInput[] | undefined = firstAllocationAt ? [
+                { createdAt: { gte: firstAllocationAt } },
+                { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } },
+            ] : undefined;
+            // The retained scalar link keeps its original expiry until the bound case end date moves later.
+            if (expiryCandidates && firstAllocationAt && babyId && existing?.endDate
+                && client.endDate > existing.endDate && !terminated && !existing.finalizedAt) {
+                const currentSchedule = schedules.filter(({ replaced, terminatedAt }) => !replaced && !terminatedAt)
+                    .sort((left, right) => right.id - left.id)[0];
+                const owner = currentSchedule && await db.service_record_baby_assignment.findFirst({
+                    where: {
+                        branchId, clientId, babyId, scheduleId: currentSchedule.id,
+                        activeOwner: true, endedAt: null, teamSlot: { active: true },
+                        employee: { branchId, deletedAt: null },
+                    },
+                    select: { employeeId: true, employee: { select: { phone: true } } },
+                });
+                const phone = recordLinkPhone(owner?.employee.phone);
+                if (currentSchedule && owner && phone) {
+                    expiryCandidates.push({
+                        scheduleId: currentSchedule.id, employeeId: owner.employeeId, expectedPhoneHash: recordLinkHash(phone),
+                        createdAt: { lt: firstAllocationAt }, expiresAt: { gt: new Date() },
+                    });
+                }
+            }
             await db.service_record_token.updateMany({
                 where: {
                     ...caseScope, active: true, revokedAt: null, expiresAt: { lt: tokenExpiresAt },
-                    // A case-specific scalar credential carried into a first
-                    // multi-baby allocation keeps its original expiry on later
-                    // routine syncs, including contract linking after the save.
-                    ...(params.firstAllocationAt ? { OR: [
-                        { createdAt: { gte: params.firstAllocationAt } },
-                        { linkTokenHash: { startsWith: GROUP_RECORD_LINK_PREFIX } },
-                    ] } : {}),
+                    ...(expiryCandidates ? { OR: expiryCandidates } : {}),
                 },
                 data: { expiresAt: tokenExpiresAt },
             });

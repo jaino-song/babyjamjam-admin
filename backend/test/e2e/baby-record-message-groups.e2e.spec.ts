@@ -1,4 +1,5 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { ExecutionContext, INestApplication } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
@@ -36,10 +37,14 @@ import { SchedulerLeaseModule } from "module/scheduler-lease.module";
 import { ScriptedAligoStub } from "./helpers/scripted-aligo.stub";
 
 function assertTestTarget() {
+    const boundExpiryDatabase = "postgresql://bjj_revision_test@127.0.0.1:62295/throwaway_baby_bound_expiry";
     const urls = ["throwaway_baby_send_work", "throwaway_baby_send_verify", "throwaway_baby_signed_binding"]
         .map(name => `postgresql://bjj_revision_test@127.0.0.1:62295/${name}`);
     const url = process.env["DATABASE_URL"];
-    if (!url || !urls.includes(url) || process.env["DIRECT_URL"] !== url
+    const allowed = url === boundExpiryDatabase
+        ? process.env["SCHEDULERS_ENABLED"] === "false" && process.env["DOCUMENT_JOBS_WORKER"] === "false"
+        : url !== undefined && urls.includes(url);
+    if (!allowed || process.env["DIRECT_URL"] !== url
         || process.env["NODE_ENV"] !== "test" || process.env["E2E_VENDOR_STUBS"] !== "1") {
         throw new Error("Message-group fixtures require equal URLs for the approved loopback PostgreSQL work or verify clone and vendor stubs");
     }
@@ -314,6 +319,78 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         expect(await db.service_record_day.count({ where: { branchId, serviceRecordCaseId: sibling?.id } })).toBe(0);
         expect(await db.service_record_day.count({ where: { branchId, serviceRecordCaseId: f.record.id } })).toBe(3);
         expect((await legacyChallenge(f.linkToken).expect(201)).body.ok).toBe(true);
+    });
+
+    it("extends the retained primary link and verified session only when the customer period grows", async () => {
+        const f = await signedLegacyFamily();
+        const { body: access } = await legacyChallenge(f.linkToken).expect(201);
+        expect(access.ok).toBe(true);
+        const where = { branchId, id: f.token.id };
+        const verified = await db.service_record_token.findUniqueOrThrow({ where });
+        const path = `/clients/${f.scope.clientId}`;
+        await http().patch(path).send(f.save).expect(200);
+        await http().patch(path).send({ endDate: dateAt(14) }).expect(200);
+        expect(isDeepStrictEqual(await db.service_record_token.findUniqueOrThrow({ where }), verified)).toBe(true);
+
+        const endDate = dateAt(21);
+        await http().patch(path).send({ endDate }).expect(200);
+        const record = await db.service_record_case.findUniqueOrThrow({ where: { branchId, id: f.record.id } });
+        expect(record.endDate).toEqual(new Date(endDate));
+        const { expiresAt, ...renewed } = await db.service_record_token.findUniqueOrThrow({ where });
+        expect(expiresAt).toEqual(getServiceRecordTokenExpiresAt(new Date(endDate)));
+        expect(isDeepStrictEqual({ ...renewed, expiresAt: verified.expiresAt }, verified)).toBe(true);
+        expect(await db.service_record_day.findMany({
+            where: { branchId, serviceRecordCaseId: f.record.id }, orderBy: { sessionIndex: "asc" },
+        })).toEqual(f.days.sort((a, b) => a.sessionIndex - b.sessionIndex));
+
+        const clock = jest.spyOn(Date, "now").mockReturnValue(verified.expiresAt.getTime() + 1);
+        try {
+            await legacyStatus(f.linkToken).expect(200, { valid: true });
+            const { body: context } = await caregiverContext(access.accessToken).expect(200);
+            expect(context.babyId).toBe(record.babyId);
+        } finally {
+            clock.mockRestore();
+        }
+        await linkService.scheduleForServiceStart(f.schedule.id);
+        const jobs = await getJobs(f.scope.clientId);
+        expect(jobs.map(job => job.recipientEmployeeId)).toEqual([staff[1]]);
+        expect(calls()).toHaveLength(0);
+
+        const laterExpiry = getServiceRecordTokenExpiresAt(new Date(dateAt(28)));
+        await db.service_record_token.update({ where, data: { expiresAt: laterExpiry } });
+        await http().patch(path).send({ endDate: dateAt(22) }).expect(200);
+        expect((await db.service_record_token.findUniqueOrThrow({ where })).expiresAt).toEqual(laterExpiry);
+    });
+
+    it.each([
+        ["expired", { expiresAt: new Date(0) }],
+        ["revoked", { revokedAt: new Date() }],
+        ["inactive", { active: false }],
+    ] as const)(
+        "does not revive an %s retained primary link after a customer extension",
+        async (_state, data) => {
+            const f = await signedLegacyFamily();
+            const path = `/clients/${f.scope.clientId}`;
+            await http().patch(path).send(f.save).expect(200);
+            const where = { branchId, id: f.token.id };
+            const invalid = await db.service_record_token.update({ where, data });
+            await http().patch(path).send({ endDate: dateAt(21) }).expect(200);
+            expect(isDeepStrictEqual(await db.service_record_token.findUniqueOrThrow({ where }), invalid)).toBe(true);
+            await legacyStatus(f.linkToken).expect(200, { valid: false, reason: "unavailable" });
+        },
+    );
+
+    it("keeps old scalar expiry unchanged for an unrelated caregiver on the bound case", async () => {
+        const f = await signedLegacyFamily();
+        const path = `/clients/${f.scope.clientId}`;
+        await http().patch(path).send(f.save).expect(200);
+        const where = { branchId, id: f.token.id };
+        const unrelated = await db.service_record_token.update({
+            where, data: { employeeId: staff[2], expectedPhoneHash: digest(phone(2)) },
+        });
+        await http().patch(path).send({ endDate: dateAt(21) }).expect(200);
+        expect(isDeepStrictEqual(await db.service_record_token.findUniqueOrThrow({ where }), unrelated)).toBe(true);
+        await legacyStatus(f.linkToken).expect(200, { valid: false, reason: "unavailable" });
     });
 
     it("keeps a locked challenge locked when binding its original case", async () => {
