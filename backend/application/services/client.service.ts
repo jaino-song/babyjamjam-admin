@@ -121,6 +121,8 @@ import { AgentAutomationRecordStoreService } from "../agent/agent-automation-rec
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { AdminAuditEventWriter } from "./admin-audit-event.service";
+import type { ServiceRecordAdminActor } from "./admin-service-record.service";
 import {
     allocationConflict,
     allocationProjection,
@@ -132,9 +134,11 @@ import {
     planClientAllocation,
     planLegacyClientAllocation,
     sameProviders,
+    type AuditedLegacyRecordBinding,
     type ClientAllocationInput,
     type ClientAllocationProjection,
 } from "./client-allocation.service";
+import { legacyRecordBindingConflict, proveLegacyRecordBinding, type LegacyRecordBinding } from "./client-legacy-record-binding";
 import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
@@ -299,6 +303,7 @@ export class ClientService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
         @Optional() private readonly serviceRecordStartDateChangeService?: ServiceRecordStartDateChangeService,
+        @Optional() private readonly adminAudit?: AdminAuditEventWriter,
     ) {}
 
     /**
@@ -2097,11 +2102,14 @@ export class ClientService {
             allowSundayService: boolean;
             allowHolidayService: boolean;
         };
-    }, beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>): Promise<ClientEntity> {
+    }, beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>,
+    legacyRecordBinding?: { selection: LegacyRecordBinding; actor: ServiceRecordAdminActor }): Promise<ClientEntity> {
         // Keep invalid phone input from reaching lifecycle/provider work or a
         // transaction that could partially mutate schedule state.
         assertClientPhoneInput(params.phone);
         const configured = hasAllocationInput(params);
+        if (legacyRecordBinding && (!configured || beforeWrite || !this.serviceRecordLifecycleService
+            || !this.messageAutomationBranchLockService)) legacyRecordBindingConflict("allocation");
         if (configured && params.voucherClient === false) allocationConflict("/voucherClient");
         assertAllocationStaffInput(params);
         // Get existing client
@@ -2393,6 +2401,17 @@ export class ClientService {
                 : currentClient.duration === null && lockedDerivedDuration !== null
                     ? lockedDerivedDuration
                     : undefined;
+            if (legacyRecordBinding && (
+                lockedClient?.branchId !== branchid
+                || getEffectiveClientServiceStatus(currentClient.serviceStatus ?? null, currentClient.startDate,
+                    currentClient.endDate, currentClient.bookingConfirmedAt) !== SERVICE_STATUS.ACTIVE
+                || (savedServiceStatus !== undefined && savedServiceStatus !== currentClient.serviceStatus)
+                || (startDateUpdate !== undefined && startDateUpdate?.getTime() !== currentClient.startDate?.getTime())
+                || (endDateUpdate !== undefined && endDateUpdate?.getTime() !== currentClient.endDate?.getTime())
+                || (duration !== undefined && duration !== currentClient.duration)
+                || (["allowSaturdayService", "allowSundayService", "allowHolidayService"] as const).some(
+                    field => params[field] !== undefined && params[field] !== (currentClient[field] ?? false))
+            )) legacyRecordBindingConflict("schedule");
             const startDateChangeDecision = await this.serviceRecordLifecycleService?.validatePeriodChange({
                 branchId: branchid,
                 clientId: id,
@@ -2443,6 +2462,27 @@ export class ClientService {
                 }, snapshot)
                 : legacyAllocationWrite && !preserveAllocation
                     ? await planLegacyClientAllocation(transaction, snapshot, params, true) : null;
+            const currentSchedule = employeeChanged || allocation || (snapshot && lockedHasDateUpdate)
+                ? await transaction.employee_schedule.findFirst({
+                    where: { clientId: id, branchId: branchid, replaced: false, ...(snapshot ? { terminatedAt: null } : {}) },
+                    orderBy: { id: "desc" },
+                })
+                : null;
+            let lockedBinding: AuditedLegacyRecordBinding | undefined;
+            if (legacyRecordBinding) {
+                const { adminAudit } = this;
+                const { selection, actor } = legacyRecordBinding;
+                if (!adminAudit || !actor?.userId) throw new InternalServerErrorException();
+                if (!snapshot || !allocation || !currentSchedule || startDateChangeDecision
+                    || allocation.providers.find(({ slot }) => slot === 0)?.employeeId !== currentSchedule.primaryEmployeeId
+                    || (allocation.providers.find(({ slot }) => slot === 1)?.employeeId ?? null) !== currentSchedule.secondaryEmployeeId
+                    || (startDateUpdate && startDateUpdate.getTime() !== currentSchedule.startDate.getTime())
+                    || (endDateUpdate && endDateUpdate.getTime() !== currentSchedule.endDate.getTime())) {
+                    legacyRecordBindingConflict("schedule");
+                }
+                const proof = await proveLegacyRecordBinding(transaction, scope, selection, allocation, snapshot, currentSchedule);
+                lockedBinding = { ...proof, actor, audit: adminAudit };
+            }
             const previousProjection = snapshot && allocationProjection(snapshot);
             const teamChanged = !!allocation && !sameProviders(allocation.providers, previousProjection?.providers ?? []);
             configuredPreBooking = (configured || lockedClient?.fetalConfirmation === "CONFIRMED") && getEffectiveClientServiceStatus(
@@ -2452,7 +2492,7 @@ export class ClientService {
                 currentClient.bookingConfirmedAt,
             ) === SERVICE_STATUS.PRE_BOOKING;
             if (allocation?.unchanged && configured && previousProjection
-                && params.expectedAllocationVersion !== previousProjection.allocationVersion) {
+                && (lockedBinding || params.expectedAllocationVersion !== previousProjection.allocationVersion)) {
                 // Only the allocation is versioned. Reject a retry that would
                 // otherwise change the service period on a newer assignment.
                 const scalarEdits = {
@@ -2501,12 +2541,6 @@ export class ClientService {
                 })
                 : null;
 
-            const currentSchedule = employeeChanged || allocation || (snapshot && lockedHasDateUpdate)
-                ? await transaction.employee_schedule.findFirst({
-                    where: { clientId: id, branchId: branchid, replaced: false, ...(snapshot ? { terminatedAt: null } : {}) },
-                    orderBy: { id: "desc" },
-                })
-                : null;
             const currentPrimary = currentSchedule?.primaryEmployeeId ?? null;
             const currentSecondary = currentSchedule?.secondaryEmployeeId ?? null;
             const primary = allocation ? allocation.providers.find(({ slot }) => slot === 0)?.employeeId ?? null
@@ -2596,7 +2630,7 @@ export class ClientService {
                 }
                 if (allocation) await persistClientAllocation(
                     transaction, scope, allocation,
-                    handoverNeeded ? createdScheduleId : currentSchedule?.id ?? null, currentSchedule?.id ?? null,
+                    handoverNeeded ? createdScheduleId : currentSchedule?.id ?? null, currentSchedule?.id ?? null, lockedBinding,
                 );
                 if (createdScheduleId !== null) {
                     createdWhilePreBooking = configuredPreBooking || (await this.serviceRecordLinkService
@@ -2698,7 +2732,9 @@ export class ClientService {
             }
             // Service-day flags follow the ordinary lifecycle sync; existing session
             // dates and any explicitly supplied end date are not re-laid.
-            const syncedRecords = await this.serviceRecordLifecycleService?.ensureAllForClient(id, transaction, calendar) ?? [];
+            const syncedRecords = (lockedBinding
+                ? await this.serviceRecordLifecycleService?.ensureAllForClient(id, transaction, calendar, lockedBinding.caseId)
+                : await this.serviceRecordLifecycleService?.ensureAllForClient(id, transaction, calendar)) ?? [];
             for (const record of syncedRecords) {
                 const required = startDateChange?.restoreByCase?.get(record.id)
                     ?? (syncedRecords.length === 1 ? startDateChange?.restoreRequiredSessionCount : null);

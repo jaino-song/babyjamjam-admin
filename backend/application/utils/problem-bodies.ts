@@ -15,7 +15,7 @@ function codeOnlyProblemFields(code: ProblemCode): CodeOnlyProblemFields {
 }
 
 /**
- * Shape an employee rejection as a public problem contract body.
+ * Shape a field-level rejection as a public problem contract body.
  * The HTTP boundary replaces the texts with locale catalog copies, so the
  * codes and pointers here only have to identify the cause.
  *
@@ -35,6 +35,11 @@ export function problemBody(
         errors: [error],
         message: error.detail,
     };
+}
+
+/** Attach a field problem to the HTTP status defined by its catalog code. */
+export function fieldProblemException(code: ProblemCode, error: ProblemError): HttpException {
+    return new HttpException(problemBody(code, error), PROBLEM_CATALOG[code].status);
 }
 
 /**

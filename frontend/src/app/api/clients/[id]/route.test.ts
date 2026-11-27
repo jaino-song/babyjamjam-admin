@@ -55,6 +55,23 @@ describe("PATCH /api/clients/[id]", () => {
         );
     });
 
+    it("forwards the explicit legacy binding with the rest of the allocation update", async () => {
+        mockPatch.mockResolvedValue({ data: { id: 75 } });
+        const body = {
+            fetalType: "TWINS", babyCount: 2, voucherIssuanceYear: 2026,
+            providers: [{ slot: 0, employeeId: 11 }, { slot: 1, employeeId: 12 }],
+            babyAssignments: [{ ordinal: 1, providerSlot: 0 }, { ordinal: 2, providerSlot: 0 }],
+            expectedAllocationVersion: "qa-allocation-version",
+            legacyRecordBinding: { caseId: "18c2f310-a2db-4b42-a681-3f6f26969880", babyOrdinal: 2 },
+        };
+
+        const response = await PATCH(createRequest("PATCH", body), { params: Promise.resolve({ id: "75" }) });
+
+        expect(response.status).toBe(200);
+        expect(mockPatch).toHaveBeenCalledTimes(1);
+        expect(mockPatch).toHaveBeenCalledWith("/clients/75", body, expect.anything());
+    });
+
     it("preserves the upstream status without logging or returning private details", async () => {
         const privateMessage = "private customer details";
         const privateToken = "Bearer private-token";

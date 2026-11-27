@@ -88,7 +88,7 @@ describe("ClientController PATCH /clients/:id expectedEndDate", () => {
                 branchId: BRANCH_ID,
                 userId: "admin-1",
                 globalRole: "admin",
-                branchRole: "admin",
+                branchRole: requestContext.headers["x-test-role"] ?? "admin",
             };
             return true;
         },
@@ -184,6 +184,39 @@ describe("ClientController PATCH /clients/:id expectedEndDate", () => {
             .send({ address: "인천시 남동구", notAField: 1 })
             .expect(400);
 
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    const binding = { caseId: "00000000-0000-4000-8000-000000000001", babyOrdinal: 1 };
+
+    it.each([undefined, "desktop", "mobile"])("forwards a manager's binding with client surface %s", async (surface) => {
+        const patch = request(app.getHttpServer()).patch("/clients/42").set("x-test-role", "manager");
+        if (surface) patch.set("x-bjj-client", surface);
+        await patch.send({ legacyRecordBinding: binding }).expect(200);
+        expect(clientService.update).toHaveBeenCalledWith(BRANCH_ID, 42, expect.any(Object), undefined, {
+            selection: binding,
+            actor: { userId: "admin-1", globalRole: "admin", branchRole: "manager" },
+        });
+    });
+
+    it("rejects an explicit binding on create", async () => {
+        await request(app.getHttpServer()).post("/clients")
+            .set("x-test-role", "manager").send({ name: "QA", legacyRecordBinding: binding }).expect(400);
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, "desktop", "mobile"])("rejects a non-manager's binding with client surface %s", async (surface) => {
+        const patch = request(app.getHttpServer()).patch("/clients/42").set("x-test-role", "user");
+        if (surface) patch.set("x-bjj-client", surface);
+        await patch.send({ legacyRecordBinding: binding }).expect(403);
+        expect(clientService.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        null, [], {}, { ...binding, caseId: "bad" }, { ...binding, babyOrdinal: "1" },
+        { ...binding, babyOrdinal: 0 }, { ...binding, babyOrdinal: 1.5 }, { ...binding, employeeId: 1 },
+    ])("rejects an invalid binding payload %p", async value => {
+        await request(app.getHttpServer()).patch("/clients/42").send({ legacyRecordBinding: value }).expect(400);
         expect(clientService.update).not.toHaveBeenCalled();
     });
 });

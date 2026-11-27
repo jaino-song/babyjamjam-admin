@@ -1,21 +1,24 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { ExecutionContext, INestApplication } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
+import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkGroupService } from "application/services/service-record-link-group.service";
 import { RECORD_LINK_GROUP_CHANGED } from "application/services/service-record-link-group-source";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import { SmsCarrierCheckService } from "application/services/sms-carrier-check.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
-import { SERVICE_RECORD_LINK_RULE_ID, getServiceRecordLinkScheduledFor, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_RULE_ID, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY, getServiceRecordLinkScheduledFor, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MESSAGE_LOG_REPOSITORY, type IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { ALIGO_SMS_API_PORT } from "domain/ports/aligo-sms-api.port";
@@ -34,10 +37,14 @@ import { SchedulerLeaseModule } from "module/scheduler-lease.module";
 import { ScriptedAligoStub } from "./helpers/scripted-aligo.stub";
 
 function assertTestTarget() {
-    const urls = ["throwaway_baby_send_work", "throwaway_baby_send_verify"]
+    const boundExpiryDatabase = "postgresql://bjj_revision_test@127.0.0.1:62295/throwaway_baby_bound_expiry";
+    const urls = ["throwaway_baby_send_work", "throwaway_baby_send_verify", "throwaway_baby_signed_binding"]
         .map(name => `postgresql://bjj_revision_test@127.0.0.1:62295/${name}`);
     const url = process.env["DATABASE_URL"];
-    if (!url || !urls.includes(url) || process.env["DIRECT_URL"] !== url
+    const allowed = url === boundExpiryDatabase
+        ? process.env["SCHEDULERS_ENABLED"] === "false" && process.env["DOCUMENT_JOBS_WORKER"] === "false"
+        : url !== undefined && urls.includes(url);
+    if (!allowed || process.env["DIRECT_URL"] !== url
         || process.env["NODE_ENV"] !== "test" || process.env["E2E_VENDOR_STUBS"] !== "1") {
         throw new Error("Message-group fixtures require equal URLs for the approved loopback PostgreSQL work or verify clone and vendor stubs");
     }
@@ -90,7 +97,12 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         }).overrideGuard(JwtGuard).useValue({
             canActivate(context: ExecutionContext) {
                 const req = context.switchToHttp().getRequest();
-                req.user = { branchId: req.headers["x-test-branch"] ?? branchId, userId: ownerId, role: "owner" };
+                const branchUserId = req.headers["x-test-branch-user"];
+                req.user = {
+                    branchId: req.headers["x-test-branch"] ?? branchId,
+                    userId: branchUserId ?? ownerId,
+                    role: branchUserId ? "user" : "owner",
+                };
                 return true;
             },
         }).overrideProvider(ALIGO_SMS_API_PORT).useValue(stub).compile();
@@ -104,7 +116,7 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         trigger = app.get(MessageTriggerService);
         linkService = app.get(ServiceRecordLinkService);
         logs = app.get(MESSAGE_LOG_REPOSITORY);
-        const requiredPrices = ["B가②형", "D가②형"];
+        const requiredPrices = ["B가②형", "C가①형", "D가②형"];
         const existing = await db.voucher_price_info.findMany({
             where: { year: 2026, duration: 31999, type: { in: requiredPrices } }, select: { type: true },
         });
@@ -155,6 +167,314 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
     });
     const getLogs = (jobId: string) => db.message_log.findMany({ where: { branchId, triggerJobId: jobId }, orderBy: { id: "asc" } });
     const dispatch = (id: string) => trigger.dispatchPendingJobNow(id, { expectedBranchId: branchId });
+    const getAdoptionAudits = (caseId: string) => db.admin_audit_event.findMany({
+        where: { action: "service_record.legacy_case_adopt", targetId: caseId },
+        select: {
+            branchId: true, tenantId: true, actorUserId: true, actorGlobalRole: true, actorBranchRole: true,
+            targetType: true, beforePayload: true, afterPayload: true, outcome: true, reason: true,
+        },
+    });
+
+    async function createBranchUser(role: "manager" | "user") {
+        const { id } = await db.user.create({ data: { name: `QA-Binding ${role}`, role: "user" } });
+        await db.user_branch.create({ data: { branchId, userId: id, role } });
+        return id;
+    }
+
+    async function signedLegacyFamily() {
+        const [primaryEmployeeId, secondaryEmployeeId] = staff as [number, number];
+        const startDate = new Date(dateAt(-6));
+        const endDate = new Date(dateAt(14));
+        const client = await db.client.create({ data: {
+            branchId, name: "QA-Signed legacy household", serviceStatus: "active", voucherClient: true,
+            type: "C-가-1형", startDate, endDate, bookingConfirmedAt: startDate, duration: 10,
+            allowSaturdayService: true, allowSundayService: true, allowHolidayService: true,
+        } });
+        const scope = { branchId, clientId: client.id };
+        const schedule = await db.employee_schedule.create({ data: {
+            ...scope, primaryEmployeeId, secondaryEmployeeId, workAddress: "", startDate, endDate,
+        } });
+        const record = await db.service_record_case.create({ data: {
+            ...scope, status: "IN_PROGRESS", startDate, endDate, requiredSessionCount: 10,
+        } });
+        const caseScope = { branchId, scheduleId: schedule.id, serviceRecordCaseId: record.id };
+        await db.service_record_assignment.create({ data: {
+            ...caseScope, employeeId: primaryEmployeeId, employeeNameSnapshot: "QA-Primary caregiver",
+            employeePhoneSnapshot: phone(0), startDate, endDate,
+        } });
+        const days = await db.service_record_day.createManyAndReturn({ data: [1, 2].map(index => ({
+            ...caseScope, employeeId: primaryEmployeeId, sessionIndex: index, caseSessionIndex: index,
+            serviceDate: new Date(dateAt(index - 7)), notes: `QA-Signed session ${index}`,
+            locked: true, momApproval: "approved", clientSignature: "data:image/png;base64,aGVsbG8=",
+            clientSignedAt: new Date(), submittedAt: new Date(),
+        })) });
+        const document = await db.eformsign_doc.create({ data: {
+            ...scope, serviceRecordCaseId: record.id, employeeScheduleId: schedule.id,
+            documentKind: "service_record_snapshot", documentId: `qa-snapshot-${randomUUID()}`,
+            createdDate: startDate, updatedDate: startDate, expiredDate: endDate, statusType: "completed",
+            statusDetail: "", stepType: "", stepIndex: "", stepName: "", stepRecipientType: "",
+            stepRecipientName: "", stepRecipientSms: "",
+        } });
+        const tokens = app.get(ServiceRecordTokenService);
+        const { linkToken } = await tokens.issueLink({
+            ...caseScope, employeeId: primaryEmployeeId, expectedPhone: phone(0),
+            // Deliberately shorter than the client period to detect extension by lifecycle sync.
+            expiresAt: new Date(Date.now() + 3_600_000),
+        });
+        const token = await db.service_record_token.findUniqueOrThrow({ where: { branchId, linkTokenHash: linkToken } });
+        const log = await db.message_log.create({ data: {
+            ...scope, provider: "aligo_sms", templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY, receiver: phone(0),
+            messageBody: `https://example.test/service-record/${linkToken}`, status: "sent",
+            providerAcceptanceState: "accepted", providerAcceptedAt: new Date(),
+            variables: { scheduleId: String(schedule.id), scheduleIncarnationId: schedule.incarnationId, employeeId: String(primaryEmployeeId) },
+        } });
+        const { body: projection } = await http().get(`/clients/${client.id}`).expect(200);
+        const save = {
+            expectedAllocationVersion: projection.allocationVersion, fetalType: "SEVERE_TWINS", babyCount: 2,
+            voucherIssuanceYear: 2026, providers: [{ slot: 0, employeeId: primaryEmployeeId }, { slot: 1, employeeId: secondaryEmployeeId }],
+            babyAssignments: [{ ordinal: 1, providerSlot: 0 }, { ordinal: 2, providerSlot: 1 }],
+            legacyRecordBinding: { caseId: record.id, babyOrdinal: 1 },
+        };
+        return { scope, schedule, record, token, log, days, document, save, linkToken };
+    }
+
+    const legacyStatus = (link: string) => http().get(`/service-record/link/${encodeURIComponent(link)}`);
+    const legacyChallenge = (link: string, recipient = phone(0)) =>
+        http().post("/service-record/verify").send({ linkToken: link, phone: recipient });
+    const caregiverContext = (session: string) => http().get("/service-record/context").auth(session, { type: "bearer" });
+
+    it("binds the signed original on first allocation and queues only the independent sibling link", async () => {
+        const f = await signedLegacyFamily();
+        await legacyStatus(f.linkToken).expect(200, { valid: true });
+        const { body: originalAccess } = await legacyChallenge(f.linkToken).expect(201);
+        expect(originalAccess.ok).toBe(true);
+        const { body: before } = await caregiverContext(originalAccess.accessToken).expect(200);
+        expect(before.babyId).toBeNull();
+        expect(before.sessions).toHaveLength(2);
+        const tokenWhere = { id: f.token.id, branchId };
+        const verifiedToken = await db.service_record_token.findUniqueOrThrow({ where: tokenWhere });
+        const unscoped = await db.service_record_token.create({ data: {
+            branchId, scheduleId: f.schedule.id, employeeId: staff[0]!, linkTokenHash: `efl_${randomUUID()}`,
+            expectedPhoneHash: digest(phone(0)), expiresAt: f.token.expiresAt,
+        } });
+        const { body: unscopedAccess } = await legacyChallenge(unscoped.linkTokenHash).expect(201);
+        expect(unscopedAccess.ok).toBe(true);
+
+        const managerId = await createBranchUser("manager");
+        const memberId = await createBranchUser("user");
+        const patch = (actor = managerId) => http().patch(`/clients/${f.scope.clientId}`)
+            .set("x-test-branch-user", actor).send(f.save);
+        await patch(memberId).expect(403);
+        expect(await getAdoptionAudits(f.record.id)).toEqual([]);
+        expect(await db.client_baby.count({ where: f.scope })).toBe(0);
+        await Promise.all([patch().expect(200), patch().expect(200)]);
+        const records = await db.service_record_case.findMany({ where: f.scope, include: { baby: true } });
+        const original = records.find(record => record.id === f.record.id);
+        const sibling = records.find(record => record.id !== f.record.id);
+        expect(records).toHaveLength(2);
+        expect(original?.baby?.ordinal).toBe(1);
+        expect(sibling?.baby?.ordinal).toBe(2);
+        const audits = await getAdoptionAudits(f.record.id);
+        expect(audits).toEqual([{
+            branchId, tenantId: branchId, actorUserId: managerId, actorGlobalRole: "user", actorBranchRole: "manager",
+            targetType: "service_record_case", beforePayload: null, afterPayload: { clientId: f.scope.clientId, babyId: original?.babyId },
+            outcome: "success", reason: null,
+        }]);
+        expect(await db.service_record_day.findMany({ where: { branchId, serviceRecordCaseId: f.record.id }, orderBy: { sessionIndex: "asc" } }))
+            .toEqual(f.days.sort((a, b) => a.sessionIndex - b.sessionIndex));
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { branchId, id: f.document.id } })).toEqual(f.document);
+        expect(await db.service_record_token.findUniqueOrThrow({ where: tokenWhere })).toEqual(verifiedToken);
+        expect(await db.service_record_token.findUniqueOrThrow({ where: { branchId, id: unscoped.id } }))
+            .toMatchObject({ active: false, revokedAt: expect.any(Date), accessTokenHash: null });
+        await caregiverContext(unscopedAccess.accessToken).expect(401);
+
+        // Ordinary scheduling may admit the second caregiver but the accepted first
+        // occurrence prevents a replacement. No carrier is called by this test.
+        await linkService.scheduleForServiceStart(f.schedule.id);
+        const jobs = (await getJobs(f.scope.clientId)).filter(job => job.status === "pending");
+        expect(jobs).toHaveLength(1);
+        expect(jobs[0]).toMatchObject({ recipientEmployeeId: staff[1], recordMembers: [{ serviceRecordCaseId: sibling?.id }] });
+        expect(calls()).toHaveLength(0);
+        await app.get(ServiceRecordLifecycleService).ensureAllForClient(f.scope.clientId);
+        expect(await db.service_record_token.findUniqueOrThrow({ where: tokenWhere })).toEqual(verifiedToken);
+        await patch().expect(200);
+        expect(await getAdoptionAudits(f.record.id)).toEqual(audits);
+        expect(await getJobs(f.scope.clientId)).toEqual(jobs);
+        expect(calls()).toHaveLength(0);
+        await legacyStatus(f.linkToken).expect(200, { valid: true });
+        const { body: after } = await caregiverContext(originalAccess.accessToken).expect(200);
+        expect(after).toMatchObject({ babyId: original?.babyId, babyRank: 1, babyCount: 2, sessions: before.sessions });
+        const second = await db.service_record_token.findFirstOrThrow({
+            where: { branchId, scheduleId: f.schedule.id, serviceRecordCaseId: sibling!.id, employeeId: staff[1]!, active: true },
+        });
+        expect((await legacyChallenge(second.linkTokenHash).expect(201)).body.ok).toBe(false);
+        const { body: secondAccess } = await legacyChallenge(second.linkTokenHash, phone(1)).expect(201);
+        expect(secondAccess.ok).toBe(true);
+        const { body: secondContext } = await caregiverContext(secondAccess.accessToken).expect(200);
+        expect(secondContext).toMatchObject({ babyId: sibling?.babyId, babyRank: 2, sessions: [] });
+        const draft = { serviceDate: dateAt(-4), notes: "QA-First only" };
+        await http().put("/service-record/sessions/3").auth(originalAccess.accessToken, { type: "bearer" })
+            .send({ ...draft, serviceRecordCaseId: sibling?.id }).expect(400);
+        await http().put("/service-record/sessions/3").auth(originalAccess.accessToken, { type: "bearer" }).send(draft).expect(200);
+        expect(await db.service_record_day.count({ where: { branchId, serviceRecordCaseId: sibling?.id } })).toBe(0);
+        expect(await db.service_record_day.count({ where: { branchId, serviceRecordCaseId: f.record.id } })).toBe(3);
+        expect((await legacyChallenge(f.linkToken).expect(201)).body.ok).toBe(true);
+    });
+
+    it("extends the retained primary link and verified session only when the customer period grows", async () => {
+        const f = await signedLegacyFamily();
+        const { body: access } = await legacyChallenge(f.linkToken).expect(201);
+        expect(access.ok).toBe(true);
+        const where = { branchId, id: f.token.id };
+        const verified = await db.service_record_token.findUniqueOrThrow({ where });
+        const path = `/clients/${f.scope.clientId}`;
+        await http().patch(path).send(f.save).expect(200);
+        await http().patch(path).send({ endDate: dateAt(14) }).expect(200);
+        expect(isDeepStrictEqual(await db.service_record_token.findUniqueOrThrow({ where }), verified)).toBe(true);
+
+        const endDate = dateAt(21);
+        await http().patch(path).send({ endDate }).expect(200);
+        const record = await db.service_record_case.findUniqueOrThrow({ where: { branchId, id: f.record.id } });
+        expect(record.endDate).toEqual(new Date(endDate));
+        const { expiresAt, ...renewed } = await db.service_record_token.findUniqueOrThrow({ where });
+        expect(expiresAt).toEqual(getServiceRecordTokenExpiresAt(new Date(endDate)));
+        expect(isDeepStrictEqual({ ...renewed, expiresAt: verified.expiresAt }, verified)).toBe(true);
+        expect(await db.service_record_day.findMany({
+            where: { branchId, serviceRecordCaseId: f.record.id }, orderBy: { sessionIndex: "asc" },
+        })).toEqual(f.days.sort((a, b) => a.sessionIndex - b.sessionIndex));
+
+        const clock = jest.spyOn(Date, "now").mockReturnValue(verified.expiresAt.getTime() + 1);
+        try {
+            await legacyStatus(f.linkToken).expect(200, { valid: true });
+            const { body: context } = await caregiverContext(access.accessToken).expect(200);
+            expect(context.babyId).toBe(record.babyId);
+        } finally {
+            clock.mockRestore();
+        }
+        await linkService.scheduleForServiceStart(f.schedule.id);
+        const jobs = await getJobs(f.scope.clientId);
+        expect(jobs.map(job => job.recipientEmployeeId)).toEqual([staff[1]]);
+        expect(calls()).toHaveLength(0);
+
+        const laterExpiry = getServiceRecordTokenExpiresAt(new Date(dateAt(28)));
+        await db.service_record_token.update({ where, data: { expiresAt: laterExpiry } });
+        await http().patch(path).send({ endDate: dateAt(22) }).expect(200);
+        expect((await db.service_record_token.findUniqueOrThrow({ where })).expiresAt).toEqual(laterExpiry);
+    });
+
+    it.each([
+        ["expired", { expiresAt: new Date(0) }],
+        ["revoked", { revokedAt: new Date() }],
+        ["inactive", { active: false }],
+    ] as const)(
+        "does not revive an %s retained primary link after a customer extension",
+        async (_state, data) => {
+            const f = await signedLegacyFamily();
+            const path = `/clients/${f.scope.clientId}`;
+            await http().patch(path).send(f.save).expect(200);
+            const where = { branchId, id: f.token.id };
+            const invalid = await db.service_record_token.update({ where, data });
+            await http().patch(path).send({ endDate: dateAt(21) }).expect(200);
+            expect(isDeepStrictEqual(await db.service_record_token.findUniqueOrThrow({ where }), invalid)).toBe(true);
+            await legacyStatus(f.linkToken).expect(200, { valid: false, reason: "unavailable" });
+        },
+    );
+
+    it("keeps old scalar expiry unchanged for an unrelated caregiver on the bound case", async () => {
+        const f = await signedLegacyFamily();
+        const path = `/clients/${f.scope.clientId}`;
+        await http().patch(path).send(f.save).expect(200);
+        const where = { branchId, id: f.token.id };
+        const unrelated = await db.service_record_token.update({
+            where, data: { employeeId: staff[2], expectedPhoneHash: digest(phone(2)) },
+        });
+        await http().patch(path).send({ endDate: dateAt(21) }).expect(200);
+        expect(isDeepStrictEqual(await db.service_record_token.findUniqueOrThrow({ where }), unrelated)).toBe(true);
+        await legacyStatus(f.linkToken).expect(200, { valid: false, reason: "unavailable" });
+    });
+
+    it("keeps a locked challenge locked when binding its original case", async () => {
+        const f = await signedLegacyFamily();
+        const locked = await db.service_record_token.update({
+            where: { branchId, id: f.token.id }, data: { failedAttempts: 5, lockedAt: new Date(), challengeWindowStartedAt: new Date() },
+        });
+        await http().patch(`/clients/${f.scope.clientId}`).send(f.save).expect(200);
+        expect(await db.service_record_token.findUniqueOrThrow({ where: { branchId, id: f.token.id } })).toEqual(locked);
+        expect((await legacyChallenge(f.linkToken).expect(201)).body.ok).toBe(false);
+    });
+
+    it("rolls back the bound case and credential revocations if sibling creation fails", async () => {
+        const f = await signedLegacyFamily();
+        const unscoped = await db.service_record_token.create({ data: {
+            branchId, scheduleId: f.schedule.id, employeeId: staff[0]!, linkTokenHash: `efl_${randomUUID()}`,
+            expectedPhoneHash: digest(phone(0)), expiresAt: f.token.expiresAt,
+        } });
+        const failSibling = jest.spyOn(ServiceRecordLifecycleService.prototype, "ensureAllForClient")
+            .mockRejectedValueOnce(new Error("Synthetic sibling failure"));
+        const appendAudit = jest.spyOn(AdminAuditEventWriter.prototype, "appendInTransaction");
+        try {
+            await http().patch(`/clients/${f.scope.clientId}`).send(f.save).expect(500);
+            expect(failSibling).toHaveBeenCalledTimes(1);
+            expect(appendAudit).toHaveBeenCalledTimes(1);
+            expect(appendAudit.mock.calls[0]?.[0]).toBe(failSibling.mock.calls[0]?.[1]);
+        } finally {
+            appendAudit.mockRestore();
+            failSibling.mockRestore();
+        }
+        expect(await getAdoptionAudits(f.record.id)).toEqual([]);
+        expect(await db.service_record_case.findMany({ where: f.scope })).toEqual([f.record]);
+        expect(await db.client_baby.count({ where: f.scope })).toBe(0);
+        expect(await getJobs(f.scope.clientId)).toEqual([]);
+        await legacyStatus(f.linkToken).expect(200, { valid: true });
+        await legacyStatus(unscoped.linkTokenHash).expect(200, { valid: true });
+    });
+
+    it("keeps the default fail-closed behavior when the administrator supplies no binding", async () => {
+        const f = await signedLegacyFamily();
+        const ordinarySave = { ...f.save, legacyRecordBinding: undefined };
+        await http().patch(`/clients/${f.scope.clientId}`).send(ordinarySave).expect(200);
+        expect(await getAdoptionAudits(f.record.id)).toEqual([]);
+        expect(await db.service_record_case.findMany({ where: f.scope })).toEqual([f.record]);
+        expect(await db.client_baby.count({ where: { ...f.scope, active: true } })).toBe(2);
+        await legacyStatus(f.linkToken).expect(200, { valid: false, reason: "unavailable" });
+        expect(calls()).toHaveLength(0);
+    });
+
+    it.each(["scope", "owner", "schedule", "schedule-period", "stale", "expired", "revoked", "unscoped", "phone", "unproven"] as const)(
+        "rejects a %s claim without changing the household or credentials",
+        async invalid => {
+            const f = await signedLegacyFamily();
+            const where = { branchId, id: f.token.id };
+            if (invalid === "scope") {
+                const other = await db.branch.create({ data: { name: "QA-Foreign", slug: randomUUID() } });
+                const foreign = await db.service_record_case.create({ data: { branchId: other.id } });
+                f.save.legacyRecordBinding.caseId = foreign.id;
+            } else if (invalid === "owner") f.save.legacyRecordBinding.babyOrdinal = 2;
+            else if (invalid === "schedule") f.save.providers[0]!.employeeId = staff[2]!;
+            else if (invalid === "schedule-period") {
+                await db.employee_schedule.update({
+                    where: { branchId, id: f.schedule.id }, data: { startDate: new Date(dateAt(-7)) },
+                });
+            }
+            else if (invalid === "stale") f.save.expectedAllocationVersion = "outdated";
+            else if (invalid === "expired") await db.service_record_token.update({ where, data: { expiresAt: new Date(0) } });
+            else if (invalid === "revoked") await db.service_record_token.update({ where, data: { active: false, revokedAt: new Date() } });
+            else if (invalid === "unscoped") await db.service_record_token.update({ where, data: { serviceRecordCaseId: null } });
+            else if (invalid === "phone") await db.employee.update({ where: { branchId, id: staff[0] }, data: { phone: phone(3) } });
+            else await db.message_log.update({ where: { branchId, id: f.log.id }, data: { providerAcceptedAt: null, providerAcceptanceState: "legacy" } });
+            const currentToken = await db.service_record_token.findUniqueOrThrow({ where });
+            const response = await http().patch(`/clients/${f.scope.clientId}`).send(f.save).expect(409);
+            expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT", outcome: "NOT_APPLIED" });
+            expect(response.body.errors[0].pointer)
+                .toBe(invalid === "stale" || invalid === "schedule-period" ? "/expectedAllocationVersion" : "/legacyRecordBinding");
+            expect(await db.client_baby.count({ where: f.scope })).toBe(0);
+            expect(await db.service_record_baby_assignment.count({ where: f.scope })).toBe(0);
+            expect(await db.service_record_case.findMany({ where: f.scope })).toEqual([f.record]);
+            expect(await db.service_record_token.findUniqueOrThrow({ where })).toEqual(currentToken);
+            expect(await getJobs(f.scope.clientId)).toEqual([]);
+            expect(calls()).toHaveLength(0);
+        },
+    );
 
     async function book(slots: (number | null)[], options: { householdSms?: boolean; staffCount?: number; auto?: boolean; startDays?: number } = {}) {
         const staffCount = options.staffCount ?? Math.max(1, ...slots.map(slot => slot === null ? 0 : slot + 1));
@@ -614,8 +934,8 @@ describe("baby record message groups over real Nest and PostgreSQL", () => {
         const automaticDedupeKey = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${family.schedule.id}:primary`;
         const job = await db.message_trigger_job.create({ data: {
             branchId, clientId: family.clientId, employeeScheduleId: family.schedule.id, ruleId: SERVICE_RECORD_LINK_RULE_ID,
-            scheduledFor: getServiceRecordLinkScheduledFor(family.schedule.startDate), recipientType: "PRIMARY_EMPLOYEE",
-            recipientPhone: phone(0), templateKey: key,
+            scheduledFor: ownership === "manual" ? new Date() : getServiceRecordLinkScheduledFor(family.schedule.startDate),
+            recipientType: "PRIMARY_EMPLOYEE", recipientPhone: phone(0), templateKey: key,
             dedupeKey: ownership === "manual" ? `${automaticDedupeKey}:manual:${randomUUID()}` : automaticDedupeKey,
             payload: { employeeId: staff[0]!, recipientName: "QA-Caregiver 1", recipientPhone: phone(0),
                 memberId: `employee:${staff[0]}`, buttonUrl: url, templateVariables: {

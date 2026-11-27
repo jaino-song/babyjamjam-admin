@@ -32,7 +32,7 @@ export function hasReconciledLegacyLinkRetry(log: MessageLogEntity, family: read
 }
 
 /** Normalize legacy attempts and their descendants without changing historical evidence. */
-export async function readLegacyLinkOccurrence(tx: Prisma.TransactionClient, occurrence: LegacyLinkOccurrence) {
+export async function readLegacyLinkOccurrence(tx: Prisma.TransactionClient, occurrence: LegacyLinkOccurrence, lock = false) {
     const { branchId, clientId, scheduleId, incarnationId, employeeId, phone } = occurrence;
     const jobs = await tx.$queryRaw<Array<{ id: string; status: string; canceledByUser: boolean }>>(Prisma.sql`
         SELECT id, status, canceled_by_user AS "canceledByUser"
@@ -44,6 +44,7 @@ export async function readLegacyLinkOccurrence(tx: Prisma.TransactionClient, occ
           AND COALESCE(payload->>'scheduleId', ${String(scheduleId)}) = ${String(scheduleId)}
           AND COALESCE(payload->>'scheduleIncarnationId', ${incarnationId}) = ${incarnationId}
           AND regexp_replace(COALESCE(recipient_phone, payload->>'recipientPhone'), '[^0-9]', '', 'g') = ${phone}
+        ${lock ? Prisma.sql`ORDER BY id FOR UPDATE` : Prisma.empty}
     `);
     const ids = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
         WITH RECURSIVE attempts AS (
@@ -70,7 +71,9 @@ export async function readLegacyLinkOccurrence(tx: Prisma.TransactionClient, occ
               AND (child.client_id IS NULL OR child.client_id = ${clientId})
               AND regexp_replace(child.receiver, '[^0-9]', '', 'g') = ${phone}
         )
-        SELECT id FROM attempts
+        ${lock ? Prisma.sql`
+            SELECT log.id FROM message_log log JOIN attempts ON attempts.id = log.id ORDER BY log.id FOR UPDATE OF log
+        ` : Prisma.sql`SELECT id FROM attempts`}
     `);
     const logs = ids.length ? await tx.message_log.findMany({
         where: { branchId, id: { in: ids.map(({ id }) => id) } },
