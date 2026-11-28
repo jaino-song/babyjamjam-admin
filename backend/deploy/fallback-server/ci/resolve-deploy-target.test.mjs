@@ -33,15 +33,17 @@ test("main targets LightNode only when the authoritative A-record hash matches",
   }), "lightnode");
 });
 
-test("main targets Lightsail only when its registered A-record hash matches", () => {
+const lightsailStandbyError = /Production is currently routed to the Lightsail standby\. Main pushes do not deploy there\. Use the Lightsail operations workflow to deploy the standby\./;
+
+test("main refuses the Lightsail standby route without a target trailer", () => {
   const lightsailRecords = ["192.0.2.20"];
 
-  assert.equal(resolveDeployTarget({
+  assert.throws(() => resolveDeployTarget({
     refName: "main",
     dnsRecords: lightsailRecords,
     fallbackDnsSha256: hash(["192.0.2.10"]),
     lightsailDnsSha256: hash(lightsailRecords),
-  }), "lightsail");
+  }), lightsailStandbyError);
 });
 
 const lightnodeTrailer = "Production-Deploy-Target: lightnode";
@@ -60,7 +62,7 @@ test("a LightNode-only release needs the approved LightNode DNS route", () => {
   assert.throws(() => resolveDeployTarget({
     ...requestedRelease,
     dnsRecords: ["192.0.2.20"],
-  }), /requires LightNode.*Lightsail/);
+  }), lightsailStandbyError);
   assert.throws(() => resolveDeployTarget({
     ...requestedRelease,
     dnsRecords: ["192.0.2.30"],
@@ -163,7 +165,7 @@ test("the CLI resolves main only from the exact pushed commit", (t) => {
   const wrongRoute = run({ GITHUB_SHA: head, DEPLOY_DNS_RECORDS: "192.0.2.20" });
   assert.equal(wrongRoute.status, 1);
   assert.equal(wrongRoute.stdout, "");
-  assert.match(wrongRoute.stderr, /requires LightNode.*Lightsail/);
+  assert.match(wrongRoute.stderr, lightsailStandbyError);
 
   for (const overrides of [{ GITHUB_SHA: previous }, { GITHUB_SHA: head.slice(0, 12) }, {}]) {
     const refused = run(overrides);
@@ -175,4 +177,10 @@ test("the CLI resolves main only from the exact pushed commit", (t) => {
   const preview = run({ DEPLOY_REF_NAME: "preview" });
   assert.equal(preview.status, 0, preview.stderr);
   assert.equal(preview.stdout, "target=cloudrun\n");
+
+  git("checkout", "--quiet", "--detach", previous);
+  const standbyRoute = run({ GITHUB_SHA: previous, DEPLOY_DNS_RECORDS: "192.0.2.20" });
+  assert.equal(standbyRoute.status, 1);
+  assert.equal(standbyRoute.stdout, "");
+  assert.match(standbyRoute.stderr, lightsailStandbyError);
 });

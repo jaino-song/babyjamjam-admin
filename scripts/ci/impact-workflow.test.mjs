@@ -96,20 +96,12 @@ function withPreviewConcurrencyAtBase(text,label) {
   assert.equal(text.includes(previewConcurrencyCheck.before),false,`${label}: the old concurrency 8 check is gone`);
   return text.replace(previewConcurrencyCheck.after,previewConcurrencyCheck.before);
 }
-// Admit only the approved provider verifier and its new Lightsail checkout, then
-// preserve the original byte comparisons for every other deployment detail.
+// Project the approved LightNode provider verifier out of the exact job comparison.
 const providerVerifierStep = [
   '      - name: Verify public production provider eligibility',
   '        env:',
   '          RESOLVED_DEPLOY_TARGET: ${{ needs.resolve-backend-deploy-target.outputs.target }}',
   '        run: node backend/deploy/ci/verify-production-provider.mjs "$RESOLVED_DEPLOY_TARGET"',
-  '', '',
-].join('\n');
-const lightsailCheckoutAnchor = '      LIGHTSAIL_SSM_TARGET_TAG: ${{ vars.LIGHTSAIL_SSM_TARGET_TAG }}\n\n    steps:\n';
-const lightsailProviderCheckout = [
-  '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0',
-  '        with:',
-  '          persist-credentials: false',
   '', '',
 ].join('\n');
 const lightnodeLeaseComment = {
@@ -135,30 +127,19 @@ function withApprovedLightnodeLeaseCommentAtBase(text,label) {
   return text.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.before);
 }
 function withApprovedDeployAdditionsAtBase(text,label) {
-  for(const id of ['deploy-lightsail','deploy-lightnode']) {
-    const block=jobText(text,id);
-    assert.ok(block,`${label}: ${id} exists`);
-    assert.equal(block.split(providerVerifierStep).length-1,1,`${label}: ${id} has exactly the approved unconditional provider verifier`);
-    let projected=block.replace(providerVerifierStep,'');
-    if(id==='deploy-lightsail') {
-      const checkout=lightsailCheckoutAnchor+lightsailProviderCheckout;
-      assert.equal(projected.split(checkout).length-1,1,`${label}: Lightsail verifier checkout is exact and anchored to its own job`);
-      projected=projected.replace(checkout,lightsailCheckoutAnchor);
-    }
-    text=text.replace(block,projected);
-  }
-  return withApprovedLightnodeLeaseCommentAtBase(text,label);
+  const block=jobText(text,'deploy-lightnode');
+  assert.ok(block,`${label}: deploy-lightnode exists`);
+  const verifier=text.endsWith(block)?providerVerifierStep.slice(0,-1):providerVerifierStep;
+  assert.equal(block.split(verifier).length-1,1,`${label}: deploy-lightnode has exactly the approved unconditional provider verifier`);
+  assert.ok(block.endsWith(verifier),`${label}: the provider verifier ends deploy-lightnode`);
+  return withApprovedLightnodeLeaseCommentAtBase(text.replace(block,block.slice(0,-verifier.length)),label);
 }
-// The LightNode warm-standby change adds exactly these contract-test commands to the
-// 'Verify backend deployment automation contracts' step, right after the ci-deployer
-// contract line, plus one new job. Each is asserted here, then removed so the caller still
-// compares every other step and job exactly against the pinned base.
+// Keep the deployer behavior test directly after the deployer contract command.
+// Project it out so the rest of the step is still compared exactly.
 const standbyContractStep = 'Verify backend deployment automation contracts';
 const standbyContractAnchor = 'backend/deploy/fallback-server/ci/ci-deployer-contract.test.sh';
 const standbyContractAdditions = [
   'bash backend/deploy/fallback-server/ci/ci-deployer.behavior.test.sh',
-  'bash backend/deploy/fallback-server/ci/standby-decision.test.sh',
-  'bash backend/deploy/fallback-server/ci/newer-primary-release.test.sh',
 ];
 const contractGlobBase = 'node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs';
 const contractGlobApproved = 'node --test backend/deploy/ci/*.test.mjs backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs';
@@ -175,15 +156,12 @@ function stepsWithoutStandbyContractTests(steps,label) {
   copy[index].run=[...lines.slice(0,anchor+1),...lines.slice(anchor+1+standbyContractAdditions.length)].map(line=>line===contractGlobApproved?contractGlobBase:line).join('\n');
   return copy;
 }
-// The only job the warm-standby change adds. Asserts it exists with exactly its approved
-// dependencies and that no other job was added or removed; every pre-existing job is
-// still compared exactly by the callers. `routingJobs` are the jobs the CI impact routing
-// itself introduced after an older pinned base (empty for a base that already has them).
-function assertOnlyStandbyJobAdded(before,after,label,routingJobs=[]) {
+// Older pinned revisions may also need to allow the original CI impact routing jobs.
+function assertBackendJobChanges(before,after,label,routingJobs=[]) {
   const added=Object.keys(after).filter(id=>!(id in before));
-  assert.deepEqual(added,[...routingJobs,'deploy-lightnode-standby'],`${label}: the standby job is the only job added besides the routing jobs`);
-  assert.deepEqual(Object.keys(before).filter(id=>!(id in after)),[],`${label}: no job was removed`);
-  assert.deepEqual(needs(after['deploy-lightnode-standby']),['build-lightsail-image','resolve-backend-deploy-target','deploy-lightsail'],`${label}: standby job dependencies`);
+  const removed=Object.keys(before).filter(id=>!(id in after));
+  assert.deepEqual(added,routingJobs,`${label}: only the routing jobs may be added`);
+  assert.deepEqual(removed,['deploy-lightsail'],`${label}: deploy-lightsail is the only removed job`);
 }
 const reusable = parse(read('ci-impact.yml'));
 const loader = reusable.jobs.classify.steps.find(s=>s.id==='impact').run;
@@ -214,7 +192,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
   });
   const previousSteps = parse(old(file)).jobs.verify.steps;
   assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(stepsWithoutAuthorityPgGates(stepsWithoutReplayPgGate(appSteps,file),file),file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
-  if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
+  if(app==='backend') {assertBackendJobChanges(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
   Object.keys(j).forEach(visit);
@@ -239,8 +217,8 @@ test('backend checks runner pin rejects latest, 26.04, missing and array values'
 });
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
   const before=old('backend-ci.yml'),current=read('backend-ci.yml'),after=withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(current,'backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
-  assertOnlyStandbyJobAdded(a,b,'backend-ci.yml',['impact','checks']);
-  for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e'].includes(id))) {
+  assertBackendJobChanges(a,b,'backend-ci.yml',['impact','checks']);
+  for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e','deploy-lightsail'].includes(id))) {
     assert.equal(jobText(after,id),jobText(before,id),`${id} raw block changed`);assert.deepEqual(b[id],a[id]);
   }
   assert.deepEqual(needs(b['auth-e2e']),['verify','impact']);assert.deepEqual({...b['auth-e2e'],needs:a['auth-e2e'].needs,if:undefined},{...a['auth-e2e'],if:undefined});
@@ -248,8 +226,6 @@ test('backend auth matrix/steps and every operational/deploy block remain byte-i
   for(const id of ['build-lightsail-image','wait-database-patches','resolve-backend-deploy-target']) assert.deepEqual(b[id].needs,a[id].needs);
   assert.equal(needs(b.verify).includes('auth-e2e'),false);
   for(const [id,original,mutated] of [
-    ['deploy-lightsail','aws ssm send-command','aws ssm list-commands'],
-    ['deploy-lightsail','role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}','role-to-assume: unapproved-role'],
     ['deploy-lightnode','"replace $GITHUB_SHA $IMAGE_DIGEST"','"status"'],
   ]) {
     assert.equal(current.split(original).length-1,1,`${id}: negative mutation has one exact target`);
@@ -305,10 +281,10 @@ test('backend installs declared compiler before executing CI impact contracts; o
   assert.ok(install >= 0 && contracts > install, 'compiler consumer contracts require installed declared TypeScript');
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
-  assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
+  assertBackendJobChanges(previous.jobs, workflow.jobs, 'backend-ci.yml');
   const previousChecks = stepsWithoutReplayPgGate(steps,'backend-ci.yml');
   assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(previousChecks,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
-  for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
+  for (const id of Object.keys(previous.jobs).filter(id => !['checks','deploy-lightsail'].includes(id))) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }
 });
