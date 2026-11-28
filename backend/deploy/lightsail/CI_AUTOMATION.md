@@ -206,10 +206,10 @@ approval gate before execution.
    its own approval. Do not attach this policy to a GitHub role or a broad IAM
    group as a convenience.
 
-9. Run the workflow manually on a non-deploying branch to validate CI, then
-   merge through `dev` to `preview` so that Backend CI publishes the image, and
-   dispatch `deploy preview` (a push does not deploy to Lightsail). Verify image
-   provenance, container health,
+9. Manually run Backend CI with `operation=ci` on a non-deploying branch to
+   validate CI. Then merge through `dev` to `preview` to publish the image and
+   dispatch `deploy preview` through Lightsail operations (a push does not
+   deploy to Lightsail). Verify image provenance, container health,
    restart count, scheduler ownership, and the public health route. Rehearse a
    rollback in preview before enabling the production environment.
 
