@@ -269,17 +269,19 @@ describe("HTTP filter advisory integration", () => {
     });
 
     it("does not create an advisory for a 401", () => {
-        const { filter, host } = fixture();
+        const { filter, host, response } = fixture();
         filter.catch(new UnauthorizedException(), host);
         expect(Sentry.captureEvent).not.toHaveBeenCalled();
+        expect(response.setHeader).not.toHaveBeenCalledWith("X-Request-Id", expect.anything());
     });
 
     it("drops an unmatched 404 and captures an unmatched 400", () => {
         const req = request(118);
         req.route = undefined;
-        const { filter, host } = fixture(req);
+        const { filter, host, response } = fixture(req);
         filter.catch(new NotFoundException(), host);
         expect(Sentry.captureEvent).not.toHaveBeenCalled();
+        expect(response.setHeader).not.toHaveBeenCalledWith("X-Request-Id", expect.anything());
         filter.catch(new BadRequestException(), host);
         expect(Sentry.captureEvent).toHaveBeenCalledTimes(1);
         expect(emittedEvent().tags).toMatchObject({ status_code: "400", route: "<unmatched>" });
