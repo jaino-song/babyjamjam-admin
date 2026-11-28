@@ -69,12 +69,14 @@ readonly DIAGNOSTICS_MAX_LOGS="5"
 readonly DIAGNOSTICS_MAX_BYTES_PER_LOG="32768"
 readonly DIAGNOSTICS_MAX_LINES_PER_LOG="200"
 readonly DIAGNOSTICS_MAX_OUTPUT_BYTES="131072"
+HEALTH_SCOPE=public
 
 usage() {
     cat >&2 <<'EOF'
 Usage:
-  babyjamjam-ci-operator status <preview|production>
-  babyjamjam-ci-operator deploy <preview|production> <40-character-commit-sha> <sha256-image-digest>
+  babyjamjam-ci-operator status <preview|production> [self]
+  babyjamjam-ci-operator deploy <preview|production> <40-character-commit-sha> <sha256-image-digest> [self]
+  babyjamjam-ci-operator standby <preview|production>
   babyjamjam-ci-operator diagnostics <preview|production>
   babyjamjam-ci-operator db-probe <preview|production> <shared|direct> <uuid>
   babyjamjam-ci-operator db-reconcile <preview|production> <uuid>
@@ -115,14 +117,14 @@ validate_invocation() {
 
     case "$command_name" in
         status)
-            [[ "$#" -eq 2 ]] || return 1
+            [[ "$#" -eq 2 || ( "$#" -eq 3 && "${3:-}" == "self" ) ]] || return 1
             is_environment "$2"
             ;;
         deploy)
-            [[ "$#" -eq 4 ]] || return 1
+            [[ "$#" -eq 4 || ( "$#" -eq 5 && "${5:-}" == "self" ) ]] || return 1
             is_environment "$2" && is_commit_sha "$3" && is_image_digest "$4"
             ;;
-        diagnostics)
+        diagnostics|standby)
             [[ "$#" -eq 2 ]] || return 1
             is_environment "$2"
             ;;
@@ -943,6 +945,26 @@ run_public_liveness_check() {
         >/dev/null 2>&1
 }
 
+report_edge_health() {
+    local host="${PUBLIC_HEALTH_URL#https://}"
+    local health_body
+    local -a curl_args=(--fail --silent --proto '=https' --connect-timeout 5 --max-time 10)
+    host="${host%%/*}"
+    curl_args+=(--resolve "$host:443:127.0.0.1" "$PUBLIC_HEALTH_URL")
+
+    # Ignore curl configuration that could change TLS verification or follow redirects.
+    if health_body="$(run_as_root /usr/bin/curl --disable "${curl_args[@]}")" \
+        && /usr/bin/grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$health_body"; then
+        printf '%s\n' 'edge_route=ok' 'edge_tls=ok'
+    # The fallback reaches this host's loopback without credentials. Its result is for reporting only.
+    elif health_body="$(run_as_root /usr/bin/curl --disable --insecure "${curl_args[@]}")" \
+        && /usr/bin/grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$health_body"; then
+        printf '%s\n' 'edge_route=ok' 'edge_tls=failed'
+    else
+        printf '%s\n' 'edge_route=failed' 'edge_tls=failed'
+    fi
+}
+
 verify_api_image_identity() {
     local api_container_id="$1"
     local expected_image_name
@@ -980,10 +1002,7 @@ verify_api_runtime() {
 
     is_route "$route" || die "Invalid route for runtime verification."
     api_container_id="$(find_api_container_optional)" || return 1
-    container_count="$(run_as_root /usr/bin/docker ps \
-        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
-        --filter "label=com.docker.compose.service=api" \
-        --format '{{.ID}}' | /usr/bin/wc -l | /usr/bin/tr -d ' ')" || return 1
+    container_count="$(list_running_api_containers | /usr/bin/wc -l | /usr/bin/tr -d ' ')" || return 1
     [[ "$container_count" == "1" ]] || return 1
     container_health="$(run_as_root /usr/bin/docker inspect \
         --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
@@ -1005,8 +1024,10 @@ verify_api_runtime() {
     RUNTIME_ROUTE="$runtime_route"
     verify_api_image_identity "$api_container_id" || return 1
     run_internal_ready_check "$api_container_id" || return 1
-    run_public_ready_check || return 1
-    run_public_liveness_check || return 1
+    if [[ "$HEALTH_SCOPE" == "public" ]]; then
+        run_public_ready_check || return 1
+        run_public_liveness_check || return 1
+    fi
 }
 
 recreate_api_for_route() {
@@ -1160,7 +1181,7 @@ write_state_value() {
     local state_value="$2"
     local temporary_file
 
-    temporary_file="$(/usr/bin/mktemp "$STATE_DIRECTORY/.ci-state.XXXXXX")"
+    temporary_file="$(/usr/bin/mktemp "$STATE_DIRECTORY/.ci-state.XXXXXX")" || return 1
     if ! /usr/bin/chmod 0640 "$temporary_file" \
         || ! printf '%s\n' "$state_value" >"$temporary_file" \
         || ! /usr/bin/mv -f "$temporary_file" "$state_file"; then
@@ -1175,7 +1196,7 @@ restore_state_value() {
 
     if [[ "$state_value" == "missing" ]]; then
         [[ ! -e "$state_file" ]] || /usr/bin/unlink "$state_file"
-        return 0
+        return
     fi
 
     write_state_value "$state_file" "$state_value"
@@ -1191,13 +1212,17 @@ record_release_digest() {
     write_state_value "$STATE_DIRECTORY/current-image-digest" "$requested_digest"
 }
 
+list_running_api_containers() {
+    run_as_root /usr/bin/docker ps \
+        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+        --filter "label=com.docker.compose.service=api" \
+        --format '{{.ID}}'
+}
+
 find_api_container() {
     local container_ids
 
-    container_ids="$(run_as_root /usr/bin/docker ps \
-        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
-        --filter "label=com.docker.compose.service=api" \
-        --format '{{.ID}}')"
+    container_ids="$(list_running_api_containers)"
 
     [[ -n "$container_ids" ]] || die "$DEPLOY_ENVIRONMENT API container is not running."
     [[ "$container_ids" != *$'\n'* ]] || die "Multiple $DEPLOY_ENVIRONMENT API containers are running."
@@ -1207,12 +1232,28 @@ find_api_container() {
 find_api_container_optional() {
     local container_ids
 
-    container_ids="$(run_as_root /usr/bin/docker ps \
-        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
-        --filter "label=com.docker.compose.service=api" \
-        --format '{{.ID}}')" || return 1
+    container_ids="$(list_running_api_containers)" || return 1
     [[ -n "$container_ids" && "$container_ids" != *$'\n'* ]] || return 1
     echo "$container_ids"
+}
+
+stop_running_api_containers() {
+    local container_ids="$1"
+    local container_id
+    local stopped_count=0
+    local stop_failed=false
+
+    while IFS= read -r container_id; do
+        [[ -n "$container_id" ]] || continue
+        if run_as_root /usr/bin/timeout --kill-after=1s 45s \
+            /usr/bin/docker stop --time 30 "$container_id" >/dev/null; then
+            stopped_count=$((stopped_count + 1))
+        else
+            stop_failed=true
+        fi
+    done <<<"$container_ids"
+    [[ "$stop_failed" == "false" ]] || return 1
+    printf '%s\n' "$stopped_count"
 }
 
 reconcile_output() {
@@ -1845,6 +1886,7 @@ status_environment() {
     local current_digest
     local current_tag
     local image_name
+    local public_health=skipped
     local public_health_body
     local restart_count
     local schedulers_enabled
@@ -1898,13 +1940,16 @@ status_environment() {
     [[ "$image_name" == "$LOCAL_IMAGE_REPOSITORY:$current_tag" ]] \
         || die "$DEPLOY_ENVIRONMENT API image does not match the recorded deployment tag."
 
-    public_health_body="$(run_as_root /usr/bin/curl --fail --silent --location \
-        --proto '=https' --proto-redir '=https' \
-        --connect-timeout 5 --max-time 10 \
-        "$PUBLIC_HEALTH_URL")" || die "$DEPLOY_ENVIRONMENT public health check failed."
-    printf '%s\n' "$public_health_body" \
-        | /usr/bin/grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' \
-        || die "$DEPLOY_ENVIRONMENT public health response is not ok."
+    if [[ "$HEALTH_SCOPE" == "public" ]]; then
+        public_health_body="$(run_as_root /usr/bin/curl --fail --silent --location \
+            --proto '=https' --proto-redir '=https' \
+            --connect-timeout 5 --max-time 10 \
+            "$PUBLIC_HEALTH_URL")" || die "$DEPLOY_ENVIRONMENT public health check failed."
+        printf '%s\n' "$public_health_body" \
+            | /usr/bin/grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' \
+            || die "$DEPLOY_ENVIRONMENT public health response is not ok."
+        public_health=ok
+    fi
 
     echo "environment=$DEPLOY_ENVIRONMENT"
     echo "current_tag=$current_tag"
@@ -1917,7 +1962,29 @@ status_environment() {
     echo "schedulers_enabled=$schedulers_enabled"
     echo "lease_mode=$lease_mode"
     echo "lease_holder=$lease_holder"
-    echo "public_health=ok"
+    echo "public_health=$public_health"
+    echo "health_scope=$HEALTH_SCOPE"
+    if [[ "$HEALTH_SCOPE" == "self" ]]; then
+        report_edge_health
+    fi
+}
+
+standby_environment() {
+    local container_ids
+    local stopped_count
+    local remaining_container_ids
+    local stop_failed=false
+
+    container_ids="$(list_running_api_containers)" \
+        || die "Unable to list running $DEPLOY_ENVIRONMENT API containers."
+    stopped_count="$(stop_running_api_containers "$container_ids")" || stop_failed=true
+    remaining_container_ids="$(list_running_api_containers)" \
+        || die "Unable to list running $DEPLOY_ENVIRONMENT API containers."
+    [[ -z "$remaining_container_ids" ]] \
+        || die "$DEPLOY_ENVIRONMENT API container is still running; standby was not reached."
+    [[ "$stop_failed" == "false" ]] || die "Unable to stop $DEPLOY_ENVIRONMENT API containers."
+
+    printf '%s\n' "environment=$DEPLOY_ENVIRONMENT" "standby=ok" "api_stopped=$stopped_count"
 }
 
 run_deploy_script() {
@@ -1931,6 +1998,7 @@ run_deploy_script() {
     run_as_root /usr/bin/env \
         BACKEND_BUILD_IMAGE=false \
         BACKEND_COMPOSE_FILE="$ROOT_COMPOSE_ARTIFACT" \
+        BACKEND_HEALTH_SCOPE="$HEALTH_SCOPE" \
         BACKEND_IMAGE="$LOCAL_IMAGE_REPOSITORY" \
         BACKEND_IMAGE_TAG="$requested_sha" \
         BACKEND_SKIP_REPOSITORY_GIT_CHECK=true \
@@ -1949,6 +2017,7 @@ run_rollback_script() {
 
     run_as_root /usr/bin/env \
         BACKEND_COMPOSE_FILE="$ROOT_COMPOSE_ARTIFACT" \
+        BACKEND_HEALTH_SCOPE="$HEALTH_SCOPE" \
         BACKEND_IMAGE="$LOCAL_IMAGE_REPOSITORY" \
         BACKEND_ROLLBACK_PRESERVE_PREVIOUS_TAG=true \
         DATABASE_CONNECTION_MODE="$route_mode" \
@@ -1961,12 +2030,16 @@ deploy_environment() {
     local requested_digest="$2"
     local current_digest
     local current_tag
+    local initial_container_ids
     local log_file
     local previous_digest
     local previous_tag
+    local running_container_ids
     local status_output
 
     acquire_lock
+    initial_container_ids="$(list_running_api_containers)" \
+        || die "Unable to list running $DEPLOY_ENVIRONMENT API containers."
     ensure_route_state
     validate_backend_env_file
     prepare_deploy_worktree "$requested_sha"
@@ -2000,7 +2073,20 @@ deploy_environment() {
         return 0
     fi
 
-    if run_rollback_script "$current_tag" >>"$log_file" 2>&1 \
+    if [[ -z "$initial_container_ids" ]]; then
+        if {
+            running_container_ids="$(list_running_api_containers)" \
+                && stop_running_api_containers "$running_container_ids" >/dev/null \
+                && restore_state_value "$STATE_DIRECTORY/current-image-tag" "$current_tag" \
+                && restore_state_value "$STATE_DIRECTORY/current-image-digest" "$current_digest" \
+                && restore_state_value "$STATE_DIRECTORY/previous-image-tag" "$previous_tag" \
+                && restore_state_value "$STATE_DIRECTORY/previous-image-digest" "$previous_digest" \
+                && running_container_ids="$(list_running_api_containers)" \
+                && [[ -z "$running_container_ids" ]]
+        } >>"$log_file" 2>&1; then
+            die "Deployment failed and the host was returned to standby (API stopped). Diagnostic log retained at $log_file"
+        fi
+    elif run_rollback_script "$current_tag" >>"$log_file" 2>&1 \
         && restore_state_value "$STATE_DIRECTORY/current-image-digest" "$current_digest" \
         && restore_state_value "$STATE_DIRECTORY/previous-image-digest" "$previous_digest" \
         && restore_state_value "$STATE_DIRECTORY/previous-image-tag" "$previous_tag" \
@@ -2173,14 +2259,21 @@ main() {
     }
     require_root
     configure_environment "$2"
+    HEALTH_SCOPE=public
 
     case "$1" in
         status)
+            HEALTH_SCOPE="${3-public}"
             acquire_lock
             status_environment
             ;;
         deploy)
+            HEALTH_SCOPE="${5-public}"
             deploy_environment "$3" "$4"
+            ;;
+        standby)
+            acquire_lock
+            standby_environment
             ;;
         diagnostics)
             diagnostics_environment "$2"
