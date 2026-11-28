@@ -72,6 +72,64 @@ test('configuration, shared inputs, lockfiles, and test support force full cover
   }
 });
 
+test('inputs outside the Jest module graph force full coverage', t => {
+  const repo = repository(t);
+  for (const path of [
+    'README.md',
+    'backend/prisma/scripts/preflight-eformsign-contract-authority-cutover.sql',
+    'backend/scripts/run-state-integrity.mjs',
+    'docs/api/document-jobs-display-projection.openapi.json',
+    'docs/policies/runtime.md',
+  ]) {
+    repo.git('reset', '--hard', repo.base);
+    repo.write(path);
+    assert.deepEqual(repo.scope(repo.commit()), full, path);
+  }
+});
+
+test('documentation and other app inputs need no unit tests', t => {
+  const repo = repository(t);
+  for (const path of [
+    'backend/docs/nested/notes.md',
+    'docs/help/guide.md',
+    'docs/help/guide.txt',
+    'docs/help/guide.rst',
+    'frontend/src/components/app/chat/parts/AgentPartRegistry.tsx',
+    'mobile/src/components/app/chat/MobileAgentPartRegistry.tsx',
+    'packages/service-record-ui/src/index.tsx',
+  ]) repo.write(path);
+  assert.deepEqual(repo.scope(repo.commit()), { mode: 'related', files: [], realDatabase: false });
+});
+
+test('scheduler-lock.ts is a related source file', t => {
+  const repo = repository(t);
+  const path = 'backend/application/services/scheduler-lock.ts';
+  repo.write(path);
+  assert.deepEqual(repo.scope(repo.commit()), { mode: 'related', files: [path], realDatabase: false });
+});
+
+test('related scope includes specs that reference the exact head sources as text', t => {
+  const repo = repository(t);
+  const aiChat = 'backend/application/services/ai-chat.service.ts';
+  const shortName = 'backend/application/id.ts';
+  const intentMapping = 'backend/application/ai-chat/__tests__/intent-mapping.spec.ts';
+  const fullPathSpec = 'backend/test/full-path.spec.ts';
+  repo.write(intentMapping, 'readFileSync("../../services/ai-chat.service.ts");\n');
+  repo.write(fullPathSpec, `readFileSync("${shortName}");\n`);
+  repo.write('backend/test/short-name.spec.ts', 'readFileSync("id.ts");\n');
+  const base = repo.commit();
+  repo.write(aiChat);
+  repo.write(shortName);
+  const head = repo.commit();
+  repo.write(intentMapping, 'working tree content without the reference\n');
+
+  assert.deepEqual(backendTestScope(base, head, repo.cwd), {
+    mode: 'related',
+    files: [shortName, aiChat, intentMapping, fullPathSpec],
+    realDatabase: false,
+  });
+});
+
 test('Prisma specs, integrity specs and persistence changes require real PostgreSQL', t => {
   const repo = repository(t);
   for (const path of [
