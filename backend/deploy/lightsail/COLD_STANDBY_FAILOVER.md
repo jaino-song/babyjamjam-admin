@@ -5,6 +5,10 @@
 > 닫히고 사용자가 순서를 승인하기 전에는 이 문서로 운영 전환을 하지 않습니다. 그 전에
 > LightNode에 장애가 나면 이 문서를 따라가지 말고 3절의 항목을 하나씩 판단하면서
 > 사용자와 함께 진행합니다. Lightsail 인스턴스도 그때까지 삭제하지 않습니다.
+>
+> **중지된 Lightsail 인스턴스를 시작하지 않습니다.** 장애 전환, 리허설, 중지 취소 어느
+> 목적이든 시작하는 순간 옛 API가 운영 DB에 붙습니다(B2). B2가 닫히고 사용자가 승인한
+> 경우에만 시작합니다.
 
 ## 1. 지금 상태와 목표 상태
 
@@ -14,12 +18,16 @@
 | 대기 | AWS Lightsail | 인스턴스 `babyjamjam-admin-server`가 **중지** 상태로 남아 있고, 스냅샷 `babyjamjam-admin-server-cold-standby-20261128`(80GB)이 있음. 삭제는 아직 안 함 | 스냅샷만 보관하고 인스턴스는 삭제 |
 | 스테이징 | Google Cloud Run | 스케줄러는 꺼져 있지만 API가 운영 DB에 붙어 있음 | BJJ-599에서 전용 DB로 분리 |
 
-- 백엔드 경로가 바뀐 `main` push는 검사와 DB 패치 대기가 끝난 뒤, `api.babyjamjam.com`이
-  LightNode를 가리킬 때만 LightNode에 배포합니다. DNS가 Lightsail을 가리키는 동안에는
+- 백엔드 경로가 바뀐 `main` push는 검사와 DB 패치 대기 게이트가 통과한 뒤,
+  `api.babyjamjam.com`이 LightNode를 가리킬 때만 LightNode에 배포합니다. 대기 게이트는 그
+  커밋에 운영 패치가 있으면 패치 잡의 성공을 기다리고, 없으면 패치 실행 없이 통과합니다. DNS가 Lightsail을 가리키는 동안에는
   `resolve backend deployment target` 잡이 **실패**하고 런타임 배포를 하지 않습니다.
-- DNS 확인은 런타임 배포만 막습니다. `Database Patches` workflow는 별도로 돌기 때문에,
-  장애 전환 중에도 조건에 맞는 `main` push는 운영 DB 패치를 적용할 수 있습니다. 장애 전환
-  중에는 `main` merge를 멈춥니다.
+- DNS 확인은 런타임 배포만 막습니다. `Database Patches` workflow는 별도로 돕니다. 그래서
+  장애 전환 중에는 두 가지를 따로 통제합니다.
+  - **이미지 SHA 고정:** `main` merge를 멈춥니다(B4).
+  - **운영 DB 패치 통제:** 조건에 맞는 `main` push뿐 아니라 `preview` push(preview가 운영
+    DB를 같이 쓰는 동안)와 수동 `production` 실행도 같은 운영 DB를 패치할 수 있습니다.
+    `preview` merge와 수동 실행도 멈추고, 이미 돌고 있는 패치 실행이 끝났는지 확인합니다.
 - 스케줄러 실행권(`scheduler_lease`의 `background-owner` 행, ADR-010)은 예약 작업만 막고
   **API 요청은 막지 않습니다.** 한 호스트의 쓰기를 멈추려면 그 호스트의 API 컨테이너를
   내리거나 접근을 끊어야 합니다.
@@ -72,13 +80,14 @@ Compose의 `restart: unless-stopped` 때문에 인스턴스를 시작하거나 �
 
 | 경로 | 조건 |
 |---|---|
-| 스케줄러 실행권 획득 | 저장된 env의 `PRODUCTION_DEPLOYMENT_PROVIDER`가 `lightsail`이고 실행권이 비어 있으면 시작 직후 가져갑니다. 값이 없으면 가져가지 않습니다(`provider_not_configured`). 스냅샷 안의 값이 어느 쪽인지는 호스트에서 확인한 적이 없습니다 |
+| 스케줄러 실행권 획득 | 저장된 env가 `SCHEDULERS_ENABLED=true`, `SCHEDULER_LEASE_MODE=required`이고 `PRODUCTION_DEPLOYMENT_PROVIDER`와 `SCHEDULER_LEASE_HOLDER_ID`가 둘 다 `lightsail`이면, 실행권이 비어 있을 때 시작 직후 가져갑니다. `PRODUCTION_DEPLOYMENT_PROVIDER`가 없으면 가져가지 않습니다(`provider_not_configured`). 2026-11-28 상태 조회에서 앞의 세 값은 이 조건과 같았고, `PRODUCTION_DEPLOYMENT_PROVIDER` 값은 호스트에서 확인한 적이 없습니다 |
 | 시작 시 템플릿 초기화 | 템플릿 테이블이 비어 있을 때만 씁니다. 템플릿이 이미 있으면 쓰지 않습니다 |
 | API 요청 처리 | 이 서버에 도달한 인증된 요청은 실행권 없이도 쓰고 문자를 보낼 수 있습니다 |
 | Migration | 컨테이너 시작만으로는 실행하지 않습니다. 배포할 때만 실행합니다 |
 
 `backend.env`를 고쳐도 이미 떠 있는 컨테이너에는 반영되지 않습니다. 리허설 인스턴스에
-DNS를 주지 않는 것만으로는 운영 DB 연결이 끊기지 않습니다.
+DNS를 주지 않는 것만으로는 운영 DB 연결이 끊기지 않습니다. 이 항목은 인스턴스를 시작하는
+모든 경우에 적용됩니다: 장애 전환, 리허설, 그리고 6절의 중지를 되돌리는 경우.
 
 닫는 방법: 부팅 뒤 API가 뜨기 전에 외부 접근과 DB 접근을 끊는 방법을 정하고(도구), 리허설을
 운영 DB에 붙인 채 할지 격리된 대상으로 할지 정합니다(결정).
@@ -87,12 +96,17 @@ DNS를 주지 않는 것만으로는 운영 DB 연결이 끊기지 않습니다.
 
 `lightsail-cli.sh status production`은 공개 주소 health까지 확인하므로, LightNode가 내려가
 있고 DNS가 아직 옮겨지지 않았으면 **정상 등록된 서버에서도 실패**합니다. 이 실패를 보고
-Systems Manager 등록을 다시 하면 안 됩니다. 실패한 위치로 구분합니다.
+Systems Manager 등록을 다시 하면 안 됩니다. workflow가 실패했다는 사실만으로는 원인을 알
+수 없고, 원인은 넷으로 나뉩니다.
 
-- workflow가 명령을 보내기 전에 끝났다면 등록 문제입니다(`DeploymentTarget` 태그를 가진
-  online 노드가 정확히 하나가 아님).
-- `Systems Manager operation failed with status: ...`가 찍혔다면 노드는 등록돼 있고 명령도
-  실행됐습니다. 호스트 쪽 확인이 실패한 것입니다.
+| 원인 | 근거 |
+|---|---|
+| 등록 문제 | `DeploymentTarget` 태그 노드 조회 결과가 정확히 하나가 아니거나 Online이 아님. 등록 문제라고 판단할 수 있는 근거는 이것뿐입니다 |
+| 명령 전송 실패 | 노드는 등록돼 있는데 전송 권한이나 문서 문제로 명령을 보내지 못함. 이 경우도 명령을 보내기 전에 끝납니다 |
+| 명령 미전달 | 전송은 됐지만 호스트에 도달하지 않거나 시간 초과. 이때도 `Systems Manager operation failed with status: ...`가 찍힙니다 |
+| 호스트 확인 실패 | 호스트에서 명령이 실행됐고 그 안의 확인(예: 공개 주소 health)이 실패 |
+
+뒤의 셋은 재등록으로 해결되지 않습니다.
 
 지금 공개 주소 확인 없이 호스트에서 명령이 실행되는지 볼 수 있는 경로는
 `operator-upgrade`뿐인데, 이것은 호스트의 운영자 도구를 바꾸는 작업이지 조회가 아닙니다.
@@ -156,11 +170,14 @@ migration `20261126010000_baby_case_keys`가 추가됐습니다. 운영 DB에 �
 3절이 닫히기 전에는 실행하지 않습니다. 각 단계는 운영 서버·DB·DNS를 바꾸므로 실행 직전에
 사용자 승인을 받습니다. 괄호는 그 단계가 걸려 있는 차단 항목입니다.
 
-1. **전환 결정.** LightNode가 일시적 장애가 아닌지 확인합니다. `main` merge를 멈춥니다.
+1. **전환 결정.** LightNode가 일시적 장애가 아닌지 확인합니다. `main` merge를 멈추고,
+   운영 DB 패치(`preview` merge, 수동 실행, 진행 중인 실행)를 1절대로 통제합니다.
 2. **이미지 확인 (B4).** `main` tip SHA의 이미지 digest가 조회되는지 확인합니다.
 3. **LightNode 쓰기 차단 (B1, B6).** 접속되면 root 운영자의 `operator.sh stop`, 안 되면
-   콘솔에서 전원을 끕니다. 정상 종료면 실행권을 즉시 반납하고, 비정상 종료면 마지막
-   갱신에서 최대 90초 뒤 만료됩니다.
+   콘솔에서 전원을 끕니다. 다음 단계로 넘어가는 근거는 종료 방식이 아니라 실행권
+   상태입니다: 운영 DB의 `scheduler_lease` `background-owner` 행이 반납됐거나 만료됐는지
+   확인합니다. 정상 종료에서도 DB 응답이 늦거나 실패하면 반납되지 않을 수 있고, 그때는
+   마지막 갱신에서 90초 뒤에 만료됩니다.
 4. **인스턴스 준비 (B2).** 원본이 중지 상태로 남아 있으면 **시작**합니다(에이전트 IAM).
    삭제한 뒤라면 관리자 콘솔에서 가장 최근 스냅샷으로 만듭니다: 리전 `ap-northeast-2`,
    번들 `medium_3_0`, 고정 IP 연결, 방화벽 80·443 열기, 22는 작업 장비의 `/32`만.
@@ -211,8 +228,9 @@ migration `20261126010000_baby_case_keys`가 추가됐습니다. 운영 DB에 �
 
 ## 6. Cold standby로 내리는 진행 상황
 
-1. 인스턴스 중지. **완료: 2026-11-28 13:23 KST.** 되돌리려면 시작하면 됩니다(B2 참고:
-   시작하면 옛 API가 운영 DB에 붙습니다).
+1. 인스턴스 중지. **완료: 2026-11-28 13:23 KST.** 중지를 되돌리는 것(인스턴스 시작)도
+   B2가 닫히고 사용자가 승인한 뒤에만 합니다. LightNode가 운영 중일 때 시작하면 옛 API가
+   DNS와 무관하게 운영 DB에 붙습니다.
 2. 수동 스냅샷. **완료: 2026-11-28 13:34 KST**,
    `babyjamjam-admin-server-cold-standby-20261128`(80GB, `available`).
 3. 3절의 차단 항목을 닫고 리허설. **미실행.**
