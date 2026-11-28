@@ -87,6 +87,17 @@ describe("PrismaExceptionFilter database failover telemetry", () => {
         expect(JSON.stringify(captured)).not.toMatch(/PRIVATE|\/clients\/118|secret/);
     });
 
+    it.each([
+        ["P2025", 404],
+        ["P2002", 409],
+    ])("keeps Prisma %s at status %i on the error capture path", (code, status) => {
+        const { host, response } = createHost();
+        new PrismaExceptionFilter().catch(knownError(code), host);
+        expect(response.status).toHaveBeenCalledWith(status);
+        expect(mockCaptureException).toHaveBeenCalledTimes(1);
+        expect(mockCaptureEvent).not.toHaveBeenCalled();
+    });
+
     it.each(["P1001", "P1017"])("captures %s as failover eligible on every API path", (code) => {
         const filter = new PrismaExceptionFilter();
         const { host, response } = createHost("/auth/login");

@@ -91,7 +91,7 @@ export class PrismaExceptionFilter implements ExceptionFilter {
         this.logger.error({ code: prismaCode, requestId, status });
         try {
             if (status === HttpStatus.BAD_REQUEST) {
-                captureHttpAdvisory(request, requestId, undefined, prismaCode);
+                captureHttpAdvisory(request, requestId, HttpStatus.BAD_REQUEST, undefined, prismaCode);
             } else {
                 capturePrismaError(exception, {
                     code: prismaCode,
