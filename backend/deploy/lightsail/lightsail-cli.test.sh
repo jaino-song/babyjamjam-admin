@@ -106,6 +106,8 @@ assert_refused_before_dispatch() {
         fail "invalid command was accepted: $*"
     fi
     grep -Fxq 'Usage:' <<<"$output" || fail "invalid command must print usage: $*"
+    grep -Fxq 'Production deploys and the host-wide operator upgrade remain subject to the GitHub production approval.' \
+        <<<"$output" || fail "usage must explain GitHub production approval"
     assert_not_contains "$call_log" '^workflow run ' "invalid command must not dispatch: $*"
 }
 

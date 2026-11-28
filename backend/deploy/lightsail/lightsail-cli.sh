@@ -21,6 +21,7 @@ Usage:
   lightsail-cli.sh operator-upgrade [--no-watch]
 
 The command uses the authenticated GitHub CLI.
+Production deploys and the host-wide operator upgrade remain subject to the GitHub production approval.
 standby and --self are production-only and require GitHub production approval.
 EOF
 }

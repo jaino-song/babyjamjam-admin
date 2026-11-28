@@ -85,6 +85,46 @@ yaml_block() {
     ' "$file"
 }
 
+assert_standby_dns_guard() (
+    local node_stdout="$1"
+    local node_status="$2"
+    local expected="$3"
+    local label="$4"
+    local probe_root
+    local guard_status=0
+    local resolver_path='backend/deploy/fallback-server/ci/resolve-deploy-target.mjs'
+    local refusal='Production DNS is not on LightNode. Refusing to put the Lightsail host in standby.'
+
+    probe_root="$(mktemp -d)"
+    trap 'rm -rf "$probe_root"' EXIT
+    cd "$probe_root"
+    cat >node <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "${1:-}" >>node-calls
+printf '%s' "$FAKE_NODE_STDOUT"
+exit "$FAKE_NODE_STATUS"
+EOF
+    chmod 0755 node
+    printf '%s\n' "$standby_dns_script" >guard.sh
+
+    env -i PATH="$probe_root" DEPLOY_REF_NAME=main \
+        FAKE_NODE_STDOUT="$node_stdout" FAKE_NODE_STATUS="$node_status" \
+        /bin/bash --noprofile --norc -eo pipefail guard.sh >guard.stdout 2>guard.stderr || guard_status=$?
+
+    [[ -f node-calls && "$(<node-calls)" == "$resolver_path" ]] \
+        || fail "standby DNS guard ($label) must call node with $resolver_path as the first argument"
+    if [[ "$expected" == allow ]]; then
+        [[ "$guard_status" -eq 0 ]] || fail "standby DNS guard ($label) must exit 0, got $guard_status"
+        if grep -Fq -- "$refusal" guard.stdout guard.stderr; then
+            fail "standby DNS guard ($label) must not print the refusal"
+        fi
+    else
+        [[ "$guard_status" -ne 0 ]] || fail "standby DNS guard ($label) must exit non-zero"
+        grep -Fxq -- "$refusal" guard.stderr || fail "standby DNS guard ($label) must print the refusal on stderr"
+    fi
+)
+
 assert_document_command() {
     local block="$1"
     local command="$2"
@@ -167,6 +207,17 @@ assert_text_not_contains "$node_preflight" 'InstanceId|IPAddress|ComputerName|\.
 
 standby_checkout="$(yaml_block "$OPERATIONS_WORKFLOW" '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0')"
 standby_dns_guard="$(yaml_block "$OPERATIONS_WORKFLOW" '      - name: Verify production DNS is on LightNode before standby')"
+standby_dns_script="$(awk '
+    /^        run: \|$/ { in_run = 1; next }
+    in_run && NF && !/^          / { exit }
+    in_run { print substr($0, 11) }
+' <<<"$standby_dns_guard")"
+[[ "$standby_dns_script" =~ [^[:space:]] ]] || fail "standby DNS guard must have a non-empty run body"
+assert_standby_dns_guard $'target=lightnode\n' 0 allow 'LightNode target'
+assert_standby_dns_guard '' 1 refuse 'resolver failure'
+assert_standby_dns_guard $'target=cloudrun\n' 0 refuse 'Cloud Run target'
+assert_standby_dns_guard '' 0 refuse 'empty target'
+
 assert_text_contains "$standby_checkout" "^        if: inputs.operation == 'standby'$" "checkout must run only for standby"
 assert_text_contains "$standby_checkout" '^          persist-credentials: false$' "standby checkout must not persist credentials"
 assert_text_contains "$standby_dns_guard" "^        if: inputs.operation == 'standby'$" "DNS guard must run only for standby"
