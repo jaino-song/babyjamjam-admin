@@ -252,7 +252,7 @@ test("backend pull requests and merge queues cannot receive the protected cutove
     const untrustedCutoverStep = cutoverSteps.find((step) => !step.join("\n").includes("secrets.AGENT_CUTOVER_MANIFEST_JSON"));
     assert.ok(trustedCutoverStep, `${fileName} must retain a protected-evidence cutover guard`);
     assert.ok(untrustedCutoverStep, `${fileName} must retain a secret-free pull-request and merge-queue cutover guard`);
-    assert.match(trustedCutoverStep.join("\n"), /if:\s+github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'/);
+    assert.match(trustedCutoverStep.join("\n"), /^        if: github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch' \|\| github\.event_name == 'schedule'$/m);
     assert.match(untrustedCutoverStep.join("\n"), /if:\s+github\.event_name == 'pull_request' \|\| github\.event_name == 'merge_group'/);
     assert.match(trustedCutoverStep.join("\n"), /secrets\.AGENT_CUTOVER_MANIFEST_JSON/);
     assert.match(untrustedCutoverStep.join("\n"), /AGENT_RELEASE_CANDIDATE_SHA:\s+\$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/);
@@ -262,6 +262,28 @@ test("backend pull requests and merge queues cannot receive the protected cutove
         /^      [A-Z0-9_]+:.*secrets\.AGENT_CUTOVER_MANIFEST_JSON/m,
         `${fileName} must not expose the cutover manifest at job scope`,
     );
+});
+
+test("only environment branches trigger push CI and the backend nightly cannot deploy", async () => {
+    for (const fileName of [
+        "backend-ci.yml", "backend-full-flow-ci.yml", "frontend-ci.yml",
+        "mobile-ci.yml", "mobile-unit-ci.yml", "shared-contracts-ci.yml",
+    ]) {
+        const workflow = await readWorkflow(fileName);
+        assert.match(workflow, /^  push:\n    branches: \[ main, dev, preview \]$/m, fileName);
+    }
+
+    const fileName = "backend-ci.yml";
+    const workflow = await readWorkflow(fileName);
+    assert.match(workflow, /^  schedule:\n    - cron: '17 18 \* \* \*'/m);
+    assert.match(workflow, /^  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m);
+    assert.match(workflow, /^  group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}-\$\{\{ github\.event_name == 'pull_request' && 'pr' \|\| github\.run_id \}\}$/m);
+    for (const jobId of ["build-lightsail-image", "wait-database-patches", "resolve-backend-deploy-target", "deploy-cloudrun", "deploy-lightnode"]) {
+        const condition = jobCondition(jobBlock(workflow, jobId, fileName));
+        assert.match(condition, /github\.event_name == 'push' &&/, jobId);
+        assert.match(condition, jobId === "deploy-lightnode" ? /github\.ref_name == 'main'/ : /github\.ref_name == 'preview'/, jobId);
+        assert.doesNotMatch(condition, /github\.event_name == 'schedule'/, jobId);
+    }
 });
 
 test("PR-controlled frontend and mobile lanes use explicit read-only permissions and no persisted checkout token", async () => {

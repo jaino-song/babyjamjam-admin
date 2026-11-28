@@ -3,7 +3,7 @@ name: Mobile CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, dev, preview, "feature/**", "fix/**" ]
+    branches: [ main, dev, preview ]
     paths:
       - 'mobile/**'
       - 'packages/shared/**'
