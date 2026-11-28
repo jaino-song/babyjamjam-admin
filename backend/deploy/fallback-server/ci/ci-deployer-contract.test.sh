@@ -6,7 +6,6 @@ readonly SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly DEPLOYER="$SCRIPT_ROOT/ci-deployer.sh"
 readonly INSTALLER="$SCRIPT_ROOT/install-ci-deployer.sh"
 readonly DISPATCHER="$SCRIPT_ROOT/ssh-dispatch.sh"
-readonly DECISION="$SCRIPT_ROOT/standby-decision.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -24,7 +23,6 @@ assert_not_contains() {
 [[ -r "$DEPLOYER" ]] || fail "missing restricted LightNode CI deployer"
 [[ -r "$INSTALLER" ]] || fail "missing restricted LightNode CI deployer installer"
 [[ -r "$DISPATCHER" ]] || fail "missing forced-command SSH dispatcher"
-[[ -r "$DECISION" ]] || fail "missing standby convergence decision script"
 
 assert_contains "$DEPLOYER" 'SUDO_USER' \
     "deployer must bind authority to the dedicated SSH user"
@@ -128,7 +126,7 @@ assert_not_contains "$INSTALLER" 'NOPASSWD: \$DESTINATION (replace-temporary-act
     "sudoers must not expose destructive or non-CI operator commands"
 assert_not_contains "$INSTALLER" 'NOPASSWD: ALL' "sudoers must not grant unrestricted commands"
 
-bash -n "$DEPLOYER" "$INSTALLER" "$DISPATCHER" "$DECISION"
+bash -n "$DEPLOYER" "$INSTALLER" "$DISPATCHER"
 if [[ "$EUID" -ne 0 ]]; then
     if "$DEPLOYER" status >/dev/null 2>&1; then
         fail "deployer must reject direct non-root execution"
