@@ -49,6 +49,7 @@ import {
 } from "application/services/sms-provider-acceptance.service";
 import {
     classifySmsProviderOutcome,
+    isSmsPreSendError,
 } from "application/services/sms-provider-outcome.service";
 import type {
     ProblemCode,
@@ -293,6 +294,7 @@ export class MessageDeliveryController {
             testMode: dto.testMode,
         }).catch(async (error) => {
             const errorMessage = this.formatErrorMessage(error);
+            const preSend = isSmsPreSendError(error);
             this.logger.warn(
                 `[SMS] Aligo request failed: branchId=${branchId || "unknown"}, error=${errorMessage}`,
             );
@@ -302,11 +304,11 @@ export class MessageDeliveryController {
                 attempts: 1,
                 lastAttemptAt: new Date(),
                 nextRetryAt: null,
-                providerAcceptanceState: "uncertain",
+                providerAcceptanceState: preSend ? "rejected" : "uncertain",
                 providerCallStartedAt: pendingLog.row.providerCallStartedAt ?? new Date(),
                 variables: {
                     ...this.smsRecordVariables(pendingLog.row),
-                    retrySafety: "uncertain",
+                    retrySafety: preSend ? "permanent-provider-rejected" : "uncertain",
                 },
             }, resolvedDto.templateRef ? branchId : undefined).catch((logError) => {
                 this.logger.error(
@@ -323,8 +325,8 @@ export class MessageDeliveryController {
             });
             throw new BadGatewayException(
                 this.smsProblemBody(
-                    "MESSAGE_SEND_UNCONFIRMED",
-                    "UNKNOWN",
+                    preSend ? "MESSAGE_SEND_REJECTED" : "MESSAGE_SEND_UNCONFIRMED",
+                    preSend ? "FAILED" : "UNKNOWN",
                     this.safeOperationId(pendingLog.id),
                 ),
                 { cause: error },

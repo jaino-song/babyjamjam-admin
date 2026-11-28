@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { AuthEmailOutboxService } from "application/services/auth-email-outbox.service";
 import { AuthEmailTokenService } from "application/services/auth-email-token.service";
 import { EmailPort } from "domain/ports/email.port";
@@ -64,6 +65,21 @@ describe("AuthEmailOutboxService provider boundary", () => {
             email,
             createSchedulerLeaseMock(),
         );
+    });
+
+    it("records an allowlist rejection as a terminal email failure", async () => {
+        const item = claimedEmail();
+        prisma.$queryRaw.mockResolvedValueOnce([item]).mockResolvedValueOnce([{ id: item.id }]);
+        prisma.auth_email_outbox.updateMany.mockResolvedValue({ count: 1 });
+        email.sendVerificationEmail.mockRejectedValue(new OutboundRecipientBlockedError("email recipient ***@example.test"));
+
+        await service.deliverPending();
+
+        expect(prisma.auth_email_outbox.updateMany).toHaveBeenCalledTimes(1);
+        expect(prisma.auth_email_outbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: item.id, status: "started", attemptVersion: 1 }),
+            data: expect.objectContaining({ status: "failed", errorCode: "outbound_recipient_blocked" }),
+        }));
     });
 
     it("keeps an accepted provider result uncertain when local completion fails and does not resend after restart", async () => {

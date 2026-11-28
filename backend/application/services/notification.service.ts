@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { ForbiddenException, Injectable, Inject, Logger } from "@nestjs/common";
 import {
     SubscribePushUsecase,
@@ -586,6 +587,10 @@ export class NotificationService {
             });
             return "sent";
         } catch (error) {
+            if (error instanceof OutboundRecipientBlockedError) {
+                this.logger.warn(`Daily digest email skipped for user ${user.id}: ${error.message}`);
+                return "skipped";
+            }
             this.logger.error(
                 `Failed to send daily digest email to user ${user.id}`,
                 error instanceof Error ? error.stack : String(error),

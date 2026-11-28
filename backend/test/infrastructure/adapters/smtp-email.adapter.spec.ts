@@ -26,6 +26,7 @@ describe("SmtpEmailAdapter", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+        jest.restoreAllMocks();
         for (const [key, value] of Object.entries(originalEnv)) {
             if (value === undefined) delete process.env[key];
             else process.env[key] = value;
@@ -64,14 +65,24 @@ describe("SmtpEmailAdapter", () => {
         });
     });
 
-    it("logs the plain recipient address", async () => {
+    it("blocks unlisted and compound addresses without calling SMTP", async () => {
+        jest.replaceProperty(process, "env", { ...process.env, EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test" });
+        const adapter = new SmtpEmailAdapter();
+        for (const to of ["blocked@example.test", "allowed@example.test, blocked@example.test"]) {
+            await expect(adapter.send({ to, subject: "test", html: "test" }))
+                .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        }
+        expect(mockSendMail).not.toHaveBeenCalled();
+    });
+
+    it("masks the recipient address in logs", async () => {
         const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
         mockSendMail.mockResolvedValue({ messageId: "smtp-message-2" });
 
         const adapter = new SmtpEmailAdapter();
         await adapter.send({ to: "recipient@example.com", subject: "제목", text: "본문", html: "<p>본문</p>" });
 
-        expect(logSpy).toHaveBeenCalledWith("SMTP email sent to recipient@example.com");
+        expect(logSpy).toHaveBeenCalledWith("SMTP email sent to ***@example.com");
         logSpy.mockRestore();
     });
 });

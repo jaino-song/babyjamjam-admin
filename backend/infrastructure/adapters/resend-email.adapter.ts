@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Resend } from 'resend';
+import { assertOutboundRecipients, maskEmailRecipient, maskOutboundContacts } from 'infrastructure/config/outbound-recipient-policy';
 import {
     EmailOptions,
     EmailPort,
@@ -37,8 +38,10 @@ export class ResendEmailAdapter implements EmailPort {
     }
 
     async send(options: EmailOptions): Promise<string> {
+        assertOutboundRecipients('email', [options.to]);
+        const recipient = maskEmailRecipient(options.to);
         if (!this.resend) {
-            this.logger.warn(`Email not sent (no API key): to=${options.to}, subject=${options.subject}`);
+            this.logger.warn(`Email not sent (no API key): to=${recipient}`);
             throw new EmailProviderError('email_provider_disabled', 'pre_send');
         }
 
@@ -52,17 +55,16 @@ export class ResendEmailAdapter implements EmailPort {
             });
 
             if (response.error) {
-                this.logger.error(`Failed to send email: ${response.error.message}`);
-                throw new Error(response.error.message);
+                this.logger.error(`Failed to send email to ${recipient}: ${maskOutboundContacts(response.error.message)}`);
+                throw new EmailProviderError('email_provider_unknown', 'unknown');
             }
 
-            this.logger.log(`Email sent successfully to ${options.to}, ID: ${response.data?.id}`);
+            this.logger.log(`Email sent successfully to ${recipient}, ID: ${response.data?.id}`);
             return response.data?.id || '';
         } catch (error) {
-            this.logger.error(`Failed to send email to ${options.to}:`, error);
-            throw error instanceof EmailProviderError
-                ? error
-                : new EmailProviderError('email_provider_unknown', 'unknown');
+            if (error instanceof EmailProviderError) throw error;
+            this.logger.error(`Failed to send email to ${recipient}`);
+            throw new EmailProviderError('email_provider_unknown', 'unknown');
         }
     }
 
@@ -105,8 +107,10 @@ export class ResendEmailAdapter implements EmailPort {
         templateId: string;
         variables: Record<string, string | number>;
     }, sendOptions?: EmailSendOptions): Promise<string> {
+        assertOutboundRecipients('email', [options.to]);
+        const recipient = maskEmailRecipient(options.to);
         if (!this.resend) {
-            this.logger.warn(`Email not sent (no API key): to=${options.to}, template=${options.templateId}`);
+            this.logger.warn(`Email not sent (no API key): to=${recipient}, template=${options.templateId}`);
             throw new EmailProviderError('email_provider_disabled', 'pre_send');
         }
 
@@ -126,17 +130,16 @@ export class ResendEmailAdapter implements EmailPort {
             );
 
             if (response.error) {
-                this.logger.error(`Failed to send template email: ${response.error.message}`);
-                throw new Error(response.error.message);
+                this.logger.error(`Failed to send template email to ${recipient}: ${maskOutboundContacts(response.error.message)}`);
+                throw new EmailProviderError('email_provider_unknown', 'unknown');
             }
 
-            this.logger.log(`Template email sent to ${options.to}, ID: ${response.data?.id}`);
+            this.logger.log(`Template email sent to ${recipient}, ID: ${response.data?.id}`);
             return response.data?.id || '';
         } catch (error) {
-            this.logger.error(`Failed to send template email to ${options.to}:`, error);
-            throw error instanceof EmailProviderError
-                ? error
-                : new EmailProviderError('email_provider_unknown', 'unknown');
+            if (error instanceof EmailProviderError) throw error;
+            this.logger.error(`Failed to send template email to ${recipient}`);
+            throw new EmailProviderError('email_provider_unknown', 'unknown');
         }
     }
 }

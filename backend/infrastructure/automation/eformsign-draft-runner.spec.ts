@@ -189,12 +189,40 @@ describe("dormant draft dispatch lifecycle", () => {
     }
     beforeEach(() => jest.clearAllMocks());
     afterEach(() => {
+        jest.restoreAllMocks();
         expect(runEformsignCreationGates).not.toHaveBeenCalled(); expect(runEformsignFinalizeGates).not.toHaveBeenCalled();
     });
     it("runs generated HTML through the existing local route and closes resources", async () => {
         const s = setup(); expect(await s.service.dispatchDraft(s.params)).toMatchObject({ ok: true, draftSaved: true });
         expect(s.beforeOpen).toHaveBeenCalledTimes(1); expect(s.page.goto).toHaveBeenCalledTimes(1);
         expect(s.page.close).toHaveBeenCalledTimes(1); expect(s.context.close).toHaveBeenCalledTimes(1);
+    });
+    it.each([
+        ["an unlisted recipient", { recipients: [{ sms: "01000000002", use_sms: true }] }, /^Blocked by staging recipient allowlist/],
+        ["missing prefill", undefined, /recipients could not be verified/],
+        ["missing recipients", { fields: [] }, /recipients could not be verified/],
+    ])("blocks %s before opening or launching a draft", async (_name, prefill, error) => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, OUTBOUND_ALLOWLIST_REQUIRED: "true", SMS_RECIPIENT_ALLOWLIST: "01000000001",
+        });
+        const s = setup();
+        await expect(s.service.dispatchDraft({
+            ...s.params, documentOption: { ...s.params.documentOption, prefill },
+        })).rejects.toThrow(error);
+        expect(s.beforeOpen).not.toHaveBeenCalled();
+        expect(launch).not.toHaveBeenCalled();
+    });
+    it("opens and saves a draft for an allowlisted recipient", async () => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, OUTBOUND_ALLOWLIST_REQUIRED: "true", SMS_RECIPIENT_ALLOWLIST: "01000000001",
+        });
+        const s = setup();
+        await expect(s.service.dispatchDraft({
+            ...s.params,
+            documentOption: { ...s.params.documentOption, prefill: { recipients: [{ sms: "01000000001", use_sms: true }] } },
+        })).resolves.toMatchObject({ ok: true, draftSaved: true });
+        expect(s.beforeOpen).toHaveBeenCalledTimes(1);
+        expect(launch).toHaveBeenCalledTimes(1);
     });
     it.each([false, "throw"])("does not initialize a provider when authority returns %s", async (authority) => {
         const s = setup();

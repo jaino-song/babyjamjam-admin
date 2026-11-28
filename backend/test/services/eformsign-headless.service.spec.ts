@@ -21,6 +21,7 @@ jest.mock("../../infrastructure/automation/eformsign-finalize-gates", () => ({
     runEformsignFinalizeGates: jest.fn().mockResolvedValue("success-latched"),
 }));
 
+import { EformsignService } from "application/services/eformsign.service";
 import { EformsignHeadlessService } from "../../infrastructure/automation/eformsign-headless.service";
 import { runEformsignCreationGates } from "../../infrastructure/automation/eformsign-creation-gates";
 import { runEformsignFinalizeGates } from "../../infrastructure/automation/eformsign-finalize-gates";
@@ -81,6 +82,96 @@ describe("EformsignHeadlessService", () => {
         browserMock = buildBrowserMock();
         launchMock.mockResolvedValue(browserMock);
         service = new EformsignHeadlessService({ get: configGetMock } as never);
+    });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it.each([
+        { sms: "01000000002", use_sms: true },
+        { id: "blocked@example.test", use_mail: true },
+    ])("blocks an unlisted creation recipient before launching the SDK", async (recipient) => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, SMS_RECIPIENT_ALLOWLIST: "01000000001", EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+
+        await expect(service.dispatchCreation({
+            documentOption: { mode: { type: "01" }, prefill: { recipients: [recipient] } },
+        })).rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        expect(launchMock).not.toHaveBeenCalled();
+    });
+
+    it("blocks document completion when a stored participant is outside the allowlist", async () => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, SMS_RECIPIENT_ALLOWLIST: "01000000001", EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+        const getDocumentById = jest.fn().mockResolvedValue({
+            current_status: { step_recipients: [{ id: "allowed@example.test", use_mail: true }] },
+            previous_status: [{ step_recipients: [{ sms: "01000000002", use_sms: true }] }],
+        });
+        service = new EformsignHeadlessService({ get: configGetMock } as never, { getDocumentById } as unknown as EformsignService);
+
+        await expect(service.dispatchFinalize({
+            documentId: "doc",
+            documentOption: { mode: { type: "02", document_id: "doc" }, user: { access_token: "test" } },
+        })).rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        expect(getDocumentById).toHaveBeenCalledWith("test", "doc");
+        expect(launchMock).not.toHaveBeenCalled();
+    });
+
+    describe("finalize with recipient enforcement", () => {
+        const params = {
+            documentId: "doc",
+            documentOption: { mode: { type: "02", document_id: "doc" }, user: { access_token: "test" } },
+        };
+        const currentStatus = { step_recipients: [{ sms: "01000000001", use_sms: true }] };
+        const completeDocument = { current_status: currentStatus, previous_status: [], next_status: [] };
+        const getDocumentById = jest.fn();
+
+        beforeEach(() => {
+            jest.replaceProperty(process, "env", {
+                ...process.env, OUTBOUND_ALLOWLIST_REQUIRED: "true", SMS_RECIPIENT_ALLOWLIST: "01000000001",
+            });
+            service = new EformsignHeadlessService({ get: configGetMock } as never, { getDocumentById } as unknown as EformsignService);
+        });
+
+        it.each([
+            ["missing status history", { current_status: currentStatus }],
+            ["missing previous status", { ...completeDocument, previous_status: undefined }],
+            ["malformed previous status", { ...completeDocument, previous_status: {} }],
+            ["missing current recipients", { ...completeDocument, current_status: {} }],
+            ["empty current recipients", { ...completeDocument, current_status: { step_recipients: [] } }],
+        ])("blocks %s before launching the SDK", async (_name, document) => {
+            getDocumentById.mockResolvedValue(document);
+            await expect(service.dispatchFinalize(params)).rejects.toThrow(/recipients could not be verified/);
+            expect(launchMock).not.toHaveBeenCalled();
+            expect(runEformsignFinalizeGates).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["missing access token", { ...params.documentOption, user: {} }],
+            ["wrong mode", { ...params.documentOption, mode: { type: "01", document_id: "doc" } }],
+            ["mismatched document ID", { ...params.documentOption, mode: { type: "02", document_id: "other-doc" } }],
+        ])("blocks finalize with %s before looking up the document", async (_name, documentOption) => {
+            getDocumentById.mockResolvedValue(completeDocument);
+            await expect(service.dispatchFinalize({ ...params, documentOption }))
+                .rejects.toThrow(/^Blocked by staging recipient allowlist: eformsign recipients could not be verified$/);
+            expect(getDocumentById).not.toHaveBeenCalled();
+            expect(launchMock).not.toHaveBeenCalled();
+        });
+
+        it("blocks finalize without a document lookup service", async () => {
+            service = new EformsignHeadlessService({ get: configGetMock } as never);
+            await expect(service.dispatchFinalize(params))
+                .rejects.toThrow(/^Blocked by staging recipient allowlist: eformsign recipients could not be verified$/);
+            expect(launchMock).not.toHaveBeenCalled();
+        });
+
+        it("finalizes with verified allowlisted recipients", async () => {
+            getDocumentById.mockResolvedValue(completeDocument);
+            await expect(service.dispatchFinalize(params)).resolves.toMatchObject({ ok: true });
+            expect(getDocumentById).toHaveBeenCalledWith("test", "doc");
+            expect(runEformsignFinalizeGates).toHaveBeenCalledTimes(1);
+        });
     });
 
     /**

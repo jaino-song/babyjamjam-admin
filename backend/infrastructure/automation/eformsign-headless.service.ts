@@ -1,5 +1,13 @@
-import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { EformsignService } from "application/services/eformsign.service";
+import {
+    assertEformsignCreationOptions,
+    assertEformsignRecipients,
+    assertStoredEformsignRecipients,
+    isEformsignRecipientAllowlistEnforced,
+} from "infrastructure/config/eformsign-recipient-policy";
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { randomUUID } from "node:crypto";
 import {
     chromium,
@@ -107,7 +115,10 @@ export class EformsignHeadlessService implements OnModuleDestroy {
     private readonly inflight = new Set<Promise<unknown>>();
     private readonly waitQueue: Array<() => void> = [];
 
-    constructor(private readonly configService: ConfigService) {}
+    constructor(
+        private readonly configService: ConfigService,
+        @Optional() private readonly eformsignService?: EformsignService,
+    ) {}
 
     /** Dormant draft-only seam: candidate identity requires later server verification. */
     async dispatchDraft(params: DispatchDraftParams): Promise<DraftDispatchResult> {
@@ -121,6 +132,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         } catch {
             return { ok: false, reason: "invalid-options", uncertain: false, durationMs: Date.now() - start };
         }
+        assertEformsignCreationOptions(params.documentOption);
         return this.runWithSlot(async () => {
             let started = false;
             try {
@@ -165,6 +177,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
      * surfacing the iframe to the user.
      */
     async dispatchCreation(params: DispatchCreationParams): Promise<HeadlessDispatchResult> {
+        assertEformsignCreationOptions(params.documentOption);
         if (areE2EVendorStubsEnabled(this.configService)) {
             await params.onProgress?.("client-started");
             await params.onProgress?.("info-inserted");
@@ -216,6 +229,20 @@ export class EformsignHeadlessService implements OnModuleDestroy {
                 durationMs: 0,
                 documentId: params.documentId,
             };
+        }
+
+        if (isEformsignRecipientAllowlistEnforced()) {
+            const user = params.documentOption["user"] as { access_token?: unknown } | undefined;
+            const mode = params.documentOption["mode"] as { type?: unknown; document_id?: unknown } | undefined;
+            const token = user?.access_token;
+            if (!this.eformsignService || typeof token !== "string"
+                || mode?.type !== "02" || mode.document_id !== params.documentId) {
+                throw new OutboundRecipientBlockedError("eformsign recipients could not be verified");
+            }
+            const prefill = params.documentOption["prefill"] as { recipients?: unknown } | undefined;
+            if (prefill?.recipients !== undefined) assertEformsignRecipients(prefill.recipients);
+            const document: unknown = await this.eformsignService.getDocumentById(token, params.documentId);
+            assertStoredEformsignRecipients(document);
         }
 
         return this.runWithSlot(async () => {
