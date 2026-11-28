@@ -154,6 +154,16 @@ sql -c "UPDATE message_trigger_job SET status = 'dispatching' WHERE id = 'qa-pen
 refuse 'Outstanding service-record link claim' cutover apply
 release_claim
 legacy_unchanged
+# Settled jobs keep their last claim token and deadline. They must not block.
+for settled in sent canceled failed; do
+  sql -c "UPDATE message_trigger_job SET status = '$settled', claim_token = 'qa-stale',
+          processing_deadline_at = now() - interval '1 day' WHERE id = 'qa-pending'"
+  cutover rehearse
+done
+sql -c "UPDATE message_trigger_job SET status = 'pending' WHERE id = 'qa-pending'"
+refuse 'Outstanding service-record link claim' cutover apply
+release_claim
+legacy_unchanged
 sql <<'SQL'
 UPDATE message_trigger_job SET status = 'failed', updated_at = now(),
     cancel_reason = '문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.'

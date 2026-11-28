@@ -115,8 +115,11 @@ BEGIN
         WHERE (j.rule_id = 'system:service_record_link' OR j.template_key = 'SERVICE_RECORD_LINK'
                OR j.recipient_employee_id IS NOT NULL
                OR EXISTS (SELECT 1 FROM public.service_record_job_member m WHERE m.job_id = j.id))
-          AND (j.status IN ('processing', 'dispatching') OR j.claim_token IS NOT NULL
-               OR j.processing_deadline_at IS NOT NULL
+          -- Terminal jobs keep their last claim token and deadline. They are
+          -- settled, so only a non-terminal job with claim state is in flight.
+          AND (j.status IN ('processing', 'dispatching')
+               OR (j.status NOT IN ('sent', 'canceled', 'failed')
+                   AND (j.claim_token IS NOT NULL OR j.processing_deadline_at IS NOT NULL))
                OR (j.cancel_reason = '제공기록지 링크 발송 작업 생성 재시도 대기'
                    AND j.next_attempt_at > clock_timestamp())
                -- Reclaim drops the claim token and persists no log id or
