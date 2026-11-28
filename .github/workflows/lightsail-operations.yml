@@ -12,6 +12,8 @@ on:
           - status
           - deploy
           - operator-upgrade
+          - node-status
+          - standby
       environment:
         description: Runtime environment
         required: true
@@ -19,6 +21,14 @@ on:
         options:
           - preview
           - production
+      health_scope:
+        description: Health check scope
+        required: false
+        type: choice
+        default: public
+        options:
+          - public
+          - self
       request_id:
         description: Unique local request identifier
         required: true
@@ -57,7 +67,14 @@ jobs:
       AWS_REGION: ap-northeast-2
       LIGHTSAIL_SSM_TARGET_TAG: ${{ vars.LIGHTSAIL_SSM_TARGET_TAG }}
       AWS_OPERATION_ROLE_ARN: ${{ inputs.environment == 'production' && vars.AWS_PRODUCTION_DEPLOY_ROLE_ARN || vars.AWS_PREVIEW_DEPLOY_ROLE_ARN }}
-      AWS_OPERATION_DOCUMENT_NAME: ${{ inputs.operation == 'operator-upgrade' && vars.AWS_OPERATOR_UPGRADE_DOCUMENT_NAME || inputs.operation == 'deploy' && (inputs.environment == 'production' && vars.AWS_PRODUCTION_DEPLOY_DOCUMENT_NAME || vars.AWS_PREVIEW_DEPLOY_DOCUMENT_NAME) || (inputs.environment == 'production' && vars.AWS_PRODUCTION_STATUS_DOCUMENT_NAME || vars.AWS_PREVIEW_STATUS_DOCUMENT_NAME) }}
+      AWS_PREVIEW_STATUS_DOCUMENT_NAME: ${{ vars.AWS_PREVIEW_STATUS_DOCUMENT_NAME }}
+      AWS_PREVIEW_DEPLOY_DOCUMENT_NAME: ${{ vars.AWS_PREVIEW_DEPLOY_DOCUMENT_NAME }}
+      AWS_PRODUCTION_STATUS_DOCUMENT_NAME: ${{ vars.AWS_PRODUCTION_STATUS_DOCUMENT_NAME }}
+      AWS_PRODUCTION_DEPLOY_DOCUMENT_NAME: ${{ vars.AWS_PRODUCTION_DEPLOY_DOCUMENT_NAME }}
+      AWS_OPERATOR_UPGRADE_DOCUMENT_NAME: ${{ vars.AWS_OPERATOR_UPGRADE_DOCUMENT_NAME }}
+      AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME: ${{ vars.AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME }}
+      AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME: ${{ vars.AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME }}
+      AWS_HOST_STANDBY_DOCUMENT_NAME: ${{ vars.AWS_HOST_STANDBY_DOCUMENT_NAME }}
       EXPECTED_SCHEDULERS_ENABLED: ${{ inputs.environment == 'production' && 'true' || 'false' }}
       IMAGE_REFERENCE: ghcr.io/jaino-song/babyjamjam-admin-backend:${{ github.sha }}
 
@@ -67,11 +84,11 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           REQUEST_ID: ${{ inputs.request_id }}
+          HEALTH_SCOPE: ${{ inputs.health_scope }}
         run: |
           set -euo pipefail
           [[ "$REQUEST_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$AWS_OPERATION_DOCUMENT_NAME" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]
           [[ "$AWS_OPERATION_ROLE_ARN" =~ ^arn:[a-z0-9-]+:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$ ]]
           [[ "$LIGHTSAIL_SSM_TARGET_TAG" =~ ^[A-Za-z0-9._:/=+@-]{1,128}$ ]]
           case "$DEPLOY_ENVIRONMENT:$GITHUB_REF_NAME" in
@@ -80,6 +97,62 @@ jobs:
           esac
           if [[ "$OPERATION" == "operator-upgrade" && "$DEPLOY_ENVIRONMENT" != "production" ]]; then
             echo "The shared host operator may be upgraded only through the production-approved main path." >&2
+            exit 1
+          fi
+          if [[ "$OPERATION" == "standby" && "$DEPLOY_ENVIRONMENT" != "production" ]]; then
+            echo "The shared host may be put in standby only through the production-approved main path." >&2
+            exit 1
+          fi
+          if [[ "$HEALTH_SCOPE" != "public" && "$HEALTH_SCOPE" != "self" ]]; then
+            echo "Health scope must be public or self." >&2
+            exit 1
+          fi
+          if [[ "$HEALTH_SCOPE" == "self" &&
+                ( "$DEPLOY_ENVIRONMENT" != "production" || ( "$OPERATION" != "status" && "$OPERATION" != "deploy" ) ) ]]; then
+            echo "Self health scope is allowed only for production status and deploy." >&2
+            exit 1
+          fi
+
+          case "$OPERATION:$DEPLOY_ENVIRONMENT:$HEALTH_SCOPE" in
+            operator-upgrade:production:public) variable=AWS_OPERATOR_UPGRADE_DOCUMENT_NAME ;;
+            standby:production:public) variable=AWS_HOST_STANDBY_DOCUMENT_NAME ;;
+            deploy:production:self) variable=AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME ;;
+            deploy:production:public) variable=AWS_PRODUCTION_DEPLOY_DOCUMENT_NAME ;;
+            deploy:preview:public) variable=AWS_PREVIEW_DEPLOY_DOCUMENT_NAME ;;
+            status:production:self) variable=AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME ;;
+            status:production:public) variable=AWS_PRODUCTION_STATUS_DOCUMENT_NAME ;;
+            status:preview:public) variable=AWS_PREVIEW_STATUS_DOCUMENT_NAME ;;
+            node-status:production:public|node-status:preview:public) exit 0 ;;
+            *) echo "Unsupported operation, environment or scope." >&2; exit 1 ;;
+          esac
+
+          name="${!variable-}"
+          if [[ -z "$name" ]]; then
+            printf 'GitHub variable %s is not set. Update the CloudFormation stack and set it from the stack outputs.\n' "$variable" >&2
+            exit 1
+          fi
+          if [[ ! "$name" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]; then
+            printf 'GitHub variable %s is not a valid Systems Manager document name.\n' "$variable" >&2
+            exit 1
+          fi
+          printf 'AWS_OPERATION_DOCUMENT_NAME=%s\n' "$name" >>"$GITHUB_ENV"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: inputs.operation == 'standby'
+        with:
+          persist-credentials: false
+
+      - name: Verify production DNS is on LightNode before standby
+        if: inputs.operation == 'standby'
+        env:
+          DEPLOY_REF_NAME: main
+          FALLBACK_DNS_SHA256: ${{ secrets.FALLBACK_DNS_SHA256 }}
+          LIGHTSAIL_DNS_SHA256: ${{ secrets.LIGHTSAIL_DNS_SHA256 }}
+        run: |
+          set -euo pipefail
+          if ! target="$(node backend/deploy/fallback-server/ci/resolve-deploy-target.mjs)" ||
+             [[ "$target" != "target=lightnode" ]]; then
+            echo "Production DNS is not on LightNode. Refusing to put the Lightsail host in standby." >&2
             exit 1
           fi
 
@@ -108,11 +181,32 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          HEALTH_SCOPE: ${{ inputs.health_scope }}
         run: |
           set -euo pipefail
 
+          nodes="$(aws ssm describe-instance-information \
+            --filters "Key=tag:DeploymentTarget,Values=$LIGHTSAIL_SSM_TARGET_TAG" \
+            --output json)"
+          managed_count="$(jq '.InstanceInformationList | length' <<<"$nodes")"
+          online_count="$(jq '[.InstanceInformationList[] | select(.PingStatus == "Online")] | length' <<<"$nodes")"
+          printf 'managed_nodes=%s\nonline_nodes=%s\n' "$managed_count" "$online_count"
+          if [[ "$OPERATION" == "node-status" ]]; then
+            jq -r '.InstanceInformationList[] |
+              "ping_status=\(.PingStatus)",
+              "last_ping=\(.LastPingDateTime)",
+              "agent_version=\(.AgentVersion)"' <<<"$nodes"
+          fi
+          if [[ "$managed_count" -ne 1 || "$online_count" -ne 1 ]]; then
+            echo "The Lightsail host is not registered exactly once and online." >&2
+            exit 1
+          fi
+          if [[ "$OPERATION" == "node-status" ]]; then
+            exit 0
+          fi
+
           case "$OPERATION" in
-            status) parameters='{}' ;;
+            status|standby) parameters='{}' ;;
             deploy)
               [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
               parameters="$(jq -cn --arg sha "$GITHUB_SHA" --arg digest "$IMAGE_DIGEST" '{CommitSha:[$sha],ImageDigest:[$digest]}')"
@@ -123,12 +217,7 @@ jobs:
             *) exit 1 ;;
           esac
 
-          managed_nodes="$(aws ssm describe-instance-information \
-            --filters "Key=tag:DeploymentTarget,Values=$LIGHTSAIL_SSM_TARGET_TAG" \
-            --output json)"
-          [[ "$(jq '.InstanceInformationList | length' <<<"$managed_nodes")" -eq 1 ]]
-          [[ "$(jq '[.InstanceInformationList[] | select(.PingStatus == "Online")] | length' <<<"$managed_nodes")" -eq 1 ]]
-          expected_node_id="$(jq -r '.InstanceInformationList[0].InstanceId' <<<"$managed_nodes")"
+          expected_node_id="$(jq -r '.InstanceInformationList[0].InstanceId' <<<"$nodes")"
           targets="$(jq -cn --arg value "$LIGHTSAIL_SSM_TARGET_TAG" '[{Key:"tag:DeploymentTarget",Values:[$value]}]')"
 
           command_id="$(aws ssm send-command \
@@ -172,6 +261,14 @@ jobs:
             exit 0
           fi
 
+          printf '%s\n' "$output"
+          if [[ "$OPERATION" == "standby" ]]; then
+            [[ "$(grep -Fxc 'standby=ok' <<<"$output")" -eq 2 ]]
+            [[ "$(grep -Fxc 'environment=production' <<<"$output")" -eq 1 ]]
+            [[ "$(grep -Fxc 'environment=preview' <<<"$output")" -eq 1 ]]
+            exit 0
+          fi
+
           read_value() { awk -F= -v key="$1" '$1 == key { print substr($0, length($1) + 2) }' <<<"$output"; }
           [[ "$(read_value environment)" == "$DEPLOY_ENVIRONMENT" ]]
           [[ "$(read_value current_tag)" =~ ^[0-9a-f]{40}$ ]]
@@ -179,11 +276,21 @@ jobs:
           [[ "$(read_value container_health)" == "healthy" ]]
           [[ "$(read_value restart_count)" == "0" ]]
           [[ "$(read_value schedulers_enabled)" == "$EXPECTED_SCHEDULERS_ENABLED" ]]
-          [[ "$(read_value public_health)" == "ok" ]]
           [[ "$(read_value db_route)" == "$(read_value runtime_route)" ]]
           [[ "$(read_value db_readiness)" == "ok" ]]
           if [[ "$OPERATION" == "deploy" ]]; then
             [[ "$(read_value current_tag)" == "$GITHUB_SHA" ]]
             [[ "$(read_value current_digest)" == "$IMAGE_DIGEST" ]]
           fi
-          printf '%s\n' "$output"
+          if [[ "$HEALTH_SCOPE" == "self" ]]; then
+            [[ "$(read_value public_health)" == "skipped" ]]
+            [[ "$(read_value health_scope)" == "self" ]]
+            if [[ "$(read_value edge_route)" != "ok" ]]; then
+              echo "::warning::Lightsail edge routing check failed."
+            fi
+            if [[ "$(read_value edge_tls)" != "ok" ]]; then
+              echo "::warning::Lightsail edge TLS check failed."
+            fi
+          else
+            [[ "$(read_value public_health)" == "ok" ]]
+          fi
