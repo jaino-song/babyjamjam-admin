@@ -3,7 +3,7 @@ name: Frontend CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    branches: [ main, dev, preview ]
     paths:
       - 'frontend/**'
       - 'packages/shared/**'
