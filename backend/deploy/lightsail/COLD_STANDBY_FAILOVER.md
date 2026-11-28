@@ -338,9 +338,9 @@ migration `20261126010000_baby_case_keys`가 추가됐습니다. 운영 DB에 �
 9. **DNS 전환 (B1).** 80·443 인바운드를 엽니다(관리자 콘솔). DNS를 바꾸기 전에 운영
    hostname과 Lightsail 고정 IP를 지정해 TLS 검증을 켠 채로 `/health/lease`를 조회하고,
    `provider`가 `lightsail`이고 `eligible`이 `true`인지 확인합니다. LightNode가 실행권을
-   쥐고 갱신 중이면 `held`가 `false`인 것이 정상입니다. 인증서 검증에 실패하면(8단계의
-   `edge_tls`가 `ok`가 아니었던 경우) 이 조회를 할 수 없으므로 DNS를 바꾸지 않고 멈춥니다.
-   그 경우에 인증서를 미리 준비할지, 호스트 안에서 실행 주체 자격을 확인하는 다른 절차를
+   쥐고 갱신 중이면 `held`가 `false`인 것이 정상입니다. 이 조회에서 인증서 검증에
+   실패하면 DNS를 바꾸지 않고 멈춥니다. 8단계의 `edge_tls`는 호스트 안에서 본 loopback 진단
+   결과일 뿐이고, 이 조회의 결과를 대신하지 않습니다. 인증서 때문에 조회가 막히는 경우에 인증서를 미리 준비할지, 호스트 안에서 실행 주체 자격을 확인하는 다른 절차를
    둘지는 정해져 있지 않습니다(B1, 결정). 조회가 통과하면
    `backend/deploy/fallback-server/VERCEL_DNS_FAILOVER.md`의 "Cutover, manual check, and
    failback"에 있는 **수동 역방향 절차**를 따릅니다. 자동 controller는 AWS에서 Fallback
@@ -353,8 +353,7 @@ migration `20261126010000_baby_case_keys`가 추가됐습니다. 운영 DB에 �
      확인하기 전에는 다시 바꾸지 않습니다.
 
    LightNode가 살아 있으면 DNS가 퍼지는 동안 두 서버가 함께 요청을 받고 둘 다 운영 DB에
-   씁니다. 8단계에서 `edge_tls`가 `ok`가 아니었다면 Caddy가 인증서를 새로 받을 때까지
-   HTTPS가 실패할 수 있습니다.
+   씁니다. DNS를 바꾼 뒤에는 10단계에서 운영 hostname의 TLS와 readiness를 다시 확인합니다.
 10. **공개 경로가 Lightsail인지 확인.** LightNode를 내리기 전에 다음을 모두 확인합니다.
     - Vercel의 A 레코드와 공개 DNS 응답이 Lightsail 고정 IP입니다.
     - 고정 IP를 대상으로 운영 hostname의 TLS와 `/health/ready`가 통과합니다.
@@ -373,10 +372,11 @@ migration `20261126010000_baby_case_keys`가 추가됐습니다. 운영 DB에 �
 12. **확인.** `/health/ready`가 200인지 보고, 로그인, 고객 조회, 제공기록지 링크 열기, 테스트
     번호로 문자 1건을 확인합니다.
 13. **전환 뒤.** LightNode는 꺼 둡니다. 전환 중의 운영 배포는 `lightsail-cli.sh deploy
-    production`으로만 합니다. 이때부터는 API가 떠 있는 상태에서 배포하므로, 배포
-    스크립트를 부른 뒤에 실패하면 배포 직전 이미지로 롤백을 시도합니다. 이미지나 migration
-    단계의 실패에는 복구가 돌지 않고, 복구가 실패할 수도 있으며, workflow의 결과 검사만
-    실패한 경우에는 호스트 상태를 직접 확인해야 합니다(B5).
+    production`으로만 합니다. 배포 스크립트를 부르기 전에 이미지 받기·검증이나 migration이
+    실패하면 자동 복구 없이 끝납니다. 스크립트 실행, 이미지 정보 기록, 호스트 확인 중
+    하나가 실패하면 B5의 복구 분기를 따릅니다. 이때부터는 API가 떠 있는 상태에서 배포하므로
+    배포 전에 기록돼 있던 이미지로 롤백을 시도합니다. 실패로 끝난 뒤에는 다음 작업 전에 실제
+    호스트 상태를 확인합니다.
 
 ## 5. 리허설로 확인할 것
 

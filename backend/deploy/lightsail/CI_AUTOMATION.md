@@ -1,14 +1,22 @@
 # GitHub-to-Lightsail backend deployment
 
-Pushes to `preview` and `main` build the backend image on GitHub-hosted runners.
-The workflow publishes an immutable commit image to the public GHCR package and
-asks AWS Systems Manager to activate that exact image on the existing Lightsail
-host. The host does not build application images.
+Backend CI runs for pushes to `preview` and `main` that touch its watched
+paths and, after its checks pass, publishes an immutable commit image to the
+public GHCR package from GitHub-hosted runners. A push does not deploy to Lightsail: the push
+deployment of `preview` targets Cloud Run, and the push deployment of `main`
+targets LightNode when the production DNS gate passes. To deploy to Lightsail,
+dispatch the Lightsail operations workflow manually (see the local operations
+CLI below). Its deploy operation resolves the digest of the image already
+published for the branch tip and sends the commit SHA and digest to AWS Systems
+Manager, which activates that exact image on the existing Lightsail host. The
+host does not build application images.
 
-| Branch | Deployment credential | Runtime | Approval |
+Manual Lightsail operations:
+
+| Dispatched from | Deployment credential | Runtime | Approval |
 |---|---|---|---|
-| `preview` | branch-scoped preview role | preview backend | automatic after CI |
-| `main` | branch-scoped production role | production backend | `production` environment job; a person reviews only while that environment has a required reviewer |
+| `preview` | branch-scoped preview role | Lightsail preview backend | operator approval for state-changing operations |
+| `main` | branch-scoped production role | Lightsail production backend | `production` environment job; a person reviews only while that environment has a required reviewer. Operator approval for state-changing operations |
 
 The deploy and fixed-purpose operations jobs receive temporary AWS credentials through GitHub OIDC. Their
 trust policy pins preview access to `refs/heads/preview` and production access
@@ -202,33 +210,39 @@ approval gate before execution.
    group as a convenience.
 
 9. Run the workflow manually on a non-deploying branch to validate CI, then
-   merge through `dev` to `preview`. Verify image provenance, container health,
+   merge through `dev` to `preview` so that Backend CI publishes the image, and
+   dispatch `deploy preview` (a push does not deploy to Lightsail). Verify image
+   provenance, container health,
    restart count, scheduler ownership, and the public health route. Rehearse a
    rollback in preview before enabling the production environment.
 
 ## Release and recovery contract
 
-The workflow waits for type checking, lint, unit tests, migration drift checks,
+Backend CI waits for type checking, lint, unit tests, migration drift checks,
 and auth/agent E2E tests. It then builds `backend/Dockerfile.lightsail`, labels
-the image with the source commit, pushes the commit tag, and passes the returned
-digest to SSM. Superseded image builds are cancelled; a deployment that has
-started is never cancelled by concurrency handling.
+the image with the source commit and pushes the commit tag. Superseded image
+builds are cancelled. The manually dispatched Lightsail operations workflow
+looks up the digest of that published image and passes the commit SHA and the
+digest to SSM; a deployment that has started is never cancelled by concurrency
+handling.
 
 The root-only host operator accepts only an environment, a lowercase 40-byte
 commit SHA, and a lowercase SHA-256 image digest. It verifies that the commit is
 the current tip of the corresponding environment branch and that the pulled
 image label matches that commit. Before changing the running container, it runs
 `prisma migrate deploy` from that exact image using the target environment's
-database configuration. A migration failure leaves the current application
-image running. Release migrations must remain backward-compatible because a
+database configuration. A migration failure ends the deploy before any
+container is touched: a running application image keeps running and a stopped
+API stays stopped. Release migrations must remain backward-compatible because a
 successful database migration cannot be automatically undone if later runtime
 activation fails. After activation it writes the candidate digest and then runs
 the final host verification: one API container, the authoritative route and
 exact `DATABASE_CONNECTION_MODE`, scheduler ownership, health/restart, image
 tag/digest identity and internal `/health/ready` in both health scopes, plus
 public `/health/ready` and public liveness in public scope. Self scope reports
-the loopback edge checks instead. If that verification fails, the operator
-attempts to restore the earlier release records.
+the loopback edge checks instead. If the deployment helper, the digest
+recording or that verification fails, the operator attempts the recovery
+described below.
 
 For the first Preview or Production deployment of an image containing
 `20261126010000_baby_case_keys`, complete the following steps in order. The
