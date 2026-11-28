@@ -5,7 +5,8 @@
 > `main` pushes: the `deploy-lightsail` job is gone, and the instance was stopped
 > and snapshotted on 2026-11-28 (it is deleted after the failover rehearsal).
 > Lightsail is deployed only by a person, through `lightsail-operations.yml`,
-> during a failover. The procedure is `COLD_STANDBY_FAILOVER.md` in this directory.
+> during a failover. `COLD_STANDBY_FAILOVER.md` in this directory is a draft of
+> that procedure and is not executable until the blockers it lists are closed.
 > This replaces the 2026-10-31 decision to return production here; text below
 > that assumes Lightsail is the primary is historical (cleanup: BJJ-604).
 > The production env file must still carry `SCHEDULER_LEASE_MODE=required` and
