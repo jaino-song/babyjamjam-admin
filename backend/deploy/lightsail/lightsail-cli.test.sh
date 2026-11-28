@@ -68,6 +68,7 @@ case "$*" in
     "workflow run "*) ;;
     "run list "*) printf '%s\n' '424242' ;;
     "run watch "*) ;;
+    "run view 424242 --web") ;;
     *) exit 1 ;;
 esac
 EOF
@@ -84,6 +85,31 @@ common_env=(
     "GH_CALL_LOG=$call_log"
     "BABYJAMJAM_RUN_DISCOVERY_INTERVAL_SECONDS=0"
 )
+
+assert_dispatch() {
+    local fields="$1"
+    shift
+
+    : >"$call_log"
+    env "${common_env[@]}" "$CLI" "$@"
+    local dispatch
+    dispatch="$(grep '^workflow run ' "$call_log")"
+    [[ "$dispatch" == "workflow run lightsail-operations.yml $fields" ]] \
+        || fail "unexpected dispatch for $*: $dispatch"
+}
+
+assert_refused_before_dispatch() {
+    local output
+
+    : >"$call_log"
+    if output="$(env "${common_env[@]}" "$CLI" "$@" 2>&1)"; then
+        fail "invalid command was accepted: $*"
+    fi
+    grep -Fxq 'Usage:' <<<"$output" || fail "invalid command must print usage: $*"
+    grep -Fxq 'Production deploys and the host-wide operator upgrade remain subject to the GitHub production approval.' \
+        <<<"$output" || fail "usage must explain GitHub production approval"
+    assert_not_contains "$call_log" '^workflow run ' "invalid command must not dispatch: $*"
+}
 
 env "${common_env[@]}" "$CLI" status preview
 grep -Fq -- 'workflow run lightsail-operations.yml --ref preview' "$call_log" \
@@ -102,6 +128,36 @@ grep -Fq -- '-f operation=deploy -f environment=production' "$call_log" \
 env "${common_env[@]}" "$CLI" operator-upgrade
 grep -Fq -- '-f operation=operator-upgrade -f environment=production' "$call_log" \
     || fail "operator upgrades must use the production-approved path"
+
+request_field='-f request_id=123e4567-e89b-42d3-a456-426614174000'
+assert_dispatch "--ref main -f operation=status -f environment=production $request_field -f health_scope=self" \
+    status production --self
+assert_dispatch "--ref main -f operation=status -f environment=production $request_field" \
+    status production
+for first_flag in --self --no-watch; do
+    case "$first_flag" in
+        --self) second_flag=--no-watch ;;
+        --no-watch) second_flag=--self ;;
+    esac
+    assert_dispatch "--ref main -f operation=deploy -f environment=production $request_field -f health_scope=self" \
+        deploy production "$first_flag" "$second_flag"
+    assert_contains "$call_log" '^run view 424242 --web$' "--no-watch must open the run in a browser"
+    assert_not_contains "$call_log" '^run watch ' "--no-watch must skip the watch command"
+done
+assert_dispatch "--ref main -f operation=node-status -f environment=production $request_field" \
+    node-status production
+assert_dispatch "--ref preview -f operation=node-status -f environment=preview $request_field" \
+    node-status preview
+assert_dispatch "--ref main -f operation=standby -f environment=production $request_field" \
+    standby
+
+assert_refused_before_dispatch status preview --self
+assert_refused_before_dispatch node-status production --self
+assert_refused_before_dispatch standby --self
+assert_refused_before_dispatch operator-upgrade --self
+assert_refused_before_dispatch status production --self --self
+assert_refused_before_dispatch deploy production --no-watch --no-watch
+assert_refused_before_dispatch standby preview
 
 if env "${common_env[@]}" "$CLI" deploy dev >/dev/null 2>&1; then
     fail "unsupported deployment environment was accepted"

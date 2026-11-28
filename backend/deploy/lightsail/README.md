@@ -104,7 +104,8 @@ APIs therefore do not share a Docker network with each other.
 Environment-branch automation is documented in
 [`CI_AUTOMATION.md`](./CI_AUTOMATION.md). It builds immutable images on GitHub,
 uses short-lived GitHub OIDC credentials to invoke fixed AWS Systems Manager
-documents, and keeps production behind a GitHub environment approval gate.
+documents, and runs production operations through a GitHub environment job
+that acts as an approval gate while the environment has a required reviewer.
 
 For an authenticated local retry or status check, use the GitHub-backed helper;
 it does not require local AWS credentials:
@@ -117,8 +118,11 @@ backend/deploy/lightsail/lightsail-cli.sh deploy production
 backend/deploy/lightsail/lightsail-cli.sh operator-upgrade
 ```
 
-Production operations and the shared host-operator upgrade retain the GitHub
-`production` environment reviewer gate.
+Production operations and the shared host-operator upgrade run through the
+GitHub `production` environment job. Whether that job waits for a person
+depends on the environment's protection rules (a required reviewer); a
+state-changing operation needs the operator's approval right before it runs
+regardless of that setting.
 
 The former ubuntu/Docker-group preview operator is retired. Do not install or
 use `install-operator.sh`; its install and check commands fail closed, and its
@@ -144,8 +148,12 @@ uninstall cover the complete bundle. Status and deployment output contains
 only secret-free release, route, readiness, and health fields. A successful
 status includes matching `db_route` and `runtime_route` values plus
 `db_readiness=ok`; it also verifies one API container, scheduler ownership,
-image tag/digest identity, internal and public `/health/ready`, and public
-liveness.
+image tag/digest identity and internal `/health/ready`. In public scope (the
+default) it additionally verifies public `/health/ready` and public liveness.
+In self scope (`status <environment> self`, used for the cold standby host)
+the public checks are skipped: the output carries `public_health=skipped`,
+`health_scope=self` and the reported loopback fields `edge_route` and
+`edge_tls`.
 
 The repository copies of `deploy.sh` and `rollback.sh` are source material for
 installation only. They fail closed when invoked from the checkout. Root
@@ -167,8 +175,11 @@ Each application deployment:
 2. tags the image with the exact Git commit;
 3. validates the resolved Compose model without printing secrets;
 4. activates the preloaded API image and starts only that environment's API and Valkey;
-5. waits for the container health check and matching public `/health` route;
-6. records current and previous healthy tags only after both checks pass.
+5. waits for the container health check and, in public scope, the matching
+   public `/health` route (self scope skips the public route);
+6. records the current tag and, when the tag changes, the previous tag after
+   the helper's health checks pass. The CI operator then records the digest and
+   runs final host verification.
 
 The repository `deploy-edge.sh`, edge Compose file, and Caddyfile are not root
 runtime inputs. That legacy helper is retired and fails closed. Database route
@@ -212,10 +223,12 @@ sudo /usr/local/libexec/babyjamjam-ci-operator/rollback.sh production <git-commi
 sudo /usr/local/libexec/babyjamjam-ci-operator/rollback.sh preview <git-commit-sha>
 ```
 
-Rollback changes only the selected API container and verifies its matching
-public route. It does not change Caddy, DNS, database state, the other
-environment, or scheduler ownership. Preview rollback retains the same
-fail-closed scheduler check.
+Rollback runs Compose for the selected environment, force-recreates its API
+with the selected image, and checks container health. In public scope it also
+checks the configured public health URL. After those checks it writes the
+selected tag as current. It does not revert database migrations, change DNS or
+Caddy, or transfer scheduler ownership. Preview rollback requires
+`SCHEDULERS_ENABLED=false`.
 
 During the one-time migration, the immediate pre-handoff rollback is to stop
 the shared edge and restart the legacy Caddy container. After scheduler
