@@ -69,6 +69,41 @@ assert_text_not_contains() {
     fi
 }
 
+yaml_block() {
+    local file="$1"
+    local header="$2"
+
+    awk -v header="$header" '
+        $0 == header && !in_block {
+            indentation = match($0, /[^ ]/)
+            in_block = 1
+            print
+            next
+        }
+        in_block && NF && match($0, /[^ ]/) <= indentation { exit }
+        in_block { print }
+    ' "$file"
+}
+
+assert_document_command() {
+    local block="$1"
+    local command="$2"
+
+    assert_text_contains "$block" '^      UpdateMethod: NewVersion$' "document must update as a new version: $command"
+    grep -Fxq -- "                - '$command'" <<<"$block" || fail "missing fixed document command: $command"
+}
+
+assert_document_output() {
+    local document="$1"
+    local variable="$2"
+    local block
+
+    block="$(yaml_block "$INFRASTRUCTURE_TEMPLATE" "  ${document}Name:")"
+    grep -Fxq "    Value: !Ref $document" <<<"$block" || fail "output must reference $document"
+    grep -Fxq "    Description: Set as the $variable GitHub repository variable." <<<"$block" \
+        || fail "output must identify GitHub variable $variable"
+}
+
 assert_compose_env_isolation() {
     local file="$1"
     local description="$2"
@@ -112,6 +147,46 @@ operation_input="$(sed -n '/^      operation:$/,/^      [a-z_-]*:$/p' "$OPERATIO
 assert_text_contains "$operation_input" '^          - deploy$' "Lightsail operations must offer the deploy choice"
 approval_job="$(sed -n '/^  approve-production:$/,/^  [a-z_-]*:$/p' "$OPERATIONS_WORKFLOW")"
 assert_text_contains "$approval_job" '^    environment: production$' "Lightsail operations must gate production on approval"
+
+assert_not_contains "$OPERATIONS_WORKFLOW" '^[[:space:]]+AWS_[A-Z_]+DOCUMENT_NAME:.*(&&|\|\|)' \
+    "workflow must not use a chained expression to choose a document"
+validation_step="$(yaml_block "$OPERATIONS_WORKFLOW" '      - name: Validate fixed operation boundary')"
+assert_text_contains "$validation_step" 'GitHub variable %s is not set\. Update the CloudFormation stack' \
+    "validation must identify a missing document variable and report how to set it"
+operations_step="$(yaml_block "$OPERATIONS_WORKFLOW" '      - name: Run fixed Systems Manager operation')"
+node_preflight="$(sed '/^          case "\$OPERATION" in/,$d' <<<"$operations_step")"
+assert_text_contains "$node_preflight" 'printf .*managed_nodes=%s.*online_nodes=%s' \
+    "node preflight must print managed and online counts"
+assert_text_contains "$node_preflight" 'jq -r .*\.InstanceInformationList\[\] \|' \
+    "node-status must report metadata for each node"
+assert_text_contains "$node_preflight" '"ping_status=\\\(\.PingStatus\)"' "node-status must report ping status"
+assert_text_contains "$node_preflight" '"last_ping=\\\(\.LastPingDateTime\)"' "node-status must report the last ping"
+assert_text_contains "$node_preflight" '"agent_version=\\\(\.AgentVersion\)"' "node-status must report the agent version"
+assert_text_not_contains "$node_preflight" 'InstanceId|IPAddress|ComputerName|\.Name|SourceId|(echo|printf).*\$nodes' \
+    "node preflight must not log node identifiers, addresses, or the raw response"
+
+standby_checkout="$(yaml_block "$OPERATIONS_WORKFLOW" '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0')"
+standby_dns_guard="$(yaml_block "$OPERATIONS_WORKFLOW" '      - name: Verify production DNS is on LightNode before standby')"
+assert_text_contains "$standby_checkout" "^        if: inputs.operation == 'standby'$" "checkout must run only for standby"
+assert_text_contains "$standby_checkout" '^          persist-credentials: false$' "standby checkout must not persist credentials"
+assert_text_contains "$standby_dns_guard" "^        if: inputs.operation == 'standby'$" "DNS guard must run only for standby"
+assert_text_contains "$standby_dns_guard" 'node backend/deploy/fallback-server/ci/resolve-deploy-target\.mjs' \
+    "standby must use the production routing resolver"
+assert_text_contains "$standby_dns_guard" '"\$target" != "target=lightnode"' "standby must require LightNode routing"
+assert_text_contains "$standby_dns_guard" 'Production DNS is not on LightNode\. Refusing to put the Lightsail host in standby\.' \
+    "standby must explain why other DNS routes are refused"
+assert_ordered_contains "$OPERATIONS_WORKFLOW" 'uses: actions/checkout@' 'name: Verify production DNS' \
+    "standby must check out the resolver before running it"
+assert_ordered_contains "$OPERATIONS_WORKFLOW" 'name: Verify production DNS' 'uses: aws-actions/configure-aws-credentials@' \
+    "standby DNS must be verified before AWS authentication"
+
+self_result="$(yaml_block "$OPERATIONS_WORKFLOW" '          if [[ "$HEALTH_SCOPE" == "self" ]]; then')"
+assert_text_contains "$self_result" '"\$\(read_value public_health\)" == "skipped"' "self scope must report skipped public health"
+assert_text_contains "$self_result" '"\$\(read_value health_scope\)" == "self"' "self scope must verify the host health scope"
+for edge_check in edge_route edge_tls; do
+    edge_result="$(yaml_block "$OPERATIONS_WORKFLOW" '            if [[ "$(read_value '"$edge_check"')" != "ok" ]]; then')"
+    assert_text_contains "$edge_result" 'echo "::warning::' "self scope must warn when $edge_check fails"
+done
 
 assert_contains "$INFRASTRUCTURE_TEMPLATE" 'token.actions.githubusercontent.com:aud' "OIDC trust must pin the AWS audience"
 assert_contains "$INFRASTRUCTURE_TEMPLATE" 'SeoulRegionOnly:' "Lightsail IAM/SSM stack must enforce the Seoul region"
@@ -176,6 +251,33 @@ assert_text_contains "$diagnostics_policy_section" 'ssm:ListCommandInvocations' 
 assert_text_contains "$diagnostics_policy_section" 'ssm:ListCommands' "diagnostics policy must retain command-list reads"
 assert_text_not_contains "$diagnostics_policy_section" 'AWS-RunShellScript|StartSession|PreviewDeployDocument|ProductionDeployDocument' "diagnostics policy must not grant deployment or session access"
 assert_text_not_contains "$diagnostics_policy_section" 'Users:|Groups:|Roles:' "diagnostics policy must remain unattached until explicitly approved"
+
+self_status_document="$(yaml_block "$INFRASTRUCTURE_TEMPLATE" '  ProductionSelfStatusDocument:')"
+self_deploy_document="$(yaml_block "$INFRASTRUCTURE_TEMPLATE" '  ProductionSelfDeployDocument:')"
+standby_document="$(yaml_block "$INFRASTRUCTURE_TEMPLATE" '  HostStandbyDocument:')"
+operator_path='/usr/local/sbin/babyjamjam-ci-operator'
+assert_document_command "$self_status_document" "$operator_path status production self"
+assert_document_command "$self_deploy_document" "$operator_path deploy production \"{{ CommitSha }}\" \"{{ ImageDigest }}\" self"
+assert_document_command "$standby_document" "$operator_path standby production && $operator_path standby preview"
+assert_text_not_contains "$self_status_document" 'parameters:' "self status must not accept parameters"
+assert_text_not_contains "$standby_document" 'parameters:' "host standby must not accept parameters"
+
+production_document_statement="$(yaml_block "$INFRASTRUCTURE_TEMPLATE" '              - Sid: UseProductionDocument')"
+template_resources="$(yaml_block "$INFRASTRUCTURE_TEMPLATE" 'Resources:')"
+for document in ProductionSelfStatusDocument ProductionSelfDeployDocument HostStandbyDocument; do
+    grep -Fxq '                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${'"$document"'}' \
+        <<<"$production_document_statement" || fail "production role must allow $document"
+    assert_text_not_contains "$preview_deploy_role_section" "$document" "preview role must not refer to $document"
+    assert_text_not_contains "$diagnostics_policy_section" "$document" "diagnostics policy must not refer to $document"
+    referrers="$(awk -v document="$document" '
+        /^  [A-Za-z][A-Za-z0-9]*:$/ { resource = $1; next }
+        index($0, document) { print resource }
+    ' <<<"$template_resources")"
+    [[ "$referrers" == "ProductionDeployRole:" ]] || fail "only the production role may refer to $document"
+done
+assert_document_output ProductionSelfStatusDocument AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME
+assert_document_output ProductionSelfDeployDocument AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME
+assert_document_output HostStandbyDocument AWS_HOST_STANDBY_DOCUMENT_NAME
 
 assert_contains "$INSTALLER" 'root:root' "CI operator must remain root-owned"
 assert_contains "$INSTALLER" '0750' "CI operator must not be executable by unprivileged users"
