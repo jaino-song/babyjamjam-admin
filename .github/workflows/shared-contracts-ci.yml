@@ -3,7 +3,7 @@ name: Shared Contracts CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main, dev, preview, "feature/**", "fix/**", "ci/**" ]
+    branches: [ main, dev, preview ]
     paths:
       - 'packages/shared/**'
       - 'packages/service-record-ui/**'
