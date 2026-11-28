@@ -293,7 +293,7 @@ Lightsail(2026-10-31 복귀)에도 같은 펜스 절차를 적용한다 (the sam
 5. 승격 PR은 merge commit (linear history 룰셋).
 6. 배포 완료 확인: 백엔드 `/health/ready` 200 + `deploy Lightsail backend` 잡(장애 중이면 `deploy LightNode fallback backend`)의 tag/digest 일치, `deploy LightNode standby backend`가 같은 tag이거나 superseded(실패 표시라도 `current_tag`/`container_health`를 확인), 프론트 production 배포 sha.
 7. 플래그 ON → 첫 실행 로그 확인 (§5).
-8. Sentry release/source map 확인 (프로덕션 아티팩트가 바뀐 경우). 백엔드 Sentry는 **service-records 이벤트만** 통과시키므로 다른 도메인 오류는 로그로 본다.
+8. Sentry release/source map 확인 (프로덕션 아티팩트가 바뀐 경우). 백엔드 Sentry는 모든 5xx 오류(`feature:backend`·`service-records`), 문서 잡 실패, 4xx advisory(`feature:http-advisory`, 401 제외 — `http-400-advisories.md`)를 보낸다. 단 `SENTRY_DSN`이 설정된 런타임에서만 보내고, `SENTRY_ENVIRONMENT=production`이 함께 있어야 production 알림 규칙에 잡힌다. DSN이 없는 런타임의 오류는 로그로 본다.
 9. 런치 체크리스트가 있는 기능은 그 문서(예: `docs/plans/2026-09-01-call-inbox-launch-checklist.md`)의 §0~§5를 닫는다.
 
 핫픽스는 `main`에서 분기한 전용 워크트리에서 만들고 `main`으로 PR, 이후 `dev`로 back-merge. `cs` 런처(dev 기준)를 핫픽스에 쓰지 않는다.

@@ -1,25 +1,57 @@
-# HTTP 400 advisories
+# HTTP 4xx advisories
 
-HTTP 400 responses handled by the backend HTTP/Prisma exception filters are
-recorded as Sentry `warning` events tagged `feature:http-advisory`.
-Grouping uses HTTP method, registered route template and public error code.
+This file keeps its original name; since 2026-11-28 it covers every reported
+4xx status, not only 400.
+
+HTTP 4xx responses handled by the backend catch-all exception filter are
+recorded as Sentry `warning` events tagged `feature:http-advisory`. A refused
+business or policy request (for example a customer update refused with 409
+`CLIENT_PHONE_ALREADY_REGISTERED`) therefore appears as a Sentry issue.
+Grouping uses HTTP method, registered route template, status and public error
+code.
+
+What is reported:
+
+- Every status from 400 to 499 except 401. A 401 is session expiry or a failed
+  sign-in and is never reported.
+- A 404 for a URL that matches no registered route is not reported (scanner
+  traffic). A 404 thrown by a matched route is reported.
+- The Prisma exception filter still reports only its 400 responses as
+  advisories. Prisma 404 and 409 keep their existing `error`-level capture
+  (`feature:database-failover`, `db.failover_eligible:false`).
+- Status 500 and above are not advisories; they keep the `error`-level
+  capture described in `error-management.md`.
+
+Volume cap: at most 30 advisories per group (method, route template, status,
+code) per 5-minute window, per backend process. Further events in that window
+are dropped and logged once as a `HttpAdvisory` warning, so one abusive caller
+cannot use up the Sentry error quota that 5xx capture shares. The event count
+of a busy issue can therefore be lower than the real number of rejections.
 
 Events contain only catalog-derived reasons, allowed field error codes, outcome,
 server-generated request UUID, release and environment. Request bodies, raw URLs,
 customer/employee identifiers, headers, user scope, breadcrumbs, exceptions and
 attachments are excluded. Capture failure does not change the HTTP response.
-Legacy errors without a registered code use the generic `REQUEST_INVALID`
-reason; raw exception messages are never forwarded.
+Legacy errors without a registered code use the generic catalog code for their
+status (`REQUEST_INVALID`, `ACCESS_DENIED`, `RESOURCE_NOT_FOUND`,
+`REQUEST_CONFLICT`, `VALIDATION_FAILED`, `REQUEST_RATE_LIMITED` and so on); raw
+exception messages are never forwarded. Such an issue names the route and
+status but not the specific business reason; register a catalog code for the
+rejection to make the reason visible.
 
 `EMPLOYEE_ASSIGNMENT_UNAVAILABLE` identifies disabled next-service assignment.
 The existing eligibility rules remain unchanged. Availability is disclosed only
 after every requested employee passes branch and deletion checks. Mobile's
 existing structured-error presenter displays the shared catalog explanation.
 
-## Sentry configuration (verified 2026-09-17)
+## Sentry configuration (verified 2026-09-17, extended 2026-11-28)
 
 Project: `babyjamjam-admin`.
 
+- [New advisory issue alert](https://covenant-labs.sentry.io/monitors/alerts/6420109/)
+  (added 2026-11-28): production, a new, regressed or reappeared issue whose
+  `feature` equals `http-advisory`. Emails the project owner. This is what
+  turns a first policy rejection of a given kind into a notification.
 - [Repeated advisory alert](https://covenant-labs.sentry.io/monitors/alerts/3999471/):
   production, event/activity captured, all filters: `feature` equals
   `http-advisory`, more than 9 events in an issue over 15 minutes. Notify existing
@@ -29,7 +61,12 @@ Project: `babyjamjam-admin`.
 - Existing service-record alerts already require `feature` containing
   `service-records`, so they do not match advisories.
 
-Alert configuration is saved, but new event ingestion requires deployment of
-this branch. No production customer mutation or test notification was performed.
-To roll back, revert the code change, disable the new alert and remove only the
-`http-advisory` exclusion from the existing high-priority alert.
+No event reaches Sentry from a runtime whose `SENTRY_DSN` is unset, and an
+event counts as production only when `SENTRY_ENVIRONMENT=production` is set
+beside it (otherwise the backend tags it `dev`, and the production alerts above
+never match). The status was added to the grouping on 2026-11-28, so a 400
+advisory issue created before that date is not continued by new events.
+To roll back the 4xx extension, revert the code change and disable the new
+advisory issue alert. To roll back advisories entirely, also disable the
+repeated advisory alert and remove only the `http-advisory` exclusion from the
+existing high-priority alert.

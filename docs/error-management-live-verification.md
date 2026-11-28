@@ -150,7 +150,7 @@
 | 공개 code/outcome 연결 | 이벤트 태그 `error.code`는 공개 카탈로그 값, `outcome`은 `NOT_APPLIED`/`FAILED`/`PARTIALLY_APPLIED`/`UNKNOWN` 중 하나. 이벤트 contexts의 `requestReference.requestId`가 응답 헤더 `X-Request-Id` 및 problem+json 본문 `requestId`와 동일하다. |
 | 중복 capture 0 | 같은 예외 인스턴스는 이벤트 1개 (WeakSet 중복 방지 + 실행 경계별 최종 보고 책임, EM-OBS-03). 같은 원인이 별도 issue로 무한 분리되지 않는다. |
 | 민감정보 비노출 | 메시지는 일반 문구("Backend failure" 등), `user` 비어 있음, 요청 `data`/`query_string`/`cookies`/`env` 없음, 헤더는 마스킹, 전화번호·이메일·토큰 패턴이 extras/stacktrace에 없음 (`EM-SEC-01`). |
-| 4xx 미보고 (설계된 부재) | 예상 4xx 이벤트는 beforeSend에서 drop된다. "Sentry에 없음"이 이 계열의 기대 증거다 — 부재를 결함으로 기록하지 않는다. |
+| 4xx는 advisory로만 보고 | 2026-11-28부터 백엔드 필터가 처리한 4xx 응답(401과 등록되지 않은 경로의 404 제외)은 `feature:http-advisory` `warning` 이벤트로 보고된다(`http-400-advisories.md`). 기대 증거는 해당 method·경로·status·code의 advisory issue 1개다. advisory가 아닌 4xx 이벤트(SDK 자동 수집 등)와 401은 여전히 beforeSend에서 drop되며, 그 부재는 결함이 아니다. 같은 그룹은 5분에 30건까지만 전송된다. |
 
 ### 5.2 절차와 명령
 
