@@ -85,6 +85,282 @@ yaml_block() {
     ' "$file"
 }
 
+extract_workflow_step_run() {
+    local name="$1"
+    local body
+
+    body="$(yaml_block "$OPERATIONS_WORKFLOW" "      - name: $name" | awk '
+        /^        run: \|$/ { in_run = 1; next }
+        in_run && NF && !/^          / { exit }
+        in_run { print substr($0, 11) }
+    ')"
+    [[ "$body" =~ [^[:space:]] ]] || fail "workflow step ($name) must have a non-empty run body"
+    printf '%s\n' "$body"
+}
+
+# Called from a probe's temporary directory. Each run replaces its captured streams.
+run_workflow_step() {
+    local body="$1" label="$2" expected="$3" operation="$4" environment="$5" scope="$6"
+    shift 6
+    local ref=preview status=0
+    if [[ "$environment" == production ]]; then
+        ref=main
+    fi
+
+    env -i OPERATION="$operation" DEPLOY_ENVIRONMENT="$environment" HEALTH_SCOPE="$scope" \
+        GITHUB_REF_NAME="$ref" LIGHTSAIL_SSM_TARGET_TAG=fixture-target "$@" \
+        /bin/bash --noprofile --norc -eo pipefail -c "$body" >step.stdout 2>step.stderr || status=$?
+    case "$expected:$status" in
+        pass:0 | fail:[1-9]*) ;;
+        *) fail "$label must $expected, got exit $status. stderr: $(<step.stderr)" ;;
+    esac
+}
+
+assert_document_selection() (
+    local body="$1" sha="$2"
+    local probe_root operation environment scope variable document label
+    local -a validation_env documents=() empty_documents=()
+    local rows='operator-upgrade production public AWS_OPERATOR_UPGRADE_DOCUMENT_NAME doc-operator-upgrade
+standby production public AWS_HOST_STANDBY_DOCUMENT_NAME doc-host-standby
+deploy production self AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME doc-production-self-deploy
+deploy production public AWS_PRODUCTION_DEPLOY_DOCUMENT_NAME doc-production-deploy
+deploy preview public AWS_PREVIEW_DEPLOY_DOCUMENT_NAME doc-preview-deploy
+status production self AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME doc-production-self-status
+status production public AWS_PRODUCTION_STATUS_DOCUMENT_NAME doc-production-status
+status preview public AWS_PREVIEW_STATUS_DOCUMENT_NAME doc-preview-status'
+
+    probe_root="$(mktemp -d)"
+    trap 'rm -rf "$probe_root"' EXIT
+    cd "$probe_root"
+    validation_env=(PATH= GITHUB_ENV="$PWD/github-env" GITHUB_SHA="$sha"
+        REQUEST_ID=123e4567-e89b-42d3-a456-426614174000
+        AWS_OPERATION_ROLE_ARN=arn:aws:iam::123456789012:role/fixture-role)
+
+    while read -r operation environment scope variable document; do
+        documents+=("$variable=$document")
+        empty_documents+=("$variable=")
+    done <<<"$rows"
+
+    while read -r operation environment scope variable document; do
+        label="document selection ($operation/$environment/$scope)"
+        : >github-env
+        run_workflow_step "$body" "$label" pass "$operation" "$environment" "$scope" \
+            "${validation_env[@]}" "${documents[@]}"
+        # Preserve the trailing newline so an extra blank line is detected too.
+        [[ "$(cat github-env; printf '.')" == "AWS_OPERATION_DOCUMENT_NAME=$document"$'\n.' ]] \
+            || fail "$label must write exactly AWS_OPERATION_DOCUMENT_NAME=$document, got: $(<github-env)"
+
+        : >github-env
+        run_workflow_step "$body" "$label with $variable empty" fail "$operation" "$environment" "$scope" \
+            "${validation_env[@]}" "${documents[@]}" "$variable="
+        grep -Fq -- "GitHub variable $variable is not set." step.stderr \
+            || fail "$label must name the missing variable $variable"
+        [[ ! -s github-env ]] || fail "$label with $variable empty must leave GITHUB_ENV empty"
+    done <<<"$rows"
+
+    for environment in production preview; do
+        : >github-env
+        run_workflow_step "$body" "document selection (node-status/$environment/public)" \
+            pass node-status "$environment" public "${validation_env[@]}" "${empty_documents[@]}"
+        [[ ! -s github-env ]] || fail "node-status/$environment must leave GITHUB_ENV empty"
+    done
+
+    while read -r operation environment scope; do
+        label="document selection ($operation/$environment/$scope)"
+        : >github-env
+        run_workflow_step "$body" "$label" fail "$operation" "$environment" "$scope" \
+            "${validation_env[@]}" "${documents[@]}"
+        [[ ! -s github-env ]] || fail "$label must leave GITHUB_ENV empty"
+    done <<'EOF'
+standby preview public
+standby production self
+operator-upgrade preview public
+operator-upgrade production self
+status preview self
+deploy preview self
+node-status production self
+unknown production public
+status unknown public
+status production bogus
+status production
+EOF
+
+    : >github-env
+    run_workflow_step "$body" "document selection with an invalid name" fail status production self \
+        "${validation_env[@]}" "${documents[@]}" 'AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME=doc with spaces'
+    [[ ! -s github-env ]] || fail "invalid document names must leave GITHUB_ENV empty"
+)
+
+assert_ssm_results() (
+    local body="$1" sha="$2"
+    local probe_root node second_node private_values line label expected operation scope warnings fixture document
+    local image_digest warning_count
+    local public_old public_new self_output self_tls_failed standby_production standby_preview
+    local digest=sha256:abababababababababababababababababababababababababababababababab
+    local wrong_sha=fedcba9876543210fedcba9876543210fedcba98
+    local wrong_digest=sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
+    local -a ssm_env
+    local -A node_lists host_outputs
+
+    probe_root="$(mktemp -d)"
+    trap 'rm -rf "$probe_root"' EXIT
+    cd "$probe_root"
+    cat >aws <<'EOF'
+#!/bin/bash
+set -euo pipefail
+jq -cn --args '$ARGS.positional' -- "$@" >>aws-calls
+case "${1:-} ${2:-}" in
+    'ssm describe-instance-information') cat nodes.json ;;
+    'ssm send-command') printf '%s\n' '11111111-2222-3333-4444-555555555555' ;;
+    'ssm list-command-invocations')
+        jq -c --arg status "$INVOCATION_STATUS" \
+            '{CommandInvocations: [{InstanceId: .InstanceInformationList[0].InstanceId, Status: $status}]}' nodes.json
+        ;;
+    'ssm get-command-invocation') cat host.stdout ;;
+    *) exit 64 ;;
+esac
+EOF
+    printf '%s\n' '#!/bin/bash' 'exit 0' >sleep
+    chmod 0755 aws sleep
+    ssm_env=(PATH="$PWD:/usr/bin:/bin" GITHUB_SHA="$sha" GITHUB_REPOSITORY=fixture/repository
+        EXPECTED_SCHEDULERS_ENABLED=true AWS_REGION=ap-northeast-2)
+
+    node='{"InstanceId":"mi-fixture-one","IPAddress":"192.0.2.77","ComputerName":"fixture-one.example",
+        "Name":"fixture-node-one","SourceId":"i-fixture-one","PingStatus":"Online",
+        "LastPingDateTime":"2026-11-28T00:00:00Z","AgentVersion":"3.3.0.0"}'
+    second_node='{"InstanceId":"mi-fixture-two","IPAddress":"192.0.2.78","ComputerName":"fixture-two.example",
+        "Name":"fixture-node-two","SourceId":"i-fixture-two","PingStatus":"Online",
+        "LastPingDateTime":"2026-11-28T00:01:00Z","AgentVersion":"3.3.0.0"}'
+    node_lists=(
+        [online]="[$node]"
+        [empty]='[]'
+        [offline]="[${node/Online/ConnectionLost}]"
+        [multiple]="[$node,$second_node]"
+    )
+
+    while read -r fixture expected; do
+        label="node-status ($fixture)"
+        printf '{"InstanceInformationList":%s}\n' "${node_lists[$fixture]}" >nodes.json
+        : >aws-calls
+        run_workflow_step "$body" "$label" "$expected" node-status production public \
+            "${ssm_env[@]}" AWS_OPERATION_DOCUMENT_NAME= IMAGE_DIGEST= INVOCATION_STATUS=Success
+        jq -se 'length == 1 and .[0][0:2] == ["ssm", "describe-instance-information"]' aws-calls >/dev/null \
+            || fail "$label must only call describe-instance-information once"
+        private_values="$(jq -r '.InstanceInformationList[] | .InstanceId, .IPAddress, .ComputerName, .Name, .SourceId' nodes.json)"
+        if [[ -n "$private_values" ]] && grep -Fq -f <(printf '%s\n' "$private_values") step.stdout step.stderr; then
+            fail "$label must not print node identifiers or addresses"
+        fi
+        if [[ "$expected" == pass ]]; then
+            for line in managed_nodes=1 online_nodes=1 ping_status=Online \
+                last_ping=2026-11-28T00:00:00Z agent_version=3.3.0.0; do
+                grep -Fxq -- "$line" step.stdout || fail "$label must print $line"
+            done
+        else
+            grep -Fxq 'The Lightsail host is not registered exactly once and online.' step.stderr \
+                || fail "$label must explain the missing or invalid registration"
+        fi
+    done <<'EOF'
+online pass
+empty fail
+offline fail
+multiple fail
+EOF
+
+    printf '{"InstanceInformationList":[%s]}\n' "$node" >nodes.json
+    public_old="$(printf '%s\n' environment=production "current_tag=$sha" "current_digest=$digest" \
+        db_route=shared runtime_route=shared db_readiness=ok container_health=healthy \
+        restart_count=0 schedulers_enabled=true public_health=ok)"
+    public_new="$public_old"$'\nhealth_scope=public'
+    self_output="${public_old/public_health=ok/public_health=skipped}"$'\nhealth_scope=self\nedge_route=ok\nedge_tls=ok'
+    self_tls_failed="${self_output/edge_tls=ok/edge_tls=failed}"
+    standby_production=$'environment=production\nstandby=ok\napi_stopped=1'
+    standby_preview=$'environment=preview\nstandby=ok\napi_stopped=0'
+    host_outputs=(
+        [standby-both]="$standby_production"$'\n'"$standby_preview"
+        [standby-production-only]="$standby_production"
+        [standby-one-marker]="$standby_production"$'\n'"${standby_preview/$'standby=ok\n'/}"
+        [standby-three-markers]="$standby_production"$'\n'"$standby_preview"$'\nstandby=ok'
+        [standby-preview-twice]="$standby_preview"$'\n'"$standby_preview"
+        [public-old]="$public_old"
+        [public-ok]="$public_new"
+        [public-health-skipped]="${public_new/public_health=ok/public_health=skipped}"
+        [self-ok]="$self_output"
+        [self-tls-failed]="$self_tls_failed"
+        [self-both-edges-failed]="${self_tls_failed/edge_route=ok/edge_route=failed}"
+        [self-public-health-ok]="${self_output/public_health=skipped/public_health=ok}"
+        [self-no-scope]="${self_output/$'\nhealth_scope=self'/}"
+        [self-public-scope]="${self_output/health_scope=self/health_scope=public}"
+        [self-bad-container]="${self_output/container_health=healthy/container_health=unhealthy}"
+        [self-restarted]="${self_output/restart_count=0/restart_count=1}"
+        [self-db-unready]="${self_output/db_readiness=ok/db_readiness=failed}"
+        [self-schedulers-off]="${self_output/schedulers_enabled=true/schedulers_enabled=false}"
+        [public-wrong-tag]="${public_new/current_tag=$sha/current_tag=$wrong_sha}"
+        [public-wrong-digest]="${public_new/current_digest=$digest/current_digest=$wrong_digest}"
+        [self-wrong-tag]="${self_output/current_tag=$sha/current_tag=$wrong_sha}"
+        [self-wrong-digest]="${self_output/current_digest=$digest/current_digest=$wrong_digest}"
+    )
+
+    while read -r operation scope fixture expected warnings; do
+        label="SSM $operation/$scope ($fixture)"
+        document="doc-$operation-$scope"
+        image_digest=
+        if [[ "$operation" == deploy ]]; then
+            image_digest="$digest"
+        fi
+        printf '%s\n' "${host_outputs[$fixture]}" >host.stdout
+        : >aws-calls
+        run_workflow_step "$body" "$label" "$expected" "$operation" production "$scope" \
+            "${ssm_env[@]}" AWS_OPERATION_DOCUMENT_NAME="$document" IMAGE_DIGEST="$image_digest" INVOCATION_STATUS=Success
+        jq -se '.[-1][0:2] == ["ssm", "get-command-invocation"]' aws-calls >/dev/null \
+            || fail "$label must reach the host output checks"
+        if [[ "$expected" == pass ]]; then
+            warning_count="$(awk '/^::warning::/ { count++ } END { print count + 0 }' step.stdout step.stderr)"
+            [[ "$warning_count" == "$warnings" ]] \
+                || fail "$label must emit $warnings warning annotations"
+            jq -se --arg doc "$document" --arg operation "$operation" --arg sha "$sha" --arg digest "$digest" '
+                def argument($flag): index($flag) as $i | if $i == null then null else .[$i + 1] end;
+                map(select(.[0:2] == ["ssm", "send-command"]))
+                | length == 1 and (.[0] |
+                    argument("--document-name") == $doc and
+                    (argument("--parameters") | fromjson) ==
+                        (if $operation == "deploy" then {CommitSha: [$sha], ImageDigest: [$digest]} else {} end))
+            ' aws-calls >/dev/null || fail "$label must send the selected document with its expected parameters"
+        fi
+    done <<'EOF'
+standby public standby-both pass 0
+standby public standby-production-only fail
+standby public standby-one-marker fail
+standby public standby-three-markers fail
+standby public standby-preview-twice fail
+standby public public-ok fail
+status self self-ok pass 0
+status self self-tls-failed pass 1
+status self self-both-edges-failed pass 2
+status self self-public-health-ok fail
+status self self-no-scope fail
+status self self-public-scope fail
+status self self-bad-container fail
+status self self-restarted fail
+status self self-db-unready fail
+status self self-schedulers-off fail
+status public public-old pass 0
+status public public-ok pass 0
+status public public-health-skipped fail
+deploy public public-ok pass 0
+deploy public public-wrong-tag fail
+deploy public public-wrong-digest fail
+deploy self self-ok pass 0
+deploy self self-wrong-tag fail
+deploy self self-wrong-digest fail
+EOF
+
+    : >aws-calls
+    run_workflow_step "$body" "failed SSM invocation" fail status production public \
+        "${ssm_env[@]}" AWS_OPERATION_DOCUMENT_NAME=doc-status-public IMAGE_DIGEST= INVOCATION_STATUS=Failed
+    grep -Fxq 'Systems Manager operation failed with status: Failed' step.stderr \
+        || fail "a failed SSM invocation must report its status"
+)
+
 assert_standby_dns_guard() (
     local node_stdout="$1"
     local node_status="$2"
@@ -190,6 +466,13 @@ assert_text_contains "$approval_job" '^    environment: production$' "Lightsail 
 
 assert_not_contains "$OPERATIONS_WORKFLOW" '^[[:space:]]+AWS_[A-Z_]+DOCUMENT_NAME:.*(&&|\|\|)' \
     "workflow must not use a chained expression to choose a document"
+
+workflow_fixture_sha=0123456789abcdef0123456789abcdef01234567
+validation_run="$(extract_workflow_step_run 'Validate fixed operation boundary')"
+operation_run="$(extract_workflow_step_run 'Run fixed Systems Manager operation')"
+assert_document_selection "$validation_run" "$workflow_fixture_sha"
+assert_ssm_results "$operation_run" "$workflow_fixture_sha"
+
 validation_step="$(yaml_block "$OPERATIONS_WORKFLOW" '      - name: Validate fixed operation boundary')"
 assert_text_contains "$validation_step" 'GitHub variable %s is not set\. Update the CloudFormation stack' \
     "validation must identify a missing document variable and report how to set it"
@@ -207,12 +490,7 @@ assert_text_not_contains "$node_preflight" 'InstanceId|IPAddress|ComputerName|\.
 
 standby_checkout="$(yaml_block "$OPERATIONS_WORKFLOW" '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0')"
 standby_dns_guard="$(yaml_block "$OPERATIONS_WORKFLOW" '      - name: Verify production DNS is on LightNode before standby')"
-standby_dns_script="$(awk '
-    /^        run: \|$/ { in_run = 1; next }
-    in_run && NF && !/^          / { exit }
-    in_run { print substr($0, 11) }
-' <<<"$standby_dns_guard")"
-[[ "$standby_dns_script" =~ [^[:space:]] ]] || fail "standby DNS guard must have a non-empty run body"
+standby_dns_script="$(extract_workflow_step_run 'Verify production DNS is on LightNode before standby')"
 assert_standby_dns_guard $'target=lightnode\n' 0 allow 'LightNode target'
 assert_standby_dns_guard '' 1 refuse 'resolver failure'
 assert_standby_dns_guard $'target=cloudrun\n' 0 refuse 'Cloud Run target'
