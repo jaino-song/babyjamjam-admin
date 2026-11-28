@@ -8,14 +8,16 @@ host. The host does not build application images.
 | Branch | Deployment credential | Runtime | Approval |
 |---|---|---|---|
 | `preview` | branch-scoped preview role | preview backend | automatic after CI |
-| `main` | branch-scoped production role | production backend | `production` environment required reviewer |
+| `main` | branch-scoped production role | production backend | `production` environment job; a person reviews only while that environment has a required reviewer |
 
 The deploy and fixed-purpose operations jobs receive temporary AWS credentials through GitHub OIDC. Their
 trust policy pins preview access to `refs/heads/preview` and production access
 to `refs/heads/main`; a feature branch cannot gain deployment authority by
 referencing an environment. Production approval runs in a separate
 `production` environment job that has no AWS token, and the branch-scoped
-deployment job starts only after that approval succeeds. The workflow does not
+operation job starts only after that job succeeds. Human review depends on the
+environment's protection rules, so obtain separate operator approval
+immediately before any state-changing operation. The workflow does not
 use an AWS access key, SSH key, or a remotely supplied shell command. The
 preview and production roles can each invoke only their fixed SSM document on a
 managed node with the configured `DeploymentTarget` tag. The workflow refuses
@@ -67,8 +69,10 @@ The last four exist for the cold standby host (BJJ-605):
   without `--self` against a standby host while production DNS points at
   LightNode: it passes on LightNode's answer and leaves the Lightsail API
   running.
-- A deploy that fails before activation (image validation, migration) leaves
-  the containers untouched. After that point the operator attempts recovery:
+- A deploy that fails before the deployment helper is called (image
+  validation, migration) leaves the containers untouched and runs no recovery.
+  Once the helper is called, a failure in the helper, in digest recording or in
+  host verification makes the operator attempt recovery:
   if the API was stopped when the deploy started, it stops the new API and
   restores the release records without starting the previous image; if the API
   was running, it rolls back to the image that was running. Recovery can itself
@@ -172,10 +176,12 @@ approval gate before execution.
    its environment and health scope. When that variable is empty the workflow
    fails and names it; it never falls back to another document. `node-status`
    uses no document variable. The tag and the evaluated role ARN are checked
-   for format before the document is selected, without naming a variable. An
-   empty production role variable makes the role expression fall through to the
-   preview role ARN, which passes that format check and then fails at
-   authentication, so check both role variables when authentication fails.
+   for format before the document is selected, without naming a variable. If
+   the production role variable is empty, the workflow evaluates the preview
+   role variable instead. An empty or malformed result fails that format check.
+   If authentication is reached with the configured preview role, its trust
+   policy rejects `main`, so check both role variables when validation or
+   authentication fails.
 
 8. If the external IAM operator needs deployment-failure diagnostics, review the
    `AgentLightsailDiagnosticsPolicyArn` stack output and explicitly attach that
@@ -272,10 +278,12 @@ After staging, use only a recovery image that supports case-scoped keys before
 resuming writes. Retain the guarded operator while the new image is eligible
 for promotion.
 
-A failure before activation (image validation or migration) ends the deploy
-without any recovery and leaves the containers as they were. When the host
-deploy fails after activation, the operator attempts recovery according to the
-API state at the start of the deploy. If the API was running, it invokes the
+A failure before the deployment helper is called (image validation or
+migration) ends the deploy without any recovery and leaves the containers as
+they were. Once the helper is called, a failure in the helper (including one
+before it activates the API), in digest recording, or in host verification
+makes the operator attempt recovery according to the API state at the start of
+the deploy. If the API was running, it invokes the
 existing rollback script with the recorded known-good commit image, preserves
 the prior rollback-tag history, restores the prior digest state, and verifies
 the recovered runtime. If the API was stopped (standby), it stops the new API
@@ -290,7 +298,10 @@ Lightsail operations workflow reports by where it stopped: a configuration,
 image-lookup or authentication failure in that workflow step; a registration
 problem after printing `managed_nodes` and `online_nodes`; no final status line
 when tracking the sent command fails (first check for an AWS query error, then
-whether the invocation count and node match what was expected); only the
+whether the invocation count and node match what was expected); neither a
+status line nor host output when Systems Manager reported `Success` and the
+call that fetches the output failed (verify the command status and the host
+state before retrying); only the
 final Systems Manager status, without host output, when the host command did
 not end in `Success` (which includes a failed check on the host). When the
 host command succeeded, the workflow fetches its standard output and checks
