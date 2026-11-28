@@ -7,12 +7,26 @@ frontend deployment. The frontend keeps the stable
 `https://api.babyjamjam.com` hostname while traffic ownership is changed by
 the separately controlled Vercel DNS client.
 
-Current status (2026-10-31): **LightNode is the permanent warm standby for the
-Lightsail production primary.** It has served production in temporary-active
-mode since 2026-09-03; the move back to Lightsail puts it on passive standby,
-and until that cutover finishes it remains the live host. It is not released
-after failback: it stays running and receives every `main` release passively
-through `deploy-lightnode-standby` (see "Conditional `main` CI replacement").
+Current status (2026-11-28, decision 2026-11-27, BJJ-597/BJJ-598): **LightNode is
+the only production host.** It has served production since 2026-09-03 and the
+return to Lightsail is cancelled. A `main` push that changes backend paths
+reaches it through `deploy-lightnode` after the checks and the database-patch
+wait gate pass, and only while `api.babyjamjam.com` points at LightNode. The
+wait gate, when it can see the commit's Database Patches runs, waits for each
+to finish and requires its `apply production database patches` job to have
+succeeded (a run that succeeds with that job skipped fails the gate). When it sees none it decides from the changed files: it waits for a
+run, and fails without one, if `backend/prisma/` or the patch workflow file
+changed, and passes at once otherwise. A passed gate is therefore not always
+proof that patches succeeded (a commit that changes only the replay script,
+or a failed file comparison with no run appearing, passes unchecked).
+AWS Lightsail is the standby: as of 2026-11-28 its instance is stopped and
+snapshotted but not yet deleted (snapshot-only is the target state). The
+failover draft is `backend/deploy/lightsail/COLD_STANDBY_FAILOVER.md`; it is
+not executable until the blockers it lists are closed. The
+`deploy-lightnode-standby` job and its helpers `ci/standby-decision.sh` and
+`ci/newer-primary-release.sh` were removed; the sections below that describe
+the passive standby release path are historical (cleanup: BJJ-604). The host
+verbs `deploy-standby` and `standby-status` still exist and have no CI caller.
 The failover controller runtime, installer, systemd unit source, and CLI are
 implemented, but the controller is **not installed or armed** and failover stays
 a manual runbook (`docs/devops-deployment-rules.md` §4.1).

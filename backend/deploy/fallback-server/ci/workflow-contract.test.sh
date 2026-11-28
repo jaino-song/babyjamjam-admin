@@ -60,20 +60,10 @@ assert_text_contains "$resolve_target_job_joined" \
     "target resolution must require BOTH the build and the Database Patches wait job to succeed (not just either)"
 assert_contains "$WORKFLOW" 'resolve-deploy-target\.mjs' \
     "backend CI must use the fail-closed target resolver"
-assert_contains "$WORKFLOW" 'FALLBACK_DNS_SHA256' \
-    "backend CI must compare the current route with the protected fallback identity"
-assert_contains "$WORKFLOW" 'LIGHTSAIL_DNS_SHA256' \
-    "backend CI must compare the current route with the protected Lightsail identity"
-assert_contains "$WORKFLOW" '^  deploy-lightnode:' \
-    "backend CI must define the LightNode replacement job"
 assert_contains "$WORKFLOW" '^  lightnode-connection-smoke:' \
     "backend CI must expose a read-only LightNode connection smoke"
 assert_contains "$WORKFLOW" "inputs.operation == 'lightnode-status'" \
     "LightNode connection smoke must require an explicit manual operation"
-assert_contains "$WORKFLOW" "needs\.resolve-backend-deploy-target\.outputs\.target == 'lightnode'" \
-    "LightNode deployment must require the resolved LightNode target"
-assert_contains "$WORKFLOW" "needs\.resolve-backend-deploy-target\.outputs\.target == 'lightsail'" \
-    "Lightsail deployment must require the resolved Lightsail target"
 assert_contains "$WORKFLOW" "'status'" \
     "LightNode deployment must invoke only the forced status command"
 assert_contains "$WORKFLOW" '"replace \$GITHUB_SHA \$IMAGE_DIGEST"' \
@@ -87,84 +77,111 @@ assert_contains "$WORKFLOW" '::error::LightNode status' \
 assert_contains "$WORKFLOW" 'expect_status lease_mode required' \
     "LightNode replacement must confirm the deployed runtime contests the scheduler lease (ADR-010)"
 
-# Both active deploys must prove the new runtime adopted the DNS-resolved owner.
-# Never apply the public-owner check to a manual non-owner or passive deployment.
+assert_deploy_lightnode_contract() {
+    local workflow_file="$1"
+    if grep -Eq '^  (deploy-lightsail|deploy-lightnode-standby):' "$workflow_file"; then
+        fail "backend CI must omit the Lightsail and LightNode standby deploy jobs"
+    fi
+    if grep -Eq "needs\.resolve-backend-deploy-target\.outputs\.target[[:space:]]*(==|!=)[[:space:]]*'lightsail'" "$workflow_file"; then
+        fail "backend CI must not compare the resolved target with Lightsail"
+    fi
+
+    local lightnode_job lightnode_if expected_if resolver_job
+    lightnode_job="$(extract_job '^  deploy-lightnode:' "$workflow_file")"
+    [[ -n "$lightnode_job" ]] || fail "backend CI must define the LightNode deploy job"
+    [[ "$(grep -E '^    needs:' <<<"$lightnode_job")" == '    needs: [build-lightsail-image, resolve-backend-deploy-target]' ]] \
+        || fail "the LightNode deploy job must keep its exact build and target-resolution dependencies"
+
+    lightnode_if="$(awk '
+        /^    if:/ { inside=1; print; next }
+        inside && /^      / { print; next }
+        { inside=0 }
+    ' <<<"$lightnode_job")"
+    expected_if="$(cat <<'EOF'
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref_name == 'main' &&
+      needs.build-lightsail-image.result == 'success' &&
+      needs.resolve-backend-deploy-target.result == 'success' &&
+      needs.resolve-backend-deploy-target.outputs.target == 'lightnode'
+EOF
+)"
+    [[ "$lightnode_if" == "$expected_if" ]] \
+        || fail "the LightNode deploy job must keep its exact main push condition"
+
+    resolver_job="$(extract_job '^  resolve-backend-deploy-target:' "$workflow_file")"
+    assert_text_contains "$resolver_job" '^      FALLBACK_DNS_SHA256: \$\{\{ secrets\.FALLBACK_DNS_SHA256 \}\}$' \
+        "target resolution must receive the protected LightNode DNS hash"
+    assert_text_contains "$resolver_job" '^      LIGHTSAIL_DNS_SHA256: \$\{\{ secrets\.LIGHTSAIL_DNS_SHA256 \}\}$' \
+        "target resolution must receive the protected Lightsail DNS hash"
+}
+assert_deploy_lightnode_contract "$WORKFLOW"
+
+# LightNode must prove the deployed runtime adopted the DNS-resolved owner.
 assert_production_provider_contract() {
-    local workflow_file="$1" job active_job provider_step
-    for job in deploy-lightsail deploy-lightnode; do
-        active_job="$(extract_job "^  $job:" "$workflow_file")"
-        assert_text_contains "$active_job" 'uses: actions/checkout@' \
-            "$job must check out the shared local verifier"
-        assert_text_contains "$active_job" 'persist-credentials: false' \
-            "$job checkout must not retain credentials"
-        assert_text_contains "$active_job" 'RESOLVED_DEPLOY_TARGET: \$\{\{ needs\.resolve-backend-deploy-target\.outputs\.target \}\}' \
-            "$job must pass the DNS-resolved target to the verifier"
-        assert_text_contains "$active_job" '^        run: node backend/deploy/ci/verify-production-provider\.mjs "\$RESOLVED_DEPLOY_TARGET"$' \
-            "$job must require the public production provider verifier"
-        # Inspect the whole verifier step: an if-clause before or after run
-        # can bypass verification even when the required command is present.
-        provider_step="$(awk '
-            /^      - / {
-                if (verifier) printf "%s", step
-                step=""
-                verifier=0
-            }
-            { step=step $0 ORS }
-            /^        run: node backend\/deploy\/ci\/verify-production-provider/ { verifier=1 }
-            END { if (verifier) printf "%s", step }
-        ' <<<"$active_job")"
-        if grep -Eq '^(      - |        )if:' <<<"$provider_step"; then
-            fail "$job provider verification must not have a step-level condition"
-        fi
-        if grep -Eq 'continue-on-error:|verify-production-provider.*(\|\||&&|;)' <<<"$active_job"; then
-            fail "$job must not ignore provider verification failure"
-        fi
-    done
+    local workflow_file="$1" active_job provider_step
+    active_job="$(extract_job '^  deploy-lightnode:' "$workflow_file")"
+    assert_text_contains "$active_job" 'uses: actions/checkout@' \
+        "deploy-lightnode must check out the shared local verifier"
+    assert_text_contains "$active_job" 'persist-credentials: false' \
+        "deploy-lightnode checkout must not retain credentials"
+    assert_text_contains "$active_job" 'RESOLVED_DEPLOY_TARGET: \$\{\{ needs\.resolve-backend-deploy-target\.outputs\.target \}\}' \
+        "deploy-lightnode must pass the DNS-resolved target to the verifier"
+    assert_text_contains "$active_job" '^        run: node backend/deploy/ci/verify-production-provider\.mjs "\$RESOLVED_DEPLOY_TARGET"$' \
+        "deploy-lightnode must require the public production provider verifier"
+    # Inspect the whole verifier step: an if-clause before or after run
+    # can bypass verification even when the required command is present.
+    provider_step="$(awk '
+        /^      - / {
+            if (verifier) printf "%s", step
+            step=""
+            verifier=0
+        }
+        { step=step $0 ORS }
+        /^        run: node backend\/deploy\/ci\/verify-production-provider/ { verifier=1 }
+        END { if (verifier) printf "%s", step }
+    ' <<<"$active_job")"
+    if grep -Eq '^(      - |        )if:' <<<"$provider_step"; then
+        fail "deploy-lightnode provider verification must not have a step-level condition"
+    fi
+    if grep -Eq 'continue-on-error:|verify-production-provider.*(\|\||&&|;)' <<<"$active_job"; then
+        fail "deploy-lightnode must not ignore provider verification failure"
+    fi
     assert_contains "$workflow_file" 'node --test backend/deploy/ci/\*\.test\.mjs' \
         "required checks must execute the production verifier tests"
-    local standby_job
-    standby_job="$(extract_job '^  deploy-lightnode-standby:' "$workflow_file")"
-    if grep -q 'verify-production-provider' <<<"$standby_job"; then
-        fail "passive standby must not verify ownership of the public API"
-    fi
 }
 assert_production_provider_contract "$WORKFLOW"
 
-provider_mutation="$(mktemp)"
-trap 'rm -f "$provider_mutation"' EXIT
-for job in deploy-lightsail deploy-lightnode; do
-    # Mutate only the selected active job, so one surviving check cannot mask a gap.
-    awk -v header="  $job:" '
-        $0 == header { inside=1 }
-        inside && /^  [a-z0-9-]*:$/ && $0 != header { inside=0 }
-        inside && /run: node backend\/deploy\/ci\/verify-production-provider/ { next }
-        { print }
-    ' "$WORKFLOW" > "$provider_mutation"
-    if ( assert_production_provider_contract "$provider_mutation" ) >/dev/null 2>&1; then
-        fail "$job provider-verification removal must fail the contract"
+lightnode_mutation="$(mktemp)"
+trap 'rm -f "$lightnode_mutation"' EXIT
+for mutation in \
+    '$a\  deploy-lightsail:' \
+    "/^      needs\.resolve-backend-deploy-target\.outputs\.target == 'cloudrun'$/a\      || needs.resolve-backend-deploy-target.outputs.target == 'lightsail'" \
+    '/^  deploy-lightnode:/,$ { /github\.ref_name == .main. &&/d; }'; do
+    sed "$mutation" "$WORKFLOW" > "$lightnode_mutation"
+    if cmp -s "$WORKFLOW" "$lightnode_mutation"; then
+        fail "LightNode contract self-check mutation did not change the workflow: $mutation"
     fi
-
-    awk -v header="  $job:" '
-        $0 == header { inside=1 }
-        inside && /^  [a-z0-9-]*:$/ && $0 != header { inside=0 }
-        inside && /run: node backend\/deploy\/ci\/verify-production-provider/ {
-            print "        if: false"
-        }
-        { print }
-    ' "$WORKFLOW" > "$provider_mutation"
-    if cmp -s "$WORKFLOW" "$provider_mutation"; then
-        fail "$job provider-verification skip mutation must change the workflow"
-    fi
-    if ( assert_production_provider_contract "$provider_mutation" ) >/dev/null 2>&1; then
-        fail "$job provider-verification skip must fail the contract"
+    if ( assert_deploy_lightnode_contract "$lightnode_mutation" ) >/dev/null 2>&1; then
+        fail "the deploy-lightnode contract self-check must fail for mutation: $mutation"
     fi
 done
-sed 's/RESOLVED_DEPLOY_TARGET: \${{ needs.resolve-backend-deploy-target.outputs.target }}/RESOLVED_DEPLOY_TARGET: lightnode/' \
-    "$WORKFLOW" > "$provider_mutation"
-if ( assert_production_provider_contract "$provider_mutation" ) >/dev/null 2>&1; then
-    fail "hard-coded owner in place of resolved target must fail the contract"
-fi
-rm -f "$provider_mutation"
+
+for mutation in \
+    '/verify-production-provider\.mjs/d' \
+    '/verify-production-provider\.mjs/i\        if: false' \
+    's/RESOLVED_DEPLOY_TARGET: \${{ needs\.resolve-backend-deploy-target\.outputs\.target }}/RESOLVED_DEPLOY_TARGET: lightnode/'; do
+    sed "/^  deploy-lightnode:/,\$ { $mutation
+}" "$WORKFLOW" > "$lightnode_mutation"
+    if cmp -s "$WORKFLOW" "$lightnode_mutation"; then
+        fail "provider verification self-check mutation did not change deploy-lightnode: $mutation"
+    fi
+    if ( assert_production_provider_contract "$lightnode_mutation" ) >/dev/null 2>&1; then
+        fail "the deploy-lightnode provider verification self-check must fail for mutation: $mutation"
+    fi
+done
+rm -f "$lightnode_mutation"
 trap - EXIT
 
 # The Cloud Run preview deploy job contract (BJJ-341). Takes the workflow
@@ -268,139 +285,6 @@ if ( assert_deploy_cloudrun_contract "$cloudrun_mutation" ) >/dev/null 2>&1; the
     fail "the deploy-cloudrun contract self-check must fail when the wait-database-patches clause is removed"
 fi
 rm -f "$cloudrun_mutation"
-trap - EXIT
-
-# The LightNode passive-standby job: after Lightsail (primary) deploys a `main`
-# release, the standby converges to it by ancestry. Takes the workflow path so
-# the mutation self-checks below re-run the exact same assertions on a mutated
-# copy.
-assert_deploy_standby_contract() {
-    local workflow_file="$1"
-    local standby_job standby_if standby_if_joined
-    standby_job="$(extract_job '^  deploy-lightnode-standby:' "$workflow_file")"
-    [[ -n "$standby_job" ]] || fail "backend CI must define the LightNode standby deploy job"
-
-    standby_if="$(awk '/^    if:/{f=1} f{print} /^    needs:/{exit}' <<<"$standby_job")"
-    standby_if_joined="$(tr '\n' ' ' <<<"$standby_if")"
-    assert_text_contains "$standby_if_joined" \
-        "always\(\) &&[[:space:]]+github\.event_name == 'push' &&[[:space:]]+github\.ref_name == 'main' &&[[:space:]]+needs\.build-lightsail-image\.result == 'success' &&[[:space:]]+needs\.resolve-backend-deploy-target\.result == 'success' &&[[:space:]]+needs\.deploy-lightsail\.result == 'success' &&[[:space:]]+needs\.resolve-backend-deploy-target\.outputs\.target == 'lightsail'" \
-        "the standby job must run only on a main push after build, target resolution and the Lightsail deploy all succeeded, every clause AND-ed"
-    assert_text_contains "$standby_job" \
-        'needs:[[:space:]]*\[build-lightsail-image,[[:space:]]*resolve-backend-deploy-target,[[:space:]]*deploy-lightsail\]' \
-        "the standby job must depend on the build, target resolution and the Lightsail deploy"
-    assert_text_contains "$standby_job" 'group:[[:space:]]*lightnode-standby-main' \
-        "the standby job must use its own concurrency group"
-    assert_text_contains "$standby_job" 'cancel-in-progress:[[:space:]]*false' \
-        "the standby job must not cancel an active deployment"
-    assert_text_contains "$standby_job" 'fetch-depth:[[:space:]]*0' \
-        "the standby job needs full history for the ancestry comparison"
-    assert_text_contains "$standby_job" 'persist-credentials:[[:space:]]*false' \
-        "the standby job must not persist checkout credentials"
-    assert_text_contains "$standby_job" 'timeout-minutes:[[:space:]]*40' \
-        "the standby job must carry the deployment timeout"
-    local standby_permissions
-    standby_permissions="$(awk '/^    permissions:/{f=1; next} f && /^      /{print; next} f{exit}' <<<"$standby_job")"
-    [[ "$(grep -c . <<<"$standby_permissions")" -eq 2 ]] \
-        || fail "the standby job must declare exactly two permission entries"
-    assert_text_contains "$standby_permissions" '^      contents:[[:space:]]*read$' \
-        "the standby job must grant only read on contents"
-    assert_text_contains "$standby_permissions" '^      actions:[[:space:]]*read$' \
-        "the standby job must grant only read on actions (to list the newer Lightsail deploys)"
-    # The newer-release lookup: fetch and feed only. The decision is executed by
-    # newer-primary-release.test.sh and handed to standby-decision.sh as an input.
-    assert_text_contains "$standby_job" 'GH_TOKEN:[[:space:]]*\$\{\{ github\.token \}\}' \
-        "the newer-release lookup must authenticate with the job token"
-    assert_text_contains "$standby_job" 'actions/workflows/backend-ci\.yml/runs\?branch=main&event=push&per_page=100' \
-        "the newer-release lookup must list the newest main push runs of backend CI"
-    assert_text_contains "$standby_job" 'actions/runs/\$run_id/jobs\?filter=latest&per_page=100' \
-        "the newer-release lookup must read the latest attempt's jobs of each newer run"
-    assert_text_contains "$standby_job" 'bash "\$script" list "\$work/runs\.json"' \
-        "the newer-release lookup must take the runs to inspect from newer-primary-release.sh"
-    assert_text_contains "$standby_job" 'bash "\$script" decide "\$work/runs\.json" "\$work/jobs"' \
-        "the newer-release lookup must take its answer from newer-primary-release.sh"
-    assert_text_contains "$standby_job" 'NEWER_PRIMARY_RELEASE:[[:space:]]*\$\{\{ steps\.newer\.outputs\.newer \}\}' \
-        "the standby decision must receive the newer-release answer"
-    assert_text_contains "$standby_job" 'script=backend/deploy/fallback-server/ci/newer-primary-release\.sh' \
-        "the newer-release lookup must run newer-primary-release.sh"
-    assert_contains "$workflow_file" '^          bash backend/deploy/fallback-server/ci/newer-primary-release\.test\.sh$' \
-        "backend CI must run the newer-release decision tests"
-    assert_text_contains "$standby_job" "'standby-status'" \
-        "the standby job must read the standby with the forced standby-status command"
-    assert_text_contains "$standby_job" '"deploy-standby \$GITHUB_SHA \$IMAGE_DIGEST"' \
-        "the standby job must deploy only through the forced deploy-standby command"
-    assert_text_contains "$standby_job" 'StrictHostKeyChecking=yes' \
-        "the standby SSH must fail closed on host-key mismatch"
-    assert_text_contains "$standby_job" 'count == 1 && value != ""' \
-        "the standby status reader must reject missing or duplicated status keys"
-    # The ancestry decision is executed by tests (standby-decision.test.sh); the
-    # job may only call it and act on its decision, never re-implement it.
-    assert_text_contains "$standby_job" 'bash backend/deploy/fallback-server/ci/standby-decision\.sh' \
-        "the standby job must take its convergence decision from standby-decision.sh"
-    assert_text_contains "$standby_job" '\| bash backend/deploy/fallback-server/ci/standby-decision\.sh\)"; then' \
-        "the standby job must stop when standby-decision.sh refuses"
-    assert_text_contains "$standby_job" '^            deploy\) ;;$' \
-        "the standby job must deploy only on a deploy decision"
-    assert_text_contains "$standby_job" '^            superseded\)$' \
-        "the standby job must report a superseded run and stop"
-    assert_text_contains "$standby_job" "decision is '[$]decision' [(]expected 'deploy' or 'superseded'[)]" \
-        "the standby job must fail on any other decision"
-    if grep -Eq 'git (merge-base|cat-file)' <<<"$standby_job"; then
-        fail "the standby job must not re-implement the ancestry decision inline"
-    fi
-    assert_contains "$workflow_file" '^          bash backend/deploy/fallback-server/ci/standby-decision\.test\.sh$' \
-        "backend CI must run the standby decision tests"
-    assert_text_contains "$standby_job" 'expect_status runtime_mode passive' \
-        "the standby job must assert the passive runtime"
-    assert_text_contains "$standby_job" 'expect_status schedulers_enabled false' \
-        "the standby job must assert schedulers are off"
-    assert_text_contains "$standby_job" 'expect_status public_routing aws' \
-        "the standby job must assert the public route stays on AWS"
-    assert_text_contains "$standby_job" 'expect_status restart_count 0' \
-        "the standby job must assert no restarts"
-    # The Lightsail OIDC contract slices from deploy-lightsail to the end of the
-    # file, so this job must never carry a GitHub environment key.
-    if grep -Eq 'environment:' <<<"$standby_job"; then
-        fail "the standby job must not contain a GitHub environment key"
-    fi
-    if grep -Eq 'api\.babyjamjam\.com' <<<"$standby_job"; then
-        fail "the standby job must not probe the public API host (that host is Lightsail)"
-    fi
-    if grep -Eq 'replace-temporary-active|temporary-active|"replace |rollback' <<<"$standby_job"; then
-        fail "the standby job must not use the active-fallback commands"
-    fi
-}
-
-assert_deploy_standby_contract "$WORKFLOW"
-
-# Self-checks: the standby contract must bite. Each mutation removes one
-# load-bearing clause from a temp copy and the same assertions must FAIL on it.
-standby_mutation="$(mktemp)"
-trap 'rm -f "$standby_mutation"' EXIT
-standby_mutations=(
-    "/needs\.deploy-lightsail\.result == 'success'/d"
-    's/fetch-depth: 0/fetch-depth: 1/'
-    's|^              \| bash backend/deploy/fallback-server/ci/standby-decision.sh)"; then|              \| cat)"; then|'
-    's/^            deploy) ;;$/            deploy) exit 0 ;;/'
-    's/^            superseded)$/            superseded-never)/'
-    '/standby-decision.test.sh$/d'
-    's/group: lightnode-standby-main/group: lightsail-deploy-main/'
-    '/^      actions: read$/d'
-    's/NEWER_PRIMARY_RELEASE: \${{ steps.newer.outputs.newer }}/NEWER_PRIMARY_RELEASE: none/'
-    '/newer-primary-release.test.sh$/d'
-    's/bash "\$script" decide/bash "$script" list/'
-    's/expect_status runtime_mode passive/expect_status runtime_mode active/'
-    's/^      # Full history:/      # environment: Full history:/'
-)
-for mutation in "${standby_mutations[@]}"; do
-    sed "$mutation" "$WORKFLOW" > "$standby_mutation"
-    if cmp -s "$WORKFLOW" "$standby_mutation"; then
-        fail "standby contract self-check mutation did not change the workflow: $mutation"
-    fi
-    if ( assert_deploy_standby_contract "$standby_mutation" ) >/dev/null 2>&1; then
-        fail "the deploy-lightnode-standby contract self-check must fail for mutation: $mutation"
-    fi
-done
-rm -f "$standby_mutation"
 trap - EXIT
 
 echo "Fallback deployment workflow contract tests passed"
