@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Prisma } from "@prisma/client";
@@ -272,6 +273,11 @@ export class AuthEmailOutboxService {
                 attemptVersion: item.attempt_version,
             }));
         } catch (error) {
+            if (error instanceof OutboundRecipientBlockedError) {
+                await this.releaseBeforeSend(item, error);
+                return;
+            }
+
             if (!(error instanceof AuthTokenUnavailableError)) {
                 try {
                     captureBackendError(error instanceof Error ? error : new Error("Auth email outbox deliver failed"), {
@@ -359,7 +365,7 @@ export class AuthEmailOutboxService {
      * newer attempt after a concurrent claim.
      */
     private async releaseBeforeSend(item: ClaimedEmail, error: unknown): Promise<void> {
-        const exhausted = item.attempts >= MAX_DELIVERY_ATTEMPTS;
+        const exhausted = error instanceof OutboundRecipientBlockedError || item.attempts >= MAX_DELIVERY_ATTEMPTS;
         const retryDelayMs = Math.min(
             60 * 60 * 1000,
             30_000 * 2 ** Math.max(0, item.attempts - 1),
@@ -454,6 +460,7 @@ export class AuthEmailOutboxService {
     }
 
     private safeErrorCode(error: unknown): string {
+        if (error instanceof OutboundRecipientBlockedError) return "outbound_recipient_blocked";
         if (error instanceof EmailProviderError) {
             return error.message.replace(/[^A-Za-z0-9_:-]/g, "_").slice(0, 64);
         }

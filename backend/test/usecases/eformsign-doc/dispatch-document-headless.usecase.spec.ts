@@ -66,7 +66,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const assignmentGuard = { assertLiveAssignedProvider: jest.fn() };
         const headless = { dispatchCreation: jest.fn() };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headless as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -102,7 +102,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const assignmentGuard = { assertLiveAssignedProvider: jest.fn() };
         const headless = { dispatchCreation: jest.fn() };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headless as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -138,7 +138,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
     it("persists the current eformsign status after headless creation", async () => {
         const eformsignService = {
             resolveEffectiveTemplateId,
-            generateDocumentOptions: jest.fn().mockReturnValue({
+            generateDispatchOptions: jest.fn().mockReturnValue({
                 mode: { type: "01" },
                 prefill: { document_name: "산모신생아건강관리서비스 계약서" },
             }),
@@ -242,7 +242,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
     it("falls back to the initial sign-request status when eformsign status fetch fails", async () => {
         const eformsignService = {
             resolveEffectiveTemplateId,
-            generateDocumentOptions: jest.fn().mockReturnValue({ mode: { type: "01" } }),
+            generateDispatchOptions: jest.fn().mockReturnValue({ mode: { type: "01" } }),
         };
         const headlessService = {
             dispatchCreation: jest.fn().mockResolvedValue({
@@ -330,7 +330,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             ),
         };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -377,7 +377,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
     it("keeps the sanitized message as the reason for errors without a registered problem code", async () => {
         const progressService = { emit: jest.fn() };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn() } as never,
+            { generateDispatchOptions: jest.fn() } as never,
             { dispatchCreation: jest.fn() } as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -415,7 +415,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
     it("returns the remote document id when local persistence fails", async () => {
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation: jest.fn().mockResolvedValue({ ok: true, documentId: "remote-1", durationMs: 50 }) } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
             createCredentialBoundary() as never,
@@ -462,7 +462,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             areaTemplate?: unknown;
         }) => legacyUsecase(
             (overrides.eformsignService ?? {
-                generateDocumentOptions: jest.fn().mockReturnValue({}),
+                generateDispatchOptions: jest.fn().mockReturnValue({}),
                 resolveEffectiveTemplateId,
             }) as never,
             { dispatchCreation: overrides.dispatchCreation } as never,
@@ -498,7 +498,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             const generate = jest.fn().mockReturnValue({ mode: { type: "01" } });
             const eformsignService = {
                 resolveEffectiveTemplateId: resolve,
-                generateDocumentOptions: generate,
+                generateDispatchOptions: generate,
             };
             const workflowClient = createWorkflowClient({
                 form_id: "template-override",
@@ -598,7 +598,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
         it("returns a stable manual-review result for a dispatch claim conflict before generation", async () => {
             const dispatchCreation = jest.fn();
-            const generateDocumentOptions = jest.fn();
+            const generateDispatchOptions = jest.fn();
             const claim = jest.fn().mockRejectedValue(
                 new ConflictException("전자문서 작업 요청이 기존 작업과 충돌합니다."),
             );
@@ -620,7 +620,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 },
                 eformsignService: {
                     resolveEffectiveTemplateId: jest.fn(resolveEffectiveTemplateId),
-                    generateDocumentOptions,
+                    generateDispatchOptions,
                 },
                 progressService: { emit },
             });
@@ -636,7 +636,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 fallbackHint: "manual_check",
             }));
             expect(claim).toHaveBeenCalledTimes(1);
-            expect(generateDocumentOptions).not.toHaveBeenCalled();
+            expect(generateDispatchOptions).not.toHaveBeenCalled();
             expect(dispatchCreation).not.toHaveBeenCalled();
             expect(releaseBeforeSend).not.toHaveBeenCalled();
             expect(markAccepted).not.toHaveBeenCalled();
@@ -653,7 +653,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
         it("retains the existing fallback for non-conflict claim errors", async () => {
             const dispatchCreation = jest.fn();
-            const generateDocumentOptions = jest.fn();
+            const generateDispatchOptions = jest.fn();
             const claim = jest.fn().mockRejectedValue(new Error("claim unavailable"));
             const releaseBeforeSend = jest.fn();
             const markAccepted = jest.fn();
@@ -664,7 +664,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 dispatchBoundary: { claim, releaseBeforeSend, markAccepted, markUncertain },
                 eformsignService: {
                     resolveEffectiveTemplateId: jest.fn(resolveEffectiveTemplateId),
-                    generateDocumentOptions,
+                    generateDispatchOptions,
                 },
                 progressService: { emit },
             });
@@ -680,7 +680,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 fallbackHint: "iframe",
             }));
             expect(claim).toHaveBeenCalledTimes(1);
-            expect(generateDocumentOptions).not.toHaveBeenCalled();
+            expect(generateDispatchOptions).not.toHaveBeenCalled();
             expect(dispatchCreation).not.toHaveBeenCalled();
             expect(releaseBeforeSend).not.toHaveBeenCalled();
             expect(markAccepted).not.toHaveBeenCalled();
@@ -893,7 +893,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             createdDate: new Date(),
         }]) };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
             createCredentialBoundary() as never,
@@ -941,7 +941,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             createdDate: new Date(),
         }]) };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
             createCredentialBoundary() as never,
@@ -978,7 +978,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             const dispatchCreation = jest.fn().mockResolvedValue({ ok: false, reason: "stop", durationMs: 1 });
             const repository = { findByClientId: jest.fn().mockResolvedValue(rows) };
             const usecase = legacyUsecase(
-                { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
+                { generateDispatchOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
                 { dispatchCreation } as never,
                 { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
                 createCredentialBoundary() as never,
@@ -1052,7 +1052,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const usecase = legacyUsecase(
             {
                 resolveEffectiveTemplateId,
-                generateDocumentOptions: jest.fn().mockReturnValue({
+                generateDispatchOptions: jest.fn().mockReturnValue({
                     mode: { type: "01" },
                     prefill: { document_name: "산모신생아건강관리서비스 계약서" },
                 }),
@@ -1101,7 +1101,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             runExclusive: jest.fn().mockRejectedValue(new EformsignOperationAlreadyRunningError()),
         };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -1137,7 +1137,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             runExclusive: jest.fn().mockRejectedValue(new EformsignOperationLockUnavailableError("redis unavailable")),
         };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,
@@ -1175,7 +1175,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             ) => run({ isHeld: () => false })),
         };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn().mockResolvedValue(null) } as never,
             createCredentialBoundary() as never,
@@ -1223,7 +1223,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             releaseBeforeSend: jest.fn(),
         };
         const usecase = legacyUsecase(
-            { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
+            { generateDispatchOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
             createCredentialBoundary() as never,

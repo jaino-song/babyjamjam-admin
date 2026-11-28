@@ -1,5 +1,10 @@
 import { BadGatewayException, BadRequestException, Inject, Injectable, Logger, Optional, PayloadTooLargeException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import {
+    assertEformsignPhone,
+    assertEformsignRecipients,
+    isEformsignRecipientAllowlistEnforced,
+} from "infrastructure/config/eformsign-recipient-policy";
 import * as crypto from "crypto";
 import {
     EFORMSIGN_DOC_REPOSITORY,
@@ -190,6 +195,12 @@ export class EformsignService {
         const effectiveTemplateId = override || normalizeEformsignTemplateId(this.EFORMSIGN_TEMPLATE_ID);
         assertEformsignTemplateCanBeCreated(effectiveTemplateId);
         return effectiveTemplateId;
+    }
+
+    generateDispatchOptions(...args: Parameters<EformsignService["generateDocumentOptions"]>) {
+        const options = this.generateDocumentOptions(...args);
+        assertEformsignRecipients(options.prefill.recipients);
+        return options;
     }
 
     generateDocumentOptions(
@@ -790,6 +801,7 @@ export class EformsignService {
     ): Promise<any> {
         if (recipientPhone) {
             assertEformPhone(recipientPhone.phoneNumber, "recipientPhone.phoneNumber");
+            assertEformsignPhone(recipientPhone.phoneNumber, recipientPhone.countryCode);
         }
         if (this.vendorStubsEnabled) {
             const result = buildEformsignStubReRequestResponse(documentId);
@@ -864,6 +876,12 @@ export class EformsignService {
             }
 
             nextStep.recipients = [recipientConfig];
+            assertEformsignRecipients(nextStep.recipients);
+        } else if (isEformsignRecipientAllowlistEnforced()) {
+            // Without an override, eformsign resends to the stored current step.
+            const document = await this.getDocumentById(accessToken, documentId);
+            const recipients: unknown = document?.current_status?.step_recipients;
+            assertEformsignRecipients(Array.isArray(recipients) && recipients.length > 0 ? recipients : undefined, true);
         }
 
         const response = await fetch(

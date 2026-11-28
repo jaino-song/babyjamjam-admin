@@ -70,7 +70,7 @@ import {
 } from "./sms-provider-acceptance.service";
 import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "./sms-trigger-payload-enricher.registry";
 import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
-import { classifySmsProviderOutcome, classifySmsProviderRejection, countSmsRecipients } from "./sms-provider-outcome.service";
+import { classifySmsProviderOutcome, classifySmsProviderRejection, countSmsRecipients, isSmsPreSendError } from "./sms-provider-outcome.service";
 
 type ManualSourceCancellation = { valid: false; reason: "Manual sender changed" | "Manual recipient changed"; canceledAt: Date };
 type ManualSourceValidation = { valid: true } | ManualSourceCancellation;
@@ -1134,6 +1134,21 @@ export class SmsTriggerDeliveryService {
             await this.persistAttempt(attempt);
             return isAccepted;
         } catch (error) {
+            if (isSmsPreSendError(error) && attempt.providerAcceptanceState === "started") {
+                const now = new Date();
+                attempt.status = "failed";
+                attempt.providerAcceptanceState = "rejected";
+                attempt.providerAcceptedAt = null;
+                attempt.errorMessage = error.message;
+                attempt.attempts += 1;
+                attempt.lastAttemptAt = now;
+                attempt.nextRetryAt = null;
+                attempt.updatedAt = now;
+                attempt.variables = { ...attempt.variables, retrySafety: "permanent-provider-rejected" };
+                job.payload.templateVariables["retrySafety"] = "permanent-provider-rejected";
+                await this.persistAttempt(attempt);
+                throw error;
+            }
             job.payload.templateVariables["retrySafety"] = "uncertain";
             const errorMessage = snapshot.standaloneLink ? "Standalone receipt delivery outcome unavailable"
                 : recordGroup ? "제공기록지 링크 문자 발송 결과를 확인할 수 없습니다" : this.formatErrorMessage(error);

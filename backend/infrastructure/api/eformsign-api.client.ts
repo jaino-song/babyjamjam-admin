@@ -1,3 +1,5 @@
+import { maskOutboundContacts } from "infrastructure/config/outbound-recipient-policy";
+import { assertEformsignRecipients } from "infrastructure/config/eformsign-recipient-policy";
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
@@ -418,6 +420,8 @@ export class EformsignApiClient implements IEformsignClientRepository {
             ];
         }
 
+        assertEformsignRecipients(recipients);
+
         // A template may forbid renaming its documents (title_change=false), in which case the
         // title comes from its doc_default_title pattern and sending document_name is rejected
         // with 4000010 "This document's title cannot be changed" — verified live against the
@@ -468,7 +472,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
         // Live response shape: { template_id, document: { id, document_name, document_status } }.
         const documentId = data.document?.id ?? data.document_id ?? data.id ?? "";
         if (!documentId) {
-            throw new Error(`createDocument: no document id in response: ${JSON.stringify(data).slice(0, 300)}`);
+            throw new Error(`createDocument: no document id in response: ${maskOutboundContacts(JSON.stringify(data)).slice(0, 300)}`);
         }
         return {
             documentId,
@@ -571,7 +575,7 @@ export class EformsignApiClient implements IEformsignClientRepository {
                 } else {
                     const errorData = await response.text();
                     httpError = new EformsignApiError(
-                        `${errorPrefix}: ${response.status} - ${errorData}`,
+                        `${errorPrefix}: ${response.status} - ${maskOutboundContacts(errorData)}`,
                         response.status,
                         extractEformsignVendorCode(errorData),
                     );

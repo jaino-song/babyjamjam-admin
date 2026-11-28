@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { SmsOccurrenceBlockedError, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { OPTIONAL_DEPS_METADATA } from "@nestjs/common/constants";
 import { SCHEDULE_CRON_OPTIONS } from "@nestjs/schedule/dist/schedule.constants";
@@ -668,7 +669,7 @@ describe("SmsRetryService", () => {
         }));
     });
 
-    it("logs the plain receiver number when a retry resends the SMS", async () => {
+    it("masks the receiver number when a retry resends the SMS", async () => {
         const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
         const log = createSmsRetryLog();
         aligoService.sendSms.mockResolvedValue({
@@ -690,7 +691,8 @@ describe("SmsRetryService", () => {
 
         await service.retry(log);
 
-        expect(logSpy).toHaveBeenCalledWith("[Retry] Successfully resent SMS client_greeting_sms to 01012345678");
+        expect(logSpy).toHaveBeenCalledWith("[Retry] Successfully resent SMS client_greeting_sms to ***5678");
+        expect(JSON.stringify(logSpy.mock.calls)).not.toContain("01012345678");
         logSpy.mockRestore();
     });
 
@@ -787,6 +789,23 @@ describe("SmsRetryService", () => {
         ).rejects.toThrow(ConflictException);
 
         expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("records an allowlist rejection as a settled retry without scheduling a resend", async () => {
+        const blocked = new OutboundRecipientBlockedError("SMS recipient ***5678");
+        aligoService.sendSms.mockRejectedValue(blocked);
+
+        await expect(service.retry(createSmsRetryLog())).resolves.toMatchObject({
+            status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null,
+            errorMessage: blocked.message,
+            variables: expect.objectContaining({ retrySafety: "permanent-provider-rejected" }),
+        });
+        expect(logRepository.update).toHaveBeenCalledWith(expect.objectContaining({
+            id: 78, providerAcceptanceState: "rejected",
+        }));
+        expect(logRepository.update).not.toHaveBeenCalledWith(expect.objectContaining({
+            providerAcceptanceState: "uncertain",
+        }));
     });
 
     it("stops automatic retries when a provider call throws with an uncertain outcome", async () => {

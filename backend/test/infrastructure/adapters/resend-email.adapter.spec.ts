@@ -15,6 +15,7 @@ describe("ResendEmailAdapter idempotency", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+        jest.restoreAllMocks();
         if (originalApiKey === undefined) delete process.env["RESEND_API_KEY"];
         else process.env["RESEND_API_KEY"] = originalApiKey;
         if (originalFrom === undefined) delete process.env["RESEND_FROM_EMAIL"];
@@ -57,14 +58,29 @@ describe("ResendEmailAdapter idempotency", () => {
         });
     });
 
-    describe("server logs keep recipient addresses unmasked", () => {
+    it("blocks direct and template emails without calling Resend", async () => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, RESEND_API_KEY: "test-key", EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+        const to = "blocked@example.test";
+        const adapter = new ResendEmailAdapter();
+        await expect(adapter.send({ to, subject: "test", html: "test" })).rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        await expect(adapter.sendVerificationEmail(to, null, "https://example.test/verify"))
+            .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        await expect(adapter.sendPasswordResetEmail(to, null, "https://example.test/reset"))
+            .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        expect(mockResendSend).not.toHaveBeenCalled();
+    });
+
+    describe("server logs mask recipient addresses", () => {
         const to = "member@example.com";
+        const masked = "***@example.com";
 
         afterEach(() => {
             jest.restoreAllMocks();
         });
 
-        it("logs the plain recipient when no API key is configured (send and template)", async () => {
+        it("masks the recipient when no API key is configured (send and template)", async () => {
             delete process.env["RESEND_API_KEY"];
             const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
             const adapter = new ResendEmailAdapter();
@@ -72,11 +88,11 @@ describe("ResendEmailAdapter idempotency", () => {
             await expect(adapter.send({ to, subject: "제목", text: "본문", html: "<p>본문</p>" })).rejects.toBeDefined();
             await expect(adapter.sendVerificationEmail(to, "Member", "https://example.com/verify")).rejects.toBeDefined();
 
-            expect(warnSpy).toHaveBeenCalledWith(`Email not sent (no API key): to=${to}, subject=제목`);
-            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`Email not sent (no API key): to=${to}, template=`));
+            expect(warnSpy).toHaveBeenCalledWith(`Email not sent (no API key): to=${masked}`);
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(`Email not sent (no API key): to=${masked}, template=`));
         });
 
-        it("logs the plain recipient on success and failure (send and template)", async () => {
+        it("masks the recipient on success and failure (send and template)", async () => {
             process.env["RESEND_API_KEY"] = "test-key";
             const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
             const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
@@ -84,20 +100,20 @@ describe("ResendEmailAdapter idempotency", () => {
 
             mockResendSend.mockResolvedValueOnce({ data: { id: "id-1" }, error: null });
             await adapter.send({ to, subject: "제목", text: "본문", html: "<p>본문</p>" });
-            expect(logSpy).toHaveBeenCalledWith(`Email sent successfully to ${to}, ID: id-1`);
+            expect(logSpy).toHaveBeenCalledWith(`Email sent successfully to ${masked}, ID: id-1`);
 
             mockResendSend.mockResolvedValueOnce({ data: { id: "id-2" }, error: null });
             await adapter.sendVerificationEmail(to, "Member", "https://example.com/verify");
-            expect(logSpy).toHaveBeenCalledWith(`Template email sent to ${to}, ID: id-2`);
+            expect(logSpy).toHaveBeenCalledWith(`Template email sent to ${masked}, ID: id-2`);
 
             const failure = new Error("boom");
             mockResendSend.mockRejectedValueOnce(failure);
             await expect(adapter.send({ to, subject: "제목", text: "본문", html: "<p>본문</p>" })).rejects.toBeDefined();
-            expect(errorSpy).toHaveBeenCalledWith(`Failed to send email to ${to}:`, failure);
+            expect(errorSpy).toHaveBeenCalledWith(`Failed to send email to ${masked}`);
 
             mockResendSend.mockRejectedValueOnce(failure);
             await expect(adapter.sendVerificationEmail(to, "Member", "https://example.com/verify")).rejects.toBeDefined();
-            expect(errorSpy).toHaveBeenCalledWith(`Failed to send template email to ${to}:`, failure);
+            expect(errorSpy).toHaveBeenCalledWith(`Failed to send template email to ${masked}`);
         });
     });
 });

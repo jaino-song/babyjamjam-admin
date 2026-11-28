@@ -67,6 +67,10 @@ SCHEDULER_LEASE_MODE="off"
 SCHEDULER_LEASE_HOLDER_ID="local"
 # Production: same desired owner on both hosts; missing/none/invalid disables ownership.
 PRODUCTION_DEPLOYMENT_PROVIDER=none
+# Set recipient lists only where outbound delivery should be restricted.
+OUTBOUND_ALLOWLIST_REQUIRED=false
+SMS_RECIPIENT_ALLOWLIST=
+EMAIL_RECIPIENT_ALLOWLIST=
 ALIGO_API_URL="https://kakaoapi.aligo.in"
 ALIGO_API_KEY=
 ALIGO_USER_ID="forchildrenbys"

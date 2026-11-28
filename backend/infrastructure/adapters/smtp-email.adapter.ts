@@ -6,6 +6,8 @@ import {
     EmailPort,
 } from "domain/ports/email.port";
 
+import { assertOutboundRecipients, maskEmailRecipient } from "infrastructure/config/outbound-recipient-policy";
+
 const DEFAULT_FROM_EMAIL = "admin@babyjamjam.local";
 const SENDER_DISPLAY_NAME = "아가잼잼 어드민";
 
@@ -34,11 +36,10 @@ export class SmtpEmailAdapter implements EmailPort {
     }
 
     async send(options: EmailOptions): Promise<string> {
-        const result = await this.transporter.sendMail({
-            from: this.from,
-            ...options,
-        });
-        this.logger.log(`SMTP email sent to ${options.to}`);
+        const { to, subject, html, text } = options;
+        assertOutboundRecipients("email", [to]);
+        const result = await this.transporter.sendMail({ from: this.from, to, subject, html, text });
+        this.logger.log(`SMTP email sent to ${maskEmailRecipient(to)}`);
         return result.messageId;
     }
 

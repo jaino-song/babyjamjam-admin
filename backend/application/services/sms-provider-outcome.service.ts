@@ -1,3 +1,11 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
+
+export class SmsPreSendError extends Error {}
+
+export function isSmsPreSendError(error: unknown): error is SmsPreSendError | OutboundRecipientBlockedError {
+    return error instanceof SmsPreSendError || error instanceof OutboundRecipientBlockedError;
+}
+
 export type SmsProviderOutcome = "accepted" | "partial" | "rejected" | "unknown";
 
 export interface SmsProviderRejection {
