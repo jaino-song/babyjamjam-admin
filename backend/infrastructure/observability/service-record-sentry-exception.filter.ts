@@ -10,7 +10,7 @@ import type { Request } from "express";
 import type { Response } from "express";
 
 import { getProblemRequestId, mapHttpProblem, sendProblemResponse } from "../filters/problem-response";
-import { captureHttpAdvisory } from "./http-advisory";
+import { captureHttpAdvisory, isEligibleHttpAdvisoryStatus } from "./http-advisory";
 
 import {
     captureBackendError,
@@ -40,10 +40,11 @@ export class ServiceRecordSentryExceptionFilter
             const requestId = getProblemRequestId(response);
             const problem = mapHttpProblem(exception, request, response);
             const statusCode = problem?.status ?? originalStatusCode;
-            if (statusCode === HttpStatus.BAD_REQUEST) {
+            if (isEligibleHttpAdvisoryStatus(statusCode)
+                && !(statusCode === HttpStatus.NOT_FOUND && request.route === undefined)) {
                 if (!response.headersSent) response.setHeader("X-Request-Id", requestId);
                 try {
-                    captureHttpAdvisory(request, requestId, problem);
+                    captureHttpAdvisory(request, requestId, statusCode, problem);
                 } catch {
                     // 진단 수집 실패는 원래 응답을 바꾸지 않아요.
                 }

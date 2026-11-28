@@ -1,6 +1,7 @@
-import { BadRequestException, Body, ConflictException, Controller, INestApplication, Post } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Get, INestApplication, NotFoundException, Post } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
+import * as Sentry from "@sentry/nestjs";
 import { IsDefined, IsString } from "class-validator";
 import request from "supertest";
 
@@ -9,6 +10,11 @@ import { codeOnlyProblemBody, problemBody } from "../../application/utils/proble
 import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import { ServiceRecordSentryExceptionFilter } from "../observability/service-record-sentry-exception.filter";
 import { GlobalValidationPipe } from "../pipes/global-validation.pipe";
+
+jest.mock("@sentry/nestjs", () => ({
+    ...jest.requireActual("@sentry/nestjs"),
+    captureEvent: jest.fn(),
+}));
 
 jest.mock("../observability/service-record-sentry", () => ({
     captureBackendError: jest.fn(), captureServiceRecordError: jest.fn(),
@@ -23,6 +29,11 @@ let changes = 0;
 
 @Controller("problem-probe")
 class ProbeController {
+    @Get("missing/:id")
+    missing() {
+        throw new NotFoundException();
+    }
+
     @Post()
     create(@Body() input: Input) {
         changes += 1;
@@ -146,8 +157,28 @@ describe("problem contract over HTTP", () => {
         app.useGlobalFilters(new ServiceRecordSentryExceptionFilter(app.get(HttpAdapterHost)));
         await app.init();
     });
-    beforeEach(() => { changes = 0; });
+    beforeEach(() => {
+        changes = 0;
+        jest.mocked(Sentry.captureEvent).mockClear();
+    });
     afterAll(async () => { await app.close(); });
+
+    it("does not report a 404 from an unmatched route", async () => {
+        await request(app.getHttpServer()).get("/unknown-probe-path").expect(404);
+        expect(Sentry.captureEvent).not.toHaveBeenCalled();
+    });
+
+    it("reports a 404 from a matched route with its registered template", async () => {
+        await request(app.getHttpServer()).get("/problem-probe/missing/118").expect(404);
+        expect(Sentry.captureEvent).toHaveBeenCalledTimes(1);
+        expect(Sentry.captureEvent).toHaveBeenCalledWith(expect.objectContaining({
+            tags: expect.objectContaining({
+                feature: "http-advisory",
+                status_code: "404",
+                route: "/problem-probe/missing/:id",
+            }),
+        }));
+    });
 
     it("returns both missing fields and leaves the operation unapplied", async () => {
         const response = await request(app.getHttpServer()).post("/problem-probe").send({}).expect(400);
