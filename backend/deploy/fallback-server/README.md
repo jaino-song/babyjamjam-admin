@@ -12,8 +12,12 @@ the only production host.** It has served production since 2026-09-03 and the
 return to Lightsail is cancelled. A `main` push that changes backend paths
 reaches it through `deploy-lightnode` after the checks and the database-patch
 wait gate pass, and only while `api.babyjamjam.com` points at LightNode. The
-wait gate waits for the production patch job when the commit has patches and
-passes without a patch run when it has none.
+wait gate waits for the commit's Database Patches run to succeed when it can
+see one. When it sees none it decides from the changed files: it waits for a
+run, and fails without one, if `backend/prisma/` or the patch workflow file
+changed, and passes at once otherwise. A passed gate is therefore not always
+proof that patches succeeded (a commit that changes only the replay script,
+or a failed file comparison with no run appearing, passes unchecked).
 AWS Lightsail is the standby: as of 2026-11-28 its instance is stopped and
 snapshotted but not yet deleted (snapshot-only is the target state). The
 failover draft is `backend/deploy/lightsail/COLD_STANDBY_FAILOVER.md`; it is

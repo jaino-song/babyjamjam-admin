@@ -20,14 +20,20 @@
 
 - 백엔드 경로가 바뀐 `main` push는 검사와 DB 패치 대기 게이트가 통과한 뒤,
   `api.babyjamjam.com`이 LightNode를 가리킬 때만 LightNode에 배포합니다. 대기 게이트는 그
-  커밋에 운영 패치가 있으면 패치 잡의 성공을 기다리고, 없으면 패치 실행 없이 통과합니다. DNS가 Lightsail을 가리키는 동안에는
+  커밋의 `Database Patches` 실행이 조회되면 그 성공을 기다립니다. 조회되지 않으면 변경
+  파일로 판단합니다: `backend/prisma/`나 패치 workflow 파일이 바뀌었으면 실행이 나타나기를
+  기다리다 없으면 실패하고, 바뀌지 않았으면 바로 통과합니다. 게이트 통과가 항상 패치
+  성공을 뜻하지는 않습니다. 리플레이 스크립트만 바뀐 커밋에서 실행이 아직 조회되지
+  않았거나, 변경 파일 비교가 실패한 채 실행이 나타나지 않으면 패치 확인 없이 통과합니다. DNS가 Lightsail을 가리키는 동안에는
   `resolve backend deployment target` 잡이 **실패**하고 런타임 배포를 하지 않습니다.
 - DNS 확인은 런타임 배포만 막습니다. `Database Patches` workflow는 별도로 돕니다. 그래서
   장애 전환 중에는 두 가지를 따로 통제합니다.
   - **이미지 SHA 고정:** `main` merge를 멈춥니다(B4).
   - **운영 DB 패치 통제:** 조건에 맞는 `main` push뿐 아니라 `preview` push(preview가 운영
     DB를 같이 쓰는 동안)와 수동 `production` 실행도 같은 운영 DB를 패치할 수 있습니다.
-    `preview` merge와 수동 실행도 멈추고, 이미 돌고 있는 패치 실행이 끝났는지 확인합니다.
+    `preview` merge와 수동 실행도 멈추고, 끝나지 않은 패치 실행이 하나도 없는지 확인합니다.
+    실행 중인 것뿐 아니라 큐에 있거나 승인 대기 중인 것도 포함합니다. 패치 실행은 한 번에
+    하나씩 돌기 때문에 큐에 있던 실행이 전환 도중에 시작할 수 있습니다.
 - 스케줄러 실행권(`scheduler_lease`의 `background-owner` 행, ADR-010)은 예약 작업만 막고
   **API 요청은 막지 않습니다.** 한 호스트의 쓰기를 멈추려면 그 호스트의 API 컨테이너를
   내리거나 접근을 끊어야 합니다.
@@ -80,7 +86,7 @@ Compose의 `restart: unless-stopped` 때문에 인스턴스를 시작하거나 �
 
 | 경로 | 조건 |
 |---|---|
-| 스케줄러 실행권 획득 | 저장된 env가 `SCHEDULERS_ENABLED=true`, `SCHEDULER_LEASE_MODE=required`이고 `PRODUCTION_DEPLOYMENT_PROVIDER`와 `SCHEDULER_LEASE_HOLDER_ID`가 둘 다 `lightsail`이면, 실행권이 비어 있을 때 시작 직후 가져갑니다. `PRODUCTION_DEPLOYMENT_PROVIDER`가 없으면 가져가지 않습니다(`provider_not_configured`). 2026-11-28 상태 조회에서 앞의 세 값은 이 조건과 같았고, `PRODUCTION_DEPLOYMENT_PROVIDER` 값은 호스트에서 확인한 적이 없습니다 |
+| 스케줄러 실행권 획득 | 저장된 env가 `SCHEDULERS_ENABLED=true`, `SCHEDULER_LEASE_MODE=required`이고 `PRODUCTION_DEPLOYMENT_PROVIDER`와 `SCHEDULER_LEASE_HOLDER_ID`가 둘 다 `lightsail`이면 시작 직후 획득을 시도합니다. 운영 모드에서는 `SCHEDULERS_ENABLED`와 `SCHEDULER_LEASE_MODE`가 아예 없어도 각각 켜짐과 `required`로 해석되므로, 이 두 키가 없다는 것은 안전 장치가 아닙니다. 시도는 실행권이 비어 있거나 만료됐을 때 성공하고, 다른 호스트가 쥐고 있으면 실패한 뒤 주기적으로 다시 시도합니다. `PRODUCTION_DEPLOYMENT_PROVIDER`가 없으면 시도하지 않습니다(`provider_not_configured`). 2026-11-28 상태 조회에서 앞의 세 값은 이 조건과 같았고, `PRODUCTION_DEPLOYMENT_PROVIDER` 값은 호스트에서 확인한 적이 없습니다 |
 | 시작 시 템플릿 초기화 | 템플릿 테이블이 비어 있을 때만 씁니다. 템플릿이 이미 있으면 쓰지 않습니다 |
 | API 요청 처리 | 이 서버에 도달한 인증된 요청은 실행권 없이도 쓰고 문자를 보낼 수 있습니다 |
 | Migration | 컨테이너 시작만으로는 실행하지 않습니다. 배포할 때만 실행합니다 |
@@ -103,7 +109,7 @@ Systems Manager 등록을 다시 하면 안 됩니다. workflow가 실패했다�
 |---|---|
 | 등록 문제 | `DeploymentTarget` 태그 노드 조회 결과가 정확히 하나가 아니거나 Online이 아님. 등록 문제라고 판단할 수 있는 근거는 이것뿐입니다 |
 | 명령 전송 실패 | 노드는 등록돼 있는데 전송 권한이나 문서 문제로 명령을 보내지 못함. 이 경우도 명령을 보내기 전에 끝납니다 |
-| 명령 미전달 | 전송은 됐지만 호스트에 도달하지 않거나 시간 초과. 이때도 `Systems Manager operation failed with status: ...`가 찍힙니다 |
+| 명령 미전달 | 전송은 됐지만 호스트에 도달하지 않거나 시간 초과. `Systems Manager operation failed with status: ...`가 찍히는 경우도 있고, 호출 기록이 끝까지 나타나지 않으면 아무 진단 메시지 없이 끝나는 경우도 있습니다 |
 | 호스트 확인 실패 | 호스트에서 명령이 실행됐고 그 안의 확인(예: 공개 주소 health)이 실패 |
 
 뒤의 셋은 재등록으로 해결되지 않습니다.
@@ -171,7 +177,7 @@ migration `20261126010000_baby_case_keys`가 추가됐습니다. 운영 DB에 �
 사용자 승인을 받습니다. 괄호는 그 단계가 걸려 있는 차단 항목입니다.
 
 1. **전환 결정.** LightNode가 일시적 장애가 아닌지 확인합니다. `main` merge를 멈추고,
-   운영 DB 패치(`preview` merge, 수동 실행, 진행 중인 실행)를 1절대로 통제합니다.
+   운영 DB 패치(`preview` merge, 수동 실행, 끝나지 않은 모든 실행)를 1절대로 통제합니다.
 2. **이미지 확인 (B4).** `main` tip SHA의 이미지 digest가 조회되는지 확인합니다.
 3. **LightNode 쓰기 차단 (B1, B6).** 접속되면 root 운영자의 `operator.sh stop`, 안 되면
    콘솔에서 전원을 끕니다. 다음 단계로 넘어가는 근거는 종료 방식이 아니라 실행권
