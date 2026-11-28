@@ -132,6 +132,7 @@ export class EformsignHeadlessService implements OnModuleDestroy {
         } catch {
             return { ok: false, reason: "invalid-options", uncertain: false, durationMs: Date.now() - start };
         }
+        assertEformsignCreationOptions(params.documentOption);
         return this.runWithSlot(async () => {
             let started = false;
             try {

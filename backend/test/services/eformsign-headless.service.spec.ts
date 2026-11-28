@@ -118,6 +118,42 @@ describe("EformsignHeadlessService", () => {
         expect(launchMock).not.toHaveBeenCalled();
     });
 
+    describe("finalize with recipient enforcement", () => {
+        const params = {
+            documentId: "doc",
+            documentOption: { mode: { type: "02", document_id: "doc" }, user: { access_token: "test" } },
+        };
+        const currentStatus = { step_recipients: [{ sms: "01000000001", use_sms: true }] };
+        const completeDocument = { current_status: currentStatus, previous_status: [], next_status: [] };
+        const getDocumentById = jest.fn();
+
+        beforeEach(() => {
+            jest.replaceProperty(process, "env", {
+                ...process.env, OUTBOUND_ALLOWLIST_REQUIRED: "true", SMS_RECIPIENT_ALLOWLIST: "01000000001",
+            });
+            service = new EformsignHeadlessService({ get: configGetMock } as never, { getDocumentById } as unknown as EformsignService);
+        });
+
+        it.each([
+            ["missing status history", { current_status: currentStatus }],
+            ["missing previous status", { ...completeDocument, previous_status: undefined }],
+            ["malformed previous status", { ...completeDocument, previous_status: {} }],
+            ["missing current recipients", { ...completeDocument, current_status: {} }],
+            ["empty current recipients", { ...completeDocument, current_status: { step_recipients: [] } }],
+        ])("blocks %s before launching the SDK", async (_name, document) => {
+            getDocumentById.mockResolvedValue(document);
+            await expect(service.dispatchFinalize(params)).rejects.toThrow(/recipients could not be verified/);
+            expect(launchMock).not.toHaveBeenCalled();
+            expect(runEformsignFinalizeGates).not.toHaveBeenCalled();
+        });
+
+        it("finalizes with verified allowlisted recipients", async () => {
+            getDocumentById.mockResolvedValue(completeDocument);
+            await expect(service.dispatchFinalize(params)).resolves.toMatchObject({ ok: true });
+            expect(runEformsignFinalizeGates).toHaveBeenCalledTimes(1);
+        });
+    });
+
     /**
      * Pulls the SDK success callback out of the generated page and returns it
      * bound to a stand-in `window`, so the assertions below exercise the source

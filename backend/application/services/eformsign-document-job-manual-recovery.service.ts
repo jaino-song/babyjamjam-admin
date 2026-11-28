@@ -11,6 +11,8 @@ import { EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY, EFORMSIGN_CONTRACT_DRAFT_DISPAT
     type IEformsignContractRecoveryRepository, type ContractDraftDispatch, type ContractRecoveryState,
     type ContractRecoveryClaim, type ContractWorkerContext, type ContractDocumentEvidence } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { eformsignExpiryDateFromRemainingDays } from "domain/utils/eformsign-expiry-date";
+import { assertStoredEformsignRecipients } from "infrastructure/config/eformsign-recipient-policy";
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 
 const object = (value: unknown): Record<string, unknown> | null => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const publicId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.exec(value)?.[0] === value;
@@ -85,7 +87,13 @@ export class EformsignDocumentJobManualRecoveryService {
             || (frozen?.["creatorId"] && frozen["creatorId"] !== creatorId)) unsupported();
         return { options: documentOption, companyId, creatorId, templateId: effective, workflow };
     }
-    private async evidence(credentials: EformsignProviderCredentials, context: Context, id: string, fresh: () => void): Promise<ContractDocumentEvidence> {
+    private async evidence(
+        credentials: EformsignProviderCredentials,
+        context: Context,
+        id: string,
+        fresh: () => void,
+        forExposure = false,
+    ): Promise<ContractDocumentEvidence> {
         if (!publicId(id)) unsupported();
         const doc = await this.provider.getDocument(credentials.accessToken, id); fresh();
         if (!doc || doc.id !== id || doc.template?.id !== context.templateId || doc.creator?.id !== context.creatorId || doc.creator.recipient_type !== "01"
@@ -98,6 +106,7 @@ export class EformsignDocumentJobManualRecoveryService {
             || (step.type === "complete" && status.status_type === "003" && status.step_type === "01")
         ));
         if ((!isDraft && !confirmed) || (isDraft && doc.current_status?._expired === true)) unsupported();
+        if (forExposure && isDraft) assertStoredEformsignRecipients(doc);
         return { documentId: id, templateId: context.templateId, companyId: context.companyId, creatorId: context.creatorId,
             documentName: doc.document_name ?? null, documentNumber: doc.document_number ?? null, templateName: doc.template.name ?? null,
             creatorName: doc.creator.name ?? null, lastEditorName: doc.last_editor?.name ?? null,
@@ -127,7 +136,7 @@ export class EformsignDocumentJobManualRecoveryService {
                     try {
                         if (!state.providerDocumentId) unsupported();
                         const context = await this.context(state, credentials, fresh);
-                        evidence = await this.evidence(credentials, context, state.providerDocumentId, fresh);
+                        evidence = await this.evidence(credentials, context, state.providerDocumentId, fresh, true);
                     } catch (error) {
                         if (error instanceof ContractRecoveryError && error.code === "RECOVERY_UNSUPPORTED") {
                             throw new ContractRecoveryError("PROVIDER_STATE_UNAVAILABLE", 503);
@@ -161,11 +170,16 @@ export class EformsignDocumentJobManualRecoveryService {
                         id = result.candidateDocumentId;
                         await this.repository.recordDraftCandidate(claim, intent.id, id); fresh();
                     } catch (error) {
+                        if (error instanceof OutboundRecipientBlockedError) {
+                            await this.repository.releaseDraftBeforeOpen(claim, intent.id);
+                            startedDraft = undefined;
+                            unsupported("draft_unavailable");
+                        }
                         await this.repository.markDraftUncertain(claim, intent.id).catch(() => undefined);
                         throw error;
                     }
                 }
-                const evidence = await this.evidence(credentials, context, id, fresh);
+                const evidence = await this.evidence(credentials, context, id, fresh, state.phase !== "creation_uncertain");
                 if (draftIntentId && evidence.confirmed) unsupported();
                 if (!state.providerDocumentId) state = await this.repository.bindDocument(claim, evidence, draftIntentId ?? state.draftIntent?.id);
                 fresh();

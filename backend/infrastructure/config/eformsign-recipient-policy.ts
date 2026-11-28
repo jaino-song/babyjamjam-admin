@@ -83,12 +83,16 @@ export function assertStoredEformsignRecipients(document: unknown): void {
     if (!isEformsignRecipientAllowlistEnforced()) return;
     const detail = asRecord(document);
     const current = asRecord(detail?.["current_status"]);
-    if (!current) throw unverifiedRecipients();
-    assertEformsignRecipients(current["step_recipients"], true);
+    const currentRecipients = current?.["step_recipients"];
+    const previousStatus = detail?.["previous_status"];
+    if (!Array.isArray(currentRecipients) || currentRecipients.length === 0 || !Array.isArray(previousStatus)) {
+        throw unverifiedRecipients();
+    }
+    assertEformsignRecipients(currentRecipients, true);
     if (detail?.["recipients"] !== undefined) assertEformsignRecipients(detail["recipients"], true);
 
     // A subsequent step or completion can notify earlier participants as well.
-    for (const statuses of [detail?.["previous_status"], detail?.["next_status"]]) {
+    for (const statuses of [previousStatus, detail?.["next_status"]]) {
         if (statuses === undefined) continue;
         if (!Array.isArray(statuses)) throw unverifiedRecipients();
         for (const status of statuses) {
