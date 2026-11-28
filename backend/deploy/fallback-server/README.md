@@ -12,8 +12,9 @@ the only production host.** It has served production since 2026-09-03 and the
 return to Lightsail is cancelled. A `main` push that changes backend paths
 reaches it through `deploy-lightnode` after the checks and the database-patch
 wait gate pass, and only while `api.babyjamjam.com` points at LightNode. The
-wait gate waits for the commit's Database Patches run to succeed when it can
-see one. When it sees none it decides from the changed files: it waits for a
+wait gate, when it can see the commit's Database Patches runs, waits for each
+to finish and requires its `apply production database patches` job to have
+succeeded (a run that succeeds with that job skipped fails the gate). When it sees none it decides from the changed files: it waits for a
 run, and fails without one, if `backend/prisma/` or the patch workflow file
 changed, and passes at once otherwise. A passed gate is therefore not always
 proof that patches succeeded (a commit that changes only the replay script,

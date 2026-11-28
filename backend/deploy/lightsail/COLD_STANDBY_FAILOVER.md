@@ -20,7 +20,9 @@
 
 - 백엔드 경로가 바뀐 `main` push는 검사와 DB 패치 대기 게이트가 통과한 뒤,
   `api.babyjamjam.com`이 LightNode를 가리킬 때만 LightNode에 배포합니다. 대기 게이트는 그
-  커밋의 `Database Patches` 실행이 조회되면 그 성공을 기다립니다. 조회되지 않으면 변경
+  커밋의 `Database Patches` 실행이 조회되면 각 실행이 끝나고 그 안의 `apply production
+  database patches` 잡이 성공하기를 기다립니다(실행이 성공으로 끝나도 그 잡이 건너뛰어졌으면
+  실패합니다). 조회되지 않으면 변경
   파일로 판단합니다: `backend/prisma/`나 패치 workflow 파일이 바뀌었으면 실행이 나타나기를
   기다리다 없으면 실패하고, 바뀌지 않았으면 바로 통과합니다. 게이트 통과가 항상 패치
   성공을 뜻하지는 않습니다. 리플레이 스크립트만 바뀐 커밋에서 실행이 아직 조회되지
@@ -86,7 +88,7 @@ Compose의 `restart: unless-stopped` 때문에 인스턴스를 시작하거나 �
 
 | 경로 | 조건 |
 |---|---|
-| 스케줄러 실행권 획득 | 저장된 env가 `SCHEDULERS_ENABLED=true`, `SCHEDULER_LEASE_MODE=required`이고 `PRODUCTION_DEPLOYMENT_PROVIDER`와 `SCHEDULER_LEASE_HOLDER_ID`가 둘 다 `lightsail`이면 시작 직후 획득을 시도합니다. 운영 모드에서는 `SCHEDULERS_ENABLED`와 `SCHEDULER_LEASE_MODE`가 아예 없어도 각각 켜짐과 `required`로 해석되므로, 이 두 키가 없다는 것은 안전 장치가 아닙니다. 시도는 실행권이 비어 있거나 만료됐을 때 성공하고, 다른 호스트가 쥐고 있으면 실패한 뒤 주기적으로 다시 시도합니다. `PRODUCTION_DEPLOYMENT_PROVIDER`가 없으면 시도하지 않습니다(`provider_not_configured`). 2026-11-28 상태 조회에서 앞의 세 값은 이 조건과 같았고, `PRODUCTION_DEPLOYMENT_PROVIDER` 값은 호스트에서 확인한 적이 없습니다 |
+| 스케줄러 실행권 획득 | 저장된 env가 `SCHEDULERS_ENABLED=true`, `SCHEDULER_LEASE_MODE=required`이고 `PRODUCTION_DEPLOYMENT_PROVIDER`와 `SCHEDULER_LEASE_HOLDER_ID`가 둘 다 `lightsail`이면 시작 직후 획득을 시도합니다. 운영 모드에서는 `SCHEDULERS_ENABLED`와 `SCHEDULER_LEASE_MODE`가 아예 없어도 각각 켜짐과 `required`로 해석되므로, 이 두 키가 없다는 것은 안전 장치가 아닙니다. 시도는 실행권이 비어 있거나 만료됐을 때 성공합니다. holder ID가 다른 호스트(`lightnode`)가 쥐고 있으면 만료될 때까지(마지막 갱신에서 90초) 실패하고 주기적으로 다시 시도합니다. holder ID가 같은(`lightsail`) 다른 인스턴스가 쥐고 있으면 70초 동안 갱신이 없을 때 만료 전에 넘겨받습니다. 원본과 리허설 인스턴스가 함께 떠 있으면 이 경우에 해당합니다. `PRODUCTION_DEPLOYMENT_PROVIDER`가 없으면 시도하지 않습니다(`provider_not_configured`). 2026-11-28 상태 조회에서 앞의 세 값은 이 조건과 같았고, `PRODUCTION_DEPLOYMENT_PROVIDER` 값은 호스트에서 확인한 적이 없습니다 |
 | 시작 시 템플릿 초기화 | 템플릿 테이블이 비어 있을 때만 씁니다. 템플릿이 이미 있으면 쓰지 않습니다 |
 | API 요청 처리 | 이 서버에 도달한 인증된 요청은 실행권 없이도 쓰고 문자를 보낼 수 있습니다 |
 | Migration | 컨테이너 시작만으로는 실행하지 않습니다. 배포할 때만 실행합니다 |
