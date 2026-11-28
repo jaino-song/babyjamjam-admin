@@ -115,5 +115,24 @@ describe("ResendEmailAdapter idempotency", () => {
             await expect(adapter.sendVerificationEmail(to, "Member", "https://example.com/verify")).rejects.toBeDefined();
             expect(errorSpy).toHaveBeenCalledWith(`Failed to send template email to ${masked}`);
         });
+
+        it("logs the masked provider error for direct and template sends", async () => {
+            process.env["RESEND_API_KEY"] = "test-key";
+            const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+            const adapter = new ResendEmailAdapter();
+            const failure = { data: null, error: { message: "Invalid recipient member@example.com or 010-1234-5678" } };
+
+            mockResendSend.mockResolvedValueOnce(failure).mockResolvedValueOnce(failure);
+            await expect(adapter.send({ to, subject: "test", html: "test" }))
+                .rejects.toMatchObject({ message: "email_provider_unknown", stage: "unknown" });
+            await expect(adapter.sendVerificationEmail(to, null, "https://example.com/verify"))
+                .rejects.toMatchObject({ message: "email_provider_unknown", stage: "unknown" });
+
+            const reason = "Invalid recipient ***@example.com or ***5678";
+            expect(errorSpy.mock.calls).toEqual([
+                [`Failed to send email to ${masked}: ${reason}`],
+                [`Failed to send template email to ${masked}: ${reason}`],
+            ]);
+        });
     });
 });

@@ -14,7 +14,7 @@ export class OutboundRecipientBlockedError extends Error {
 
 export function isRecipientAllowlistEnforced(channel: RecipientChannel): boolean {
     return process.env["OUTBOUND_ALLOWLIST_REQUIRED"] === "true"
-        || process.env[ALLOWLIST_KEYS[channel]] !== undefined;
+        || /[^\s,]/.test(process.env[ALLOWLIST_KEYS[channel]] ?? "");
 }
 
 function normalizeSms(value: string): string {

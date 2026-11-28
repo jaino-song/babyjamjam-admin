@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import {
     assertEformsignPhone,
     assertEformsignRecipients,
+    assertStoredEformsignRecipients,
     isEformsignRecipientAllowlistEnforced,
 } from "infrastructure/config/eformsign-recipient-policy";
 import * as crypto from "crypto";
@@ -741,6 +742,13 @@ export class EformsignService {
         }
 
         this.assertConfigured();
+        if (isEformsignRecipientAllowlistEnforced()) {
+            for (const documentId of documentIds) {
+                const document: unknown = await this.getDocumentById(accessToken, documentId);
+                assertStoredEformsignRecipients(document);
+            }
+        }
+
         const controller = new AbortController();
         const timeout = setTimeout(() => {
             controller.abort(createDeleteTimeoutError());

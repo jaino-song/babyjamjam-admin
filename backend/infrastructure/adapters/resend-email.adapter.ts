@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Resend } from 'resend';
-import { assertOutboundRecipients, maskEmailRecipient } from 'infrastructure/config/outbound-recipient-policy';
+import { assertOutboundRecipients, maskEmailRecipient, maskOutboundContacts } from 'infrastructure/config/outbound-recipient-policy';
 import {
     EmailOptions,
     EmailPort,
@@ -55,16 +55,16 @@ export class ResendEmailAdapter implements EmailPort {
             });
 
             if (response.error) {
-                throw new Error(response.error.message);
+                this.logger.error(`Failed to send email to ${recipient}: ${maskOutboundContacts(response.error.message)}`);
+                throw new EmailProviderError('email_provider_unknown', 'unknown');
             }
 
             this.logger.log(`Email sent successfully to ${recipient}, ID: ${response.data?.id}`);
             return response.data?.id || '';
         } catch (error) {
+            if (error instanceof EmailProviderError) throw error;
             this.logger.error(`Failed to send email to ${recipient}`);
-            throw error instanceof EmailProviderError
-                ? error
-                : new EmailProviderError('email_provider_unknown', 'unknown');
+            throw new EmailProviderError('email_provider_unknown', 'unknown');
         }
     }
 
@@ -130,16 +130,16 @@ export class ResendEmailAdapter implements EmailPort {
             );
 
             if (response.error) {
-                throw new Error(response.error.message);
+                this.logger.error(`Failed to send template email to ${recipient}: ${maskOutboundContacts(response.error.message)}`);
+                throw new EmailProviderError('email_provider_unknown', 'unknown');
             }
 
             this.logger.log(`Template email sent to ${recipient}, ID: ${response.data?.id}`);
             return response.data?.id || '';
         } catch (error) {
+            if (error instanceof EmailProviderError) throw error;
             this.logger.error(`Failed to send template email to ${recipient}`);
-            throw error instanceof EmailProviderError
-                ? error
-                : new EmailProviderError('email_provider_unknown', 'unknown');
+            throw new EmailProviderError('email_provider_unknown', 'unknown');
         }
     }
 }

@@ -147,9 +147,29 @@ describe("EformsignHeadlessService", () => {
             expect(runEformsignFinalizeGates).not.toHaveBeenCalled();
         });
 
+        it.each([
+            ["missing access token", { ...params.documentOption, user: {} }],
+            ["wrong mode", { ...params.documentOption, mode: { type: "01", document_id: "doc" } }],
+            ["mismatched document ID", { ...params.documentOption, mode: { type: "02", document_id: "other-doc" } }],
+        ])("blocks finalize with %s before looking up the document", async (_name, documentOption) => {
+            getDocumentById.mockResolvedValue(completeDocument);
+            await expect(service.dispatchFinalize({ ...params, documentOption }))
+                .rejects.toThrow(/^Blocked by staging recipient allowlist: eformsign recipients could not be verified$/);
+            expect(getDocumentById).not.toHaveBeenCalled();
+            expect(launchMock).not.toHaveBeenCalled();
+        });
+
+        it("blocks finalize without a document lookup service", async () => {
+            service = new EformsignHeadlessService({ get: configGetMock } as never);
+            await expect(service.dispatchFinalize(params))
+                .rejects.toThrow(/^Blocked by staging recipient allowlist: eformsign recipients could not be verified$/);
+            expect(launchMock).not.toHaveBeenCalled();
+        });
+
         it("finalizes with verified allowlisted recipients", async () => {
             getDocumentById.mockResolvedValue(completeDocument);
             await expect(service.dispatchFinalize(params)).resolves.toMatchObject({ ok: true });
+            expect(getDocumentById).toHaveBeenCalledWith("test", "doc");
             expect(runEformsignFinalizeGates).toHaveBeenCalledTimes(1);
         });
     });

@@ -34,9 +34,18 @@ describe("outbound recipient allowlist", () => {
         expect(() => assertOutboundRecipients("email", ["unlisted@example.test"])).not.toThrow();
     });
 
-    it("enforces each explicit list independently when the flag is not exactly true", () => {
-        process.env["OUTBOUND_ALLOWLIST_REQUIRED"] = "TRUE";
-        process.env["SMS_RECIPIENT_ALLOWLIST"] = "";
+    it.each(["", " , "])("keeps delivery unrestricted with blank lists (%p)", (list) => {
+        process.env["SMS_RECIPIENT_ALLOWLIST"] = list;
+        process.env["EMAIL_RECIPIENT_ALLOWLIST"] = list;
+        expect(() => assertOutboundRecipients("SMS", ["01000000002"])).not.toThrow();
+        expect(() => assertOutboundRecipients("email", ["unlisted@example.test"])).not.toThrow();
+    });
+
+    it.each([undefined, "TRUE"])("enforces each non-empty list independently with required set to %p", (flag) => {
+        if (flag !== undefined) process.env["OUTBOUND_ALLOWLIST_REQUIRED"] = flag;
+        process.env["SMS_RECIPIENT_ALLOWLIST"] = "01000000001";
+        process.env["EMAIL_RECIPIENT_ALLOWLIST"] = " , ";
+        expect(() => assertOutboundRecipients("SMS", ["01000000001"])).not.toThrow();
         expect(() => assertOutboundRecipients("SMS", ["01000000002"])).toThrow(/^Blocked by staging recipient allowlist/);
         expect(() => assertOutboundRecipients("email", ["unlisted@example.test"])).not.toThrow();
     });
