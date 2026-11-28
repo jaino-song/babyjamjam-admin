@@ -34,7 +34,33 @@ backend/deploy/lightsail/lightsail-cli.sh deploy preview
 backend/deploy/lightsail/lightsail-cli.sh status production
 backend/deploy/lightsail/lightsail-cli.sh deploy production
 backend/deploy/lightsail/lightsail-cli.sh operator-upgrade
+backend/deploy/lightsail/lightsail-cli.sh node-status production
+backend/deploy/lightsail/lightsail-cli.sh standby
+backend/deploy/lightsail/lightsail-cli.sh status production --self
+backend/deploy/lightsail/lightsail-cli.sh deploy production --self
 ```
+
+The last four exist for the cold standby host (BJJ-605):
+
+- `node-status` only asks Systems Manager whether the tagged host is registered
+  exactly once and online. It sends no command to the host and needs no new AWS
+  resource.
+- `standby` stops the API containers of both environments on the host and
+  leaves them stopped, so the host can be rebooted, snapshotted and restored
+  without the API starting. Only a later `deploy` starts the API again. The
+  workflow refuses `standby` unless production DNS currently points at LightNode.
+- `--self` makes `status` and `deploy` verify this host from the inside
+  (container state, image identity, in-container readiness) and skip the public
+  hostname. The output then carries `public_health=skipped`, `health_scope=self`
+  and two reported fields, `edge_route` and `edge_tls`, from a probe of the
+  host's own Caddy on the loopback address. The workflow shows a warning when
+  either is not `ok` and does not fail on them. `--self` is production-only.
+- A deploy that started while the API was stopped returns the host to standby
+  when it fails; it does not start the previous image.
+
+`standby` and `--self` use three more SSM documents, so they work only after
+the stack is updated, the three variables below are set, and the host operator
+has been upgraded from a `main` commit that contains this change.
 
 The command watches the workflow run and returns its exit status. Add
 `--no-watch` to open the run without waiting. Production operations enter the
@@ -114,7 +140,14 @@ approval gate before execution.
    - `AWS_PRODUCTION_DEPLOY_DOCUMENT_NAME`
    - `AWS_PRODUCTION_STATUS_DOCUMENT_NAME`
    - `AWS_OPERATOR_UPGRADE_DOCUMENT_NAME`
+   - `AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME`
+   - `AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME`
+   - `AWS_HOST_STANDBY_DOCUMENT_NAME`
    - `LIGHTSAIL_SSM_TARGET_TAG`
+
+   The workflow selects one document per operation. When the variable it needs
+   is empty it fails and names that variable; it never falls back to another
+   document.
 
 8. If the external IAM operator needs deployment-failure diagnostics, review the
    `AgentLightsailDiagnosticsPolicyArn` stack output and explicitly attach that
@@ -214,12 +247,11 @@ the prior rollback-tag history, restores the prior digest state, and verifies
 the recovered runtime. The root CI operator holds one per-environment lock so
 concurrent commands cannot change the same runtime. Detailed output is kept in
 a root-only host log; GitHub receives only a failure status and safe release
-fields. When a deployment reaches a terminal SSM failure, Backend CI first
-requests both `StandardOutputContent` and `StandardErrorContent` through the
-command-invocation read API, then applies the same length, whitespace, URL,
-assignment, and credential-word redaction checks before printing a bounded
-diagnostic. A missing, ambiguous, or unsafe response is reported as unavailable
-rather than copied into the workflow log. The fixed diagnostics documents expose
+fields. The Backend CI job that used to print a redacted copy of a failed
+command's output was removed with the main-push Lightsail deploy (BJJ-598); the
+Lightsail operations workflow prints the host's standard output for a command
+that succeeded on the host, and only the final Systems Manager status for one
+that did not. The fixed diagnostics documents expose
 the host's own bounded failure history when the SSM invocation output is
 insufficient; they cannot accept a command or path parameter. The status contract
 includes `db_route`, `runtime_route`, and
