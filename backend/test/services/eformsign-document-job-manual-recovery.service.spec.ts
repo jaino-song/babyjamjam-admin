@@ -1,6 +1,98 @@
 import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
 import { runtimeFixture, B, U, J, G, I, F, data, worker, principal, intentInput, workflowPlan } from "../utils/eformsign-contract-recovery.fixture";
+
+describe("manual recovery with recipient enforcement", () => {
+    const allowed = { sms: "01000000001", use_sms: true };
+    const unlisted = { sms: "01000000002", use_sms: true };
+
+    function setup() {
+        const f = runtimeFixture();
+        f.manual();
+        f.remote.previous_status = [];
+        f.remote.current_status.step_recipients = [allowed];
+        return {
+            ...f,
+            expose: jest.spyOn(f.repository, "expose"),
+            reexposeHuman: jest.spyOn(f.repository, "reexposeHuman"),
+        };
+    }
+
+    beforeEach(() => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, OUTBOUND_ALLOWLIST_REQUIRED: "true", SMS_RECIPIENT_ALLOWLIST: allowed.sms,
+        });
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it("exposes and reopens the same draft when stored recipients are allowlisted", async () => {
+        const f = setup();
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "editable" });
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "editable" });
+        expect(f.expose).toHaveBeenCalledTimes(1);
+        expect(f.reexposeHuman).toHaveBeenCalledTimes(1);
+        expect(f.provider.getDocument).toHaveBeenCalledTimes(2);
+    });
+
+    describe.each([
+        ["an unlisted current recipient", { step_recipients: [unlisted] }, []],
+        ["an unlisted previous recipient", { step_recipients: [allowed] }, [{ step_recipients: [unlisted] }]],
+        ["missing history", { step_recipients: [allowed] }, undefined],
+        ["malformed history", { step_recipients: [allowed] }, {}],
+        ["missing current recipients", { step_recipients: undefined }, []],
+        ["empty current recipients", { step_recipients: [] }, []],
+        ["malformed current recipients", { step_recipients: [null] }, []],
+    ])("with %s", (_name, currentStatus, previousStatus) => {
+        it("settles a newly saved draft without exposing it", async () => {
+            const f = setup();
+            const markDraftUncertain = jest.spyOn(f.repository, "markDraftUncertain");
+            Object.assign(f.remote.current_status, currentStatus);
+            f.remote.previous_status = previousStatus;
+
+            await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: "RECOVERY_UNSUPPORTED", reason: "draft_unavailable" });
+            expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
+            expect(f.state.intents[1]).toMatchObject({ status: "accepted", providerDocumentId: "bound-doc" });
+            expect(f.state.authorities[0]).toMatchObject({ phase: "document_ready", providerDocumentId: "bound-doc", humanIntentId: null });
+            expect(markDraftUncertain).not.toHaveBeenCalled();
+            expect(f.expose).not.toHaveBeenCalled();
+            expect(f.reexposeHuman).not.toHaveBeenCalled();
+        });
+
+        it("refuses to reopen an exposed draft", async () => {
+            const f = setup();
+            await f.service.open(J, principal);
+            Object.assign(f.remote.current_status, currentStatus);
+            f.remote.previous_status = previousStatus;
+
+            await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: "RECOVERY_UNAVAILABLE" });
+            expect(f.expose).toHaveBeenCalledTimes(1);
+            expect(f.reexposeHuman).not.toHaveBeenCalled();
+        });
+    });
+
+    it("releases the draft intent when dispatch blocks before opening", async () => {
+        const f = setup();
+        f.draft.dispatchDraft.mockRejectedValueOnce(new OutboundRecipientBlockedError("SMS recipient ***0002"));
+
+        await expect(f.service.open(J, principal)).rejects.toMatchObject({ reason: "draft_unavailable" });
+        expect(f.state.authorities[0]).toMatchObject({ phase: "reserved", draftIntentId: null });
+        expect(f.state.intents[1].status).toBe("prepared");
+        expect(f.provider.getDocument).not.toHaveBeenCalled();
+        expect(f.expose).not.toHaveBeenCalled();
+    });
+
+    it("verifies an already sent document when recipient details are absent", async () => {
+        const f = setup();
+        await f.service.open(J, principal);
+        f.forward();
+        delete f.remote.previous_status;
+        delete f.remote.current_status.step_recipients;
+
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+        expect(f.reexposeHuman).not.toHaveBeenCalled();
+    });
+});
 
 describe("manual recovery connected service with real authority adapter", () => {
     it("saves exactly one verified draft, persists exposure before editable, and returns only public IDs", async () => {
@@ -232,7 +324,8 @@ import { SbEformsignDispatchIntentRepository } from "infrastructure/database/rep
 function connectedWorker(f: ReturnType<typeof runtimeFixture>, result: any) {
     const sdk = { dispatchCreation: jest.fn().mockResolvedValue(result) }, generic = { execute: jest.fn() }, search = { execute: jest.fn() };
     const boundary = new EformsignDispatchBoundaryService(new SbEformsignDispatchIntentRepository(f.prisma), f.repository);
-    const usecase = new DispatchDocumentHeadlessUsecase(f.options, sdk as never, { findByArea: jest.fn().mockResolvedValue(null) } as never, f.credentials,
+    const options = { ...f.options, generateDispatchOptions: f.options.generateDocumentOptions };
+    const usecase = new DispatchDocumentHeadlessUsecase(options, sdk as never, { findByArea: jest.fn().mockResolvedValue(null) } as never, f.credentials,
         generic as never, { execute: jest.fn() } as never, { emit: jest.fn() } as never, { findById: jest.fn().mockResolvedValue(f.state.clients[0]) } as never,
         new ContractClientAssignmentGuardService(f.prisma), { findByClientId: jest.fn(async () => f.state.docs) } as never, search as never, f.provider, undefined, boundary);
     const oldReconciliation = { reconcile: jest.fn() };

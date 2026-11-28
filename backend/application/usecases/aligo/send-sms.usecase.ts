@@ -8,6 +8,7 @@ import {
     SendAligoSmsDto,
     SendAligoSmsResult,
 } from "application/dto/aligo/send-sms.dto";
+import { SmsPreSendError } from "application/services/sms-provider-outcome.service";
 import { PhoneNumber } from "domain/value-objects/phone-number.vo";
 
 @Injectable()
@@ -64,7 +65,7 @@ export class SendAligoSmsUsecase {
             .map((phone) => {
                 const normalized = PhoneNumber.create(phone);
                 if (!normalized) {
-                    throw new Error(`Invalid receiver phone number: ${phone}`);
+                    throw new SmsPreSendError("Invalid receiver phone number");
                 }
                 return normalized.toString();
             })

@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { Injectable, Inject, Logger, Optional, HttpException } from "@nestjs/common";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
@@ -438,6 +439,7 @@ export class CreateAndSendContractUsecase {
                 },
             );
         } catch (error) {
+            if (error instanceof OutboundRecipientBlockedError) providerAttempted = false;
             const safeError = sanitizeEformsignErrorMessage(error);
             this.logger.error(`Failed to create contract: ${safeError}`);
             const certainProviderRejection = error instanceof EformsignApiError

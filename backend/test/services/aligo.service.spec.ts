@@ -65,7 +65,7 @@ describe("AligoService", () => {
             ).rejects.toThrow("API Error");
         });
 
-        it("logs the plain receiver number when sms API fails", async () => {
+        it("masks the receiver number when sms API fails", async () => {
             const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
             sendSmsUsecase.execute.mockRejectedValue(new Error("API Error"));
 
@@ -74,8 +74,7 @@ describe("AligoService", () => {
             ).rejects.toThrow("API Error");
 
             expect(errorSpy).toHaveBeenCalledWith(
-                "[Aligo] Failed to send sms to 01012345678",
-                expect.any(String),
+                "[Aligo] Failed to send sms to ***5678",
             );
             errorSpy.mockRestore();
         });

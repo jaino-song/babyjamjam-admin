@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import {
     BadRequestException,
     ConflictException,
@@ -1439,10 +1440,11 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             return result.documentId;
         } catch (error) {
             const message = this.errorMessage(error);
-            const definitiveClientError = /Failed to create document: 4\d\d\b/.test(message);
+            const recipientBlocked = error instanceof OutboundRecipientBlockedError;
+            const definitiveClientError = recipientBlocked || /Failed to create document: 4\d\d\b/.test(message);
             const attempts = params.chunkAttempts + 1;
             const statusAfterFailure = definitiveClientError
-                ? (attempts >= MAX_DEFINITIVE_CREATE_ATTEMPTS ? "MANUAL_REVIEW" : "FAILED")
+                ? (recipientBlocked || attempts >= MAX_DEFINITIVE_CREATE_ATTEMPTS ? "MANUAL_REVIEW" : "FAILED")
                 : "RECONCILING";
             await this.prisma.service_record_snapshot_chunk.update({
                 where: this.unlinkedChunkWhere(params),

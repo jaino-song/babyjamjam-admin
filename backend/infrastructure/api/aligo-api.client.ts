@@ -11,6 +11,9 @@ import {
     AligoDefaultSenderPolicy,
 } from "domain/ports/aligo-sms-api.port";
 
+import { SmsPreSendError } from "application/services/sms-provider-outcome.service";
+import { assertOutboundRecipients, maskOutboundContacts, maskSmsRecipient } from "infrastructure/config/outbound-recipient-policy";
+
 export const DEFAULT_ALIGO_SENDER_PHONE = "010-9641-1878";
 const ALIGO_SEND_TIMEOUT_MS = 30_000;
 export const ALIGO_HISTORY_CALL_TIMEOUT_MS = 10_000;
@@ -54,6 +57,10 @@ export class AligoApiClient implements IAligoSmsApiPort {
     }
 
     async sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse> {
+        const receivers = params.receiver.split(",");
+        // Aligo's personalization field can contain its own receiver/name pairs.
+        const destinations = params.destination?.split(",").map(pair => pair.split("|")[0]) ?? [];
+        assertOutboundRecipients("SMS", [...receivers, ...destinations]);
         this.assertConfigured();
         const url = `${this.ALIGO_SMS_API_URL}/send/`;
 
@@ -83,7 +90,7 @@ export class AligoApiClient implements IAligoSmsApiPort {
             formData.append("testmode_yn", params.testModeYn);
         }
 
-        if (!params.confidential) this.logger.debug(`[Aligo] Sending sms to ${params.receiver}`);
+        if (!params.confidential) this.logger.debug(`[Aligo] Sending sms to ${receivers.map(maskSmsRecipient).join(",")}`);
 
         const response = await fetch(url, {
             method: "POST",
@@ -93,8 +100,8 @@ export class AligoApiClient implements IAligoSmsApiPort {
 
         if (!response.ok) {
             if (params.confidential) throw new Error(`Aligo confidential SMS API error (${response.status})`);
-            const errorText = await response.text();
-            this.logger.error(`[Aligo] SMS API error: ${response.status} - ${errorText}`);
+            const errorText = maskOutboundContacts(await response.text());
+            this.logger.error(`[Aligo] SMS API error: ${response.status}`);
             throw new Error(`Aligo SMS API error (${response.status}): ${errorText}`);
         }
 
@@ -168,7 +175,7 @@ export class AligoApiClient implements IAligoSmsApiPort {
             });
 
             if (!response.ok) {
-                const errorText = await response.text();
+                const errorText = maskOutboundContacts(await response.text());
                 this.logger.error(`[Aligo] SMS list API error: ${response.status} - ${errorText}`);
                 throw new Error(`Aligo SMS list API error (${response.status}): ${errorText}`);
             }
@@ -215,7 +222,7 @@ export class AligoApiClient implements IAligoSmsApiPort {
 
         return {
             result_code: this.toNumber(response["result_code"], 0),
-            message: typeof response["message"] === "string" ? response["message"] : "",
+            message: typeof response["message"] === "string" ? maskOutboundContacts(response["message"]) : "",
             msg_id: this.toOptionalNumber(response["msg_id"]),
             success_cnt: this.toOptionalNumber(response["success_cnt"]),
             error_cnt: this.toOptionalNumber(response["error_cnt"]),
@@ -246,7 +253,7 @@ export class AligoApiClient implements IAligoSmsApiPort {
 
     private assertConfigured() {
         if (!this.isConfigured) {
-            throw new Error("Aligo SMS integration is not configured.");
+            throw new SmsPreSendError("Aligo SMS integration is not configured.");
         }
     }
 }

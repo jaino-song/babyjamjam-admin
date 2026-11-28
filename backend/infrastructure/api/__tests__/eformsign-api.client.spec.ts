@@ -48,6 +48,42 @@ describe("EformsignApiClient retry policy", () => {
         jest.restoreAllMocks();
     });
 
+    it.each([
+        { recipient: { name: "QA", sms: "01000000002" } },
+        { reviewer: { name: "QA", id: "blocked@example.test", phoneNumber: "01000000001" } },
+        { reviewer: { name: "QA", id: "allowed@example.test", phoneNumber: "01000000002" } },
+    ])("rejects a document with any unlisted SMS or email recipient before fetch", async (recipients) => {
+        jest.replaceProperty(process, "env", {
+            ...process.env,
+            OUTBOUND_ALLOWLIST_REQUIRED: "true",
+            SMS_RECIPIENT_ALLOWLIST: "01000000001",
+            EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
+
+        await expect(createClient().createDocument("access-token", { ...createDocumentPayload, ...recipients }))
+            .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        {},
+        { recipient: { name: "QA", sms: "01000000001" } },
+        { reviewer: { name: "QA", id: "ALLOWED@example.test", phoneNumber: "+82 10 0000 0001" } },
+    ])("posts a document with allowed recipients or without notifications", async (recipients) => {
+        jest.replaceProperty(process, "env", {
+            ...process.env,
+            OUTBOUND_ALLOWLIST_REQUIRED: "true",
+            SMS_RECIPIENT_ALLOWLIST: "01000000001",
+            EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+        const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(createSuccessResponse());
+
+        await expect(createClient().createDocument("access-token", { ...createDocumentPayload, ...recipients }))
+            .resolves.toMatchObject({ documentId: "document-1" });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("calls fetch exactly once without retry delay on first-attempt success", async () => {
         jest.useFakeTimers();
         const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);

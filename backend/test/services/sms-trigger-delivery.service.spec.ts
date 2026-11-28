@@ -3,6 +3,9 @@ import { messageQuietHoldVariables, parseMessageQuietHold } from "domain/message
 import { SystemSettingService } from "application/services/system-setting.service";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { Prisma } from "@prisma/client";
+import { ConfigService } from "@nestjs/config";
+import { AligoApiClient } from "infrastructure/api/aligo-api.client";
+import { SendAligoSmsUsecase } from "application/usecases/aligo";
 import { AligoService } from "application/services/aligo.service";
 import {
     SMS_DELIVERY_CONFIG_VERSION,
@@ -1274,6 +1277,48 @@ https://mobile.test/service-record/efl_token`;
 
             expect((logRepository.save.mock.calls[0]?.[0] as MessageLogEntity).nextRetryAt).toBeInstanceOf(Date);
         });
+    });
+
+    it.each([
+        { configured: true, error: "Blocked by staging recipient allowlist: SMS recipient ***2222" },
+        { configured: false, error: "Aligo SMS integration is not configured." },
+    ])("persists a settled pre-HTTP failure when configured=$configured", async ({ configured, error }) => {
+        const env = { ...process.env };
+        delete env["OUTBOUND_ALLOWLIST_REQUIRED"];
+        delete env["SMS_RECIPIENT_ALLOWLIST"];
+        if (configured) env["SMS_RECIPIENT_ALLOWLIST"] = "01000000001";
+        const envMock = jest.replaceProperty(process, "env", env);
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
+        try {
+            const values: Record<string, string> = configured
+                ? { ALIGO_API_KEY: "test-key", ALIGO_USER_ID: "test-user" }
+                : {};
+            const config = { get: (name: string) => values[name] } as ConfigService;
+            const aligoService = new AligoService(new SendAligoSmsUsecase(new AligoApiClient(config)));
+            const logRepository = {
+                save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
+                update: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
+            };
+            const service = buildService({
+                aligoService,
+                systemTemplateService: { getByKeyForBranch: jest.fn().mockResolvedValue({ content: serviceRecordLinkTemplate }) },
+                logRepository,
+            });
+            const job = createServiceRecordJob();
+
+            await expect(service.sendJob(job)).rejects.toThrow(error);
+            expect(fetchMock).not.toHaveBeenCalled();
+            expect(logRepository.update).toHaveBeenCalledTimes(1);
+            expect(logRepository.update).toHaveBeenCalledWith(expect.objectContaining({
+                status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null,
+                errorMessage: error, attempts: 1,
+                variables: expect.objectContaining({ retrySafety: "permanent-provider-rejected" }),
+            }));
+            expect(job.payload.templateVariables["retrySafety"]).toBe("permanent-provider-rejected");
+        } finally {
+            fetchMock.mockRestore();
+            envMock.restore();
+        }
     });
 
     it.each([

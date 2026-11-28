@@ -231,6 +231,7 @@ const EXPECTED_PLAIN_ENV = new Map([
     ["MOBILE_SERVICE_RECORD_BASE_URL", "https://preview.m.admin.babyjamjam.com"],
     ["MOBILE_RECEIPT_BASE_URL", "https://preview.m.admin.babyjamjam.com"],
     ["SENTRY_ENVIRONMENT", "preview"],
+    ["OUTBOUND_ALLOWLIST_REQUIRED", "true"],
     ["ALIGO_API_KEY", ""],
     ["ALIGO_USER_ID", ""],
     ["ALIGO_SENDER_PHONE", ""],
@@ -530,6 +531,12 @@ test("SENTRY_DSN and AUTH_EMAIL_TOKEN_HMAC_SECRET are intentionally not deployed
         assert.ok(!secretSet.has(name), `${name} must not be deployed as a secret`);
         assert.ok(!plain.has(name), `${name} must not be deployed as plain env`);
     }
+});
+
+test("Preview requires both outbound recipient lists from Secret Manager", () => {
+    assert.equal(plain.get("OUTBOUND_ALLOWLIST_REQUIRED"), "true");
+    assert.ok(secretSet.has("SMS_RECIPIENT_ALLOWLIST"));
+    assert.ok(secretSet.has("EMAIL_RECIPIENT_ALLOWLIST"));
 });
 
 test("Aligo keys are plain empty strings (not secrets); reconcile unlock stays off", () => {

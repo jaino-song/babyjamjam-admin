@@ -44,6 +44,19 @@ describe("AligoApiClient SMS", () => {
         expect(error).not.toHaveBeenCalled();
     });
 
+    it.each([
+        { receiver: "01000000001,01000000002" },
+        { receiver: "01000000001", destination: "01000000002|QA" },
+    ])("blocks an SMS addressed outside the allowlist before calling Aligo", async (addresses) => {
+        jest.replaceProperty(process, "env", { ...process.env, SMS_RECIPIENT_ALLOWLIST: "01000000001" });
+        const { client } = createClient({ ALIGO_API_KEY: "test-key", ALIGO_USER_ID: "test-user" });
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
+
+        await expect(client.sendSms({ ...addresses, message: "test" }))
+            .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("sends SMS without Alimtalk-only environment variables", async () => {
         const { client } = createClient({
             ALIGO_API_KEY: "api-key",
@@ -78,7 +91,7 @@ describe("AligoApiClient SMS", () => {
         });
     });
 
-    it("logs the plain receiver number when sending an SMS", async () => {
+    it("masks the receiver number when sending an SMS", async () => {
         const debugSpy = jest.spyOn(Logger.prototype, "debug").mockImplementation(() => undefined);
         const { client } = createClient({
             ALIGO_API_KEY: "api-key",
@@ -90,7 +103,8 @@ describe("AligoApiClient SMS", () => {
 
         await client.sendSms({ receiver: "01033334444", message: "테스트" });
 
-        expect(debugSpy).toHaveBeenCalledWith("[Aligo] Sending sms to 01033334444");
+        expect(debugSpy).toHaveBeenCalledWith("[Aligo] Sending sms to ***4444");
+        expect(JSON.stringify(debugSpy.mock.calls)).not.toContain("01033334444");
     });
 
     it.each([true, false])("handles the rejected HTTP response with confidential=%s", async confidential => {
@@ -120,9 +134,11 @@ describe("AligoApiClient SMS", () => {
             for (const sentinel of [receiver, url, reflected]) expect(diagnostic).not.toContain(sentinel);
         } else {
             expect(readBody).toHaveBeenCalledTimes(1);
-            expect(debug).toHaveBeenCalledWith(`[Aligo] Sending sms to ${receiver}`);
+            expect(debug).toHaveBeenCalledWith("[Aligo] Sending sms to ***5432");
             expect(error.message).toContain(reflected);
-            expect(errorLog).toHaveBeenCalledWith(expect.stringContaining(reflected));
+            expect(error.message).not.toContain(receiver);
+            expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("503"));
+            expect(JSON.stringify(errorLog.mock.calls)).not.toContain(receiver);
         }
     });
 
@@ -143,10 +159,12 @@ describe("AligoApiClient SMS", () => {
 
     it("rejects SMS when required SMS credentials are missing", async () => {
         const { client } = createClient();
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
 
         await expect(
             client.sendSms({ receiver: "01033334444", message: "테스트" }),
         ).rejects.toThrow("Aligo SMS integration is not configured.");
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("reads the actual normalized default sender and endpoint as an opaque policy without calling the provider", () => {

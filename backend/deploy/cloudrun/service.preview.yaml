@@ -86,6 +86,8 @@ spec:
               value: "https://preview.m.admin.babyjamjam.com"
             - name: SENTRY_ENVIRONMENT
               value: "preview"
+            - name: OUTBOUND_ALLOWLIST_REQUIRED
+              value: "true"
             # Aligo disabled (operator decision 2026-09-23): Cloud Run has no
             # Aligo-registered outbound IP; mirrors
             # backend/deploy/fallback-server/compose.yml lines 29-34.
@@ -111,6 +113,16 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: JWT_SECRET
+                  key: latest
+            - name: SMS_RECIPIENT_ALLOWLIST
+              valueFrom:
+                secretKeyRef:
+                  name: SMS_RECIPIENT_ALLOWLIST
+                  key: latest
+            - name: EMAIL_RECIPIENT_ALLOWLIST
+              valueFrom:
+                secretKeyRef:
+                  name: EMAIL_RECIPIENT_ALLOWLIST
                   key: latest
             - name: KAKAO_CLIENT_ID
               valueFrom:

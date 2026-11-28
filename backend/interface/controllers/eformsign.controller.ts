@@ -45,6 +45,8 @@ import {
 } from "application/services/eformsign-template-scope.service";
 import { EformsignPermanentPurgeRequest } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { GetContractClientCandidateUsecase } from "application/usecases/eformsign-doc/get-contract-client-candidate.usecase";
+import { assertEformsignPhone } from "infrastructure/config/eformsign-recipient-policy";
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { EformsignApiError } from "infrastructure/api/eformsign-api.error";
 import {
     documentSearchIndex,
@@ -1187,6 +1189,9 @@ export class EformsignController {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
+            if (body.recipientPhone) {
+                assertEformsignPhone(body.recipientPhone.phoneNumber, body.recipientPhone.countryCode);
+            }
             return await this.credentialBoundary.withCredentials(
                 tenant,
                 "document.re_request",
@@ -1202,6 +1207,9 @@ export class EformsignController {
         } catch (error) {
             if (error instanceof HttpException) {
                 throw error;
+            }
+            if (error instanceof OutboundRecipientBlockedError) {
+                throw new ForbiddenException(error.message);
             }
 
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));

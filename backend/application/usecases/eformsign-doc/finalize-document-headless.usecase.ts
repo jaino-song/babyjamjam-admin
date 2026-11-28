@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
@@ -487,7 +488,7 @@ export class FinalizeDocumentHeadlessUsecase {
             return {
                 ok: false,
                 reason,
-                fallbackHint: sendWasAttempted ? "manual_check" : "iframe",
+                fallbackHint: sendWasAttempted || error instanceof OutboundRecipientBlockedError ? "manual_check" : "iframe",
                 dispatchIntentId: dispatchIntent?.id,
                 durationMs: Date.now() - start,
                 failedStep: latestProgressStep,
