@@ -35,25 +35,40 @@ describe("manual recovery with recipient enforcement", () => {
         expect(f.provider.getDocument).toHaveBeenCalledTimes(2);
     });
 
-    it.each([
+    describe.each([
         ["an unlisted current recipient", { step_recipients: [unlisted] }, []],
         ["an unlisted previous recipient", { step_recipients: [allowed] }, [{ step_recipients: [unlisted] }]],
         ["missing history", { step_recipients: [allowed] }, undefined],
         ["malformed history", { step_recipients: [allowed] }, {}],
         ["missing current recipients", { step_recipients: undefined }, []],
         ["empty current recipients", { step_recipients: [] }, []],
-    ])("refuses both exposure paths for %s", async (_name, currentStatus, previousStatus) => {
-        for (const reopening of [false, true]) {
+        ["malformed current recipients", { step_recipients: [null] }, []],
+    ])("with %s", (_name, currentStatus, previousStatus) => {
+        it("settles a newly saved draft without exposing it", async () => {
             const f = setup();
-            if (reopening) await f.service.open(J, principal);
-            f.expose.mockClear();
+            const markDraftUncertain = jest.spyOn(f.repository, "markDraftUncertain");
+            Object.assign(f.remote.current_status, currentStatus);
+            f.remote.previous_status = previousStatus;
+
+            await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: "RECOVERY_UNSUPPORTED", reason: "draft_unavailable" });
+            expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
+            expect(f.state.intents[1]).toMatchObject({ status: "accepted", providerDocumentId: "bound-doc" });
+            expect(f.state.authorities[0]).toMatchObject({ phase: "document_ready", providerDocumentId: "bound-doc", humanIntentId: null });
+            expect(markDraftUncertain).not.toHaveBeenCalled();
+            expect(f.expose).not.toHaveBeenCalled();
+            expect(f.reexposeHuman).not.toHaveBeenCalled();
+        });
+
+        it("refuses to reopen an exposed draft", async () => {
+            const f = setup();
+            await f.service.open(J, principal);
             Object.assign(f.remote.current_status, currentStatus);
             f.remote.previous_status = previousStatus;
 
             await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: "RECOVERY_UNAVAILABLE" });
-            expect(f.expose).not.toHaveBeenCalled();
+            expect(f.expose).toHaveBeenCalledTimes(1);
             expect(f.reexposeHuman).not.toHaveBeenCalled();
-        }
+        });
     });
 
     it("releases the draft intent when dispatch blocks before opening", async () => {
