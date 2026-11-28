@@ -1,5 +1,10 @@
 # LightNode temporary Fallback host
 
+> **2026-11-28 (BJJ-597/BJJ-598): LightNode is the only production host and the
+> return to Lightsail is cancelled.** Lightsail is a cold standby; see
+> `backend/deploy/lightsail/COLD_STANDBY_FAILOVER.md`. The banner below and the
+> failback text are historical (cleanup: BJJ-604).
+
 > **2026-10-31: LightNode is now a permanent standby, not a temporary host.** It
 > stays running after failback and is **not** released. Failback ends with the
 > operator `stop` followed by a passive `deploy-standby` of the current release,

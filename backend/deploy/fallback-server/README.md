@@ -7,12 +7,15 @@ frontend deployment. The frontend keeps the stable
 `https://api.babyjamjam.com` hostname while traffic ownership is changed by
 the separately controlled Vercel DNS client.
 
-Current status (2026-10-31): **LightNode is the permanent warm standby for the
-Lightsail production primary.** It has served production in temporary-active
-mode since 2026-09-03; the move back to Lightsail puts it on passive standby,
-and until that cutover finishes it remains the live host. It is not released
-after failback: it stays running and receives every `main` release passively
-through `deploy-lightnode-standby` (see "Conditional `main` CI replacement").
+Current status (2026-11-28, decision 2026-11-27, BJJ-597/BJJ-598): **LightNode is
+the only production host.** It has served production since 2026-09-03 and the
+return to Lightsail is cancelled. Every `main` release reaches it through
+`deploy-lightnode`. AWS Lightsail is a cold standby (snapshot only) with its own
+runbook, `backend/deploy/lightsail/COLD_STANDBY_FAILOVER.md`. The
+`deploy-lightnode-standby` job and its helpers `ci/standby-decision.sh` and
+`ci/newer-primary-release.sh` were removed; the sections below that describe
+the passive standby release path are historical (cleanup: BJJ-604). The host
+verbs `deploy-standby` and `standby-status` still exist and have no CI caller.
 The failover controller runtime, installer, systemd unit source, and CLI are
 implemented, but the controller is **not installed or armed** and failover stays
 a manual runbook (`docs/devops-deployment-rules.md` §4.1).
