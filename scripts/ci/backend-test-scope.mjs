@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
-import { basename, extname } from 'node:path';
+import { basename, dirname, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const full = { mode: 'full', files: [], realDatabase: true };
@@ -30,10 +30,11 @@ const git = (cwd, args, input) => execFileSync('git', args, {
 
 function specsReadingSources(cwd, head, files) {
   if (!files.length) return [];
-  const patterns = new Set(files);
+  // Directory scans can cover newly added files without naming them.
+  const patterns = new Set([...files, 'readdirSync', 'readdir(', 'globSync', 'glob(', 'opendirSync']);
   for (const path of files) {
     const name = basename(path, extname(path));
-    if (name.length >= 6) patterns.add(name);
+    patterns.add(name.length >= 6 ? name : `${basename(dirname(path))}/${name}`);
   }
 
   try {

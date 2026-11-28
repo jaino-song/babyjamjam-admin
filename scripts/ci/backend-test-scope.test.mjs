@@ -130,6 +130,49 @@ test('related scope includes specs that reference the exact head sources as text
   });
 });
 
+test('a new backend source selects specs that scan source directories', t => {
+  const repo = repository(t);
+  const source = 'backend/application/services/new-writer.service.ts';
+  const scanners = [
+    'readdirSync(sourceDirectory)',
+    'readdir(sourceDirectory)',
+    'globSync(sourcePattern)',
+    'glob(sourcePattern)',
+    'opendirSync(sourceDirectory)',
+  ];
+  const specs = scanners.map((scanner, index) => {
+    const spec = `backend/test/source-guard-${index}.spec.ts`;
+    repo.write(spec, `${scanner};\n`);
+    return spec;
+  });
+  repo.write('backend/application/scan-sources.ts', 'readdirSync(sourceDirectory);\n');
+  const base = repo.commit();
+  repo.write(source);
+
+  assert.deepEqual(backendTestScope(base, repo.commit(), repo.cwd), {
+    mode: 'related',
+    files: [source, ...specs],
+    realDatabase: false,
+  });
+});
+
+test('related scope matches short source names with their parent directory', t => {
+  const repo = repository(t);
+  const source = 'backend/application/some/dir/index.ts';
+  const guard = 'backend/test/index-guard.spec.ts';
+  repo.write(source);
+  repo.write(guard, 'readFileSync("../some/dir/index.ts");\n');
+  repo.write('backend/test/other-index.spec.ts', 'readFileSync("./other/index.ts");\n');
+  const base = repo.commit();
+  repo.write(source, 'changed\n');
+
+  assert.deepEqual(backendTestScope(base, repo.commit(), repo.cwd), {
+    mode: 'related',
+    files: [source, guard],
+    realDatabase: false,
+  });
+});
+
 test('Prisma specs, integrity specs and persistence changes require real PostgreSQL', t => {
   const repo = repository(t);
   for (const path of [
