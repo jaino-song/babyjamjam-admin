@@ -177,8 +177,9 @@ Each application deployment:
 4. activates the preloaded API image and starts only that environment's API and Valkey;
 5. waits for the container health check and, in public scope, the matching
    public `/health` route (self scope skips the public route);
-6. records current and previous healthy tags only after the checks for that
-   scope pass.
+6. records the current tag and, when the tag changes, the previous tag after
+   the helper's health checks pass. The CI operator then records the digest and
+   runs final host verification.
 
 The repository `deploy-edge.sh`, edge Compose file, and Caddyfile are not root
 runtime inputs. That legacy helper is retired and fails closed. Database route
@@ -222,10 +223,12 @@ sudo /usr/local/libexec/babyjamjam-ci-operator/rollback.sh production <git-commi
 sudo /usr/local/libexec/babyjamjam-ci-operator/rollback.sh preview <git-commit-sha>
 ```
 
-Rollback changes only the selected API container and verifies its matching
-public route. It does not change Caddy, DNS, database state, the other
-environment, or scheduler ownership. Preview rollback retains the same
-fail-closed scheduler check.
+Rollback runs Compose for the selected environment, force-recreates its API
+with the selected image, and checks container health. In public scope it also
+checks the configured public health URL. After those checks it writes the
+selected tag as current. It does not revert database migrations, change DNS or
+Caddy, or transfer scheduler ownership. Preview rollback requires
+`SCHEDULERS_ENABLED=false`.
 
 During the one-time migration, the immediate pre-handoff rollback is to stop
 the shared edge and restart the legacy Caddy container. After scheduler

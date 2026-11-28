@@ -75,15 +75,12 @@ The last four exist for the cold standby host (BJJ-605):
 - Without `--self`, `status` and `deploy` also require the public hostname to
   answer, and cannot tell which server answered. Do not run `deploy production`
   without `--self` against a standby host while production DNS points at
-  LightNode: it passes on LightNode's answer and leaves the Lightsail API
-  running.
-- A deploy that fails before the deployment helper is called (image
-  validation, migration) leaves the containers untouched and runs no recovery.
-  Once the helper is called, a failure in the helper, in digest recording or in
-  host verification makes the operator attempt recovery:
-  if the API was stopped when the deploy started, it stops the new API and
-  restores the release records without starting the previous image; if the API
-  was running, it rolls back to the image that was running. Recovery can itself
+  LightNode. LightNode can satisfy the public checks, and a successful deploy
+  leaves the Lightsail API running.
+- A host-side rejection before the deployment helper runs leaves the target
+  service API in its starting state. A nonzero result from the deployment
+  helper, digest recording, or final host verification triggers the recovery
+  attempt described under "Release and recovery contract". Recovery can itself
   fail, and a workflow check that fails after the host command succeeded runs
   no recovery, so confirm the actual API state before the next step. Applied
   database changes stay.
@@ -231,18 +228,18 @@ commit SHA, and a lowercase SHA-256 image digest. It verifies that the commit is
 the current tip of the corresponding environment branch and that the pulled
 image label matches that commit. Before changing the running container, it runs
 `prisma migrate deploy` from that exact image using the target environment's
-database configuration. A migration failure ends the deploy before any
-container is touched: a running application image keeps running and a stopped
-API stays stopped. Release migrations must remain backward-compatible because a
+database configuration. A failed migration ends the deploy before the target
+service API is started, stopped, or replaced. The migration itself runs in a
+temporary container. Release migrations must remain backward-compatible because a
 successful database migration cannot be automatically undone if later runtime
 activation fails. After activation it writes the candidate digest and then runs
 the final host verification: one API container, the authoritative route and
 exact `DATABASE_CONNECTION_MODE`, scheduler ownership, health/restart, image
 tag/digest identity and internal `/health/ready` in both health scopes, plus
 public `/health/ready` and public liveness in public scope. Self scope reports
-the loopback edge checks instead. If the deployment helper, the digest
-recording or that verification fails, the operator attempts the recovery
-described below.
+the loopback edge checks instead. If the deployment helper, digest-recording
+function, or final host-status check returns nonzero, the operator attempts the
+recovery described below.
 
 For the first Preview or Production deployment of an image containing
 `20261126010000_baby_case_keys`, complete the following steps in order. The
@@ -292,32 +289,39 @@ After staging, use only a recovery image that supports case-scoped keys before
 resuming writes. Retain the guarded operator while the new image is eligible
 for promotion.
 
-A failure before the deployment helper is called (image validation or
-migration) ends the deploy without any recovery and leaves the containers as
-they were. Once the helper is called, a failure in the helper (including one
-before it activates the API), in digest recording, or in host verification
-makes the operator attempt recovery according to the API state at the start of
-the deploy. If the API was running, it invokes the
-existing rollback script with the recorded known-good commit image, preserves
-the prior rollback-tag history, restores the prior digest state, and verifies
-the recovered runtime. If the API was stopped (standby), it stops the new API
-and restores the release records instead. Recovery can itself fail. When only
+A rejection before the deployment helper runs, including rejection of image
+provenance or failure of the migration stage, ends the deploy without automatic
+recovery or replacement of the target service API. The operator enters recovery
+when the deployment helper, digest-recording function, or final host-status
+check returns nonzero. This includes the helper's Compose configuration and
+local-image checks before API startup. If the initial listing found a running
+API, the operator passes the pre-deploy `current-image-tag` to the rollback
+helper, restores the saved digest values and previous tag, and checks the
+recovered runtime. If the initial listing was empty, it attempts to stop all
+currently running API containers in that environment, restore all four saved
+tag and digest records, and verify that the final listing is empty. A deploy
+whose recovery succeeded still ends in failure. Recovery can itself fail. A
+failed recovery can leave the API running or stopped and the release records
+only partly restored. When only
 the workflow's result check fails after the host command succeeded, no recovery
 runs; check the host state directly. The root CI operator holds one per-environment lock so
-concurrent commands cannot change the same runtime. Detailed output is kept in
-a root-only host log; GitHub receives only a failure status and safe release
-fields. The Backend CI job that used to print a redacted copy of a failed
+concurrent commands cannot change the same runtime. For failures after the operator creates its root-only deploy log, diagnostic
+detail can remain on the host. The workflow prints the SSM status for a
+non-successful invocation on the expected node, and prints fetched deploy
+output before checking it. The Backend CI job that used to print a redacted copy of a failed
 command's output was removed with the main-push Lightsail deploy (BJJ-598). The
 Lightsail operations workflow reports by where it stopped: a configuration,
 image-lookup or authentication failure in that workflow step; a registration
-problem after printing `managed_nodes` and `online_nodes`; no final status line
+count mismatch after printing `managed_nodes` and `online_nodes`; no final status line
 when tracking the sent command fails (first check for an AWS query error, then
 whether the invocation count and node match what was expected); neither a
 status line nor host output when Systems Manager reported `Success` and the
 call that fetches the output failed (verify the command status and the host
 state before retrying); only the
-final Systems Manager status, without host output, when the host command did
-not end in `Success` (which includes a failed check on the host). When the
+last observed Systems Manager status, without host output, when the expected
+node was found and the observed status was not `Success` (including
+host-command failure or polling ending while the command was still in
+progress). When the
 host command succeeded, the workflow fetches its standard output and checks
 it; `status`, `deploy` and `standby` print the output before the checks, and
 `operator-upgrade` prints it after confirming its success marker. The fixed
@@ -330,8 +334,8 @@ any missing or non-`ok` readiness value.
 
 ## Disable and roll back the automation
 
-To stop new deployments without changing the running service, disable the
-GitHub workflow or remove the branch's OIDC role repository variable. To remove
+To stop new Lightsail workflow deployments without changing the running
+service, disable the Lightsail operations workflow. To remove
 host execution capability, run:
 
 ```bash
