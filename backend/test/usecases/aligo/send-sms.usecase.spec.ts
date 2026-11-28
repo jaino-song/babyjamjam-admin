@@ -62,6 +62,6 @@ describe("SendAligoSmsUsecase", () => {
                 receiver: "invalid-number",
                 message: "테스트",
             }),
-        ).rejects.toThrow("Invalid receiver phone number: invalid-number");
+        ).rejects.toThrow("Invalid receiver phone number");
     });
 });

@@ -52,15 +52,12 @@ export function resolveDeployTarget({
     throw new Error("Only preview and main may resolve a backend deployment target.");
   }
 
-  const lightnodeRequired = requiresLightNode(commitMessage);
+  requiresLightNode(commitMessage);
   requireApprovedHashes(fallbackDnsSha256, lightsailDnsSha256);
   const currentDnsSha256 = canonicalDnsHash(dnsRecords);
   if (currentDnsSha256 === fallbackDnsSha256) return "lightnode";
   if (currentDnsSha256 === lightsailDnsSha256) {
-    if (lightnodeRequired) {
-      throw new Error("This release requires LightNode, but the approved production route is Lightsail.");
-    }
-    return "lightsail";
+    throw new Error("Production is currently routed to the Lightsail standby. Main pushes do not deploy there. Use the Lightsail operations workflow to deploy the standby.");
   }
   throw new Error("The current production route does not match an approved production target.");
 }

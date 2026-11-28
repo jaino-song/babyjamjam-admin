@@ -11,6 +11,7 @@ import { SmsTriggerDeliverySkipError } from "./sms-trigger-payload-enricher.regi
 import { isStandaloneReceiptJob, STANDALONE_RECEIPT_LOG_REFERENCE } from "domain/entities/standalone-receipt-request";
 import { SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-end-notice-message";
 import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
+import { maskSmsRecipient } from "infrastructure/config/outbound-recipient-policy";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
 import { parseMessageQuietHold, publicMessageVariables, type MessageQuietHold } from "domain/message-policy-evaluator";
@@ -55,6 +56,7 @@ import {
     classifySmsProviderRejection,
     classifySmsProviderOutcome,
     countSmsRecipients,
+    isSmsPreSendError,
 } from "./sms-provider-outcome.service";
 import { readAutomationRetrySeal, type AutomationRetrySealState } from "./automation-retry-seal";
 import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTriggerJobStatus } from "domain/entities/message-trigger-job.entity";
@@ -1199,9 +1201,16 @@ export class SmsRetryService {
             }
             await this.logRepository.update(providerAttempt);
             this.logger.log(confidential ? `[Retry] SMS log ${providerAttempt.id} accepted`
-                : `[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${providerAttempt.receiver}`);
+                : `[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${providerAttempt.receiver.split(",").map(maskSmsRecipient).join(",")}`);
             return providerAttempt;
         } catch (error) {
+            if (isSmsPreSendError(error)) {
+                this.markSmsRetryRejected(providerAttempt, error.message, invocation, retryDelayMs);
+                providerAttempt.nextRetryAt = null;
+                providerAttempt.variables = { ...providerAttempt.variables, retrySafety: "permanent-provider-rejected" };
+                await this.logRepository.update(providerAttempt);
+                return providerAttempt;
+            }
             const errorMessage = standalone ? "Standalone receipt delivery outcome unavailable"
                 : recordGroup ? "제공기록지 링크 문자 발송 결과를 확인할 수 없습니다"
                 : error instanceof Error ? error.message : String(error);

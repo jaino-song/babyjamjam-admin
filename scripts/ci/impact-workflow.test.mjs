@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { classifyPaths, complete } from './impact.mjs';
@@ -96,20 +96,12 @@ function withPreviewConcurrencyAtBase(text,label) {
   assert.equal(text.includes(previewConcurrencyCheck.before),false,`${label}: the old concurrency 8 check is gone`);
   return text.replace(previewConcurrencyCheck.after,previewConcurrencyCheck.before);
 }
-// Admit only the approved provider verifier and its new Lightsail checkout, then
-// preserve the original byte comparisons for every other deployment detail.
+// Project the approved LightNode provider verifier out of the exact job comparison.
 const providerVerifierStep = [
   '      - name: Verify public production provider eligibility',
   '        env:',
   '          RESOLVED_DEPLOY_TARGET: ${{ needs.resolve-backend-deploy-target.outputs.target }}',
   '        run: node backend/deploy/ci/verify-production-provider.mjs "$RESOLVED_DEPLOY_TARGET"',
-  '', '',
-].join('\n');
-const lightsailCheckoutAnchor = '      LIGHTSAIL_SSM_TARGET_TAG: ${{ vars.LIGHTSAIL_SSM_TARGET_TAG }}\n\n    steps:\n';
-const lightsailProviderCheckout = [
-  '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0',
-  '        with:',
-  '          persist-credentials: false',
   '', '',
 ].join('\n');
 const lightnodeLeaseComment = {
@@ -135,30 +127,19 @@ function withApprovedLightnodeLeaseCommentAtBase(text,label) {
   return text.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.before);
 }
 function withApprovedDeployAdditionsAtBase(text,label) {
-  for(const id of ['deploy-lightsail','deploy-lightnode']) {
-    const block=jobText(text,id);
-    assert.ok(block,`${label}: ${id} exists`);
-    assert.equal(block.split(providerVerifierStep).length-1,1,`${label}: ${id} has exactly the approved unconditional provider verifier`);
-    let projected=block.replace(providerVerifierStep,'');
-    if(id==='deploy-lightsail') {
-      const checkout=lightsailCheckoutAnchor+lightsailProviderCheckout;
-      assert.equal(projected.split(checkout).length-1,1,`${label}: Lightsail verifier checkout is exact and anchored to its own job`);
-      projected=projected.replace(checkout,lightsailCheckoutAnchor);
-    }
-    text=text.replace(block,projected);
-  }
-  return withApprovedLightnodeLeaseCommentAtBase(text,label);
+  const block=jobText(text,'deploy-lightnode');
+  assert.ok(block,`${label}: deploy-lightnode exists`);
+  const verifier=text.endsWith(block)?providerVerifierStep.slice(0,-1):providerVerifierStep;
+  assert.equal(block.split(verifier).length-1,1,`${label}: deploy-lightnode has exactly the approved unconditional provider verifier`);
+  assert.ok(block.endsWith(verifier),`${label}: the provider verifier ends deploy-lightnode`);
+  return withApprovedLightnodeLeaseCommentAtBase(text.replace(block,block.slice(0,-verifier.length)),label);
 }
-// The LightNode warm-standby change adds exactly these contract-test commands to the
-// 'Verify backend deployment automation contracts' step, right after the ci-deployer
-// contract line, plus one new job. Each is asserted here, then removed so the caller still
-// compares every other step and job exactly against the pinned base.
+// Keep the deployer behavior test directly after the deployer contract command.
+// Project it out so the rest of the step is still compared exactly.
 const standbyContractStep = 'Verify backend deployment automation contracts';
 const standbyContractAnchor = 'backend/deploy/fallback-server/ci/ci-deployer-contract.test.sh';
 const standbyContractAdditions = [
   'bash backend/deploy/fallback-server/ci/ci-deployer.behavior.test.sh',
-  'bash backend/deploy/fallback-server/ci/standby-decision.test.sh',
-  'bash backend/deploy/fallback-server/ci/newer-primary-release.test.sh',
 ];
 const contractGlobBase = 'node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs';
 const contractGlobApproved = 'node --test backend/deploy/ci/*.test.mjs backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs';
@@ -175,15 +156,49 @@ function stepsWithoutStandbyContractTests(steps,label) {
   copy[index].run=[...lines.slice(0,anchor+1),...lines.slice(anchor+1+standbyContractAdditions.length)].map(line=>line===contractGlobApproved?contractGlobBase:line).join('\n');
   return copy;
 }
-// The only job the warm-standby change adds. Asserts it exists with exactly its approved
-// dependencies and that no other job was added or removed; every pre-existing job is
-// still compared exactly by the callers. `routingJobs` are the jobs the CI impact routing
-// itself introduced after an older pinned base (empty for a base that already has them).
-function assertOnlyStandbyJobAdded(before,after,label,routingJobs=[]) {
+// Older pinned revisions may also need to allow the original CI impact routing jobs.
+function assertBackendJobChanges(before,after,label,routingJobs=[]) {
   const added=Object.keys(after).filter(id=>!(id in before));
-  assert.deepEqual(added,[...routingJobs,'deploy-lightnode-standby'],`${label}: the standby job is the only job added besides the routing jobs`);
-  assert.deepEqual(Object.keys(before).filter(id=>!(id in after)),[],`${label}: no job was removed`);
-  assert.deepEqual(needs(after['deploy-lightnode-standby']),['build-lightsail-image','resolve-backend-deploy-target','deploy-lightsail'],`${label}: standby job dependencies`);
+  const removed=Object.keys(before).filter(id=>!(id in after));
+  assert.deepEqual(added,routingJobs,`${label}: only the routing jobs may be added`);
+  assert.deepEqual(removed,['deploy-lightsail'],`${label}: deploy-lightsail is the only removed job`);
+}
+function backendStepsAtBase(jobs, previousSteps) {
+  const steps = structuredClone(jobs.checks.steps);
+  const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
+  assert.deepEqual(steps[contracts], {
+    name: 'CI impact routing contracts',
+    run: 'node --test scripts/ci/impact*.test.mjs scripts/ci/backend-test-scope.test.mjs',
+  });
+  assert.ok(contracts > steps.findIndex(step => step.name === 'Install dependencies'));
+  steps.splice(contracts, 1);
+  const trustedGuard = steps.find(step => step.env?.AGENT_CUTOVER_MANIFEST_JSON);
+  const pushAndManual = "github.event_name == 'push' || github.event_name == 'workflow_dispatch'";
+  assert.equal(trustedGuard.if, `${pushAndManual} || github.event_name == 'schedule'`);
+  trustedGuard.if = pushAndManual;
+
+  const oldUnit = previousSteps.find(step => step.name === 'Unit tests');
+  const unit = jobs.unit.steps.at(-1);
+  assert.equal(unit.name, oldUnit.name);
+  assert.equal(unit.env.CI, oldUnit.env.CI);
+  assert.equal(unit.if, undefined);
+  assert.equal(unit['continue-on-error'], undefined);
+  const unitOptions = /--testPathIgnorePatterns=[^\s'`]+/g;
+  assert.deepEqual(unit.run.match(unitOptions), oldUnit.run.replaceAll("'", '').match(unitOptions), 'both Jest modes retain every original exclusion');
+  const authority = steps.findIndex(step => step.name === authorityPgSteps[1].name);
+  steps.splice(authority, 0, oldUnit);
+
+  const database = jobs['real-database'];
+  for (const job of [jobs.unit, database]) {
+    assert.deepEqual(needs(job), ['test-scope']);
+    assert.equal(job['continue-on-error'], undefined);
+    const setup = structuredClone(steps.slice(0, 4));
+    delete setup[0].with['fetch-depth'];
+    assert.deepEqual(job.steps.slice(0, -1), setup, 'dedicated jobs use the same dependency setup');
+  }
+  assert.deepEqual(database.services, jobs.checks.services, 'both jobs keep a dedicated ephemeral PostgreSQL service');
+  steps.push(database.steps.at(-1));
+  return steps;
 }
 const reusable = parse(read('ci-impact.yml'));
 const loader = reusable.jobs.classify.steps.find(s=>s.id==='impact').run;
@@ -200,7 +215,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
   const file=`${app}-ci.yml`,text=read(file),w=parse(text),j=w.jobs;
   if(app==='backend') assertBackendChecksRunner(j.checks);
   assert.equal(j.verify.name,expectedNames[app]);assert.equal(j.impact.uses,'./.github/workflows/ci-impact.yml');assert.equal(j.impact.with.component,app);
-  assert.deepEqual(needs(j.checks),['impact']);assert.deepEqual(needs(j.verify),['impact','checks']);assert.match(j.verify.if,/always\(\)/);
+  assert.deepEqual(needs(j.checks),['impact']);assert.deepEqual(needs(j.verify),app==='backend'?['impact','checks','test-scope','unit','real-database']:['impact','checks']);assert.match(j.verify.if,/always\(\)/);
   assert.equal(w.permissions.contents,'read');assert.equal(w.on.pull_request.paths,undefined);assert.equal(w.on.merge_group?.paths,undefined);
   assert.equal(j.verify.services,undefined);assert.equal(j.verify.steps.find(s=>s.run)?.run,loader,'completion executes identical workflow-owned trusted loader');
   const gate=j.verify.steps.find(s=>s.env?.IMPACT_MODE==='gate');assert.equal(gate.env.COMPONENT,app);assert.equal(gate.env.REPORTED_SELECTION,`\${{ needs.impact.outputs.${app} }}`);assert.equal(gate.env.IMPACT_RESULT,'${{ needs.impact.result }}');assert.equal(gate.env.CHECKS_RESULT,'${{ needs.checks.result }}');
@@ -208,13 +223,13 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     const checkout=j[id].steps.find(s=>s.uses?.startsWith('actions/checkout@'));assert.equal(checkout.with['persist-credentials'],false);
     if(id==='verify') assert.equal(checkout.with['fetch-depth'],0);
   }
-  const appSteps = j.checks.steps.filter(step=>step.name!=='CI impact routing contracts').map(step=> {
+  const previousSteps = parse(old(file)).jobs.verify.steps;
+  const appSteps = (app==='backend'?backendStepsAtBase(j,previousSteps):j.checks.steps.filter(step=>step.name!=='CI impact routing contracts')).map(step=> {
     if(app==='backend' && step.uses?.startsWith('actions/checkout@')) {const copy=structuredClone(step);delete copy.with['fetch-depth'];return copy;}
     return step;
   });
-  const previousSteps = parse(old(file)).jobs.verify.steps;
   assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(stepsWithoutAuthorityPgGates(stepsWithoutReplayPgGate(appSteps,file),file),file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
-  if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
+  if(app==='backend') {assertBackendJobChanges(parse(old(file)).jobs,j,file,['impact','test-scope','checks','unit','real-database']);assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
   Object.keys(j).forEach(visit);
@@ -237,19 +252,116 @@ test('backend checks runner pin rejects latest, 26.04, missing and array values'
     assert.throws(()=>assertBackendChecksRunner(mutant.jobs.checks),/backend checks require the installed PG16 runner image/);
   }
 });
+test('backend full events select every suite and PR-only skips require a valid scope', () => {
+  const jobs = parse(read('backend-ci.yml')).jobs;
+  for (const id of ['checks', 'test-scope', 'auth-e2e']) {
+    assert.deepEqual(needs(jobs[id]), ['impact']);
+    assert.equal(jobs[id]['timeout-minutes'], 15);
+    assert.equal(jobs[id]['continue-on-error'], undefined);
+    for (const event of ['push', 'merge_group', 'schedule', 'workflow_dispatch']) {
+      assert.equal(enabled(jobs[id], {backend:false}, event), true, `${event}: ${id} must run`);
+    }
+    assert.equal(enabled(jobs[id], {backend:false}), false);
+    assert.equal(enabled(jobs[id], {backend:true}), true);
+  }
+  for (const id of ['unit', 'real-database']) assert.equal(jobs[id]['timeout-minutes'], 15);
+  assert.deepEqual(jobs.unit.strategy, {
+    'fail-fast': false,
+    matrix: {shard: "${{ fromJSON(needs.test-scope.outputs.mode == 'related' && '[0]' || '[1,2,3]') }}"},
+  });
+  assert.equal(jobs['real-database'].if, "needs.test-scope.outputs.real-database == 'true'");
+  assert.equal(jobs.verify['continue-on-error'], undefined);
+
+  const gate = jobs.verify.steps.at(-1);
+  assert.deepEqual(gate.env, {
+    BACKEND_SELECTED: '${{ needs.impact.outputs.backend }}',
+    CHECKS_RESULT: '${{ needs.checks.result }}',
+    SCOPE_RESULT: '${{ needs.test-scope.result }}',
+    SCOPE_MODE: '${{ needs.test-scope.outputs.mode }}',
+    SCOPE_DATABASE: '${{ needs.test-scope.outputs.real-database }}',
+    UNIT_RESULT: '${{ needs.unit.result }}',
+    DATABASE_RESULT: '${{ needs.real-database.result }}',
+  });
+  const related = {
+    GITHUB_EVENT_NAME: 'pull_request', BACKEND_SELECTED: 'true', CHECKS_RESULT: 'success',
+    SCOPE_RESULT: 'success', SCOPE_MODE: 'related', SCOPE_DATABASE: 'false',
+    UNIT_RESULT: 'success', DATABASE_RESULT: 'skipped',
+  };
+  const full = {...related, GITHUB_EVENT_NAME:'merge_group', BACKEND_SELECTED:'false',
+    SCOPE_MODE:'full', SCOPE_DATABASE:'true', DATABASE_RESULT:'success'};
+  const unselected = {...related, BACKEND_SELECTED:'false', CHECKS_RESULT:'skipped',
+    SCOPE_RESULT:'skipped', SCOPE_MODE:'', SCOPE_DATABASE:'', UNIT_RESULT:'skipped'};
+  for (const env of [related, full, unselected, {...related, SCOPE_DATABASE:'true', DATABASE_RESULT:'success'}]) {
+    const run = spawnSync('bash', ['-eu', '-c', gate.run], {encoding:'utf8', env:{...process.env,...env}});
+    assert.equal(run.status, 0, run.stderr);
+  }
+  for (const env of [
+    {...full, CHECKS_RESULT:'skipped'}, {...full, SCOPE_RESULT:'skipped'},
+    {...full, UNIT_RESULT:'failure'}, {...full, UNIT_RESULT:'cancelled'}, {...full, UNIT_RESULT:'skipped'},
+    {...full, DATABASE_RESULT:'skipped'}, {...full, SCOPE_DATABASE:'false', DATABASE_RESULT:'skipped'},
+    {...full, SCOPE_MODE:'related'}, {...related, SCOPE_DATABASE:''},
+    {...related, DATABASE_RESULT:'failure'}, {...related, SCOPE_DATABASE:'true'},
+    {...unselected, UNIT_RESULT:'failure'},
+  ]) {
+    const run = spawnSync('bash', ['-eu', '-c', gate.run], {encoding:'utf8', env:{...process.env,...env}});
+    assert.notEqual(run.status, 0, JSON.stringify(env));
+  }
+});
+test('backend scope reads the protected helper and bootstraps full coverage when it is absent', t => {
+  const step = parse(read('backend-ci.yml')).jobs['test-scope'].steps.find(step => step.id === 'scope');
+  const cwd = mkdtempSync(resolve(root, 'scripts/ci/.backend-scope-'));
+  t.after(() => rmSync(cwd, {recursive:true,force:true}));
+  const git = (...args) => execFileSync('git', args, {cwd, encoding:'utf8'}).trim();
+  const commit = () => {
+    git('add', 'scripts/ci/backend-test-scope.mjs', 'backend/service.ts');
+    git('-c','user.name=CI fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgsign=false','commit','-qm','fixture');
+    return git('rev-parse', 'HEAD');
+  };
+  const output = resolve(cwd, 'github-output');
+  const run = (event, base, head) => {
+    rmSync(output, {force:true});
+    const result = spawnSync('bash', ['-eu','-c',step.run], {cwd, encoding:'utf8', env:{
+      ...process.env, GITHUB_EVENT_NAME:event, BASE_SHA:base, HEAD_SHA:head, GITHUB_OUTPUT:output, RUNNER_TEMP:cwd,
+    }});
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /candidate helper executed/);
+    return Object.fromEntries(readFileSync(output,'utf8').trim().split('\n').map(line => line.split(/=(.*)/s).slice(0,2)));
+  };
+
+  git('init','-q');
+  git('-c','user.name=CI fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgsign=false','commit','--allow-empty','-qm','before helper');
+  const beforeHelper = git('rev-parse','HEAD');
+  mkdirSync(resolve(cwd, 'scripts/ci'), {recursive:true});
+  mkdirSync(resolve(cwd, 'backend'));
+  const helper = resolve(cwd, 'scripts/ci/backend-test-scope.mjs');
+  const source = resolve(cwd, 'backend/service.ts');
+  writeFileSync(helper, readFileSync(resolve(root,'scripts/ci/backend-test-scope.mjs')));
+  writeFileSync(source, 'export const value = 1;\n');
+  const base = commit();
+  writeFileSync(source, 'export const value = 2;\n');
+  const head = commit();
+  assert.deepEqual(run('pull_request', base, head), {mode:'related',files:'["backend/service.ts"]','real-database':'false'});
+
+  const full = {mode:'full',files:'[]','real-database':'true'};
+  assert.deepEqual(run('pull_request', beforeHelper, head), full);
+  assert.deepEqual(run('pull_request', base, 'f'.repeat(40)), full);
+  assert.deepEqual(run('schedule', '', ''), full);
+  writeFileSync(helper, 'console.log("candidate helper executed"); process.exit(7);\n');
+  assert.deepEqual(run('pull_request', base, commit()), full);
+});
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
   const before=old('backend-ci.yml'),current=read('backend-ci.yml'),after=withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(current,'backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
-  assertOnlyStandbyJobAdded(a,b,'backend-ci.yml',['impact','checks']);
-  for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e'].includes(id))) {
+  assertBackendJobChanges(a,b,'backend-ci.yml',['impact','test-scope','checks','unit','real-database']);
+  for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e','deploy-lightsail'].includes(id))) {
     assert.equal(jobText(after,id),jobText(before,id),`${id} raw block changed`);assert.deepEqual(b[id],a[id]);
   }
-  assert.deepEqual(needs(b['auth-e2e']),['verify','impact']);assert.deepEqual({...b['auth-e2e'],needs:a['auth-e2e'].needs,if:undefined},{...a['auth-e2e'],if:undefined});
+  assert.deepEqual(needs(b['auth-e2e']),['impact']);
+  assert.equal(b['auth-e2e']['timeout-minutes'],15);
+  assert.deepEqual({...b['auth-e2e'],needs:a['auth-e2e'].needs,if:undefined,'timeout-minutes':a['auth-e2e']['timeout-minutes']},{...a['auth-e2e'],if:undefined});
   assert.deepEqual(b['auth-e2e'].strategy.matrix.tenant_isolation_mode,['observe','enforce']);
   for(const id of ['build-lightsail-image','wait-database-patches','resolve-backend-deploy-target']) assert.deepEqual(b[id].needs,a[id].needs);
   assert.equal(needs(b.verify).includes('auth-e2e'),false);
   for(const [id,original,mutated] of [
-    ['deploy-lightsail','aws ssm send-command','aws ssm list-commands'],
-    ['deploy-lightsail','role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}','role-to-assume: unapproved-role'],
     ['deploy-lightnode','"replace $GITHUB_SHA $IMAGE_DIGEST"','"status"'],
   ]) {
     assert.equal(current.split(original).length-1,1,`${id}: negative mutation has one exact target`);
@@ -305,10 +417,13 @@ test('backend installs declared compiler before executing CI impact contracts; o
   assert.ok(install >= 0 && contracts > install, 'compiler consumer contracts require installed declared TypeScript');
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
-  assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
-  const previousChecks = stepsWithoutReplayPgGate(steps,'backend-ci.yml');
+  assertBackendJobChanges(previous.jobs, workflow.jobs, 'backend-ci.yml', ['test-scope','unit','real-database']);
+  const previousChecks = stepsWithoutReplayPgGate(backendStepsAtBase(workflow.jobs,previous.jobs.checks.steps),'backend-ci.yml');
   assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(previousChecks,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
-  for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
+  const currentVerify = structuredClone(workflow.jobs.verify);
+  assert.equal(currentVerify.steps.pop().name, 'Require every selected backend test lane');
+  assert.deepEqual({...currentVerify, needs: previous.jobs.verify.needs}, previous.jobs.verify);
+  for (const id of Object.keys(previous.jobs).filter(id => !['checks','verify','auth-e2e','deploy-lightsail'].includes(id))) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }
 });

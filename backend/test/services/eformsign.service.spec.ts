@@ -74,6 +74,91 @@ describe("EformsignService", () => {
         jest.restoreAllMocks();
     });
 
+    it("blocks recipient setup for dispatch but permits draft options without a send", () => {
+        jest.replaceProperty(process, "env", { ...process.env, OUTBOUND_ALLOWLIST_REQUIRED: "true" });
+        delete process.env["SMS_RECIPIENT_ALLOWLIST"];
+        const service = new EformsignService(createConfigService());
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
+
+        expect(() => service.generateDispatchOptions(createContractData(), "access", "refresh"))
+            .toThrow(/^Blocked by staging recipient allowlist/);
+        expect(() => service.generateDocumentOptions(createContractData(), "access", "refresh")).not.toThrow();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("checks the replacement phone before any eformsign call", async () => {
+        jest.replaceProperty(process, "env", { ...process.env, SMS_RECIPIENT_ALLOWLIST: "01000000001" });
+        const service = new EformsignService(createConfigService());
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
+        const getDocument = jest.spyOn(service, "getDocumentById");
+
+        for (const replacement of [
+            { countryCode: "+82", phoneNumber: CUSTOMER_PHONE },
+            { countryCode: "+1", phoneNumber: "01000000001" },
+        ]) {
+            await expect(service.reRequestOutsiderDocument("access", "doc", "05", "1", "", replacement))
+                .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        }
+        expect(getDocument).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { id: "blocked@example.test", sms: "01000000001", use_mail: true, use_sms: true },
+        { id: "allowed@example.test", sms: "01000000002", use_mail: true, use_sms: true },
+    ])("checks every stored re-request recipient before dispatch", async (blockedRecipient) => {
+        jest.replaceProperty(process, "env", {
+            ...process.env,
+            OUTBOUND_ALLOWLIST_REQUIRED: "true",
+            SMS_RECIPIENT_ALLOWLIST: "01000000001",
+            EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+        const service = new EformsignService(createConfigService());
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
+        jest.spyOn(service, "getDocumentById").mockResolvedValue({
+            current_status: {
+                step_recipients: [{ id: "allowed@example.test", use_mail: true, use_sms: false }, blockedRecipient],
+            },
+        });
+
+        await expect(service.reRequestOutsiderDocument("access", "doc", "05", "1"))
+            .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("also checks the stored email reused by a phone override", async () => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, SMS_RECIPIENT_ALLOWLIST: "01000000001", EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+        const service = new EformsignService(createConfigService());
+        const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected provider call"));
+        jest.spyOn(service, "getDocumentById").mockResolvedValue({
+            current_status: { step_recipients: [{ id: "blocked@example.test" }] },
+        });
+
+        await expect(service.reRequestOutsiderDocument("access", "doc", "05", "1", "", {
+            countryCode: "+82", phoneNumber: "01000000001",
+        })).rejects.toThrow(/^Blocked by staging recipient allowlist/);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("allows re-requests when all stored recipients are listed", async () => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, SMS_RECIPIENT_ALLOWLIST: "01000000001", EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+        });
+        const service = new EformsignService(createConfigService());
+        jest.spyOn(service, "getDocumentById").mockResolvedValue({
+            current_status: { step_recipients: [{ id: "ALLOWED@example.test", sms: "01000000001" }] },
+        });
+        const fetchMock = jest.spyOn(global, "fetch")
+            .mockResolvedValue(new Response(JSON.stringify({ result: true })));
+
+        await expect(service.reRequestOutsiderDocument("access", "doc", "05", "1")).resolves.toEqual({ result: true });
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/re_request_outsider"),
+            expect.objectContaining({ method: "POST" }));
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("rejects a malformed outsider phone override before reading or calling the provider", async () => {
         const service = new EformsignService(createConfigService());
         const getDocument = jest.spyOn(service, "getDocumentById");
@@ -189,6 +274,9 @@ describe("EformsignService", () => {
     });
 
     it("posts a cancellation to the vendor's cancel endpoint", async () => {
+        jest.replaceProperty(process, "env", {
+            ...process.env, OUTBOUND_ALLOWLIST_REQUIRED: "", SMS_RECIPIENT_ALLOWLIST: "", EMAIL_RECIPIENT_ALLOWLIST: "",
+        });
         const service = new EformsignService(createConfigService());
         const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response(
             JSON.stringify({ result: { success_result: ["doc-1"], fail_result: [] } }),
@@ -198,6 +286,7 @@ describe("EformsignService", () => {
         await expect(service.cancelDocuments("access-token", ["doc-1"], "관리자 삭제"))
             .resolves.toEqual({ result: { success_result: ["doc-1"], fail_result: [] } });
 
+        expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock).toHaveBeenCalledWith(
             "https://doc.eformsign.example/v2.0/api/documents/cancel",
             expect.objectContaining({
@@ -208,6 +297,60 @@ describe("EformsignService", () => {
                 }),
             }),
         );
+    });
+
+    describe("cancellation with recipient enforcement", () => {
+        const allowedDocument = {
+            current_status: { step_recipients: [{ id: "allowed@example.test" }] },
+            previous_status: [],
+        };
+        let service: EformsignService;
+
+        beforeEach(() => {
+            jest.replaceProperty(process, "env", {
+                ...process.env,
+                OUTBOUND_ALLOWLIST_REQUIRED: "true",
+                SMS_RECIPIENT_ALLOWLIST: "",
+                EMAIL_RECIPIENT_ALLOWLIST: "allowed@example.test",
+            });
+            service = new EformsignService(createConfigService());
+        });
+
+        it("posts a cancellation after checking all documents in the batch", async () => {
+            const getDocument = jest.spyOn(service, "getDocumentById").mockResolvedValue(allowedDocument);
+            const result = { result: { success_result: ["doc-1", "doc-2"], fail_result: [] } };
+            const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify(result)));
+
+            await expect(service.cancelDocuments("access-token", ["doc-1", "doc-2"])).resolves.toEqual(result);
+
+            expect(getDocument.mock.calls).toEqual([["access-token", "doc-1"], ["access-token", "doc-2"]]);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/documents/cancel"),
+                expect.objectContaining({ method: "POST" }));
+        });
+
+        it("blocks the whole batch when a prior recipient of any document is unlisted", async () => {
+            jest.spyOn(service, "getDocumentById")
+                .mockResolvedValueOnce(allowedDocument)
+                .mockResolvedValueOnce({
+                    ...allowedDocument,
+                    previous_status: [{ step_recipients: [{ id: "blocked@example.test" }] }],
+                });
+            const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected cancellation"));
+
+            await expect(service.cancelDocuments("access-token", ["doc-1", "doc-2"]))
+                .rejects.toThrow(/^Blocked by staging recipient allowlist/);
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
+        it("blocks cancellation when document lookup fails", async () => {
+            const lookupFailure = new Error("document lookup failed");
+            jest.spyOn(service, "getDocumentById").mockRejectedValue(lookupFailure);
+            const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(new Error("unexpected cancellation"));
+
+            await expect(service.cancelDocuments("access-token", ["doc-1"])).rejects.toBe(lookupFailure);
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
     });
 
     it("surfaces a vendor rejection of a cancellation as an api error", async () => {

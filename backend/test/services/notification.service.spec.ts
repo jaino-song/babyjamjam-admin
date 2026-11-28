@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { Logger } from "@nestjs/common";
 import { DailyDigestSection, NotificationService } from "application/services/notification.service";
 import { NotificationEntity } from "domain/entities/notification.entity";
@@ -752,6 +753,21 @@ describe("NotificationService", () => {
                 "branch:branch-1:daily:2026-08-29:user:user-2",
                 "claim-token",
                 "sent",
+            );
+        });
+
+        it("settles the push digest when the email adapter refuses delivery before sending", async () => {
+            emailPort.send.mockRejectedValue(new OutboundRecipientBlockedError("email recipient ***@example.test"));
+
+            await service.sendDailyDigestToBranchUsers(
+                branchId, branchName, sections, digestContext, "branch:branch-1:daily:2026-08-29",
+            );
+
+            expect(systemSettingService.completePwaDigestDelivery).toHaveBeenCalledWith(
+                "branch:branch-1:daily:2026-08-29:user:user-1", "claim-token", "sent",
+            );
+            expect(systemSettingService.completePwaDigestDelivery).not.toHaveBeenCalledWith(
+                expect.any(String), expect.any(String), "uncertain",
             );
         });
 

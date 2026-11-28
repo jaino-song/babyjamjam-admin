@@ -1,3 +1,4 @@
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
@@ -864,6 +865,24 @@ describe("MessageDeliveryController", () => {
                 errorMessage: expect.stringContaining("부분 발송"),
                 providerAcceptanceState: "uncertain",
                 variables: expect.objectContaining({ retrySafety: "partial" }),
+            }),
+        });
+    });
+
+    it("records an allowlist rejection as a settled manual SMS failure", async () => {
+        const blocked = new OutboundRecipientBlockedError("SMS recipient ***5678");
+        aligoService.sendSms.mockRejectedValue(blocked);
+
+        const error = await controller.sendSms({ branchId: "org-1" }, {
+            receiver: "01012345678", message: "test", title: "test", triggerType: "immediate", msgType: "AUTO",
+        }).catch(reason => reason);
+
+        expect(error.getResponse()).toMatchObject({ code: "MESSAGE_SEND_REJECTED", outcome: "FAILED" });
+        expect(prismaService.message_log.update).toHaveBeenCalledWith({
+            where: { id: 42 },
+            data: expect.objectContaining({
+                status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null,
+                errorMessage: blocked.message,
             }),
         });
     });

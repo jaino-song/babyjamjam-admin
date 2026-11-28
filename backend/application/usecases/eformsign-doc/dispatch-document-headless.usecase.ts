@@ -1,6 +1,8 @@
 import { ConflictException, HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import type { ProblemCode, ProblemOutcome, ProblemRecovery } from "@babyjamjam/shared/errors/problem-details";
+import { assertEformsignPhone } from "infrastructure/config/eformsign-recipient-policy";
+import { OutboundRecipientBlockedError } from "infrastructure/config/outbound-recipient-policy";
 import { createHash } from "node:crypto";
 import { ContractDataDto } from "application/dto/contract.dto";
 import { parseContractCopaymentReceivedDate } from "application/utils/contract-copayment-date";
@@ -293,6 +295,7 @@ export class DispatchDocumentHeadlessUsecase {
                 params.clientId,
                 params.contractData.caretaker1Contact,
             );
+            assertEformsignPhone(params.contractData.customerContact);
             return await this.credentialBoundary.withCredentials(
                 principal,
                 "contract.dispatch",
@@ -407,7 +410,7 @@ export class DispatchDocumentHeadlessUsecase {
                 dispatchIntent = claim.intent;
             }
 
-            const documentOption = this.eformsignService.generateDocumentOptions(
+            const documentOption = this.eformsignService.generateDispatchOptions(
                 params.contractData,
                 accessToken,
                 refreshToken,
@@ -618,7 +621,8 @@ export class DispatchDocumentHeadlessUsecase {
             const reason = registeredProblemCode(error)
                 ?? sanitizeEformsignErrorMessage(error || "unknown headless dispatch error");
             if (dispatchIntent) {
-                if ((worker && sdkStarted) || latestProgressStep === "creating" || latestProgressStep === "sent") {
+                if (!(error instanceof OutboundRecipientBlockedError)
+                    && ((worker && sdkStarted) || latestProgressStep === "creating" || latestProgressStep === "sent")) {
                     await this.dispatchBoundary?.markUncertain(dispatchIntent, reason).catch((persistError) => {
                         this.logger.error(`Failed to persist uncertain eformsign dispatch outcome: ${sanitizeEformsignErrorMessage(persistError)}`);
                     });
@@ -631,7 +635,7 @@ export class DispatchDocumentHeadlessUsecase {
             return {
                 ok: false,
                 reason,
-                fallbackHint: "iframe",
+                fallbackHint: error instanceof OutboundRecipientBlockedError ? "manual_check" : "iframe",
                 dispatchIntentId: dispatchIntent?.id,
                 durationMs: Date.now() - start,
                 failedStep: latestProgressStep,

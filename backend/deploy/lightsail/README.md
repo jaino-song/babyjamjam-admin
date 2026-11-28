@@ -1,11 +1,16 @@
 # Lightsail Backend Environments
 
-> **Chosen as production primary again (decision 2026-10-31; cutover pending).**
-> Production has run on the LightNode fallback since 2026-09-03 and **stays there
-> until the cutover in `docs/devops-deployment-rules.md` §4.1 completes**. After
-> it, LightNode stays on as a passive standby that gets every `main` release. The production env file
-> must carry `SCHEDULER_LEASE_MODE=required` and `SCHEDULER_LEASE_HOLDER_ID=lightsail`
-> (ADR-010; `ci-operator.sh` refuses otherwise).
+> **Cold standby since 2026-11-28 (decision 2026-11-27, BJJ-597/BJJ-598).**
+> Production runs on LightNode only. This host is no longer a deploy target of
+> `main` pushes: the `deploy-lightsail` job is gone, and the instance was stopped
+> and snapshotted on 2026-11-28 (it is deleted after the failover rehearsal).
+> Lightsail is deployed only by a person, through `lightsail-operations.yml`,
+> during a failover. `COLD_STANDBY_FAILOVER.md` in this directory is a draft of
+> that procedure and is not executable until the blockers it lists are closed.
+> This replaces the 2026-10-31 decision to return production here; text below
+> that assumes Lightsail is the primary is historical (cleanup: BJJ-604).
+> The production env file must still carry `SCHEDULER_LEASE_MODE=required` and
+> `SCHEDULER_LEASE_HOLDER_ID=lightsail` (ADR-010; `ci-operator.sh` refuses otherwise).
 >
 > **Preview is retired here (2026-09-23, BJJ-341).** The preview backend runs on
 > Google Cloud Run (`backend/deploy/cloudrun/`, runbook
