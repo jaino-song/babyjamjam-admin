@@ -82,7 +82,10 @@ has been upgraded from a `main` commit that contains this change.
 
 The command watches the workflow run and returns its exit status. Add
 `--no-watch` to open the run without waiting. Production operations enter the
-`production` GitHub environment approval gate. The root operator bundle is
+`production` GitHub environment approval gate. That gate waits for a person
+only while the environment has a required reviewer (activation step 6); a
+state-changing operation needs the operator's approval right before it runs
+regardless of that setting. The root operator bundle is
 shared by Preview and Production, so `operator-upgrade` is always pinned to the
 current `main` commit and uses the same Production approval gate; no
 Preview-only upgrade exists. The workflow does not accept arbitrary shell text,
@@ -168,8 +171,11 @@ approval gate before execution.
    An operation that sends a host command selects one document variable for
    its environment and health scope. When that variable is empty the workflow
    fails and names it; it never falls back to another document. `node-status`
-   uses no document variable. An empty tag or role variable fails earlier,
-   without naming the variable.
+   uses no document variable. The tag and the evaluated role ARN are checked
+   for format before the document is selected, without naming a variable. An
+   empty production role variable makes the role expression fall through to the
+   preview role ARN, which passes that format check and then fails at
+   authentication, so check both role variables when authentication fails.
 
 8. If the external IAM operator needs deployment-failure diagnostics, review the
    `AgentLightsailDiagnosticsPolicyArn` stack output and explicitly attach that
@@ -266,12 +272,16 @@ After staging, use only a recovery image that supports case-scoped keys before
 resuming writes. Retain the guarded operator while the new image is eligible
 for promotion.
 
-If deployment or verification fails on a host whose API was running when the
-deploy started, the operator immediately invokes the existing rollback script
-with the recorded known-good commit image, preserves the prior rollback-tag
-history, restores the prior digest state, and verifies the recovered runtime.
-On a host whose API was stopped (standby), it stops the new API and restores
-the release records instead. The root CI operator holds one per-environment lock so
+A failure before activation (image validation or migration) ends the deploy
+without any recovery and leaves the containers as they were. When the host
+deploy fails after activation, the operator attempts recovery according to the
+API state at the start of the deploy. If the API was running, it invokes the
+existing rollback script with the recorded known-good commit image, preserves
+the prior rollback-tag history, restores the prior digest state, and verifies
+the recovered runtime. If the API was stopped (standby), it stops the new API
+and restores the release records instead. Recovery can itself fail. When only
+the workflow's result check fails after the host command succeeded, no recovery
+runs; check the host state directly. The root CI operator holds one per-environment lock so
 concurrent commands cannot change the same runtime. Detailed output is kept in
 a root-only host log; GitHub receives only a failure status and safe release
 fields. The Backend CI job that used to print a redacted copy of a failed
@@ -279,7 +289,8 @@ command's output was removed with the main-push Lightsail deploy (BJJ-598). The
 Lightsail operations workflow reports by where it stopped: a configuration,
 image-lookup or authentication failure in that workflow step; a registration
 problem after printing `managed_nodes` and `online_nodes`; no final status line
-when the sent command's invocation is not found on the expected node; only the
+when tracking the sent command fails (first check for an AWS query error, then
+whether the invocation count and node match what was expected); only the
 final Systems Manager status, without host output, when the host command did
 not end in `Success` (which includes a failed check on the host). When the
 host command succeeded, the workflow fetches its standard output and checks
