@@ -233,6 +233,7 @@ PREVIOUS_TAG_FILE="$STATE_DIRECTORY/previous-image-tag"
 IMAGE_TAG="${BACKEND_IMAGE_TAG:-}"
 DATABASE_CONNECTION_MODE="${DATABASE_CONNECTION_MODE:-shared}"
 PUBLIC_HEALTH_URL="${BACKEND_PUBLIC_HEALTH_URL:-$DEFAULT_PUBLIC_HEALTH_URL}"
+HEALTH_SCOPE="${BACKEND_HEALTH_SCOPE-public}"
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-babyjamjam-backend-$ENVIRONMENT}"
 NETWORK_ALIAS="${BACKEND_NETWORK_ALIAS:-api-$ENVIRONMENT}"
 VALKEY_DATA_VOLUME="${VALKEY_DATA_VOLUME:-$DEFAULT_VALKEY_DATA_VOLUME}"
@@ -352,6 +353,11 @@ if [[ "$PUBLIC_HEALTH_REQUIRED" != "true" && "$PUBLIC_HEALTH_REQUIRED" != "false
     exit 1
 fi
 
+if [[ "$HEALTH_SCOPE" != "public" && "$HEALTH_SCOPE" != "self" ]]; then
+    echo "BACKEND_HEALTH_SCOPE must be public or self." >&2
+    exit 1
+fi
+
 if [[ "$BUILD_IMAGE" != "false" ]]; then
     echo "The protected deployment helper requires BACKEND_BUILD_IMAGE=false and a preloaded image." >&2
     exit 1
@@ -437,19 +443,21 @@ if [[ "$PUBLIC_HEALTH_REQUIRED" == "false" ]]; then
     exit 0
 fi
 
-public_route_is_healthy=false
-for _attempt in $(seq 1 30); do
-    if curl --fail --silent --location --proto '=http,https' --proto-redir '=http,https' --connect-timeout 5 --max-time 10 "$PUBLIC_HEALTH_URL" >/dev/null; then
-        public_route_is_healthy=true
-        break
+if [[ "$HEALTH_SCOPE" == "public" ]]; then
+    public_route_is_healthy=false
+    for _attempt in $(seq 1 30); do
+        if curl --fail --silent --location --proto '=http,https' --proto-redir '=http,https' --connect-timeout 5 --max-time 10 "$PUBLIC_HEALTH_URL" >/dev/null; then
+            public_route_is_healthy=true
+            break
+        fi
+
+        sleep 2
+    done
+
+    if [[ "$public_route_is_healthy" != "true" ]]; then
+        echo "Deployment timed out waiting for the public health check: $PUBLIC_HEALTH_URL" >&2
+        exit 1
     fi
-
-    sleep 2
-done
-
-if [[ "$public_route_is_healthy" != "true" ]]; then
-    echo "Deployment timed out waiting for the public health check: $PUBLIC_HEALTH_URL" >&2
-    exit 1
 fi
 
 previous_tag=""
@@ -462,4 +470,8 @@ if [[ -n "$previous_tag" && "$previous_tag" != "$IMAGE_TAG" ]]; then
 fi
 
 printf '%s\n' "$IMAGE_TAG" > "$CURRENT_TAG_FILE"
-echo "Deployed $ENVIRONMENT backend image after API and public proxy health checks: $IMAGE_TAG"
+if [[ "$HEALTH_SCOPE" == "self" ]]; then
+    echo "Deployed $ENVIRONMENT backend image after the internal API health check: $IMAGE_TAG"
+else
+    echo "Deployed $ENVIRONMENT backend image after API and public proxy health checks: $IMAGE_TAG"
+fi
