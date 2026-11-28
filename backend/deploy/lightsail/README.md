@@ -144,8 +144,12 @@ uninstall cover the complete bundle. Status and deployment output contains
 only secret-free release, route, readiness, and health fields. A successful
 status includes matching `db_route` and `runtime_route` values plus
 `db_readiness=ok`; it also verifies one API container, scheduler ownership,
-image tag/digest identity, internal and public `/health/ready`, and public
-liveness.
+image tag/digest identity and internal `/health/ready`. In public scope (the
+default) it additionally verifies public `/health/ready` and public liveness.
+In self scope (`status <environment> self`, used for the cold standby host)
+the public checks are skipped: the output carries `public_health=skipped`,
+`health_scope=self` and the reported loopback fields `edge_route` and
+`edge_tls`.
 
 The repository copies of `deploy.sh` and `rollback.sh` are source material for
 installation only. They fail closed when invoked from the checkout. Root
@@ -167,8 +171,10 @@ Each application deployment:
 2. tags the image with the exact Git commit;
 3. validates the resolved Compose model without printing secrets;
 4. activates the preloaded API image and starts only that environment's API and Valkey;
-5. waits for the container health check and matching public `/health` route;
-6. records current and previous healthy tags only after both checks pass.
+5. waits for the container health check and, in public scope, the matching
+   public `/health` route (self scope skips the public route);
+6. records current and previous healthy tags only after the checks for that
+   scope pass.
 
 The repository `deploy-edge.sh`, edge Compose file, and Caddyfile are not root
 runtime inputs. That legacy helper is retired and fails closed. Database route

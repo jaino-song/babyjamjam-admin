@@ -42,21 +42,39 @@ backend/deploy/lightsail/lightsail-cli.sh deploy production --self
 
 The last four exist for the cold standby host (BJJ-605):
 
-- `node-status` only asks Systems Manager whether the tagged host is registered
-  exactly once and online. It sends no command to the host and needs no new AWS
-  resource.
-- `standby` stops the API containers of both environments on the host and
-  leaves them stopped, so the host can be rebooted, snapshotted and restored
-  without the API starting. Only a later `deploy` starts the API again. The
-  workflow refuses `standby` unless production DNS currently points at LightNode.
+- `node-status` asks Systems Manager for the nodes carrying the configured tag
+  and prints the total count, the online count, and each node's ping status,
+  last ping time and agent version. It succeeds only when exactly one node is
+  registered and online. It sends no command to the host and uses no SSM
+  document.
+- `standby` stops the production API container on the host and then the preview
+  one, re-lists after each stop, and fails if a container is still running. If
+  it fails part-way, check both environments. It is meant to leave the API
+  stopped across a reboot, a snapshot and a restore; that has been read from
+  the Docker documentation and has yet to be verified on the host. A later
+  `deploy`, an administrator-run rollback, or `db-reconcile` can create the API
+  again. The workflow refuses `standby` unless production DNS currently points
+  at LightNode.
 - `--self` makes `status` and `deploy` verify this host from the inside
-  (container state, image identity, in-container readiness) and skip the public
-  hostname. The output then carries `public_health=skipped`, `health_scope=self`
-  and two reported fields, `edge_route` and `edge_tls`, from a probe of the
-  host's own Caddy on the loopback address. The workflow shows a warning when
-  either is not `ok` and does not fail on them. `--self` is production-only.
-- A deploy that started while the API was stopped returns the host to standby
-  when it fails; it does not start the previous image.
+  (container state, image identity, scheduler configuration, database route
+  agreement, in-container readiness) and skip the public hostname. The output
+  then carries `public_health=skipped`, `health_scope=self` and two reported
+  fields, `edge_route` and `edge_tls`, from a probe of the host's own Caddy on
+  the loopback address. The workflow shows a warning when either is not `ok`
+  and does not fail on them. `--self` is production-only.
+- Without `--self`, `status` and `deploy` also require the public hostname to
+  answer, and cannot tell which server answered. Do not run `deploy production`
+  without `--self` against a standby host while production DNS points at
+  LightNode: it passes on LightNode's answer and leaves the Lightsail API
+  running.
+- A deploy that fails before activation (image validation, migration) leaves
+  the containers untouched. After that point the operator attempts recovery:
+  if the API was stopped when the deploy started, it stops the new API and
+  restores the release records without starting the previous image; if the API
+  was running, it rolls back to the image that was running. Recovery can itself
+  fail, and a workflow check that fails after the host command succeeded runs
+  no recovery, so confirm the actual API state before the next step. Applied
+  database changes stay.
 
 `standby` and `--self` use three more SSM documents, so they work only after
 the stack is updated, the three variables below are set, and the host operator
@@ -140,14 +158,18 @@ approval gate before execution.
    - `AWS_PRODUCTION_DEPLOY_DOCUMENT_NAME`
    - `AWS_PRODUCTION_STATUS_DOCUMENT_NAME`
    - `AWS_OPERATOR_UPGRADE_DOCUMENT_NAME`
-   - `AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME`
-   - `AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME`
-   - `AWS_HOST_STANDBY_DOCUMENT_NAME`
+   - `AWS_PRODUCTION_SELF_STATUS_DOCUMENT_NAME` (output
+     `ProductionSelfStatusDocumentName`)
+   - `AWS_PRODUCTION_SELF_DEPLOY_DOCUMENT_NAME` (output
+     `ProductionSelfDeployDocumentName`)
+   - `AWS_HOST_STANDBY_DOCUMENT_NAME` (output `HostStandbyDocumentName`)
    - `LIGHTSAIL_SSM_TARGET_TAG`
 
-   The workflow selects one document per operation. When the variable it needs
-   is empty it fails and names that variable; it never falls back to another
-   document.
+   An operation that sends a host command selects one document variable for
+   its environment and health scope. When that variable is empty the workflow
+   fails and names it; it never falls back to another document. `node-status`
+   uses no document variable. An empty tag or role variable fails earlier,
+   without naming the variable.
 
 8. If the external IAM operator needs deployment-failure diagnostics, review the
    `AgentLightsailDiagnosticsPolicyArn` stack output and explicitly attach that
@@ -188,10 +210,13 @@ image label matches that commit. Before changing the running container, it runs
 database configuration. A migration failure leaves the current application
 image running. Release migrations must remain backward-compatible because a
 successful database migration cannot be automatically undone if later runtime
-activation fails. It records digest state only after the full runtime invariant
-succeeds: one API container, the authoritative route and exact
-`DATABASE_CONNECTION_MODE`, scheduler ownership, health/restart, image
-tag/digest identity, internal and public `/health/ready`, and public liveness.
+activation fails. After activation it writes the candidate digest and then runs
+the final host verification: one API container, the authoritative route and
+exact `DATABASE_CONNECTION_MODE`, scheduler ownership, health/restart, image
+tag/digest identity and internal `/health/ready` in both health scopes, plus
+public `/health/ready` and public liveness in public scope. Self scope reports
+the loopback edge checks instead. If that verification fails, the operator
+attempts to restore the earlier release records.
 
 For the first Preview or Production deployment of an image containing
 `20261126010000_baby_case_keys`, complete the following steps in order. The
@@ -241,17 +266,26 @@ After staging, use only a recovery image that supports case-scoped keys before
 resuming writes. Retain the guarded operator while the new image is eligible
 for promotion.
 
-If deployment or verification fails, the operator immediately invokes the
-existing rollback script with the recorded known-good commit image, preserves
-the prior rollback-tag history, restores the prior digest state, and verifies
-the recovered runtime. The root CI operator holds one per-environment lock so
+If deployment or verification fails on a host whose API was running when the
+deploy started, the operator immediately invokes the existing rollback script
+with the recorded known-good commit image, preserves the prior rollback-tag
+history, restores the prior digest state, and verifies the recovered runtime.
+On a host whose API was stopped (standby), it stops the new API and restores
+the release records instead. The root CI operator holds one per-environment lock so
 concurrent commands cannot change the same runtime. Detailed output is kept in
 a root-only host log; GitHub receives only a failure status and safe release
 fields. The Backend CI job that used to print a redacted copy of a failed
-command's output was removed with the main-push Lightsail deploy (BJJ-598); the
-Lightsail operations workflow prints the host's standard output for a command
-that succeeded on the host, and only the final Systems Manager status for one
-that did not. The fixed diagnostics documents expose
+command's output was removed with the main-push Lightsail deploy (BJJ-598). The
+Lightsail operations workflow reports by where it stopped: a configuration,
+image-lookup or authentication failure in that workflow step; a registration
+problem after printing `managed_nodes` and `online_nodes`; no final status line
+when the sent command's invocation is not found on the expected node; only the
+final Systems Manager status, without host output, when the host command did
+not end in `Success` (which includes a failed check on the host). When the
+host command succeeded, the workflow fetches its standard output and checks
+it; `status`, `deploy` and `standby` print the output before the checks, and
+`operator-upgrade` prints it after confirming its success marker. The fixed
+diagnostics documents expose
 the host's own bounded failure history when the SSM invocation output is
 insufficient; they cannot accept a command or path parameter. The status contract
 includes `db_route`, `runtime_route`, and
